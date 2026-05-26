@@ -21,6 +21,7 @@
  */
 
 import { prisma } from '@/lib/db';
+import { assertAssigneeTenant } from '@/lib/assignee-validation';
 import { generateAndPersistEntityEmbedding, generateAndPersistBatchEmbeddings } from './embedding.service';
 import type { CreateMemoInput, UpdateMemoInput } from '@/lib/validators/memo';
 
@@ -180,6 +181,9 @@ export async function createMemo(
   if (visibility === 'private' && input.assigneeId && input.assigneeId !== userId) {
     throw new Error('PRIVATE_MEMO_ASSIGNEE_FORBIDDEN');
   }
+  // feat/asset-assignee-expansion (2026-05-26) severity-1 越境防御:
+  //   担当者として他テナントのユーザを指定する攻撃を service 層で reject。
+  await assertAssigneeTenant(input.assigneeId, tenantId);
   const created = await prisma.memo.create({
     data: {
       tenantId,
@@ -272,6 +276,8 @@ export async function updateMemo(
   ) {
     throw new Error('PRIVATE_MEMO_ASSIGNEE_FORBIDDEN');
   }
+  // feat/asset-assignee-expansion (2026-05-26) severity-1 越境防御
+  await assertAssigneeTenant(input.assigneeId, viewerTenantId);
 
   // 2026-05-15: text フィールドが「実値として変わったか」を比較で判定。
   //   未指定 (undefined) または既存値と同一なら trigger しない (LLM 課金回避)。

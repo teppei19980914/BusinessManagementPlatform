@@ -32,6 +32,7 @@
  */
 
 import { prisma } from '@/lib/db';
+import { assertAssigneeTenant } from '@/lib/assignee-validation';
 import { generateAndPersistEntityEmbedding, generateAndPersistBatchEmbeddings } from './embedding.service';
 import type { Prisma } from '@/generated/prisma/client';
 import type { CreateKnowledgeInput } from '@/lib/validators/knowledge';
@@ -375,6 +376,9 @@ export async function createKnowledge(
   userId: string,
   tenantId: string,
 ): Promise<KnowledgeDTO> {
+  // feat/asset-assignee-expansion (2026-05-26) severity-1 越境防御:
+  //   担当者として他テナントのユーザを指定する攻撃を service 層で reject する。
+  await assertAssigneeTenant(input.assigneeId, tenantId);
   // 2026-05-09 feedback Phase 2-4: data.tenantId を明示し schema DB DEFAULT 暗黙依存を解消。
   const k = await prisma.knowledge.create({
     data: {
@@ -508,6 +512,10 @@ export async function updateKnowledge(
   if (existing.createdBy !== userId && existing.assigneeId !== userId) {
     throw new Error('FORBIDDEN');
   }
+
+  // feat/asset-assignee-expansion (2026-05-26) severity-1 越境防御:
+  //   担当者変更時に他テナントのユーザを指定する攻撃を service 層で reject。
+  await assertAssigneeTenant(input.assigneeId, tenantId);
 
   // 2026-05-11 defense-in-depth: 「全メンバー」(public) 化する更新で、
   //   title が input でも DB でも空の場合は拒否。

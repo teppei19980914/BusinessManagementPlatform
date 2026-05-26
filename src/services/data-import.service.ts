@@ -630,6 +630,8 @@ async function runImport(
         processTags: jsonOrEmptyArray(k.processTags),
         businessDomainTags: jsonOrEmptyArray(k.businessDomainTags),
         visibility: String(k.visibility ?? 'draft'),
+        // feat/asset-assignee-expansion (2026-05-26): 担当者を import round-trip 対応
+        assigneeId: resolveUserFkNullable(k.assigneeId),
         createdBy: resolveUserFk(k.createdBy),
         updatedBy: resolveUserFk(k.updatedBy),
       },
@@ -710,6 +712,9 @@ async function runImport(
         knowledgeToShare: stringOrNull(rt.knowledgeToShare),
         state: String(rt.state ?? 'draft'),
         visibility: String(rt.visibility ?? 'draft'),
+        // feat/asset-assignee-expansion (2026-05-26): 担当者を import round-trip 対応。
+        //   旧 export ファイル (assigneeId カラム無) は undefined → resolveUserFkNullable で null になる。
+        assigneeId: resolveUserFkNullable(rt.assigneeId),
         createdBy: resolveUserFk(rt.createdBy),
         updatedBy: resolveUserFk(rt.updatedBy),
       },
@@ -730,6 +735,8 @@ async function runImport(
         title: String(m.title ?? '').slice(0, 150),
         content: String(m.content ?? ''),
         visibility: String(m.visibility ?? 'private'),
+        // feat/asset-assignee-expansion (2026-05-26): 担当者を import round-trip 対応
+        assigneeId: resolveUserFkNullable(m.assigneeId),
       },
     });
     maps.memo.set(String(m.id), newId);

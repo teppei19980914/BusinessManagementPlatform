@@ -70,11 +70,29 @@ export async function POST(
   const projectIds = Array.from(
     new Set([...(parsed.data.projectIds ?? []), projectId]),
   );
-  const knowledge = await createKnowledge(
-    { ...parsed.data, projectIds },
-    user.id,
-    user.tenantId,
-  );
+  let knowledge;
+  try {
+    knowledge = await createKnowledge(
+      { ...parsed.data, projectIds },
+      user.id,
+      user.tenantId,
+    );
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    // feat/asset-assignee-expansion (2026-05-26) severity-1 越境防御
+    if (msg === 'ASSIGNEE_TENANT_MISMATCH') {
+      return NextResponse.json(
+        {
+          error: {
+            code: 'ASSIGNEE_TENANT_MISMATCH',
+            message: '指定された担当者は同じテナントのメンバーではありません',
+          },
+        },
+        { status: 400 },
+      );
+    }
+    throw e;
+  }
 
   await recordAuditLog({
     tenantId: user.tenantId,

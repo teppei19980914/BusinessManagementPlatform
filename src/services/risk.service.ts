@@ -32,6 +32,7 @@
  */
 
 import { prisma } from '@/lib/db';
+import { assertAssigneeTenant } from '@/lib/assignee-validation';
 import { generateAndPersistEntityEmbedding, generateAndPersistBatchEmbeddings } from './embedding.service';
 // Prisma types used for Decimal handling in toRiskDTO
 import type { CreateRiskInput } from '@/lib/validators/risk';
@@ -452,6 +453,10 @@ export async function createRisk(
   userId: string,
   tenantId: string,
 ): Promise<RiskDTO> {
+  // feat/asset-assignee-expansion (2026-05-26) severity-1 越境防御:
+  //   担当者として他テナントのユーザを指定する攻撃を service 層で reject する。
+  //   validator は uuid 形式のみ確認のため、tenant 越境は本層で防ぐ必要がある。
+  await assertAssigneeTenant(input.assigneeId, tenantId);
   const r = await prisma.riskIssue.create({
     data: {
       // PR feat/asset-multi-project-linking: projectId は **作成元** プロジェクト (audit)。
@@ -606,6 +611,10 @@ export async function updateRisk(
   if (existing.reporterId !== userId && existing.assigneeId !== userId) {
     throw new Error('FORBIDDEN');
   }
+
+  // feat/asset-assignee-expansion (2026-05-26) severity-1 越境防御:
+  //   担当者変更時に「他テナントのユーザを指定」する攻撃を service 層で reject する。
+  await assertAssigneeTenant(input.assigneeId, tenantId);
 
   // 2026-05-11 defense-in-depth: 「全メンバー」(public) 化する更新で、
   //   title が input でも DB でも空の場合は拒否 (個人情報がうっかり公開化されるのを防ぐ)。

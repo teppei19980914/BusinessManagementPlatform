@@ -63,6 +63,18 @@ export async function POST(req: NextRequest) {
         { status: 400 },
       );
     }
+    // feat/asset-assignee-expansion (2026-05-26) severity-1 越境防御
+    if (msg === 'ASSIGNEE_TENANT_MISMATCH') {
+      return NextResponse.json(
+        {
+          error: {
+            code: 'ASSIGNEE_TENANT_MISMATCH',
+            message: '指定された担当者は同じテナントのメンバーではありません',
+          },
+        },
+        { status: 400 },
+      );
+    }
     throw e;
   }
   await recordAuditLog({

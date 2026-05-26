@@ -34,6 +34,12 @@ vi.mock('./embedding.service', () => ({
   generateAndPersistBatchEmbeddings: vi.fn().mockResolvedValue({ generated: 0, failed: 0, costJpy: 0 }),
 }));
 
+// feat/asset-assignee-expansion (2026-05-26): クロステナント assigneeId 検証を mock
+//   (専用テストは src/lib/assignee-validation.test.ts、本ファイルでは pass 扱い)
+vi.mock('@/lib/assignee-validation', () => ({
+  assertAssigneeTenant: vi.fn().mockResolvedValue(undefined),
+}));
+
 import {
   listRisks,
   listAllRisksForViewer,

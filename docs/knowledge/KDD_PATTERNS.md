@@ -15974,3 +15974,115 @@ memo bulk (`bulkUpdateMemosVisibilityFromList`) は対象外:
 - 関連テスト: 各 service の `担当者本人のレコードも bulk 更新対象に含まれる` テスト
 
 ---
+
+## 5.X+155 ★severity-1 (テナント越境攻撃)★ 担当者 (assigneeId) フィールドの validator は UUID 形式しかチェックしないため、service 層で tenantId 検証を必須にする (PR #448 post-PR 3 巡目検証で発覚)
+
+### 事象
+
+PR #448 (feat/asset-restructure-and-assignee-expansion) で 4 資産 (Risk/Knowledge/Retrospective/Memo) に `assigneeId` を追加し、認可を「作成者 OR 担当者」に拡張した。validator は `z.string().uuid().nullable().optional()` で UUID 形式のみを確認するため、API で `{ assigneeId: '<他テナントのユーザ id>' }` を送信すると:
+
+1. validator は透過 (UUID 形式は正しい)
+2. service の `where: { tenantId: ... }` は **対象 entity (Risk/Knowledge 等) のテナント一致** を検証するが、`assigneeId` で指定された User の tenantId は検証しない
+3. Prisma の FK は `users.id` の存在のみ確認 (テナント越境を検出しない)
+4. DB に「他テナントの user.id」が assigneeId として保存される
+
+### 漏洩リスク
+
+- `getRisk` / `listRisks` 等で assignee.name を resolve する経路:
+  - `prisma.user.findMany({ where: { id: { in: userIds } } })` (cross-tenant lookup 許容、retrospective.service.ts の userMap 等)
+  - UI に **他テナントのユーザ氏名** が表示される (severity-1 個人情報漏洩)
+- bulk update の `OR: [{ createdBy }, { assigneeId }]` 句で「他テナントのユーザを attacker が自分の id にして assignee 設定 → 自分が編集者となる」攻撃の起点になり得る
+
+### 解決策
+
+`src/lib/assignee-validation.ts` に共通ヘルパ `assertAssigneeTenant(assigneeId, expectedTenantId)` を新設:
+
+```typescript
+export async function assertAssigneeTenant(
+  assigneeId: string | null | undefined,
+  expectedTenantId: string,
+): Promise<void> {
+  if (assigneeId === undefined || assigneeId === null) return; // 未指定/解除は許容
+  const user = await prisma.user.findUnique({
+    where: { id: assigneeId },
+    select: { tenantId: true },
+  });
+  if (!user || user.tenantId !== expectedTenantId) {
+    throw new Error('ASSIGNEE_TENANT_MISMATCH');
+  }
+}
+```
+
+4 service の create/update 関数の冒頭で `await assertAssigneeTenant(input.assigneeId, tenantId);` を呼ぶ。API route 層で `ASSIGNEE_TENANT_MISMATCH` を catch して 400 にマップ。
+
+### 再発防止策
+
+1. **「外部から渡される FK は必ず tenantId 検証する」原則を明文化**:
+   - User リレーションを持つ field を validator で受け入れる場合、validator は UUID 形式しか確認できない
+   - tenantId 整合性は **必ず service 層** で行う
+   - 横展開対象: 既存の reporterId / createdBy 等は API から受け取らないので問題ないが、新規 FK field を追加するたびに本ルールを適用
+2. **チェックリスト**: 新規 schema field 追加時に「外部入力か?」「User/Project 等 tenant 境界を跨ぐ FK か?」を確認
+3. **テスト**: `src/lib/assignee-validation.test.ts` で undefined/null/same-tenant/other-tenant/nonexistent の 5 ケースをカバー
+
+### 関連
+
+- 関連 PR: #448 (post-PR 検証 3 巡目で検出)
+- 該当コード: [src/lib/assignee-validation.ts](../../src/lib/assignee-validation.ts)
+- 関連テスト: [src/lib/assignee-validation.test.ts](../../src/lib/assignee-validation.test.ts)
+- 関連 memory: `feedback_tenant_isolation` (= severity-1 テナント越境)
+- 関連 memory: `feedback_repeated_verification_request` (= フルスキャン検証 N 回目で重大バグ検出の実績)
+
+---
+
+## 5.X+156 ★severity-1 (round-trip 欠陥)★ 新規 schema field を追加したら data-export / data-import 両方に必ず column を追加する (PR #448 post-PR 3 巡目検証で発覚)
+
+### 事象
+
+PR #448 で Knowledge / Retrospective / Memo に `assigneeId` 列を追加したが、`src/services/data-export.service.ts` の `buildKnowledgeCsv` / `buildRetrospectivesCsv` / `buildMemosCsv` のカラムリストに `'assigneeId'` を追加し忘れた。
+
+さらに `src/services/data-import.service.ts` の `tx.knowledge.create / tx.retrospective.create / tx.memo.create` の data オブジェクトでも `assigneeId` を読み取らない (= `data.assigneeId` が `undefined` で create される → null 保存)。
+
+### 影響
+
+- **round-trip 非対称**: 担当者を割り当てた Knowledge を export → import すると `assigneeId` が消える (担当者が外れる)
+- **テナント移行 / バックアップ復旧で担当者情報が喪失**: 業務オペレーション (引継ぎ後の担当 entity) が import で死ぬ
+- **検出困難**: round-trip テストは E2E 想定 (export を保存し再 import して differ) で、本 PR の単体テストではカバーできなかった
+
+### 解決策
+
+1. `data-export.service.ts`:
+   - `buildKnowledgeCsv` カラムに `'assigneeId'` を追加
+   - `buildRetrospectivesCsv` 同
+   - `buildMemosCsv` 同
+   - `buildRisksIssuesCsv` は既に `'assigneeId'` を含む (init 時から) ので不要
+
+2. `data-import.service.ts`:
+   - `tx.knowledge.create` data に `assigneeId: resolveUserFkNullable(k.assigneeId)`
+   - `tx.retrospective.create` data に `assigneeId: resolveUserFkNullable(rt.assigneeId)`
+   - `tx.memo.create` data に `assigneeId: resolveUserFkNullable(m.assigneeId)`
+   - `resolveUserFkNullable` は user id マッピング (export 時の旧 id → import 時の新 id 変換) を行うため必須
+
+### 再発防止策
+
+1. **「新 field 追加時の横展開チェックリスト」を更新**:
+   - migration SQL / schema.prisma
+   - service 層: create / update / list / get (DTO)
+   - validator (zod schema)
+   - UI (form state, display)
+   - **data-export.service.ts の CSV カラムリスト**
+   - **data-import.service.ts の create data オブジェクト**
+   - API route (catch + error code)
+   - tests (single, bulk, cross-tenant, edge case)
+2. **round-trip テスト** (将来 work): `export → import → 同 field 比較` のテストを書く
+3. **schema-driven CSV 生成** (将来 work): Prisma model 定義から CSV カラムを自動生成する仕組みを導入し、手書きで漏れる罠を構造的に防ぐ
+
+### 関連
+
+- 関連 PR: #448 (post-PR 検証 3 巡目で検出)
+- 該当コード:
+  - [src/services/data-export.service.ts](../../src/services/data-export.service.ts) (buildKnowledgeCsv 等 3 関数)
+  - [src/services/data-import.service.ts](../../src/services/data-import.service.ts) (Knowledge/Retrospective/Memo create)
+- 関連 memory: `feedback_repeated_verification_request` (= 「再確認 N 回目で重大バグ」)
+- 関連 memory: `feedback_3layer_sync_filter` (= 「同期更新が必要な 4 経路」、本件は export/import が同種の sync 対象)
+
+---

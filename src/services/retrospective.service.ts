@@ -32,6 +32,7 @@
  */
 
 import { prisma } from '@/lib/db';
+import { assertAssigneeTenant } from '@/lib/assignee-validation';
 import { generateAndPersistEntityEmbedding, generateAndPersistBatchEmbeddings } from './embedding.service';
 import type { CreateRetrospectiveInput } from '@/lib/validators/retrospective';
 
@@ -298,6 +299,8 @@ export async function createRetrospective(
   userId: string,
   tenantId: string,
 ): Promise<RetroDTO> {
+  // feat/asset-assignee-expansion (2026-05-26) severity-1 越境防御
+  await assertAssigneeTenant(input.assigneeId, tenantId);
   const r = await prisma.retrospective.create({
     data: {
       // PR feat/asset-multi-project-linking: projectId は **作成元** プロジェクト (audit)。
@@ -472,6 +475,9 @@ export async function updateRetrospective(
   if (existing.createdBy !== userId && existing.assigneeId !== userId) {
     throw new Error('FORBIDDEN');
   }
+
+  // feat/asset-assignee-expansion (2026-05-26) severity-1 越境防御
+  await assertAssigneeTenant(input.assigneeId, tenantId);
 
   // PR #5-c + PR D (2026-05-09 / #20): text フィールドが「実値として変わったか」を比較で判定。
   const textFieldsChanging =
