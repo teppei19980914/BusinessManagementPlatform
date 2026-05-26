@@ -15497,3 +15497,84 @@ git は file content の先頭 8000 バイトを scan し、NULL バイトが 1 
 - 関連 PR: PR #445 (ADR-0021 基盤層、フルスキャン検証で発覚 / 2026-05-26)
 - 関連 KDD: [§5.X+140](#5x140), [§5.X+141](#5x141), [§5.X+142](#5x142) (PR #445 の同一バッチ)
 - 関連 file: [src/services/file-text-extraction.service.ts](../../src/services/file-text-extraction.service.ts), [.gitattributes](../../.gitattributes)
+
+## 5.X+144 **共通コンポーネントへの UI 追加で、それを内包する全 dashboard visual baseline が連鎖 fail する (transitive closure trap / PR #446 で発覚)**
+
+### 事象
+
+PR #446 (ADR-0021 ファイルストレージ従量課金) で `src/components/attachments/attachment-list.tsx` に **「ファイルをアップロード (50MB 上限)」セクション** (約 42px 高) を追加。Local lint / tsc / test / build は全 PASS。しかし Linux Playwright CI で:
+
+```
+e2e/visual/dashboard-screens.spec.ts:83
+  プロジェクト詳細 概要タブ 初期表示 (light テーマ)
+
+Error: expect(page).toHaveScreenshot(expected) failed
+  Expected an image 1440px by 985px, received 1440px by 1027px.
+  Snapshot: project-detail-light.png
+```
+
+PR で **直接** 変更していない画面 (project detail) が baseline mismatch で fail した。
+
+### 根本原因
+
+`AttachmentList` は dashboard 配下の **複数の画面/コンポーネント** から間接的に rendering されている:
+
+| 影響画面 | 参照箇所 | コンポーネント参照 |
+|---|---|---|
+| プロジェクト詳細 概要タブ | [project-detail-client.tsx:885](../../src/app/(dashboard)/projects/[projectId]/project-detail-client.tsx#L885) | `<AttachmentList entityType="project" />` |
+| 課題 / リスク dialog | [risk-edit-dialog.tsx](../../src/components/dialogs/risk-edit-dialog.tsx) | `<DialogAttachmentSection entityType="risk" />` |
+| 課題/リスク/ナレッジ/振り返り/タスク/見積 編集 dialog | 各 dialog | `<DialogAttachmentSection entityType="..." />` |
+
+→ `AttachmentList` の 1 行追加 (42px) が、project-detail-light.png の baseline と 42px ずれて visual fail。
+
+**本質**: visual regression test は **コンポーネントツリー全体の transitive closure (推移的閉包)** を検証している。leaf コンポーネントの変更が、それを内包する **全 baseline** に伝播する。「自分が触っていない画面」が fail することは原理的に普通であり、想定外ではない。
+
+### 対応
+
+1. **意図した UI 変化と確認できたら、`[gen-visual]` コミットで baseline 再生成**:
+   ```bash
+   git commit --allow-empty -m "chore: regen visual baselines for AttachmentList upload UI [gen-visual]"
+   git push
+   ```
+2. `e2e-visual-baseline.yml` workflow が発火 → `Update visual baselines (e2e-visual-baseline workflow)` commit が自動 push
+3. 次の通常 E2E run で baseline 一致 → PASS
+
+### 再発防止
+
+#### 「広く使われる共通コンポーネント」を変更する PR では事前認識
+
+下記コンポーネントへの変更は **必ず visual baseline 再生成を伴う** ことを PR 着手時点で予測する:
+
+| 共通コンポーネント | 影響範囲 |
+|---|---|
+| `AttachmentList` ([attachment-list.tsx](../../src/components/attachments/attachment-list.tsx)) | UPLOADABLE_ENTITY_TYPES 全件 (project / task / estimate / risk / retrospective / knowledge / customer dialog) |
+| `CommentSection` ([comment-section.tsx](../../src/components/comments/comment-section.tsx)) | 全 entity の編集 dialog (8 entity 程度) |
+| `AppHeader` / `AppFooter` | **全 dashboard / public / auth 画面** (= 全 baseline) |
+| `DegradedModeBanner` | dashboard 全画面 (degraded 時の baseline は別) |
+| `LoadingProvider` overlay | overlay 表示時のみ (通常 baseline は影響なし) |
+| `Dialog` ([dialog.tsx](../../src/components/ui/dialog.tsx)) | open 状態でスクリーンショットされる baseline 全件 |
+
+#### チェックリスト (PR 着手前)
+
+- [ ] **共通コンポーネント** に新 UI 要素 (input / button / banner / 1 行テキスト) を追加していないか
+- [ ] 追加している場合は、PR 説明欄に **「visual baseline 再生成必要」と明記**
+- [ ] PR 末尾コミット (= リリース直前 commit) を `[gen-visual]` 付きで push する
+- [ ] e2e-visual-baseline workflow の成功確認 → 通常 E2E 再実行 → 全 PASS でマージ
+
+### 教訓 (転用可能)
+
+- **「自分が触っていない画面」が visual で fail するのは原理的に普通**: 直接編集していないファイル群が CI で赤くなっても「謎の retry で直ることを期待しない」。必ず transitive closure を辿って原因コンポーネントを特定する。
+- **leaf コンポーネントの 1 行追加 = 上流すべての画面の高さ変化**: HTML/CSS のレンダリングは合成的。小さな追加でも `fullPage` snapshot は全体差分として表現される。
+- **PR 説明欄に「visual baseline 再生成必要」フラグを書く文化**: 後続レビューア / 自動化 bot が「これは意図的 UI 変更で gen-visual 必要」と即判断できる。
+- **共通コンポーネント変更時の「影響範囲リスト」を本 §の表で固定化**: 次回同じコンポーネントを変更する開発者 / AI が、上記表を参照することで再発防止になる。
+- **`gen-visual` は罪悪感無く使え**: 「prod 影響なし / baseline の整備コスト」と認識する。失敗を見て即時 `[gen-visual]` で対応するのは熟練の応答パターン。
+
+### 関連
+
+- 関連 PR: PR #446 (ADR-0021 ファイルストレージ従量課金、本事例 / 2026-05-26)
+- 関連 §: [E2E_LESSONS.md §4.59](../test/E2E_LESSONS.md#459-共通コンポーネント-attachmentlist-等-に-ui-要素を追加するとそれを-間接的に-内包する-dashboard-visual-baseline-がまとめて壊れる-pr-446-で遭遇) (本事例の E2E 文書側、影響画面表を含む)
+- 関連 §: [E2E_LESSONS.md §4.12 視覚回帰の baseline 生成は Linux CI で自動化する](../test/E2E_LESSONS.md#412-視覚回帰の-baseline-生成は-linux-ci-で自動化する-pr-96) (`[gen-visual]` の基本メカニズム)
+- 関連 §: [E2E_LESSONS.md §4.43 視覚回帰 baseline mismatch の診断・修正フロー](../test/E2E_LESSONS.md#443-視覚回帰-baseline-mismatch-の診断修正フロー-pr-178-で遭遇) (個別事象の診断手順)
+- 関連 §: [E2E_LESSONS.md §4.52](../test/E2E_LESSONS.md#452-dashboard-header-に-top-nav-グループを追加すると-chromium-mobile-の-fullpage-snapshot-幅が成長する罠-pr-292--pr-i-で遭遇), [§4.56](../test/E2E_LESSONS.md#456-全ページに常時表示するグローバル-ui-要素-fab--floating-button-を追加すると-dashboard-系の全-visual-baseline-がモバイル-viewport-で-fail-する-pr-432-で遭遇) (前例: 全画面共通コンポーネント変更の伝播)
+- 該当コード: [src/components/attachments/attachment-list.tsx:328-347](../../src/components/attachments/attachment-list.tsx#L328-L347) (新規追加された upload UI セクション)
+- 該当 CI run: [GitHub Actions run 26429155365](https://github.com/teppei19980914/BusinessManagementPlatform/actions/runs/26429155365/job/77798624559?pr=446)

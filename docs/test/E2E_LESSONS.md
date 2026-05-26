@@ -3,7 +3,7 @@
 - 初版作成日: 2026-04-22
 - 対象 PR: #90 (基盤) → #92 (Steps 1-6) → #93 (Step 7) → #94 (Step 8) → #95 (Steps 9-12)
   → #96 (視覚回帰 + WBS/Gantt/見積) → #97/#99 (session race hotfix) 以降も継続追記
-- 罠パターン数: **33 個** (§4.1 〜 §4.33)
+- 罠パターン数: **35+ 個** (§4.1 〜 §4.59、欠番あり)
 
 ## 1. この文書の位置付け
 
@@ -3739,6 +3739,68 @@ await trigger.tap();
 - 関連 KDD: [§5.X+119 「追加発覚バグ」セクション](../knowledge/KDD_PATTERNS.md) (CI で発覚した本事例の根本原因解析)
 - 関連 spec: [e2e/specs/16-column-sort.spec.ts](../../e2e/specs/16-column-sort.spec.ts) (`.click()` を使う本テスト群)
 - 関連 test: [src/components/sort/sortable-header.test.tsx](../../src/components/sort/sortable-header.test.tsx) (toggle 形式への退行を防ぐ static invariant 1 件)
+
+---
+
+### 4.59 共通コンポーネント (`AttachmentList` 等) に UI 要素を追加すると、それを **間接的に** 内包する dashboard visual baseline がまとめて壊れる (PR #446 で遭遇)
+
+**症状**: PR #446 (ADR-0021 ファイルストレージ従量課金) で `src/components/attachments/attachment-list.tsx` に **「ファイルをアップロード (50MB 上限)」セクション** (約 42px 高) を追加した。本コンポーネント自体には spec が無い (= localでの lint/tsc/test は全 PASS) が、Linux Playwright CI で以下が確率なく fail:
+
+```
+e2e/visual/dashboard-screens.spec.ts:83
+  プロジェクト詳細 概要タブ 初期表示 (light テーマ)
+
+Error: expect(page).toHaveScreenshot(expected) failed
+  Expected an image 1440px by 985px, received 1440px by 1027px.
+  Snapshot: project-detail-light.png
+```
+
+**原因**: AttachmentList は以下の dashboard 配下画面で `<AttachmentList />` として直接または間接に rendering されている。表面上は touch していない画面でも、内包コンポーネントの差分でページ全体の高さが変わる:
+
+| 影響画面 | 配置箇所 | コンポーネント参照 |
+|---|---|---|
+| プロジェクト詳細 概要タブ | [project-detail-client.tsx:885](../../src/app/(dashboard)/projects/[projectId]/project-detail-client.tsx#L885) | `<AttachmentList entityType="project" />` |
+| 課題 / リスク dialog | [risk-edit-dialog.tsx](../../src/components/dialogs/risk-edit-dialog.tsx) | `<DialogAttachmentSection entityType="risk" />` |
+| ナレッジ / 振り返り dialog | 同等 | `<DialogAttachmentSection entityType="knowledge"|"retrospective" />` |
+| タスク / 見積 dialog | 同等 | `<DialogAttachmentSection entityType="task"|"estimate" />` |
+
+→ **dashboard-screens.spec.ts の project-detail-light baseline** が +42px ずれて visual fail。
+
+**対策 (即応プレイブック)**:
+
+1. 「**意図した変化**」と確認できたら `[gen-visual]` 空コミットで baseline を再生成:
+   ```bash
+   git commit --allow-empty -m "chore: regen visual baselines for AttachmentList upload UI [gen-visual]"
+   git push
+   ```
+2. `e2e-visual-baseline.yml` workflow が発火 → 新 baseline を `Update visual baselines (e2e-visual-baseline workflow)` commit で自動 push
+3. 次回 E2E run で baseline 一致 → PASS
+
+**根本原因の本質 (将来 PR でも繰り返す可能性大)**: **「自分が触っていない画面」が baseline mismatch で fail する** ─ visual regression test の真の検証範囲は **コンポーネントツリー全体の transitive closure** であり、leaf コンポーネントの 1 行追加が dashboard 画面 (project detail 等) 全体に伝播する。
+
+| 注意が必要な「広く使われる共通コンポーネント」 | 変更時に baseline 再生成が必要な対象 画面 |
+|---|---|
+| `AttachmentList` ([attachment-list.tsx](../../src/components/attachments/attachment-list.tsx)) | dashboard 系: project-detail / task / risk / retrospective / knowledge / estimate / customer dialog 等 (= UPLOADABLE_ENTITY_TYPES 全件) |
+| `CommentSection` ([comment-section.tsx](../../src/components/comments/comment-section.tsx)) | 全 entity の編集 dialog (task / risk / issue / retrospective / knowledge / memo / customer / stakeholder) |
+| `AppHeader` / `AppFooter` ([app-header.tsx](../../src/components/app-header.tsx) / [app-footer.tsx](../../src/components/app-footer.tsx)) | **全 dashboard / public / auth 画面** (= 全 baseline) |
+| `DegradedModeBanner` ([degraded-mode-banner.tsx](../../src/components/degraded-mode-banner.tsx)) | dashboard 全画面 (degraded 時) |
+| `LoadingProvider` overlay ([loading-overlay.tsx](../../src/components/loading-overlay.tsx)) | overlay 表示時のみ (基本影響なし) |
+
+**チェックリスト (PR 着手前の心構え)**:
+
+- [ ] 上記「広く使われる共通コンポーネント」を変更している場合は、影響画面の visual baseline が再生成必要と **マージ前に PR 説明欄に明記**
+- [ ] PR 末尾コミットに `[gen-visual]` を必ず含めて push する
+- [ ] Linux CI の e2e-visual-baseline workflow が成功した後に通常 E2E が PASS することを確認してからマージ
+
+#### 関連
+
+- 関連 PR: PR #446 (ADR-0021 ファイルストレージ従量課金、本事例 / 2026-05-26)
+- 関連 §: [§4.12 視覚回帰の baseline 生成は Linux CI で自動化する](#412-視覚回帰の-baseline-生成は-linux-ci-で自動化する-pr-96) (基盤メカニズム)
+- 関連 §: [§4.43 視覚回帰 baseline mismatch の診断・修正フロー](#443-視覚回帰-baseline-mismatch-の診断修正フロー-pr-178-で遭遇) (個別事象の診断手順)
+- 関連 §: [§4.52 dashboard-header に top-nav グループを追加すると ...](#452-dashboard-header-に-top-nav-グループを追加すると-chromium-mobile-の-fullpage-snapshot-幅が成長する罠-pr-292--pr-i-で遭遇) (前例: 全画面共通コンポーネント変更で全 baseline fail)
+- 関連 §: [§4.56 全ページに常時表示するグローバル UI 要素 (FAB / floating button) を追加すると、dashboard 系の全 visual baseline がモバイル viewport で fail](#456-全ページに常時表示するグローバル-ui-要素-fab--floating-button-を追加すると-dashboard-系の全-visual-baseline-がモバイル-viewport-で-fail-する-pr-432-で遭遇) (本事例の上位概念)
+- 関連 KDD: [KDD_PATTERNS.md visual baseline 関連エントリ](../knowledge/KDD_PATTERNS.md)
+- 該当コード: [src/components/attachments/attachment-list.tsx:328-347](../../src/components/attachments/attachment-list.tsx#L328-L347) (新規追加された upload UI セクション)
 
 ---
 
