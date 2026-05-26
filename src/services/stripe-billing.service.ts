@@ -30,7 +30,6 @@ import { prisma } from '@/lib/db';
 import {
   getStripe,
   getStripePriceConfig,
-  getStoragePriceId,
   STRIPE_METER_EVENT_NAMES,
   type StripeMeterCallType,
 } from '@/lib/stripe';
@@ -197,7 +196,6 @@ export async function setupSubscriptionWithExistingCard(
     where: { id: tenantId, deletedAt: null },
     select: {
       stripeCustomerId: true,
-      storageAddonPlan: true,
       timezone: true,
     },
   });
@@ -227,9 +225,9 @@ export async function setupSubscriptionWithExistingCard(
   await cancelAllActiveStripeSubscriptionsForCustomer(tenant.stripeCustomerId);
 
   // Step 3: 新規 Subscription 作成
+  // chore/storage-addon-backend-removal (2026-05-26): storage addon プラン廃止に伴い storageAddonPlan 引数は撤去
   const subscriptionResult = await createSubscriptionForTenant({
     tenantId,
-    storageAddonPlan: tenant.storageAddonPlan ?? 'standard',
     billingCycleAnchor,
     paymentMethodId,
   });
@@ -240,9 +238,6 @@ export async function setupSubscriptionWithExistingCard(
   const prices = getStripePriceConfig();
   const haikuItem = subscription.items.data.find((i) => i.price.id === prices.haiku);
   const sonnetItem = subscription.items.data.find((i) => i.price.id === prices.sonnet);
-  const storageItem = subscription.items.data.find(
-    (i) => i.price.id === prices.storagePlus || i.price.id === prices.storagePro,
-  );
   const currentYearMonth = getTenantCurrentYearMonth(
     new Date(),
     tenant.timezone ?? 'Asia/Tokyo',
@@ -256,7 +251,6 @@ export async function setupSubscriptionWithExistingCard(
         stripeSubscriptionStatus: subscription.status,
         stripeSubscriptionItemHaikuId: haikuItem?.id ?? null,
         stripeSubscriptionItemSonnetId: sonnetItem?.id ?? null,
-        stripeSubscriptionItemStorageId: storageItem?.id ?? null,
         stripeDefaultPaymentMethodId: paymentMethodId,
         cardLastVerifiedAt: new Date(),
         cardVerificationStatus: 'valid',
@@ -345,7 +339,6 @@ export async function completeStripeSetup(
       paymentMethod: true,
       stripeCustomerId: true,
       stripeSubscriptionId: true,
-      storageAddonPlan: true,
       // PR-V7a (2026-05-19): 二重課金防止のため、テナント TZ で「現在の年月」を判定
       timezone: true,
     },
@@ -485,9 +478,9 @@ export async function completeStripeSetup(
   await cancelAllActiveStripeSubscriptionsForCustomer(sessionCustomerId);
 
   // Step 4: Subscription 作成 (Phase 3)
+  // chore/storage-addon-backend-removal (2026-05-26): storage addon プラン廃止に伴い storageAddonPlan 引数は撤去
   const subscriptionResult = await createSubscriptionForTenant({
     tenantId,
-    storageAddonPlan: tenant.storageAddonPlan ?? 'standard',
     billingCycleAnchor,
     paymentMethodId,
   });
@@ -506,9 +499,6 @@ export async function completeStripeSetup(
   const prices = getStripePriceConfig();
   const haikuItem = subscription.items.data.find((i) => i.price.id === prices.haiku);
   const sonnetItem = subscription.items.data.find((i) => i.price.id === prices.sonnet);
-  const storageItem = subscription.items.data.find(
-    (i) => i.price.id === prices.storagePlus || i.price.id === prices.storagePro,
-  );
 
   const currentYearMonth = getTenantCurrentYearMonth(
     new Date(),
@@ -523,7 +513,6 @@ export async function completeStripeSetup(
         stripeSubscriptionStatus: subscription.status,
         stripeSubscriptionItemHaikuId: haikuItem?.id ?? null,
         stripeSubscriptionItemSonnetId: sonnetItem?.id ?? null,
-        stripeSubscriptionItemStorageId: storageItem?.id ?? null,
         paymentMethod: 'credit_card',
       },
     });
@@ -781,8 +770,6 @@ export async function verifyTenantCard(
 
 export type SubscriptionCreationInput = {
   tenantId: string;
-  /** Storage add-on plan ('standard' / 'plus' / 'pro_storage') */
-  storageAddonPlan: string;
   /** billing_cycle_anchor の Unix 秒。null なら現時刻起点 */
   billingCycleAnchor: number | null;
   /** payment_method ID (= setup フローで取得した pm_xxx) */
@@ -792,12 +779,13 @@ export type SubscriptionCreationInput = {
 /**
  * テナントの Stripe Subscription を作成 (= プラン契約)。
  *
- * - 全プラン (Haiku, Sonnet, Storage) の Subscription Item を作成
- *   - Haiku / Sonnet: Metered (= 使った分だけ、Usage Record で課金)
- *   - Storage Plus / Pro: Recurring 固定額
- *   - Storage standard は Stripe Item を作らない (= ¥0)
+ * - Haiku / Sonnet の Subscription Item を作成 (= Metered、Usage Record で課金)
  * - billing_cycle_anchor で JST 月末締めに揃える (= 詳細設計 §C-3)
  * - automatic_tax: true で Stripe Tax (インボイス制度対応)
+ *
+ * 履歴:
+ *   chore/storage-addon-backend-removal (2026-05-26):
+ *     ADR-0020/0021 で完全従量課金化されたため、旧 Storage add-on Subscription Item は撤去。
  *
  * @returns 作成された Subscription
  */
@@ -820,16 +808,12 @@ export async function createSubscriptionForTenant(
 
   const stripe = getStripe();
   const prices = getStripePriceConfig();
-  const storagePriceId = getStoragePriceId(input.storageAddonPlan);
 
-  // Subscription Items: 全プラン共存 (= Usage 送信先のみ plan 別に切替、詳細設計 §C-2)
+  // Subscription Items: Haiku + Sonnet のみ (= Storage add-on は廃止)
   const items: Stripe.SubscriptionCreateParams.Item[] = [
     { price: prices.haiku },
     { price: prices.sonnet },
   ];
-  if (storagePriceId != null) {
-    items.push({ price: storagePriceId });
-  }
 
   const params: Stripe.SubscriptionCreateParams = {
     customer: tenant.stripeCustomerId,
@@ -923,142 +907,13 @@ export async function reportUsage(
 }
 
 // ============================================================
-// §7. Storage Add-on プラン変更 → Stripe Subscription Item sync (PR-V7 #2 / 2026-05-19)
+// §7. (削除済) Storage Add-on プラン変更 → Stripe Subscription Item sync
+//
+//   chore/storage-addon-backend-removal (2026-05-26):
+//     ADR-0020 (DB 容量従量課金) + ADR-0021 (添付ファイル従量課金) で完全従量課金化されたため、
+//     旧 4 段階プラン (Standard/Plus/Pro/Enterprise) の Stripe Item sync は撤去。
+//     Stripe Subscription は Haiku + Sonnet の 2 Meter のみで構成される。
 // ============================================================
-
-/**
- * Storage add-on プラン変更を Stripe Subscription Item に反映する。
- *
- * 仕様: docs/business/STRIPE_BILLING.md §1 + storage-addon.ts ADDON_MONTHLY_JPY
- *   - 'standard' (¥0) = Stripe Subscription Item なし
- *   - 'plus' (¥500/月) = STRIPE_PRICE_STORAGE_PLUS の Item
- *   - 'pro_storage' (¥1500/月) = STRIPE_PRICE_STORAGE_PRO の Item
- *   - 'enterprise' (¥5000/月) = Stripe Item なし (= manual billing)
- *
- * 動作:
- *   - 元 standard / enterprise + 新 plus/pro_storage → 新 Item を `subscriptionItems.create`
- *   - 元 plus/pro_storage + 新 standard / enterprise → 既存 Item を `subscriptionItems.del`
- *   - 元 plus + 新 pro_storage (または逆) → 既存 Item を `subscriptionItems.update` で price 差替
- *   - 元 = 新 → no-op
- *
- * proration_behavior: 'none' (= Subscription 作成時の設定と整合、日割りなし)
- *
- * 副作用:
- *   - tenant.stripeSubscriptionItemStorageId を新 Item ID で更新 (削除時は null)
- *
- * 呼出側ユースケース:
- *   - updateStorageAddonPlan (= アップグレード即時反映)
- *   - applyScheduledStorageChanges (= ダウングレード月初 cron 適用時)
- */
-export async function syncStorageAddonToStripe(
-  tenantId: string,
-  fromPlan: string,
-  toPlan: string,
-): Promise<StripeOperationResult<{ action: 'noop' | 'created' | 'updated' | 'deleted'; itemId: string | null }>> {
-  // PR-V7 横展開 (2026-05-19): 削除済テナントへの Subscription Item 操作を防ぐ
-  const tenant = await prisma.tenant.findFirst({
-    where: { id: tenantId, deletedAt: null },
-    select: {
-      paymentMethod: true,
-      stripeSubscriptionId: true,
-      stripeSubscriptionItemStorageId: true,
-    },
-  });
-  if (tenant == null) {
-    return { ok: false, code: 'invalid_request', userMessage: 'テナントが見つかりません', detail: 'tenant_not_found' };
-  }
-  // credit_card 払いでない / Subscription 未登録 → no-op
-  if (tenant.paymentMethod !== 'credit_card' || tenant.stripeSubscriptionId == null) {
-    return { ok: true, value: { action: 'noop', itemId: tenant.stripeSubscriptionItemStorageId } };
-  }
-
-  const fromPriceId = getStoragePriceId(fromPlan);
-  const toPriceId = getStoragePriceId(toPlan);
-
-  // 両方とも Stripe 対象外 (= standard / enterprise) → no-op
-  if (fromPriceId == null && toPriceId == null) {
-    return { ok: true, value: { action: 'noop', itemId: null } };
-  }
-
-  const stripe = getStripe();
-  const idempotencyBase = `storage:${tenantId}:${fromPlan}_to_${toPlan}`;
-
-  // Case A: 新規 Item 作成 (= 元 standard/enterprise → 新 plus/pro_storage)
-  if (fromPriceId == null && toPriceId != null) {
-    const result = await withStripeError(() =>
-      stripe.subscriptionItems.create(
-        {
-          subscription: tenant.stripeSubscriptionId!,
-          price: toPriceId,
-          proration_behavior: 'none',
-        },
-        { idempotencyKey: `${idempotencyBase}:create` },
-      ),
-    );
-    if (!result.ok) return result;
-    await prisma.tenant.update({
-      where: { id: tenantId },
-      data: { stripeSubscriptionItemStorageId: result.value.id },
-    });
-    return { ok: true, value: { action: 'created', itemId: result.value.id } };
-  }
-
-  // Case B: 既存 Item 削除 (= 元 plus/pro_storage → 新 standard/enterprise)
-  if (fromPriceId != null && toPriceId == null) {
-    if (tenant.stripeSubscriptionItemStorageId == null) {
-      // DB と Stripe の状態不整合: 元 plus/pro なのに ItemId が null。no-op + 警告 (= 既に削除済の想定)
-      return { ok: true, value: { action: 'noop', itemId: null } };
-    }
-    const result = await withStripeError(() =>
-      stripe.subscriptionItems.del(tenant.stripeSubscriptionItemStorageId!, {
-        proration_behavior: 'none',
-      }),
-    );
-    if (!result.ok) return result;
-    await prisma.tenant.update({
-      where: { id: tenantId },
-      data: { stripeSubscriptionItemStorageId: null },
-    });
-    return { ok: true, value: { action: 'deleted', itemId: null } };
-  }
-
-  // Case C: 既存 Item の price 変更 (= plus ↔ pro_storage)
-  if (fromPriceId != null && toPriceId != null && fromPriceId !== toPriceId) {
-    if (tenant.stripeSubscriptionItemStorageId == null) {
-      // DB 不整合: ItemId なし + plan は plus/pro_storage → 新規 create にフォールバック
-      const result = await withStripeError(() =>
-        stripe.subscriptionItems.create(
-          {
-            subscription: tenant.stripeSubscriptionId!,
-            price: toPriceId,
-            proration_behavior: 'none',
-          },
-          { idempotencyKey: `${idempotencyBase}:fallback_create` },
-        ),
-      );
-      if (!result.ok) return result;
-      await prisma.tenant.update({
-        where: { id: tenantId },
-        data: { stripeSubscriptionItemStorageId: result.value.id },
-      });
-      return { ok: true, value: { action: 'created', itemId: result.value.id } };
-    }
-    const result = await withStripeError(() =>
-      stripe.subscriptionItems.update(tenant.stripeSubscriptionItemStorageId!, {
-        price: toPriceId,
-        proration_behavior: 'none',
-      }),
-    );
-    if (!result.ok) return result;
-    return {
-      ok: true,
-      value: { action: 'updated', itemId: tenant.stripeSubscriptionItemStorageId },
-    };
-  }
-
-  // fromPriceId === toPriceId (= 同一 Price ID) → no-op
-  return { ok: true, value: { action: 'noop', itemId: tenant.stripeSubscriptionItemStorageId } };
-}
 
 // ============================================================
 // §8. Subscription キャンセル (PR-V7 #1 / #3 / 2026-05-19)
@@ -1191,7 +1046,6 @@ async function clearTenantStripeSubscriptionFields(tenantId: string): Promise<vo
       stripeSubscriptionStatus: 'canceled',
       stripeSubscriptionItemHaikuId: null,
       stripeSubscriptionItemSonnetId: null,
-      stripeSubscriptionItemStorageId: null,
       stripeDefaultPaymentMethodId: null,
       cardVerificationStatus: null,
       cardLastVerifiedAt: null,

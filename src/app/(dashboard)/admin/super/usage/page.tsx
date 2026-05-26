@@ -62,12 +62,13 @@ export default async function SuperAdminUsagePage() {
           value={summary.totalCurrentMonthApiCalls.toLocaleString()}
           unit="回"
         />
-        {/* 2026-05-11: LLM + Storage add-on 合算課金 + 内訳併記 */}
+        {/* chore/storage-addon-backend-removal (2026-05-26): 旧 4 段階プラン Storage 月額は撤去。
+            ApiCallLog 集計 (DB / file storage 超過の従量課金も含む) に統合 */}
         <UsageCard
-          label="今月の合計課金 (LLM + Storage)"
-          value={`¥${summary.totalCurrentMonthCombinedJpy.toLocaleString()}`}
+          label="今月の合計課金"
+          value={`¥${summary.totalCurrentMonthApiCostJpy.toLocaleString()}`}
           unit=""
-          subValue={`LLM ¥${summary.totalCurrentMonthApiCostJpy.toLocaleString()} + Storage ¥${summary.totalCurrentMonthStorageJpy.toLocaleString()}`}
+          subValue="ApiCallLog 集計 (DB / ファイルストレージ超過の従量課金を含む)"
         />
       </section>
 
@@ -292,12 +293,12 @@ function DefaultTenantUsageSection({
             unit=""
             subValue="(請求対象外)"
           />
-          {/* fix/list-export-import-bugs (2026-05-26): Storage プラン表示削除 (ADR-0020/0021 で従量課金化済) */}
+          {/* chore/storage-addon-backend-removal (2026-05-26): ADR-0020 50GB ハードキャップを上限として表示 */}
           <UsageCard
             label="Storage 使用量"
             value={formatBytesLocal(defaultTenant.storageBytesUsed)}
             unit=""
-            subValue={`/ ${formatBytesLocal(defaultTenant.storageLimitBytes)} (ハードキャップ)`}
+            subValue={`${(defaultTenant.storageUsageRatio * 100).toFixed(1)}% (50GB ハードキャップ)`}
           />
         </div>
       )}

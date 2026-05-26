@@ -154,28 +154,20 @@ model Tenant {
   ///   - 開始時 NOW() / 終了時 NULL に戻す。クラッシュ残留対策のためタイムスタンプ型。
   ///   - 30 分 (IMPORT_LOCK_STALE_MINUTES) 以上経過した値は自動失効扱い。
   importInProgressAt                   DateTime? @map("import_in_progress_at") @db.Timestamptz
-  /// Storage add-on (Phase 2 / 2026-05-08): LLM プランと独立した容量プラン。
-  ///   - 'standard' (default): LLM プラン連動 (Beginner 50MB / Expert 150MB / Pro 300MB)
-  ///   - 'plus':       Standard + 200MB 拡張 (+¥500/月)
-  ///   - 'pro_storage': Standard + 1GB 拡張 (+¥1500/月)
-  ///   - 'enterprise': Standard + 5GB 拡張 (+¥5000/月)
-  ///   ※ enum 名は LLM の 'pro' と衝突しないよう 'pro_storage' とする
-  storageAddonPlan                     String    @default("standard") @map("storage_addon_plan") @db.VarChar(20)
   /// Storage 使用量 (バイト)。日次 cron (`updateAllStorageBytesUsed`) で `pg_column_size`
   /// 集計で更新。インポート/作成時のリアルタイム更新は重いので避けてキャッシュ運用。
   storageBytesUsed                     BigInt    @default(0) @map("storage_bytes_used")
   /// 最終更新時刻 (UI 表示で「○分前」を出すため、また stale 判定で on-demand 再計算するため)
   storageBytesUsedAt                   DateTime? @map("storage_bytes_used_at") @db.Timestamptz
-  /// 上限超過 → Grace period 開始日時 (P-B 風、null=正常)。Grace 7 日経過後に write 停止。
-  storageGracePeriodStartedAt          DateTime? @map("storage_grace_period_started_at") @db.Timestamptz
   /// 超過通知メール送信日時 (重複送信防止)
   storageOverLimitNoticeSentAt         DateTime? @map("storage_over_limit_notice_sent_at") @db.Timestamptz
-  /// ダウングレード予約日時 (= 翌月 1 日 UTC)
-  /// @deprecated ADR-0020 (2026-05-25): 4 段階プラン廃止により未使用。P9-cleanup で削除予定。
-  scheduledStorageAddonAt              DateTime? @map("scheduled_storage_addon_at") @db.Timestamptz
-  /// ダウングレード後のプラン名 (= scheduledStorageAddonAt と対)
-  /// @deprecated ADR-0020 (2026-05-25): 4 段階プラン廃止により未使用。P9-cleanup で削除予定。
-  scheduledNextStorageAddon            String?   @map("scheduled_next_storage_addon") @db.VarChar(20)
+  // chore/storage-addon-backend-removal (2026-05-26):
+  //   ADR-0020 (DB 容量従量課金) + ADR-0021 (添付ファイル従量課金) で完全従量課金化されたため、
+  //   旧 4 段階プラン (Standard/Plus/Pro/Enterprise) 関連の以下カラムを撤去:
+  //     - storage_addon_plan
+  //     - storage_grace_period_started_at
+  //     - scheduled_storage_addon_at
+  //     - scheduled_next_storage_addon
   // ============================================================
   // DB 容量従量課金 (ADR-0020 / 2026-05-25)
   //
@@ -294,8 +286,7 @@ model Tenant {
   stripeSubscriptionItemHaikuId   String?   @map("stripe_subscription_item_haiku_id") @db.VarChar(50)
   /// Sonnet (Pro plan) per-call Subscription Item ID
   stripeSubscriptionItemSonnetId  String?   @map("stripe_subscription_item_sonnet_id") @db.VarChar(50)
-  /// Storage add-on (月固定額) Subscription Item ID。standard プランも形式的に存在
-  stripeSubscriptionItemStorageId String?   @map("stripe_subscription_item_storage_id") @db.VarChar(50)
+  // chore/storage-addon-backend-removal (2026-05-26): stripe_subscription_item_storage_id 撤去
   /// Default Payment Method ID (= デフォルトの請求用カード)。Stripe Checkout 登録後に保存
   stripeDefaultPaymentMethodId    String?   @map("stripe_default_payment_method_id") @db.VarChar(50)
   /// 直近のカード検証成功時刻 (プラン変更時 + 月初検証 cron が更新)
@@ -1541,12 +1532,10 @@ model TenantMonthlyUsageHistory {
   plan             String   @db.VarChar(20)
   /// 当月末時点のアクティブユーザ数 (請求書根拠用)
   activeUserCount  Int      @map("active_user_count")
-  /// 後続 PR (Storage add-on) で使用予定のフィールド (前方互換のため Phase 1 で追加)。
-  ///   Phase 1 (外部 import) では値は 0 / 'standard' のまま記録される。
-  ///   Phase 2 (Storage add-on 実装) で実値を投入し super_admin ダッシュボードで表示する。
+  /// chore/storage-addon-backend-removal (2026-05-26):
+  ///   ADR-0020/0021 で完全従量課金化されたため、storage_addon_plan / storage_addon_jpy は撤去。
+  ///   storageBytesUsed のみ snapshot に残す (= 過去月の容量推移グラフ用)。
   storageBytesUsed BigInt   @default(0) @map("storage_bytes_used")
-  storageAddonPlan String   @default("standard") @map("storage_addon_plan") @db.VarChar(20)
-  storageAddonJpy  Int      @default(0) @map("storage_addon_jpy")
   /// ADR-0021 (2026-05-26): ファイルストレージ peak (バイト)。月初 cron 時の peak を保存。
   ///   過去月の super_admin / テナント請求 UI で「DB 容量 / ファイルストレージ」の内訳を表示するため独立カラム化。
   ///   feedback_3layer_sync_filter: 現在値 (Tenant) / 月初 snapshot (本カラム) / 履歴 (本カラム) の 3 レイヤ同期。

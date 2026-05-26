@@ -214,33 +214,22 @@ export default async function SuperAdminTenantDetailPage({
             value={formatBytesSuper(tenant.storageBytesUsed)}
             tooltip="添付ファイル + DB 行サイズの合算 (= ADR-0020 課金根拠)。上限は ADR-0020 で 50GB ハードキャップ。"
           />
-          {/* ★ PR-V8.1 (2026-05-19) 請求 invariant: LLM 部分は ApiCallLog SUM (真値) を使う。
-              同画面の「今月 API 費用」(line 130-134) と一致させ、合算式も整合させる。 */}
+          {/* chore/storage-addon-backend-removal (2026-05-26): 旧 Storage 月額固定費は撤去。
+              ApiCallLog 集計 (DB / file storage 超過の従量課金を含む) に統合 */}
           <DetailCard
             label={`当月予想合計課金${nonBillableSuffix}`}
             value={(() => {
-              const llmCost = apiReconcile?.reconciledCostJpy ?? tenant.currentMonthApiCostJpy;
-              const total = llmCost + tenant.storageAddonMonthlyJpy;
-              return `¥${total.toLocaleString()} (LLM ¥${llmCost.toLocaleString()} + Storage ¥${tenant.storageAddonMonthlyJpy.toLocaleString()})`;
+              const total = apiReconcile?.reconciledCostJpy ?? tenant.currentMonthApiCostJpy;
+              return `¥${total.toLocaleString()}`;
             })()}
             tooltip={
               isDefaultTenant
                 ? 'ApiCallLog 集計値。Default テナントは請求対象外のため顧客請求書合計には含まれません (PR-V8.1)'
-                : 'ApiCallLog SUM (真値) + Storage add-on (固定月額) の合算 = 請求書根拠と完全一致 (PR-V8.1)'
+                : 'ApiCallLog SUM (真値) = 請求書根拠と完全一致 (PR-V8.1)。DB / file storage 超過の従量課金も含まれる'
             }
           />
         </div>
-        {tenant.storageGracePeriodStartedAt && (
-          <p className="rounded border border-amber-300 bg-amber-50 p-2 text-xs dark:bg-amber-900/30">
-            ⚠ Grace period 開始: {tenant.storageGracePeriodStartedAt.toISOString().split('T')[0]} (7 日経過で write 停止)
-          </p>
-        )}
-        {tenant.storageScheduledAt && tenant.storageScheduledNext && (
-          <p className="rounded border border-amber-300 bg-amber-50 p-2 text-xs dark:bg-amber-900/30">
-            予約: {tenant.storageScheduledAt.toISOString().split('T')[0]} に{' '}
-            <span className="font-mono">{tenant.storageScheduledNext}</span> へ変更予定
-          </p>
-        )}
+        {/* chore/storage-addon-backend-removal (2026-05-26): Grace period / プラン変更予約 表示は撤去 (4 段階プラン廃止) */}
       </section>
 
       {/* P-G (2026-05-08): 請求先情報 / PR C (2026-05-09 #5/#8/#10) で個人法人 + 住所構造化 */}

@@ -12,7 +12,6 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
   isStripeEnabled,
   getStripePriceConfig,
-  getStoragePriceId,
   getStripeWebhookSecret,
   getSystemUserId,
   resetStripeClient,
@@ -73,22 +72,16 @@ describe('getStripePriceConfig', () => {
   it('全環境変数がセットされていれば 4 つの ID を返す', () => {
     process.env['STRIPE_PRICE_HAIKU'] = 'price_haiku_1';
     process.env['STRIPE_PRICE_SONNET'] = 'price_sonnet_2';
-    process.env['STRIPE_PRICE_STORAGE_PLUS'] = 'price_plus_3';
-    process.env['STRIPE_PRICE_STORAGE_PRO'] = 'price_pro_4';
     const config = getStripePriceConfig();
     expect(config).toEqual({
       haiku: 'price_haiku_1',
       sonnet: 'price_sonnet_2',
-      storagePlus: 'price_plus_3',
-      storagePro: 'price_pro_4',
     });
   });
 
   it('1 つでも未設定なら throw', () => {
     process.env['STRIPE_PRICE_HAIKU'] = 'price_haiku_1';
-    process.env['STRIPE_PRICE_SONNET'] = 'price_sonnet_2';
-    process.env['STRIPE_PRICE_STORAGE_PLUS'] = 'price_plus_3';
-    // STORAGE_PRO 欠落
+    // SONNET 欠落
     expect(() => getStripePriceConfig()).toThrow('STRIPE_PRICE_*');
   });
 
@@ -97,36 +90,8 @@ describe('getStripePriceConfig', () => {
   });
 });
 
-describe('getStoragePriceId', () => {
-  const originalEnv = { ...process.env };
-
-  beforeEach(() => {
-    process.env['STRIPE_PRICE_HAIKU'] = 'price_haiku';
-    process.env['STRIPE_PRICE_SONNET'] = 'price_sonnet';
-    process.env['STRIPE_PRICE_STORAGE_PLUS'] = 'price_plus';
-    process.env['STRIPE_PRICE_STORAGE_PRO'] = 'price_pro';
-  });
-
-  afterEach(() => {
-    process.env = { ...originalEnv };
-  });
-
-  it("'standard' → null (= Subscription Item を作らない)", () => {
-    expect(getStoragePriceId('standard')).toBe(null);
-  });
-
-  it("'plus' → STRIPE_PRICE_STORAGE_PLUS", () => {
-    expect(getStoragePriceId('plus')).toBe('price_plus');
-  });
-
-  it("'pro_storage' → STRIPE_PRICE_STORAGE_PRO", () => {
-    expect(getStoragePriceId('pro_storage')).toBe('price_pro');
-  });
-
-  it('想定外値 → null (= 安全側、Subscription Item を作らない)', () => {
-    expect(getStoragePriceId('unknown_plan')).toBe(null);
-  });
-});
+// chore/storage-addon-backend-removal (2026-05-26):
+//   getStoragePriceId は撤去 (ADR-0020/0021 で従量課金化、Stripe Subscription は Haiku/Sonnet の 2 Meter のみ)
 
 describe('getStripeWebhookSecret', () => {
   const originalEnv = { ...process.env };
