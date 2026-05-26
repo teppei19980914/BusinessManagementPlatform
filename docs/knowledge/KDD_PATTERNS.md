@@ -15116,3 +15116,109 @@ for (const name of progressTabsViaMenu) {
 - 関連 KDD: [§5.X+126](#5x126) (`{ force: true }` 導入経緯、chromium-mobile DPR=3 hit-test 問題) / [§5.X+129 Section B](#5x129) (本 fix の前段、「別 PR で fix 推奨」とマークされた本問題) / [§5.X+138](#5x138) (前回 PR #443 で別の chromium 系 flake を根本 fix)
 - 関連 file: [e2e/specs/02-project-detail-tabs.spec.ts](../../e2e/specs/02-project-detail-tabs.spec.ts), [src/app/(dashboard)/projects/[projectId]/project-detail-client.tsx](../../src/app/(dashboard)/projects/[projectId]/project-detail-client.tsx) (修正対象は spec のみ、本体コードは変更なし)
 - 累計 chromium-mobile flake 対処: §5.X+124-126 (force:true 11 件) + §5.X+138 (CSRF cookie 削除除去) + §5.X+139 (本 menuitem 2 段 wait) で **chromium-mobile + Base UI Menu 系の主要 race は構造的解消**
+
+---
+
+## 5.X+140 **★severity-high CI ゲート全滅 — package.json 編集後に `pnpm install` を忘れて `pnpm-lock.yaml` が乖離、CI の `--frozen-lockfile` で 7 ジョブ同時 fail (2026-05-26 / PR #445)**
+
+### 事象
+
+PR #445 (ADR-0021 基盤層) 作成直後、**7 個の CI チェックが同時に fail**:
+
+1. Lint / Test / Build (GitHub Actions)
+2. Security Score Gate (>= 90) (GitHub Actions)
+3. Playwright E2E + Visual Regression (GitHub Actions)
+4. netlify/tasukiba/deploy-preview (Netlify)
+5. Header rules - tasukiba (Netlify、上記 deploy-preview 失敗の派生)
+6. Pages changed - tasukiba (Netlify、同上)
+7. Redirect rules - tasukiba (Netlify、同上)
+
+最初に visible なエラーメッセージは **coverage-summary.json 不在** で、一見「vitest が json-summary reporter を吐いていない」「test step がスキップされた」ように見えるが、これは **下流の症状で根本原因ではない**。
+
+### 根本原因
+
+`pnpm install` 実行ログを掘ると、`Install dependencies` ステップで以下の error が発生していた:
+
+```
+ERR_PNPM_OUTDATED_LOCKFILE  Cannot install with "frozen-lockfile" because pnpm-lock.yaml is not up to date with <ROOT>/package.json
+* 4 dependencies were added: @types/pdf-parse@^1.1.4, mammoth@^1.8.0, pdf-parse@^1.1.1, xlsx@https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz
+```
+
+#### 何が起きていたか
+
+1. ADR-0021 実装中に `package.json` を直接 Edit して 4 つの依存 (pdf-parse / xlsx / mammoth / @types/pdf-parse) を追加
+2. **ローカルで `pnpm install` を実行せずに commit + push**
+3. `pnpm-lock.yaml` は依存追加が反映されない古い状態
+4. CI は **`pnpm install --frozen-lockfile`** を使う (lockfile を信頼して厳密に解決する pnpm のデフォルト production install) ため、package.json と lockfile の乖離を検知して即 fail
+5. `Install dependencies` ステップが exit 1 で終了 → 後続の Lint / Test / Build / Prisma generate / Security check / Netlify build / Playwright が全て skip → ジョブ全体が fail
+6. test step が skip されたため `coverage/coverage-summary.json` が生成されず、最終的に表面化するエラーは `ENOENT: no such file` という **下流の症状**
+
+#### なぜ手元の単体テスト 3289 件 PASS で気付かなかったか
+
+`file-text-extraction.service.ts` は **dynamic import** (`await import('pdf-parse')` 等) で parser を読み込む設計にしていた:
+- 単体テストは `_setExtractorsForTest()` で parser を mock 注入していたため、実際の dynamic import は走らず、`pdf-parse` 等の不在を検知できなかった
+- `pnpm tsc --noEmit` は走らせていたが、`Cannot find module 'pdf-parse'` の TS2307 エラーが出ていた (= **見えていたが許容してしまった**)
+- `pnpm test` が PASS することで「テストレベルでは問題なし」と誤判断、CI が dependency 不在で落ちる可能性を見逃した
+
+これは **「手元 PASS = CI PASS」の典型的な誤前提**。CI 側は `--frozen-lockfile` で lockfile 整合性も検証するため、`pnpm install` を経由しないと CI 側だけで起きる failure mode がある。
+
+### 対応
+
+```bash
+# 1. ローカルで pnpm install して lockfile を実 dependency に同期
+pnpm install
+#   → pnpm-lock.yaml が +4 dependencies で更新される
+#   → "Done in 6.6s" で正常完了 (mammoth 1.12.0 / pdf-parse 1.1.4 / xlsx 0.20.3 / @types/pdf-parse 1.1.5)
+
+# 2. 実 parser で単体テストを再実行 → 157/157 PASS を確認
+pnpm vitest run src/services/file-text-extraction.service.test.ts ...
+
+# 3. tsc を再確認 → file-text-extraction.service.ts の TS2307 が消えていることを確認
+pnpm tsc --noEmit 2>&1 | grep -E "file-text-extraction|attachment-embedding|file-storage-pricing"
+
+# 4. security:gate + build もローカル PASS
+pnpm security:gate
+pnpm build
+
+# 5. pnpm-lock.yaml を commit + push
+git add pnpm-lock.yaml
+git commit -m "fix(ci): pnpm-lock.yaml 更新 (PR #445 で package.json 追加した 4 deps を lockfile 反映)"
+git push
+```
+
+これで CI 全 7 ジョブが green に復帰する見込み。
+
+### 再発防止
+
+#### 即時 (本人ワークフロー)
+
+- **`package.json` 編集 → 必ず `pnpm install` 実行 → `pnpm-lock.yaml` の diff も同 commit に含める** を絶対ルール化
+- commit 前 self-check に「依存変更があるか」を追加。`git diff --name-only HEAD~1 HEAD | grep -E 'package.json|pnpm-lock.yaml'` で抽出可
+- `pnpm tsc --noEmit` で `TS2307: Cannot find module` が出たら **必ず原因確認** (= 未インストール deps の警告である可能性が高い)。今回は「dynamic import だから build には影響しない」と判断して見送ったが、CI の `--frozen-lockfile` で先に落ちる
+
+#### 構造的 (pre-commit hook 候補)
+
+将来的に以下のいずれかを導入し、人為ミスを構造的に防止:
+
+1. **pre-commit hook**: `package.json` が staged だったら `pnpm install --frozen-lockfile` を dry-run し、失敗したら commit を block
+2. **CI lockfile-check job**: 既存 lint/test の前段に「lockfile in sync」専用ジョブを追加し、失敗時にエラーメッセージを明確にする (= 今回の coverage ENOENT のような下流症状で迷子にならない)
+
+#### CI ログの読み方
+
+- **複数ジョブが同時に fail した場合、どれか 1 つに表面化した「目立つエラー」(本件は coverage-summary.json ENOENT) に飛びつかない**
+- 必ず **「失敗の最も早いステップ」** から確認する (本件は Install dependencies)。`gh run view <id>` でステップ一覧を見れば、X 印の最初のステップが root cause 候補
+
+### 教訓 (転用可能)
+
+- **`--frozen-lockfile` は package.json と pnpm-lock.yaml の整合性を 1 ビット単位で検証する**。pnpm v10 のデフォルト CI 動作なので、package.json を編集したら **lockfile も同時に更新するのが義務**
+- **dynamic import は便利だが、単体テストで「依存が実在するか」を検証できない trap がある**。CI 側で frozen-lockfile を経由して初めて発覚する failure mode がある
+- **複数 CI ジョブ同時 fail は単一根本原因のシグナル**: 独立したジョブが同時に落ちるとき、共通の前段 (本件は `Install dependencies` を含む全ジョブ共通の setup) を疑うのが先決。表面化したエラーを個別に追うと迷子になる
+- **「目立つエラー」ではなく「最初に失敗したステップ」を見る**: 本件の表面化エラー `coverage-summary.json` は test ステップが skip された結果でしかなく、上流の Install dependencies failure を発見しないと永久に治らない (= cargo cult debug 防止)
+- **`pnpm tsc --noEmit` の `TS2307: Cannot find module`** は単に「型情報がない」ではなく「**実 dependency が install されていない可能性が高い**」シグナル。`dynamic import` で defer したとしても、CI で frozen-lockfile が失敗する伏線になる
+
+### 関連
+
+- 関連 PR: PR #445 (ADR-0021 基盤層、本事例 / 2026-05-26)
+- 関連 KDD: なし (初発)
+- 関連 file: [package.json](../../package.json), [pnpm-lock.yaml](../../pnpm-lock.yaml), [src/services/file-text-extraction.service.ts](../../src/services/file-text-extraction.service.ts) (dynamic import 採用箇所)
+- 関連 memory: [feedback_quality_gate_exit_code](../../memory) (本件と同系列で「ローカル成功 → CI fail を見逃す」パターン)、新規 [feedback_pnpm_lockfile_sync](../../memory) を追加 (下記)
