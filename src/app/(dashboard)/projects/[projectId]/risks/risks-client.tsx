@@ -240,12 +240,9 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
 
   // PR #165: 一括選択 + 一括編集ダイアログ
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  // Phase C 要件 18 (2026-04-28): フィルター有無に関わらず、自分が起票した行は常に選択可能。
-  // feat/asset-assignee-expansion (2026-05-26): viewerCanEdit (= 作成者 OR 担当者) ベースに拡張。
-  //   旧 viewerIsCreator 単独判定では引継ぎ後の担当者が bulk 操作できなかった。
-  const selectableIds = filteredRisks
-    .filter((r) => r.viewerCanEdit === true || r.viewerIsCreator === true)
-    .map((r) => r.id);
+  // fix/list-export-import-bugs (2026-05-26): チェックボックスは export + bulk visibility 兼用に拡張。
+  //   全行選択可とし、bulk visibility は サーバ側で per-row 認可 (viewerCanEdit=false は silent skip)。
+  const selectableIds = filteredRisks.map((r) => r.id);
   const allSelectableSelected
     = selectableIds.length > 0 && selectableIds.every((id) => selectedIds.has(id));
 
@@ -322,13 +319,42 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
     await reload();
   }
 
-  async function handleExport() {
-    window.open(`/api/projects/${projectId}/risks/export`, '_blank');
+  // fix/list-export-import-bugs (2026-05-26): 共通の export ハンドラ。
+  //   selectedIds.size === 0 のとき全件 export、それ以外なら選択 ID のみ。
+  async function postExport(mode: 'csv' | 'sync', filename: string) {
+    const body: Record<string, unknown> = {};
+    if (selectedIds.size > 0) body.ids = [...selectedIds];
+    const url = mode === 'sync'
+      ? `/api/projects/${projectId}/risks/export?mode=sync`
+      : `/api/projects/${projectId}/risks/export`;
+    const res = await withLoading(() =>
+      fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      }),
+    );
+    if (!res.ok) {
+      showError('リスク/課題のエクスポートに失敗しました');
+      return;
+    }
+    const csvText = await res.text();
+    const blob = new Blob(['﻿' + csvText], { type: 'text/csv; charset=utf-8' });
+    const dlUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = dlUrl;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(dlUrl);
   }
 
-  // T-22 Phase 22a: sync-import 用の 16 列 export (編集 dialog 完全網羅 format)
+  async function handleExport() {
+    await postExport('csv', `risks_${projectId}.csv`);
+  }
+
+  // T-22 Phase 22a: sync-import 用の export (編集 dialog 完全網羅 format)
   async function handleSyncExport() {
-    window.open(`/api/projects/${projectId}/risks/export?mode=sync`, '_blank');
+    await postExport('sync', `risks_sync_${projectId}.csv`);
   }
 
   // T-22 Phase 22a: 上書きインポート (sync-import) ダイアログ表示
@@ -649,12 +675,12 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
               onClick={() => setEditingRisk(r)}
             >
               <TableCell onClick={(e) => e.stopPropagation()}>
+                {/* fix/list-export-import-bugs (2026-05-26): export 対象指定と bulk visibility 兼用のため全行チェック可 */}
                 <BulkSelectCell
-                  canSelect={canEdit}
+                  canSelect={true}
                   selected={selectedIds.has(r.id)}
                   onToggle={() => toggleOneId(r.id)}
                   ariaLabel={tRisk('addToBulkEdit', { title: r.title })}
-                  notSelectableTitle={tRisk('rowNotEditableByOthers')}
                 />
               </TableCell>
               {!typeFilter && <TableCell><Badge variant="outline">{r.type === 'risk' ? tRisk('labelRisk') : tRisk('labelIssue')}</Badge></TableCell>}

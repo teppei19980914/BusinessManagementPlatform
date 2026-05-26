@@ -221,14 +221,17 @@ describe('computeSyncDiff (T-19)', () => {
     expect(r.rows[0].errors).toBeUndefined();
   });
 
-  it('[A2] ID 空欄 + DB に「同一親配下の同名」タスクあり → blocker (誤コピー検知)', async () => {
+  it('[A2] ID 空欄 + DB に「同一親配下の同名」タスクあり → warning (新規 ID で別タスク作成、canExecute は維持)', async () => {
+    // fix/list-export-import-bugs (2026-05-26): parent+name 重複は ID が一意なら別タスクとして許容するよう
+    //   warning にダウングレード。canExecute はブロックしない。
     // baseDbTask: parentTaskId=null (root), name='設計'
     vi.mocked(prisma.task.findMany).mockResolvedValue([baseDbTask] as never);
 
-    // CSV: root level の '設計' を新規作成しようとする → 同一親 (どちらも root) で衝突
+    // CSV: root level の '設計' を新規作成しようとする → 同一親 (どちらも root) で衝突 (warning)
     const r = await computeSyncDiff(projectId, [csvRow({ name: '設計' })], 'tenant-A');
-    expect(r.canExecute).toBe(false);
-    expect(r.rows[0].errors?.[0]).toContain('同一親配下に同名のタスクが既存');
+    expect(r.canExecute).toBe(true);
+    expect(r.rows[0].warnings?.some((w) => w.includes('同一親配下に同名'))).toBe(true);
+    expect(r.rows[0].warningLevel).toBe('WARN');
   });
 
   it('[A2] 別の親配下なら同名でも CREATE 許可 (旧実装の過剰制限を解消)', async () => {
@@ -314,8 +317,9 @@ describe('computeSyncDiff (T-19)', () => {
     expect(r.summary.blockedErrors).toBe(0);
   });
 
-  it('[A1] level=3 で同一 sub-WP 配下の同名 ACT はブロック', async () => {
-    // 同 sub-WP-A 配下に ACT-X が 2 つ → ブロック
+  it('[A1] level=3 で同一 sub-WP 配下の同名 ACT は warning (canExecute は維持)', async () => {
+    // fix/list-export-import-bugs (2026-05-26): parent+name 重複は warning にダウングレード
+    // 同 sub-WP-A 配下に ACT-X が 2 つ → warning (新規 ID で別タスク作成)
     vi.mocked(prisma.task.findMany).mockResolvedValue([] as never);
 
     const r = await computeSyncDiff(
@@ -340,16 +344,17 @@ describe('computeSyncDiff (T-19)', () => {
       ],
       'tenant-A',
     );
-    expect(r.canExecute).toBe(false);
+    expect(r.canExecute).toBe(true);
     expect(
-      r.rows.some((row) => row.errors?.some((e) => e.includes('同一親配下に同じ名称'))),
+      r.rows.some((row) => row.warnings?.some((w) => w.includes('同一親配下に同じ名称'))),
     ).toBe(true);
   });
 
-  it('[A1] CSV 内: 別 WP 配下の同名 ACT は許可、同一 WP 配下の同名 ACT のみブロック', async () => {
+  it('[A1] CSV 内: 別 WP 配下の同名 ACT は許可、同一 WP 配下の同名 ACT は warning (canExecute は維持)', async () => {
+    // fix/list-export-import-bugs (2026-05-26): parent+name 重複は warning にダウングレード
     vi.mocked(prisma.task.findMany).mockResolvedValue([] as never);
 
-    // WPA / AACT, BACT + WPB / AACT, BACT (別 WP 配下の同名は OK)
+    // WPA / AACT, BACT + WPB / AACT, BACT (別 WP 配下の同名は OK / warning 無し)
     const r1 = await computeSyncDiff(
       projectId,
       [
@@ -365,7 +370,7 @@ describe('computeSyncDiff (T-19)', () => {
     expect(r1.canExecute).toBe(true);
     expect(r1.summary.blockedErrors).toBe(0);
 
-    // 同一 WPA 配下に AACT が 2 つ → ブロック
+    // 同一 WPA 配下に AACT が 2 つ → warning (新規 ID で別タスク作成)
     const r2 = await computeSyncDiff(
       projectId,
       [
@@ -375,9 +380,9 @@ describe('computeSyncDiff (T-19)', () => {
       ],
       'tenant-A',
     );
-    expect(r2.canExecute).toBe(false);
+    expect(r2.canExecute).toBe(true);
     expect(
-      r2.rows.some((row) => row.errors?.some((e) => e.includes('同一親配下に同じ名称'))),
+      r2.rows.some((row) => row.warnings?.some((w) => w.includes('同一親配下に同じ名称'))),
     ).toBe(true);
   });
 

@@ -116,10 +116,18 @@ export type RemoveMode = 'keep' | 'warn' | 'delete';
 // CSV ヘッダー
 // ============================================================
 
-/** Risk CSV ヘッダー (17 列、編集 dialog 完全網羅)。
- *  feat/risk-issue-4-section (2026-05-26): 「発生事象」を 4 列目に追加して合計 17 列。
- *  旧 16 列 CSV (= 「発生事象」列なし) も後方互換で parse 可能 (= occurrence=null 扱い)。 */
+/** Risk CSV ヘッダー (14 列、編集 dialog 表示項目に整合)。
+ *  fix/list-export-import-bugs (2026-05-26): UI から削除済の 3 列 (対応詳細/結果/教訓) を CSV からも
+ *  削除し、編集 dialog と 1:1 対応に統一。DB スキーマは温存。
+ *  旧 17 列 / 16 列 CSV も後方互換で parse 可能 (parser で列数判定)。 */
 export const RISK_CSV_HEADERS = [
+  'ID', '種別', '件名', '発生事象', '内容', '原因', '影響度', '発生確率',
+  '対応方針', '担当者氏名', '期限', '状態',
+  '公開範囲', 'リスク性質',
+] as const;
+
+/** 旧 17 列 CSV ヘッダー (PR #448 feat/risk-issue-4-section の format、互換読込用)。 */
+export const RISK_CSV_HEADERS_LEGACY_17 = [
   'ID', '種別', '件名', '発生事象', '内容', '原因', '影響度', '発生確率',
   '対応方針', '対応詳細', '担当者氏名', '期限', '状態',
   '結果', '教訓', '公開範囲', 'リスク性質',
@@ -156,25 +164,45 @@ export function parseRiskSyncImportCsv(csvText: string): RiskSyncImportRow[] {
   const lines = cleanText.split(/\r?\n/).filter((l) => l.trim());
   if (lines.length < 2) return [];
 
-  // feat/risk-issue-4-section (2026-05-26): header 行で列数を確定 (= 17 or 16)
+  // fix/list-export-import-bugs (2026-05-26): header 行で列数を確定 (14 / 17 / 16)。
+  //   - 14 列 (新): 対応詳細/結果/教訓を削除した編集 dialog 整合形式
+  //   - 17 列 (PR #448 LEGACY_17): occurrence 含む旧形式
+  //   - 16 列 (LEGACY_16): occurrence なしの旧形式
   const headerFields = parseCsvLine(lines[0]);
-  const isNewLayout = headerFields.length >= 17;
-
-  // 列 index マッピング (旧 16 列 vs 新 17 列で content 以降が 1 つずれる)
-  const COL = isNewLayout
-    ? {
-        id: 0, type: 1, title: 2, occurrence: 3, content: 4, cause: 5,
-        impact: 6, likelihood: 7, responsePolicy: 8, responseDetail: 9,
-        assigneeName: 10, deadline: 11, state: 12, result: 13,
-        lessonLearned: 14, visibility: 15, riskNature: 16,
-      }
-    : {
-        id: 0, type: 1, title: 2, occurrence: -1, content: 3, cause: 4,
-        impact: 5, likelihood: 6, responsePolicy: 7, responseDetail: 8,
-        assigneeName: 9, deadline: 10, state: 11, result: 12,
-        lessonLearned: 13, visibility: 14, riskNature: 15,
-      };
-  const minColumnsRequired = isNewLayout ? COL.impact : COL.impact;
+  const colCount = headerFields.length;
+  type ColMap = {
+    id: number; type: number; title: number; occurrence: number; content: number;
+    cause: number; impact: number; likelihood: number; responsePolicy: number;
+    responseDetail: number; assigneeName: number; deadline: number; state: number;
+    result: number; lessonLearned: number; visibility: number; riskNature: number;
+  };
+  let COL: ColMap;
+  if (colCount >= 17) {
+    // LEGACY_17 (PR #448 format)
+    COL = {
+      id: 0, type: 1, title: 2, occurrence: 3, content: 4, cause: 5,
+      impact: 6, likelihood: 7, responsePolicy: 8, responseDetail: 9,
+      assigneeName: 10, deadline: 11, state: 12, result: 13,
+      lessonLearned: 14, visibility: 15, riskNature: 16,
+    };
+  } else if (colCount === 14) {
+    // 新形式 (fix/list-export-import-bugs)
+    COL = {
+      id: 0, type: 1, title: 2, occurrence: 3, content: 4, cause: 5,
+      impact: 6, likelihood: 7, responsePolicy: 8, responseDetail: -1,
+      assigneeName: 9, deadline: 10, state: 11, result: -1,
+      lessonLearned: -1, visibility: 12, riskNature: 13,
+    };
+  } else {
+    // LEGACY_16 (occurrence なし)
+    COL = {
+      id: 0, type: 1, title: 2, occurrence: -1, content: 3, cause: 4,
+      impact: 5, likelihood: 6, responsePolicy: 7, responseDetail: 8,
+      assigneeName: 9, deadline: 10, state: 11, result: 12,
+      lessonLearned: 13, visibility: 14, riskNature: 15,
+    };
+  }
+  const minColumnsRequired = COL.impact;
 
   const dataLines = lines.slice(1);
   const rows: RiskSyncImportRow[] = [];
@@ -204,13 +232,13 @@ export function parseRiskSyncImportCsv(csvText: string): RiskSyncImportRow[] {
     const likelihoodRaw = (fields[COL.likelihood] ?? '').trim();
     const likelihood = VALID_IMPACTS.has(likelihoodRaw) ? (likelihoodRaw as 'low' | 'medium' | 'high') : null;
     const responsePolicy = (fields[COL.responsePolicy] ?? '').trim() || null;
-    const responseDetail = (fields[COL.responseDetail] ?? '').trim() || null;
+    const responseDetail = COL.responseDetail >= 0 ? ((fields[COL.responseDetail] ?? '').trim() || null) : null;
     const assigneeName = (fields[COL.assigneeName] ?? '').trim() || null;
     const deadline = (fields[COL.deadline] ?? '').trim() || null;
     const stateRaw = (fields[COL.state] ?? '').trim();
     const state = (VALID_STATES.has(stateRaw) ? stateRaw : 'open') as 'open' | 'in_progress' | 'monitoring' | 'resolved';
-    const result = (fields[COL.result] ?? '').trim() || null;
-    const lessonLearned = (fields[COL.lessonLearned] ?? '').trim() || null;
+    const result = COL.result >= 0 ? ((fields[COL.result] ?? '').trim() || null) : null;
+    const lessonLearned = COL.lessonLearned >= 0 ? ((fields[COL.lessonLearned] ?? '').trim() || null) : null;
     const visibilityRaw = (fields[COL.visibility] ?? '').trim();
     const visibility = (VALID_VISIBILITIES.has(visibilityRaw) ? visibilityRaw : 'public') as 'draft' | 'public';
     const natureRaw = (fields[COL.riskNature] ?? '').trim();
@@ -368,13 +396,16 @@ export async function computeRiskSyncDiff(
   for (let i = 0; i < csvRows.length; i++) {
     const row = csvRows[i];
     const errors: string[] = [];
+    const warnings: string[] = [];
     const fieldChanges: SyncDiffFieldChange[] = [];
 
     if (row.id && duplicateIds.has(row.id)) {
       errors.push(`CSV 内で ID "${row.id}" が重複しています`);
     }
+    // fix/list-export-import-bugs (2026-05-26): title 重複は ID が一意なら別エンティティとして
+    //   許容できるため、error → warning にダウングレード。
     if (duplicateTitles.has(row.title)) {
-      errors.push(`CSV 内で件名 "${row.title}" が重複しています`);
+      warnings.push(`CSV 内で件名 "${row.title}" が重複しています (ID が異なれば別エンティティとして取り込まれます)`);
     }
 
     // 担当者 lookup
@@ -410,10 +441,11 @@ export async function computeRiskSyncDiff(
         }
       }
     } else {
+      // fix/list-export-import-bugs (2026-05-26): DB に同件名存在は warning にダウングレード。
       const sameTitle = existingByTitle.get(row.title);
       if (sameTitle && sameTitle.length > 0) {
-        errors.push(
-          `ID 空欄ですが同じ件名のリスク/課題が既存にあります (新規作成すると重複)。意図的なら ID 列に既存 ID を貼り付けるか、CSV 上で件名を変えてください`,
+        warnings.push(
+          `件名 "${row.title}" のリスク/課題が既存にあります。ID 空欄のため新規 ID で作成されます (同件名の別エンティティが追加で作成されます)`,
         );
       }
     }
@@ -442,7 +474,8 @@ export async function computeRiskSyncDiff(
     }
 
     const errorCount = errors.length;
-    const warningLevel: SyncDiffWarningLevel = errorCount > 0 ? 'ERROR' : 'INFO';
+    const warnCount = warnings.length;
+    const warningLevel: SyncDiffWarningLevel = errorCount > 0 ? 'ERROR' : warnCount > 0 ? 'WARN' : 'INFO';
 
     result.rows.push({
       csvRow: row.tempRowIndex,
@@ -451,12 +484,14 @@ export async function computeRiskSyncDiff(
       name: row.title,
       fieldChanges: fieldChanges.length > 0 ? fieldChanges : undefined,
       errors: errors.length > 0 ? errors : undefined,
+      warnings: warnings.length > 0 ? warnings : undefined,
       warningLevel,
     });
 
     if (action === 'CREATE' && errorCount === 0) result.summary.added++;
     if (action === 'UPDATE' && errorCount === 0) result.summary.updated++;
     result.summary.blockedErrors += errorCount;
+    result.summary.warnings += warnCount;
   }
 
   // 削除候補 (DB に存在するが CSV に出てこない ID)
@@ -771,6 +806,8 @@ export async function exportRisksSync(
   viewerUserId: string,
   viewerSystemRole: string,
   viewerTenantId: string,
+  /** fix/list-export-import-bugs (2026-05-26): 指定された ID のみ export。未指定なら全件。 */
+  ids?: string[],
 ): Promise<string> {
   const isAdmin = viewerSystemRole === 'admin';
   const visibilityWhere = isAdmin ? {} : { visibility: 'public' };
@@ -783,11 +820,14 @@ export async function exportRisksSync(
       tenantId: viewerTenantId,
       ...visibilityWhere,
       riskIssueProjects: { some: { projectId } },
+      ...(ids && ids.length > 0 ? { id: { in: ids } } : {}),
     },
     include: { assignee: { select: { name: true } } },
     orderBy: { createdAt: 'desc' },
   });
 
+  // fix/list-export-import-bugs (2026-05-26): 編集 dialog で扱う 14 列のみ出力。
+  //   対応詳細 / 結果 / 教訓 は UI 撤去済のため CSV にも含めない。
   const lines = [RISK_CSV_HEADERS.join(',')];
   for (const r of risks) {
     const line = [
@@ -801,12 +841,9 @@ export async function exportRisksSync(
       r.impact,
       r.likelihood ?? '',
       escapeCsv(r.responsePolicy),
-      escapeCsv(r.responseDetail),
       escapeCsv(r.assignee?.name ?? null),
       r.deadline ? r.deadline.toISOString().split('T')[0] : '',
       r.state,
-      escapeCsv(r.result),
-      escapeCsv(r.lessonLearned),
       r.visibility,
       r.riskNature ?? '',
     ].join(',');

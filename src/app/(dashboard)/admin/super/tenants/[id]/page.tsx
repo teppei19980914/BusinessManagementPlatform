@@ -207,16 +207,12 @@ export default async function SuperAdminTenantDetailPage({
           />
         </div>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {/* fix/list-export-import-bugs (2026-05-26): ストレージプラン (Standard/Plus/Pro/Enterprise) 表示は
+              ADR-0020/0021 で従量課金化されたため削除。使用量は ADR-0020/0021 セクションで個別表示。 */}
           <DetailCard
-            label="ストレージプラン"
-            value={`${tenant.storageAddonPlan} (+¥${tenant.storageAddonMonthlyJpy.toLocaleString()}/月)`}
-            tooltip="standard (LLM プラン連動 50/150/300MB) / plus (+200MB ¥500) / pro_storage (+1GB ¥1500)"
-          />
-          <DetailCard
-            label="使用量 / 上限"
-            value={`${formatBytesSuper(tenant.storageBytesUsed)} / ${formatBytesSuper(tenant.storageLimitBytes)} (${Math.round(tenant.storageUsageRatio * 100)}%)`}
-            highlight={tenant.storageUsageRatio > 1.0}
-            tooltip="添付ファイル合算サイズ。100% 超で Grace period (7 日)、未対応で write 停止"
+            label="使用量"
+            value={formatBytesSuper(tenant.storageBytesUsed)}
+            tooltip="添付ファイル + DB 行サイズの合算 (= ADR-0020 課金根拠)。上限は ADR-0020 で 50GB ハードキャップ。"
           />
           {/* ★ PR-V8.1 (2026-05-19) 請求 invariant: LLM 部分は ApiCallLog SUM (真値) を使う。
               同画面の「今月 API 費用」(line 130-134) と一致させ、合算式も整合させる。 */}

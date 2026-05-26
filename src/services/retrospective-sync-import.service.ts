@@ -69,7 +69,17 @@ export type RemoveMode = 'keep' | 'warn' | 'delete';
 // CSV ヘッダー (13 列)
 // ============================================================
 
+/** Retrospective CSV ヘッダー (8 列、編集 dialog 表示項目に整合)。
+ *  fix/list-export-import-bugs (2026-05-26): UI から削除済の 5 列 (見積差異要因/スケジュール差異要因/
+ *  品質課題/リスク対応評価/共有ナレッジ) を CSV からも削除し、編集 dialog と 1:1 対応に統一。
+ *  DB スキーマは温存。旧 13 列 CSV も後方互換で parse 可能 (parser で列数判定)。 */
 export const RETRO_CSV_HEADERS = [
+  'ID', '実施日', '計画総括', '実績総括', '良かった点', '課題',
+  '改善事項', '公開範囲',
+] as const;
+
+/** 旧 13 列 CSV ヘッダー (互換読込用、新規 export は使わない)。 */
+export const RETRO_CSV_HEADERS_LEGACY_13 = [
   'ID', '実施日', '計画総括', '実績総括', '良かった点', '課題',
   '見積差異要因', 'スケジュール差異要因', '品質課題', 'リスク対応評価',
   '改善事項', '共有ナレッジ', '公開範囲',
@@ -87,6 +97,23 @@ export function parseRetrospectiveSyncImportCsv(csvText: string): RetrospectiveS
   const lines = cleanText.split(/\r?\n/).filter((l) => l.trim());
   if (lines.length < 2) return [];
 
+  // fix/list-export-import-bugs (2026-05-26): header 行で列数を判定し新旧 layout を切替。
+  //   - 8 列 (新): ID/実施日/計画総括/実績総括/良かった点/課題/改善事項/公開範囲
+  //   - 13 列 (旧): + 見積差異要因/スケジュール差異要因/品質課題/リスク対応評価/共有ナレッジ
+  const headerFields = parseCsvLine(lines[0]);
+  const isLegacyLayout = headerFields.length >= 13;
+  const COL = isLegacyLayout
+    ? {
+        id: 0, conductedDate: 1, planSummary: 2, actualSummary: 3, goodPoints: 4, problems: 5,
+        estimateGapFactors: 6, scheduleGapFactors: 7, qualityIssues: 8, riskResponseEvaluation: 9,
+        improvements: 10, knowledgeToShare: 11, visibility: 12,
+      }
+    : {
+        id: 0, conductedDate: 1, planSummary: 2, actualSummary: 3, goodPoints: 4, problems: 5,
+        estimateGapFactors: -1, scheduleGapFactors: -1, qualityIssues: -1, riskResponseEvaluation: -1,
+        improvements: 6, knowledgeToShare: -1, visibility: 7,
+      };
+
   const dataLines = lines.slice(1);
   const rows: RetrospectiveSyncImportRow[] = [];
 
@@ -96,23 +123,23 @@ export function parseRetrospectiveSyncImportCsv(csvText: string): RetrospectiveS
 
     const csvRowIndex = i + 2;
 
-    const idRaw = (fields[0] ?? '').trim();
+    const idRaw = (fields[COL.id] ?? '').trim();
     const id = idRaw.length > 0 ? idRaw : null;
 
-    const conductedDate = (fields[1] ?? '').trim();
+    const conductedDate = (fields[COL.conductedDate] ?? '').trim();
     if (!conductedDate || !DATE_REGEX.test(conductedDate)) continue;
 
-    const planSummary = (fields[2] ?? '').trim();
-    const actualSummary = (fields[3] ?? '').trim();
-    const goodPoints = (fields[4] ?? '').trim();
-    const problems = (fields[5] ?? '').trim();
-    const estimateGapFactors = (fields[6] ?? '').trim() || null;
-    const scheduleGapFactors = (fields[7] ?? '').trim() || null;
-    const qualityIssues = (fields[8] ?? '').trim() || null;
-    const riskResponseEvaluation = (fields[9] ?? '').trim() || null;
-    const improvements = (fields[10] ?? '').trim();
-    const knowledgeToShare = (fields[11] ?? '').trim() || null;
-    const visibilityRaw = (fields[12] ?? '').trim();
+    const planSummary = (fields[COL.planSummary] ?? '').trim();
+    const actualSummary = (fields[COL.actualSummary] ?? '').trim();
+    const goodPoints = (fields[COL.goodPoints] ?? '').trim();
+    const problems = (fields[COL.problems] ?? '').trim();
+    const estimateGapFactors = COL.estimateGapFactors >= 0 ? ((fields[COL.estimateGapFactors] ?? '').trim() || null) : null;
+    const scheduleGapFactors = COL.scheduleGapFactors >= 0 ? ((fields[COL.scheduleGapFactors] ?? '').trim() || null) : null;
+    const qualityIssues = COL.qualityIssues >= 0 ? ((fields[COL.qualityIssues] ?? '').trim() || null) : null;
+    const riskResponseEvaluation = COL.riskResponseEvaluation >= 0 ? ((fields[COL.riskResponseEvaluation] ?? '').trim() || null) : null;
+    const improvements = (fields[COL.improvements] ?? '').trim();
+    const knowledgeToShare = COL.knowledgeToShare >= 0 ? ((fields[COL.knowledgeToShare] ?? '').trim() || null) : null;
+    const visibilityRaw = (fields[COL.visibility] ?? '').trim();
     const visibility = (VALID_VISIBILITIES.has(visibilityRaw) ? visibilityRaw : 'public') as 'draft' | 'public';
 
     rows.push({
@@ -223,13 +250,16 @@ export async function computeRetrospectiveSyncDiff(
 
   for (const row of csvRows) {
     const errors: string[] = [];
+    const warnings: string[] = [];
     const fieldChanges: SyncDiffFieldChange[] = [];
 
     if (row.id && duplicateIds.has(row.id)) {
       errors.push(`CSV 内で ID "${row.id}" が重複しています`);
     }
+    // fix/list-export-import-bugs (2026-05-26): 実施日重複は ID が一意なら別エンティティとして
+    //   許容できるため、error → warning にダウングレード。
     if (duplicateDates.has(row.conductedDate)) {
-      errors.push(`CSV 内で実施日 "${row.conductedDate}" が重複しています`);
+      warnings.push(`CSV 内で実施日 "${row.conductedDate}" が重複しています (ID が異なれば別エンティティとして取り込まれます)`);
     }
 
     let action: SyncDiffAction = 'CREATE';
@@ -246,10 +276,11 @@ export async function computeRetrospectiveSyncDiff(
         csvKeptIds.add(dbRetro.id);
       }
     } else {
+      // fix/list-export-import-bugs (2026-05-26): DB に同実施日存在は warning にダウングレード。
       const sameDate = existingByDate.get(row.conductedDate);
       if (sameDate && sameDate.length > 0) {
-        errors.push(
-          `ID 空欄ですが同じ実施日 "${row.conductedDate}" の振り返りが既存にあります (新規作成すると重複)。意図的なら ID 列に既存 ID を貼り付けるか、CSV 上で実施日を変えてください`,
+        warnings.push(
+          `実施日 "${row.conductedDate}" の振り返りが既存にあります。ID 空欄のため新規 ID で作成されます (同実施日の別振り返りが追加で作成されます)`,
         );
       }
     }
@@ -272,6 +303,7 @@ export async function computeRetrospectiveSyncDiff(
     if (action === 'UPDATE' && fieldChanges.length === 0) action = 'NO_CHANGE';
 
     const errorCount = errors.length;
+    const warnCount = warnings.length;
     result.rows.push({
       csvRow: row.tempRowIndex,
       id: dbRetro?.id ?? null,
@@ -279,12 +311,14 @@ export async function computeRetrospectiveSyncDiff(
       name: row.conductedDate,
       fieldChanges: fieldChanges.length > 0 ? fieldChanges : undefined,
       errors: errors.length > 0 ? errors : undefined,
-      warningLevel: errorCount > 0 ? 'ERROR' : 'INFO',
+      warnings: warnings.length > 0 ? warnings : undefined,
+      warningLevel: errorCount > 0 ? 'ERROR' : warnCount > 0 ? 'WARN' : 'INFO',
     });
 
     if (action === 'CREATE' && errorCount === 0) result.summary.added++;
     if (action === 'UPDATE' && errorCount === 0) result.summary.updated++;
     result.summary.blockedErrors += errorCount;
+    result.summary.warnings += warnCount;
   }
 
   for (const r of existingRetros) {
@@ -524,6 +558,8 @@ export async function exportRetrospectivesSync(
   projectId: string,
   viewerSystemRole: string,
   viewerTenantId: string,
+  /** fix/list-export-import-bugs (2026-05-26): 指定された ID のみ export。未指定なら全件。 */
+  ids?: string[],
 ): Promise<string> {
   const isAdmin = viewerSystemRole === 'admin';
   const visibilityWhere = isAdmin ? {} : { visibility: 'public' };
@@ -536,10 +572,13 @@ export async function exportRetrospectivesSync(
       tenantId: viewerTenantId,
       ...visibilityWhere,
       retrospectiveProjects: { some: { projectId } },
+      ...(ids && ids.length > 0 ? { id: { in: ids } } : {}),
     },
     orderBy: { conductedDate: 'desc' },
   });
 
+  // fix/list-export-import-bugs (2026-05-26): 編集 dialog で扱う 8 列のみ出力。
+  //   見積差異要因/スケジュール差異要因/品質課題/リスク対応評価/共有ナレッジは UI 撤去済のため CSV にも含めない。
   const lines = [RETRO_CSV_HEADERS.join(',')];
   for (const r of retros) {
     const line = [
@@ -549,12 +588,7 @@ export async function exportRetrospectivesSync(
       escapeCsv(r.actualSummary),
       escapeCsv(r.goodPoints),
       escapeCsv(r.problems),
-      escapeCsv(r.estimateGapFactors),
-      escapeCsv(r.scheduleGapFactors),
-      escapeCsv(r.qualityIssues),
-      escapeCsv(r.riskResponseEvaluation),
       escapeCsv(r.improvements),
-      escapeCsv(r.knowledgeToShare),
       r.visibility,
     ].join(',');
     lines.push(line);

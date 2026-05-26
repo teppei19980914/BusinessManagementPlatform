@@ -157,10 +157,10 @@ export function ProjectKnowledgeClient({
     return multiSort(xs, sortState, getProjectKnowledgeSortValue);
   })();
 
-  // feat/asset-assignee-expansion (2026-05-26): 作成者 OR 担当者を編集可能 (= bulk 対象)
-  const selectableKnowledgeIds = filteredKnowledges
-    .filter((k) => k.createdBy === currentUserId || k.assigneeId === currentUserId)
-    .map((k) => k.id);
+  // fix/list-export-import-bugs (2026-05-26): チェックボックスは export + bulk visibility 兼用に拡張。
+  //   全行選択可とし、bulk visibility は サーバ側で per-row 認可 (createdBy/assigneeId 不一致は silent skip)。
+  //   export は visibility フィルタ済の表示中ナレッジを対象に ids 指定で絞り込む。
+  const selectableKnowledgeIds = filteredKnowledges.map((k) => k.id);
   const allKnowledgeSelected
     = selectableKnowledgeIds.length > 0 && selectableKnowledgeIds.every((id) => selectedIds.has(id));
 
@@ -258,6 +258,33 @@ export function ProjectKnowledgeClient({
     await onReload();
   }
 
+  // fix/list-export-import-bugs (2026-05-26): チェックされている行のみエクスポート対象に絞る。
+  //   selectedIds.size === 0 のとき全件 export (tasks 画面と同パターン)。
+  async function handleSyncExport() {
+    const body: Record<string, unknown> = {};
+    if (selectedIds.size > 0) body.ids = [...selectedIds];
+    const res = await withLoading(() =>
+      fetch(`/api/projects/${projectId}/knowledge/export?mode=sync`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      }),
+    );
+    if (!res.ok) {
+      showError('ナレッジのエクスポートに失敗しました');
+      return;
+    }
+    const csvText = await res.text();
+    // PR #87 / Phase B 要件 20: res.text() は BOM を strip するため client 側で再付与。
+    const blob = new Blob(['﻿' + csvText], { type: 'text/csv; charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `knowledge_sync_${projectId}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   return (
     <div className="space-y-4">
       {/* PR #165: project-level「ナレッジ一覧」での一括 visibility 変更 */}
@@ -281,7 +308,7 @@ export function ProjectKnowledgeClient({
         {/* T-22 Phase 22c: sync-import (往復編集) */}
         {canCreate && (
           <>
-            <Button variant="outline" onClick={() => window.open(`/api/projects/${projectId}/knowledge/export?mode=sync`, '_blank')}>
+            <Button variant="outline" onClick={handleSyncExport}>
               {tKnowledge('syncExport')}
             </Button>
             <Button variant="outline" onClick={() => setIsSyncImportOpen(true)}>
@@ -450,9 +477,10 @@ export function ProjectKnowledgeClient({
               return (
                 <ClickableRow key={k.id} onClick={() => setEditingKnowledge(k)}>
                   <TableCell onClick={(e) => e.stopPropagation()}>
+                    {/* fix/list-export-import-bugs (2026-05-26): export 対象指定と bulk visibility 兼用のため全行チェック可。
+                        非所有行で bulk visibility を発火しても サーバ側で silent skip される */}
                     <BulkSelectCell
-                      canSelect={isOwner}
-                      hidePlaceholderWhenDisabled
+                      canSelect={true}
                       stopPropagation
                       selected={selectedIds.has(k.id)}
                       onToggle={() => toggleOneKnowledge(k.id)}

@@ -173,10 +173,9 @@ export function RetrospectivesClient({ projectId, retros, members, canCreate, cu
     return multiSort(xs, sortState, getProjectRetroSortValue);
   })();
 
-  // feat/asset-assignee-expansion (2026-05-26): 作成者 OR 担当者を編集可能 (= bulk 対象)
-  const selectableRetroIds = filteredRetros
-    .filter((r) => r.createdBy === currentUserId || r.assigneeId === currentUserId)
-    .map((r) => r.id);
+  // fix/list-export-import-bugs (2026-05-26): チェックボックスは export + bulk visibility 兼用に拡張。
+  //   全行選択可とし、bulk visibility は サーバ側で per-row 認可 (createdBy/assigneeId 不一致は silent skip)。
+  const selectableRetroIds = filteredRetros.map((r) => r.id);
   const allRetrosSelected
     = selectableRetroIds.length > 0 && selectableRetroIds.every((id) => selectedIds.has(id));
 
@@ -270,6 +269,32 @@ export function RetrospectivesClient({ projectId, retros, members, canCreate, cu
 
   // 項目 10: handleComment は UI 非表示化に伴い削除。API endpoint は残置。
 
+  // fix/list-export-import-bugs (2026-05-26): チェックされている行のみエクスポート対象に絞る。
+  //   selectedIds.size === 0 のとき全件 export (tasks 画面と同パターン)。
+  async function handleSyncExport() {
+    const body: Record<string, unknown> = {};
+    if (selectedIds.size > 0) body.ids = [...selectedIds];
+    const res = await withLoading(() =>
+      fetch(`/api/projects/${projectId}/retrospectives/export?mode=sync`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      }),
+    );
+    if (!res.ok) {
+      showError('振り返りのエクスポートに失敗しました');
+      return;
+    }
+    const csvText = await res.text();
+    const blob = new Blob(['﻿' + csvText], { type: 'text/csv; charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `retrospectives_sync_${projectId}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   return (
     <div className="space-y-6">
       {/* Phase A 要件 6: h2 ページタイトル削除 (タブ名と重複のため) */}
@@ -278,7 +303,7 @@ export function RetrospectivesClient({ projectId, retros, members, canCreate, cu
         {/* T-22 Phase 22b: sync-import (往復編集) */}
         {canCreate && (
           <>
-            <Button variant="outline" onClick={() => window.open(`/api/projects/${projectId}/retrospectives/export?mode=sync`, '_blank')}>
+            <Button variant="outline" onClick={handleSyncExport}>
               {tRetro('syncExport')}
             </Button>
             <Button variant="outline" onClick={() => setIsSyncImportOpen(true)}>
@@ -421,9 +446,10 @@ export function RetrospectivesClient({ projectId, retros, members, canCreate, cu
               return (
                 <ClickableRow key={retro.id} onClick={() => setEditingRetro(retro)}>
                   <TableCell onClick={(e) => e.stopPropagation()}>
+                    {/* fix/list-export-import-bugs (2026-05-26): export 対象指定と bulk visibility 兼用のため全行チェック可。
+                        非所有行で bulk visibility を発火しても サーバ側で silent skip される */}
                     <BulkSelectCell
-                      canSelect={isOwner}
-                      hidePlaceholderWhenDisabled
+                      canSelect={true}
                       stopPropagation
                       selected={selectedIds.has(retro.id)}
                       onToggle={() => toggleOneRetro(retro.id)}

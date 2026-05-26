@@ -109,10 +109,13 @@ describe('computeMemoSyncDiff (T-22 Phase 22d, user-scoped)', () => {
     expect(r.summary.added).toBe(1);
   });
 
-  it('ID 空欄 + DB 同タイトルあり → blocker', async () => {
+  it('ID 空欄 + DB 同タイトルあり → warning (新規 ID で別エンティティ作成、canExecute は維持)', async () => {
+    // fix/list-export-import-bugs (2026-05-26): title 重複は warning にダウングレード
     vi.mocked(prisma.memo.findMany).mockResolvedValue([baseDbMemo] as never);
     const r = await computeMemoSyncDiff(userId, [csvRow({ title: '既存メモ' })], 'tenant-A');
-    expect(r.canExecute).toBe(false);
+    expect(r.canExecute).toBe(true);
+    expect(r.rows[0].warnings?.some((w) => w.includes('既存メモ'))).toBe(true);
+    expect(r.rows[0].warningLevel).toBe('WARN');
   });
 
   it('ID 一致 + 変更なし → NO_CHANGE', async () => {

@@ -165,13 +165,15 @@ describe('computeRiskSyncDiff (T-22 Phase 22a)', () => {
     expect(r.rows[0].errors).toBeUndefined();
   });
 
-  it('ID 空欄 + DB に同件名あり → blocker (誤コピー検知)', async () => {
+  it('ID 空欄 + DB に同件名あり → warning (新規 ID で別エンティティ作成、canExecute は維持)', async () => {
+    // fix/list-export-import-bugs (2026-05-26): title 重複は warning にダウングレード
     vi.mocked(prisma.riskIssue.findMany).mockResolvedValue([baseDbRisk] as never);
     vi.mocked(prisma.projectMember.findMany).mockResolvedValue([] as never);
 
     const r = await computeRiskSyncDiff(projectId, [csvRow({ title: 'DB ダウン' })], 'tenant-A');
-    expect(r.canExecute).toBe(false);
-    expect(r.rows[0].errors?.[0]).toContain('ID 空欄ですが同じ件名');
+    expect(r.canExecute).toBe(true);
+    expect(r.rows[0].warnings?.some((w) => w.includes('DB ダウン'))).toBe(true);
+    expect(r.rows[0].warningLevel).toBe('WARN');
   });
 
   it('ID 一致 → UPDATE、変更がなければ NO_CHANGE', async () => {
