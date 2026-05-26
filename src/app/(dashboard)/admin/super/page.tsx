@@ -323,11 +323,7 @@ function DefaultTenantSection({
           subValue="(請求対象外、ApiCallLog 集計値)"
           tooltip="ApiCallLog 集計値。Default テナントは請求対象外のため実際の請求は発生しません (PR-V8.1)"
         />
-        <SummaryCard
-          label="Storage プラン"
-          value={defaultTenant.storageAddonPlan}
-          tooltip="standard / plus / pro_storage / enterprise"
-        />
+        {/* fix/list-export-import-bugs (2026-05-26): Storage プラン表示削除 (ADR-0020/0021 で従量課金化済) */}
         <SummaryCard
           label="Storage 使用量"
           value={`${formatBytes(defaultTenant.storageBytesUsed)} / ${formatBytes(defaultTenant.storageLimitBytes)}`}
@@ -778,7 +774,8 @@ function StorageUsageTopCard({ rows }: { rows: StorageUsageTopRow[] }) {
                   <span className="ml-2 text-xs text-muted-foreground">#{r.tenantSeq}</span>
                 )}
                 <p className="text-xs text-muted-foreground">
-                  LLM: {r.llmPlan} / Storage: {r.storageAddonPlan}
+                  {/* fix/list-export-import-bugs (2026-05-26): Storage プラン廃止 (ADR-0020/0021) */}
+                  LLM: {r.llmPlan}
                 </p>
               </div>
               <div className="flex items-center gap-2">

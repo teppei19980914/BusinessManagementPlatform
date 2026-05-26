@@ -153,13 +153,16 @@ export async function computeMemoSyncDiff(
 
   for (const row of csvRows) {
     const errors: string[] = [];
+    const warnings: string[] = [];
     const fieldChanges: SyncDiffFieldChange[] = [];
 
     if (row.id && duplicateIds.has(row.id)) {
       errors.push(`CSV 内で ID "${row.id}" が重複しています`);
     }
+    // fix/list-export-import-bugs (2026-05-26): title 重複は ID が一意なら別エンティティとして
+    //   許容できるため、error → warning にダウングレード。
     if (duplicateTitles.has(row.title)) {
-      errors.push(`CSV 内でタイトル "${row.title}" が重複しています`);
+      warnings.push(`CSV 内でタイトル "${row.title}" が重複しています (ID が異なれば別エンティティとして取り込まれます)`);
     }
 
     let action: SyncDiffAction = 'CREATE';
@@ -174,10 +177,11 @@ export async function computeMemoSyncDiff(
         csvKeptIds.add(dbM.id);
       }
     } else {
+      // fix/list-export-import-bugs (2026-05-26): DB に同タイトル存在は warning にダウングレード。
       const sameTitle = existingByTitle.get(row.title);
       if (sameTitle && sameTitle.length > 0) {
-        errors.push(
-          `ID 空欄ですが同じタイトル "${row.title}" のメモが既存にあります (新規作成すると重複)。意図的なら ID 列に既存 ID を貼り付けるか、CSV 上でタイトルを変えてください`,
+        warnings.push(
+          `タイトル "${row.title}" のメモが既存にあります。ID 空欄のため新規 ID で作成されます (同タイトルの別メモが追加で作成されます)`,
         );
       }
     }
@@ -191,6 +195,7 @@ export async function computeMemoSyncDiff(
     if (action === 'UPDATE' && fieldChanges.length === 0) action = 'NO_CHANGE';
 
     const errorCount = errors.length;
+    const warnCount = warnings.length;
     result.rows.push({
       csvRow: row.tempRowIndex,
       id: dbM?.id ?? null,
@@ -198,12 +203,14 @@ export async function computeMemoSyncDiff(
       name: row.title,
       fieldChanges: fieldChanges.length > 0 ? fieldChanges : undefined,
       errors: errors.length > 0 ? errors : undefined,
-      warningLevel: errorCount > 0 ? 'ERROR' : 'INFO',
+      warnings: warnings.length > 0 ? warnings : undefined,
+      warningLevel: errorCount > 0 ? 'ERROR' : warnCount > 0 ? 'WARN' : 'INFO',
     });
 
     if (action === 'CREATE' && errorCount === 0) result.summary.added++;
     if (action === 'UPDATE' && errorCount === 0) result.summary.updated++;
     result.summary.blockedErrors += errorCount;
+    result.summary.warnings += warnCount;
   }
 
   for (const m of existingMemos) {
@@ -379,10 +386,20 @@ function escapeCsv(v: string | null | undefined): string {
   return s;
 }
 
-export async function exportMemosSync(userId: string, viewerTenantId: string): Promise<string> {
+export async function exportMemosSync(
+  userId: string,
+  viewerTenantId: string,
+  /** fix/list-export-import-bugs (2026-05-26): 指定された ID のみ export。未指定なら全件。 */
+  ids?: string[],
+): Promise<string> {
   // 2026-05-10 Phase 2-8: tenantId 二重防御
   const memos = await prisma.memo.findMany({
-    where: { userId, tenantId: viewerTenantId, deletedAt: null },
+    where: {
+      userId,
+      tenantId: viewerTenantId,
+      deletedAt: null,
+      ...(ids && ids.length > 0 ? { id: { in: ids } } : {}),
+    },
     orderBy: { createdAt: 'desc' },
   });
 

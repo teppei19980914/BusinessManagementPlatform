@@ -179,9 +179,9 @@ export function MemosClient({
     return multiSort(xs, sortState, getMemoSortValue);
   }, [memos, bulkFilter, sortState]);
 
-  // feat/asset-assignee-expansion (2026-05-26): isMine だけでなく canEdit (= 作成者 OR 担当者) ベース。
-  //   public メモで自分が担当者に指定された場合も bulk 操作対象に含める。
-  const selectableIds = filteredMemos.filter((m) => m.canEdit).map((m) => m.id);
+  // fix/list-export-import-bugs (2026-05-26): チェックボックスは export + bulk visibility 兼用に拡張。
+  //   全行選択可とし、bulk visibility は サーバ側で per-row 認可 (canEdit=false は silent skip)。
+  const selectableIds = filteredMemos.map((m) => m.id);
   const allSelectableSelected
     = selectableIds.length > 0 && selectableIds.every((id) => selectedIds.has(id));
 
@@ -301,6 +301,32 @@ export function MemosClient({
     await reload();
   }
 
+  // fix/list-export-import-bugs (2026-05-26): チェックされている行のみエクスポート対象に絞る。
+  //   selectedIds.size === 0 のとき全件 export (tasks 画面と同パターン)。
+  async function handleSyncExport() {
+    const body: Record<string, unknown> = {};
+    if (selectedIds.size > 0) body.ids = [...selectedIds];
+    const res = await withLoading(() =>
+      fetch('/api/memos/export', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      }),
+    );
+    if (!res.ok) {
+      showError('メモのエクスポートに失敗しました');
+      return;
+    }
+    const csvText = await res.text();
+    const blob = new Blob(['﻿' + csvText], { type: 'text/csv; charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'memos_sync.csv';
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   // initialMemos の更新に合わせて state 側も追従 (Derived State)
   // PR fix/eslint-config-next-16.2.6 (2026-05-11):
   //   eslint-config-next 16.2.6 が `react-hooks/set-state-in-effect` を新たに enforce。
@@ -346,7 +372,7 @@ export function MemosClient({
         <div className="flex items-center gap-2">
           <span className="text-sm text-muted-foreground">{tCommon('itemCount', { count: filteredMemos.length })}</span>
           {/* T-22 Phase 22d: sync-import (往復編集) — 自分のメモのみ */}
-          <Button variant="outline" size="sm" onClick={() => window.open('/api/memos/export', '_blank')}>
+          <Button variant="outline" size="sm" onClick={handleSyncExport}>
             {tMemo('syncExport')}
           </Button>
           <Button variant="outline" size="sm" onClick={() => setIsSyncImportOpen(true)}>
@@ -445,8 +471,9 @@ export function MemosClient({
                 onClick={() => setEditing(m)}
               >
                 <TableCell onClick={(e) => e.stopPropagation()}>
+                  {/* fix/list-export-import-bugs (2026-05-26): export 対象指定と bulk visibility 兼用のため全行チェック可 */}
                   <BulkSelectCell
-                    canSelect={m.canEdit}
+                    canSelect={true}
                     selected={selectedIds.has(m.id)}
                     onToggle={() => toggleOneMemo(m.id)}
                     ariaLabel={tMemo('bulkSelectLabel', { title: m.title })}

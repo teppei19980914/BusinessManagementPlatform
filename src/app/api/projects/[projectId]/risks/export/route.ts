@@ -1,10 +1,14 @@
 /**
- * GET /api/projects/[projectId]/risks/export — リスク/課題 CSV エクスポート
+ * POST /api/projects/[projectId]/risks/export — リスク/課題 CSV エクスポート
  *
  * 役割:
  *   2 モードあり:
  *     - mode='summary' (既定、後方互換): 8 列 PMO 報告書用サマリ format
- *     - mode='sync' (T-22 Phase 22a): 16 列 sync-import 往復編集用 full-fidelity format
+ *     - mode='sync' (T-22 Phase 22a): 17 列 sync-import 往復編集用 full-fidelity format
+ *
+ * fix/list-export-import-bugs (2026-05-26):
+ *   - GET → POST に変更し body で ids を受け取れるように (tasks /export と統一)
+ *   - body.ids が指定されればその ID のみ export、未指定なら全件 (従来挙動)
  *
  * 認可:
  *   summary: checkProjectPermission('risk:read') + admin only (PMO 報告は管理者用途)
@@ -20,7 +24,7 @@ import { getAuthenticatedUser, checkProjectPermission } from '@/lib/api-helpers'
 import { listRisks, risksToCSV } from '@/services/risk.service';
 import { exportRisksSync } from '@/services/risk-sync-import.service';
 
-export async function GET(
+export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ projectId: string }> },
 ) {
@@ -31,12 +35,22 @@ export async function GET(
   const url = new URL(req.url);
   const mode = url.searchParams.get('mode') === 'sync' ? 'sync' : 'summary';
 
+  let ids: string[] | undefined;
+  try {
+    const body = await req.json().catch(() => ({}));
+    if (Array.isArray(body?.ids) && body.ids.length > 0) {
+      ids = body.ids.filter((x: unknown): x is string => typeof x === 'string');
+    }
+  } catch {
+    // 空 body は許容 (= 全件)
+  }
+
   if (mode === 'sync') {
     // sync mode は upsert 用のため update 権限を要求 (実 import は別 endpoint で再確認)
     const forbidden = await checkProjectPermission(user, projectId, 'risk:update');
     if (forbidden) return forbidden;
 
-    const csv = await exportRisksSync(projectId, user.id, user.systemRole, user.tenantId);
+    const csv = await exportRisksSync(projectId, user.id, user.systemRole, user.tenantId, ids);
     return new NextResponse(csv, {
       headers: {
         'Content-Type': 'text/csv; charset=utf-8',
@@ -55,7 +69,8 @@ export async function GET(
   }
 
   const risks = await listRisks(projectId, user.id, user.systemRole, user.tenantId);
-  const csv = risksToCSV(risks);
+  const filtered = ids && ids.length > 0 ? risks.filter((r) => ids!.includes(r.id)) : risks;
+  const csv = risksToCSV(filtered);
 
   return new NextResponse(csv, {
     headers: {

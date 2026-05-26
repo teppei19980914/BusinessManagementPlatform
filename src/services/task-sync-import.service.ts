@@ -487,8 +487,10 @@ export async function computeSyncDiff(
       );
     }
     // [A1] 同一親配下の名称重複 (旧 level+name → parentRowIndex+name)
+    // fix/list-export-import-bugs (2026-05-26): ID が一意なら別エンティティとして許容できるため
+    //   error → warning にダウングレード (canExecute をブロックしない)。
     if (duplicateNamesUnderSameParent.has(`${row.parentRowIndex ?? '__root__'}::${row.name}`)) {
-      errors.push(`同一親配下に同じ名称のタスクが CSV 内に複数あります (別 WP 配下の同名は許可されます)`);
+      warnings.push(`同一親配下に同じ名称のタスクが CSV 内に複数あります (ID が異なれば別タスクとして取り込まれます)`);
     }
 
     // ID 突合
@@ -519,12 +521,14 @@ export async function computeSyncDiff(
     } else {
       // [A2] ID 不一致 (空欄) で「同一親配下の同名」をチェック (誤コピー検知)
       //   旧実装は project 全体スコープで「他 WP 配下の同名」も誤検知していた。
+      // fix/list-export-import-bugs (2026-05-26): error → warning にダウングレード。
+      //   ID が一意なら別エンティティとして許容できるため canExecute をブロックしない。
       const resolved = resolveNewParentDbId(row);
       if (!resolved.parentIsCsvCreate) {
         const sameName = existingByParentAndName.get(parentScopeKey(resolved.parentDbId, row.name));
         if (sameName && sameName.length > 0) {
-          errors.push(
-            `ID 空欄ですが同一親配下に同名のタスクが既存にあります (新規作成すると重複)。意図的なら ID 列に既存 ID を貼り付けるか、CSV 上で名称を変えてください`,
+          warnings.push(
+            `同一親配下に同名のタスクが既存にあります。ID 空欄のため新規 ID で作成されます (同名の別タスクが追加で作成されます)`,
           );
         }
       }

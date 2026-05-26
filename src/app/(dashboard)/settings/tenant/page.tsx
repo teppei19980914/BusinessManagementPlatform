@@ -18,10 +18,7 @@ import Link from 'next/link';
 import { LOGIN_ROUTE } from '@/config';
 import { isTenantAdmin } from '@/lib/permissions';
 import { getTenantSelfInfo } from '@/services/tenant-self.service';
-import {
-  getStorageInfo,
-  updateStorageBytesUsedForTenant,
-} from '@/services/tenant-storage.service';
+import { updateStorageBytesUsedForTenant } from '@/services/tenant-storage.service';
 // ADR-0020 (2026-05-25): DB 容量従量課金セクション (R12)
 import { DbCapacitySection } from './db-capacity-section';
 // ADR-0021 (2026-05-26): ファイルストレージ従量課金セクション
@@ -59,7 +56,6 @@ export default async function TenantSettingsPage() {
   //   のような「フォールバック値で描画継続」ではなく、project-detail と同様に
   //   インライン error 画面を直接描画する形を採る。
   let info: Awaited<ReturnType<typeof getTenantSelfInfo>> = null;
-  let storageInfo: Awaited<ReturnType<typeof getStorageInfo>> = null;
   let apiReconcile: ApiUsageReconcileResult | null = null;
   let degradedMode: DegradedModeState | null = null;
   // PR #425 (2026-05-22): Stripe 登録カード情報 (brand/last4/exp) を画面表示するため取得。
@@ -69,14 +65,14 @@ export default async function TenantSettingsPage() {
   let dataLoadError = false;
   try {
     // 2026-05-14: getStorageInfo (キャッシュ値) を読む前に最新値で書き戻す。
-    //   失敗は info / storageInfo の取得を妨げないよう Promise.allSettled で吸収。
+    //   失敗は info の取得を妨げないよう Promise.allSettled で吸収。
     //   reconcileTenantApiUsage は ApiCallLog からの整合性検証用。
+    // fix/list-export-import-bugs (2026-05-26): ストレージプラン廃止に伴い getStorageInfo 削除。
+    //   ストレージ使用量は DbCapacitySection / FileStorageSection (server component) が独立に取得する。
     await Promise.allSettled([
       updateStorageBytesUsedForTenant(session.user.tenantId),
     ]);
     info = await getTenantSelfInfo(session.user.tenantId);
-    // Storage add-on (Phase 2 / 2026-05-08): Storage プラン選択セクション初期値
-    storageInfo = await getStorageInfo(session.user.tenantId);
     apiReconcile = await reconcileTenantApiUsage(session.user.tenantId).catch(() => null);
     // Q5(3) (2026-05-14): 縮退モード状態 + embedding 未生成件数 (失敗は許容)
     degradedMode = await getDegradedModeState(session.user.tenantId).catch(() => null);
@@ -124,34 +120,19 @@ export default async function TenantSettingsPage() {
     );
   }
 
-  // BigInt + Date を JSON-friendly な形に変換 (Server Component → Client Component の境界)
-  const storageInitialInfo = storageInfo
-    ? {
-        ...storageInfo,
-        graceStartedAt: storageInfo.graceStartedAt?.toISOString() ?? null,
-        scheduledStorageAddonAt: storageInfo.scheduledStorageAddonAt?.toISOString() ?? null,
-        storageBytesUsedAt: storageInfo.storageBytesUsedAt?.toISOString() ?? null,
-      }
-    : null;
-
+  // fix/list-export-import-bugs (2026-05-26): DbCapacitySection / FileStorageSection は
+  //   async server component。client component の TenantSettingsClient 内で直接使えないため、
+  //   ここで render し ReactNode として prop で渡す (使用量タブ内に配置)。
+  //   ストレージプラン (storage_addon_plan) は ADR-0020/0021 で従量課金化されたため廃止。
   return (
-    <>
-      {/* ADR-0020 (2026-05-25): DB 容量従量課金の使用量・peak・想定請求額 (server component) */}
-      <div className="mx-auto max-w-5xl px-4 pt-4">
-        <DbCapacitySection tenantId={session.user.tenantId} />
-      </div>
-      {/* ADR-0021 (2026-05-26): ファイルストレージ従量課金の使用量・peak・想定請求額 (server component) */}
-      <div className="mx-auto max-w-5xl px-4 pt-4">
-        <FileStorageSection tenantId={session.user.tenantId} />
-      </div>
-      <TenantSettingsClient
-        initialInfo={info}
-        storageInitialInfo={storageInitialInfo}
-        apiReconcile={apiReconcile}
-        degradedMode={degradedMode}
-        stripeEnabled={isStripeEnabled()}
-        cardSummary={cardSummary}
-      />
-    </>
+    <TenantSettingsClient
+      initialInfo={info}
+      apiReconcile={apiReconcile}
+      degradedMode={degradedMode}
+      stripeEnabled={isStripeEnabled()}
+      cardSummary={cardSummary}
+      dbCapacitySection={<DbCapacitySection tenantId={session.user.tenantId} />}
+      fileStorageSection={<FileStorageSection tenantId={session.user.tenantId} />}
+    />
   );
 }

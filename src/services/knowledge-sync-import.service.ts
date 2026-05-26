@@ -71,7 +71,16 @@ export type RemoveMode = 'keep' | 'warn' | 'delete';
 // CSV ヘッダー (14 列)
 // ============================================================
 
+/** Knowledge CSV ヘッダー (7 列、編集 dialog 表示項目に整合)。
+ *  fix/list-export-import-bugs (2026-05-26): UI から削除済の 7 列 (結論/推奨/再利用性/開発方式/
+ *  3 種タグ) を CSV からも削除し、編集 dialog と 1:1 対応に統一。DB スキーマは温存。
+ *  旧 14 列 CSV も後方互換で parse 可能 (parseKnowledgeSyncImportCsv で列数判定)。 */
 export const KNOWLEDGE_CSV_HEADERS = [
+  'ID', 'タイトル', 'ナレッジ種別', '背景', '内容', '結果', '公開範囲',
+] as const;
+
+/** 旧 14 列 CSV ヘッダー (互換読込用、新規 export は使わない)。 */
+export const KNOWLEDGE_CSV_HEADERS_LEGACY_14 = [
   'ID', 'タイトル', 'ナレッジ種別', '背景', '内容', '結果',
   '結論', '推奨', '再利用性', '開発方式',
   '技術タグ (;区切り)', 'プロセスタグ (;区切り)', '業界ドメインタグ (;区切り)', '公開範囲',
@@ -103,6 +112,24 @@ export function parseKnowledgeSyncImportCsv(csvText: string): KnowledgeSyncImpor
   const lines = cleanText.split(/\r?\n/).filter((l) => l.trim());
   if (lines.length < 2) return [];
 
+  // fix/list-export-import-bugs (2026-05-26): header 行で列数を判定し新旧 layout を切替。
+  //   - 7 列 (新): ID/タイトル/種別/背景/内容/結果/公開範囲
+  //   - 14 列 (旧): + 結論/推奨/再利用性/開発方式/3 種タグ
+  //   旧 layout は parser 経路では値を読み取るが、UI から削除済の項目のため新規 export では出ない。
+  const headerFields = parseCsvLine(lines[0]);
+  const isLegacyLayout = headerFields.length >= 14;
+  const COL = isLegacyLayout
+    ? {
+        id: 0, title: 1, knowledgeType: 2, background: 3, content: 4, result: 5,
+        conclusion: 6, recommendation: 7, reusability: 8, devMethod: 9,
+        techTags: 10, processTags: 11, businessDomainTags: 12, visibility: 13,
+      }
+    : {
+        id: 0, title: 1, knowledgeType: 2, background: 3, content: 4, result: 5,
+        conclusion: -1, recommendation: -1, reusability: -1, devMethod: -1,
+        techTags: -1, processTags: -1, businessDomainTags: -1, visibility: 6,
+      };
+
   const dataLines = lines.slice(1);
   const rows: KnowledgeSyncImportRow[] = [];
 
@@ -112,28 +139,28 @@ export function parseKnowledgeSyncImportCsv(csvText: string): KnowledgeSyncImpor
 
     const csvRowIndex = i + 2;
 
-    const idRaw = (fields[0] ?? '').trim();
+    const idRaw = (fields[COL.id] ?? '').trim();
     const id = idRaw.length > 0 ? idRaw : null;
 
-    const title = (fields[1] ?? '').trim();
+    const title = (fields[COL.title] ?? '').trim();
     if (!title) continue;
 
-    const ktRaw = (fields[2] ?? '').trim();
+    const ktRaw = (fields[COL.knowledgeType] ?? '').trim();
     const knowledgeType = (VALID_KNOWLEDGE_TYPES.has(ktRaw) ? ktRaw : 'other') as KnowledgeSyncImportRow['knowledgeType'];
 
-    const background = (fields[3] ?? '').trim();
-    const content = (fields[4] ?? '').trim();
-    const result = (fields[5] ?? '').trim();
-    const conclusion = (fields[6] ?? '').trim() || null;
-    const recommendation = (fields[7] ?? '').trim() || null;
-    const reusabilityRaw = (fields[8] ?? '').trim();
+    const background = (fields[COL.background] ?? '').trim();
+    const content = (fields[COL.content] ?? '').trim();
+    const result = (fields[COL.result] ?? '').trim();
+    const conclusion = COL.conclusion >= 0 ? ((fields[COL.conclusion] ?? '').trim() || null) : null;
+    const recommendation = COL.recommendation >= 0 ? ((fields[COL.recommendation] ?? '').trim() || null) : null;
+    const reusabilityRaw = COL.reusability >= 0 ? (fields[COL.reusability] ?? '').trim() : '';
     const reusability = VALID_REUSABILITIES.has(reusabilityRaw) ? (reusabilityRaw as 'low' | 'medium' | 'high') : null;
-    const devMethodRaw = (fields[9] ?? '').trim();
+    const devMethodRaw = COL.devMethod >= 0 ? (fields[COL.devMethod] ?? '').trim() : '';
     const devMethod = VALID_DEV_METHODS.has(devMethodRaw) ? (devMethodRaw as KnowledgeSyncImportRow['devMethod']) : null;
-    const techTags = parseTags(fields[10]);
-    const processTags = parseTags(fields[11]);
-    const businessDomainTags = parseTags(fields[12]);
-    const visibilityRaw = (fields[13] ?? '').trim();
+    const techTags = COL.techTags >= 0 ? parseTags(fields[COL.techTags]) : [];
+    const processTags = COL.processTags >= 0 ? parseTags(fields[COL.processTags]) : [];
+    const businessDomainTags = COL.businessDomainTags >= 0 ? parseTags(fields[COL.businessDomainTags]) : [];
+    const visibilityRaw = (fields[COL.visibility] ?? '').trim();
     const visibility = (VALID_VISIBILITIES.has(visibilityRaw) ? visibilityRaw : 'public') as 'draft' | 'public';
 
     rows.push({
@@ -237,13 +264,16 @@ export async function computeKnowledgeSyncDiff(
 
   for (const row of csvRows) {
     const errors: string[] = [];
+    const warnings: string[] = [];
     const fieldChanges: SyncDiffFieldChange[] = [];
 
     if (row.id && duplicateIds.has(row.id)) {
       errors.push(`CSV 内で ID "${row.id}" が重複しています`);
     }
+    // fix/list-export-import-bugs (2026-05-26): title 重複は ID が一意なら別エンティティとして
+    //   許容できるため、error → warning にダウングレード (canExecute をブロックしない)。
     if (duplicateTitles.has(row.title)) {
-      errors.push(`CSV 内でタイトル "${row.title}" が重複しています`);
+      warnings.push(`CSV 内でタイトル "${row.title}" が重複しています (ID が異なれば別エンティティとして取り込まれます)`);
     }
 
     let action: SyncDiffAction = 'CREATE';
@@ -258,10 +288,12 @@ export async function computeKnowledgeSyncDiff(
         csvKeptIds.add(dbK.id);
       }
     } else {
+      // fix/list-export-import-bugs (2026-05-26): DB に同タイトル存在は warning にダウングレード。
+      //   新規 ID で採番されれば重複 title でも問題なし。
       const sameTitle = existingByTitle.get(row.title);
       if (sameTitle && sameTitle.length > 0) {
-        errors.push(
-          `ID 空欄ですが同じタイトル "${row.title}" のナレッジが既存にあります (新規作成すると重複)。意図的なら ID 列に既存 ID を貼り付けるか、CSV 上でタイトルを変えてください`,
+        warnings.push(
+          `タイトル "${row.title}" のナレッジが既存にあります。ID 空欄のため新規 ID で作成されます (同タイトルの別エンティティが追加で作成されます)`,
         );
       }
     }
@@ -291,6 +323,7 @@ export async function computeKnowledgeSyncDiff(
     if (action === 'UPDATE' && fieldChanges.length === 0) action = 'NO_CHANGE';
 
     const errorCount = errors.length;
+    const warnCount = warnings.length;
     result.rows.push({
       csvRow: row.tempRowIndex,
       id: dbK?.id ?? null,
@@ -298,12 +331,14 @@ export async function computeKnowledgeSyncDiff(
       name: row.title,
       fieldChanges: fieldChanges.length > 0 ? fieldChanges : undefined,
       errors: errors.length > 0 ? errors : undefined,
-      warningLevel: errorCount > 0 ? 'ERROR' : 'INFO',
+      warnings: warnings.length > 0 ? warnings : undefined,
+      warningLevel: errorCount > 0 ? 'ERROR' : warnCount > 0 ? 'WARN' : 'INFO',
     });
 
     if (action === 'CREATE' && errorCount === 0) result.summary.added++;
     if (action === 'UPDATE' && errorCount === 0) result.summary.updated++;
     result.summary.blockedErrors += errorCount;
+    result.summary.warnings += warnCount;
   }
 
   for (const k of existingKnowledges) {
@@ -550,6 +585,9 @@ export async function exportKnowledgeSync(
   viewerTenantId: string,
   viewerUserId: string,
   viewerSystemRole: string,
+  /** fix/list-export-import-bugs (2026-05-26): 指定された ID のみ export。
+   *  未指定/空配列ならプロジェクト全件 (従来挙動)。 */
+  ids?: string[],
 ): Promise<string> {
   // 2026-05-10 Phase 2-8: 越境 export を遮断するため tenantId 二重防御
   // feat/crud-permission-redesign (2026-05-20): severity-1 漏洩修正。
@@ -566,11 +604,14 @@ export async function exportKnowledgeSync(
       deletedAt: null,
       tenantId: viewerTenantId,
       knowledgeProjects: { some: { projectId } },
+      ...(ids && ids.length > 0 ? { id: { in: ids } } : {}),
       ...visibilityWhere,
     },
     orderBy: { createdAt: 'desc' },
   });
 
+  // fix/list-export-import-bugs (2026-05-26): 編集 dialog で扱う 7 列のみ出力。
+  //   結論/推奨/再利用性/開発方式/3 種タグは UI 撤去済のため CSV にも含めない。
   const lines = [KNOWLEDGE_CSV_HEADERS.join(',')];
   for (const k of knowledges) {
     const line = [
@@ -580,13 +621,6 @@ export async function exportKnowledgeSync(
       escapeCsv(k.background),
       escapeCsv(k.content),
       escapeCsv(k.result),
-      escapeCsv(k.conclusion),
-      escapeCsv(k.recommendation),
-      k.reusability ?? '',
-      k.devMethod ?? '',
-      escapeCsv((k.techTags as string[]).join(';')),
-      escapeCsv((k.processTags as string[]).join(';')),
-      escapeCsv((k.businessDomainTags as string[]).join(';')),
       k.visibility,
     ].join(',');
     lines.push(line);

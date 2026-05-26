@@ -140,11 +140,13 @@ describe('computeRetrospectiveSyncDiff (T-22 Phase 22b)', () => {
     expect(r.summary.added).toBe(1);
   });
 
-  it('ID 空欄 + DB 同実施日あり → blocker', async () => {
+  it('ID 空欄 + DB 同実施日あり → warning (新規 ID で別エンティティ作成、canExecute は維持)', async () => {
+    // fix/list-export-import-bugs (2026-05-26): conductedDate 重複は warning にダウングレード
     vi.mocked(prisma.retrospective.findMany).mockResolvedValue([baseDbRetro] as never);
     const r = await computeRetrospectiveSyncDiff(projectId, [csvRow({ conductedDate: '2026-04-15' })], 'tenant-A');
-    expect(r.canExecute).toBe(false);
-    expect(r.rows[0].errors?.[0]).toContain('同じ実施日');
+    expect(r.canExecute).toBe(true);
+    expect(r.rows[0].warnings?.some((w) => w.includes('2026-04-15'))).toBe(true);
+    expect(r.rows[0].warningLevel).toBe('WARN');
   });
 
   it('ID 一致 + 変更なし → NO_CHANGE', async () => {

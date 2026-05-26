@@ -130,10 +130,14 @@ describe('computeKnowledgeSyncDiff (T-22 Phase 22c)', () => {
     expect(r.summary.added).toBe(1);
   });
 
-  it('ID 空欄 + DB 同タイトルあり → blocker', async () => {
+  it('ID 空欄 + DB 同タイトルあり → warning (新規 ID で別エンティティ作成、canExecute は維持)', async () => {
+    // fix/list-export-import-bugs (2026-05-26): title 重複は ID が一意なら別エンティティとして許容するよう
+    // warning にダウングレードした。canExecute はブロックしない。
     vi.mocked(prisma.knowledge.findMany).mockResolvedValue([baseDbKnowledge] as never);
     const r = await computeKnowledgeSyncDiff(projectId, [csvRow({ title: 'React導入' })], 'tenant-A');
-    expect(r.canExecute).toBe(false);
+    expect(r.canExecute).toBe(true);
+    expect(r.rows[0].warnings?.some((w) => w.includes('React導入'))).toBe(true);
+    expect(r.rows[0].warningLevel).toBe('WARN');
   });
 
   it('ID 一致 + 変更なし → NO_CHANGE', async () => {

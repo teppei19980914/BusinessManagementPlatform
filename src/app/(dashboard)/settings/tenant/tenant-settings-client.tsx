@@ -119,36 +119,20 @@ const PLAN_OPTIONS: PlanLabel[] = [
   },
 ];
 
-/**
- * Storage add-on (Phase 2 / 2026-05-08): page.tsx から渡される初期情報。
- * Server Component → Client Component の境界で BigInt と Date を string 化済。
- */
-type StorageInitialInfo = {
-  tenantId: string;
-  llmPlan: 'beginner' | 'expert' | 'pro';
-  storageAddonPlan: 'standard' | 'plus' | 'pro_storage' | 'enterprise';
-  storageAddonMonthlyJpy: number;
-  storageBytesUsed: number;
-  storageLimitBytes: number;
-  usageRatio: number;
-  graceState: 'active' | 'grace_active' | 'write_blocked';
-  graceStartedAt: string | null;
-  graceDaysRemaining: number | null;
-  scheduledStorageAddonAt: string | null;
-  scheduledNextStorageAddon: 'standard' | 'plus' | 'pro_storage' | 'enterprise' | null;
-  storageBytesUsedAt: string | null;
-};
+// fix/list-export-import-bugs (2026-05-26): StorageInitialInfo 型と storageInitialInfo prop は
+//   ADR-0020 / ADR-0021 で従量課金化されたため削除。ストレージ使用量は DbCapacitySection /
+//   FileStorageSection (server component) が独立に表示する。
 
 export function TenantSettingsClient({
   initialInfo,
-  storageInitialInfo,
   apiReconcile,
   degradedMode,
   stripeEnabled,
   cardSummary,
+  dbCapacitySection,
+  fileStorageSection,
 }: {
   initialInfo: TenantSelfInfo;
-  storageInitialInfo: StorageInitialInfo | null;
   /** 2026-05-14: 自テナントの API 利用量整合性チェック結果 (drift 警告用) */
   apiReconcile: ApiUsageReconcileResult | null;
   /** Q5(3) (2026-05-14): 縮退モード状態 + embedding 未生成件数 (取得失敗時は null) */
@@ -160,6 +144,10 @@ export function TenantSettingsClient({
    * カード未登録 / Stripe API 失敗 / Stripe disabled なら null。
    */
   cardSummary: StripeCardSummaryProp | null;
+  /** fix/list-export-import-bugs (2026-05-26): server component で render 済の
+   *  DB 容量 / ファイルストレージ セクション (使用量タブ内に配置)。 */
+  dbCapacitySection: React.ReactNode;
+  fileStorageSection: React.ReactNode;
 }) {
   // PR-4 (2026-05-15): テナント TZ で日付を表示するため useFormatters を導入
   const { formatDate } = useFormatters();
@@ -559,19 +547,15 @@ export function TenantSettingsClient({
             apiReconcile={apiReconcile}
           />
 
-          {/* Storage add-on (Phase 2 / 2026-05-08): ストレージプラン管理 */}
-          {storageInitialInfo && (
-            <div className="space-y-2">
-              <div className="flex flex-wrap items-baseline justify-between gap-2">
-                <h2 className="text-base font-semibold">ストレージ使用量</h2>
-                <RecalculateButton
-                  endpoint="/api/tenants/me/recalculate"
-                  label="ストレージを再集計"
-                />
-              </div>
-              <StorageAddonSection initialInfo={storageInitialInfo} />
-            </div>
-          )}
+          {/* fix/list-export-import-bugs (2026-05-26): DB 容量 / ファイルストレージ セクションを
+              使用量タブ内に集約。旧 page.tsx ではタブの上にあったが、UX 改善のため使用量タブに移動。
+              いずれも async server component の出力を ReactNode prop で受領。
+              storage_addon_plan の Standard/Plus/Pro/Enterprise 4 段階プラン UI は廃止
+              (ADR-0020 + ADR-0021 で DB / ファイルストレージとも完全従量課金化済)。 */}
+          {/* ADR-0020 (2026-05-25): DB 容量従量課金 */}
+          {dbCapacitySection}
+          {/* ADR-0021 (2026-05-26): ファイルストレージ従量課金 */}
+          {fileStorageSection}
         </TabsContent>
 
         {/* --- 請求タブ --- */}
@@ -1032,232 +1016,6 @@ function SelfDeleteTenantSection({ tenantName }: { tenantName: string }) {
   );
 }
 
-// ================================================================
-// Storage add-on (Phase 2 / 2026-05-08): ストレージプラン管理セクション
-// ================================================================
-
-const STORAGE_ADDON_OPTIONS: Array<{
-  value: StorageInitialInfo['storageAddonPlan'];
-  label: string;
-  desc: string;
-}> = [
-  { value: 'standard', label: 'Standard', desc: 'LLM プランに連動した無料容量' },
-  { value: 'plus', label: 'Storage Plus', desc: '+200MB / +¥500/月' },
-  { value: 'pro_storage', label: 'Storage Pro', desc: '+1GB / +¥1,500/月' },
-  { value: 'enterprise', label: 'Storage Enterprise', desc: '+5GB / +¥5,000/月' },
-];
-
-function formatBytes(bytes: number): string {
-  if (bytes >= 1024 * 1024 * 1024) {
-    return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
-  }
-  if (bytes >= 1024 * 1024) {
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  }
-  if (bytes >= 1024) {
-    return `${(bytes / 1024).toFixed(1)} KB`;
-  }
-  return `${bytes} B`;
-}
-
-function StorageAddonSection({ initialInfo }: { initialInfo: StorageInitialInfo }) {
-  const router = useRouter();
-  const { showSuccess, showError } = useToast();
-  // PR-4 (2026-05-15): テナント TZ で日付を表示
-  const { formatDate } = useFormatters();
-  const [info, setInfo] = useState(initialInfo);
-  const [selected, setSelected] = useState(initialInfo.storageAddonPlan);
-  const [submitting, setSubmitting] = useState(false);
-
-  const usagePercent = Math.min(100, Math.round(info.usageRatio * 100));
-  const isOverLimit = info.usageRatio > 1.0;
-  const planChanged = selected !== info.storageAddonPlan;
-
-  const ADDON_ORDER = { standard: 0, plus: 1, pro_storage: 2, enterprise: 3 } as const;
-  const isDowngrade = ADDON_ORDER[selected] < ADDON_ORDER[info.storageAddonPlan];
-
-  const refresh = async () => {
-    const res = await fetch('/api/tenants/me/storage-addon');
-    if (!res.ok) return;
-    const json = await res.json();
-    if (json?.data) {
-      // graceStartedAt 等が Date のままなので、文字列化された response で上書き
-      setInfo({
-        ...json.data,
-        graceStartedAt: json.data.graceStartedAt
-          ? new Date(json.data.graceStartedAt).toISOString()
-          : null,
-        scheduledStorageAddonAt: json.data.scheduledStorageAddonAt
-          ? new Date(json.data.scheduledStorageAddonAt).toISOString()
-          : null,
-        storageBytesUsedAt: json.data.storageBytesUsedAt
-          ? new Date(json.data.storageBytesUsedAt).toISOString()
-          : null,
-      });
-      setSelected(json.data.storageAddonPlan);
-    }
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!planChanged) {
-      showError('変更内容がありません');
-      return;
-    }
-    if (isDowngrade) {
-      const ok = confirm(
-        'ダウングレードは翌月 1 日 (UTC) から適用されます。当月分の月額は引き続き発生します。続行しますか?',
-      );
-      if (!ok) return;
-    }
-    setSubmitting(true);
-    try {
-      const res = await fetch('/api/tenants/me/storage-addon', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ plan: selected }),
-      });
-      const json = await res.json().catch(() => null);
-      if (!res.ok) {
-        showError(json?.error?.message ?? 'プラン変更に失敗しました');
-        return;
-      }
-      if (json.data.appliedImmediately) {
-        showSuccess('ストレージプランを即時反映しました');
-      } else {
-        // PR-4 (2026-05-15): テナント TZ で日付表示
-        const date = formatDate(json.data.scheduledFor);
-        showSuccess(`${date} にストレージプランを変更します`);
-      }
-      await refresh();
-      router.refresh();
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const handleCancelScheduled = async () => {
-    if (!confirm('ストレージプラン変更予約をキャンセルしますか?')) return;
-    setSubmitting(true);
-    try {
-      const res = await fetch('/api/tenants/me/storage-addon', { method: 'DELETE' });
-      if (!res.ok) {
-        showError('予約キャンセルに失敗しました');
-        return;
-      }
-      showSuccess('予約をキャンセルしました');
-      await refresh();
-      router.refresh();
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  return (
-    <section className="rounded border p-4">
-      <h2 className="mb-2 font-semibold">ストレージプラン (容量 add-on)</h2>
-      <p className="mb-3 text-xs text-muted-foreground">
-        LLM プランと独立した容量プランです。アップグレードは即時反映、ダウングレードは翌月 1 日 UTC に適用されます。
-      </p>
-
-      {/* 当月使用量 */}
-      <div className="mb-3 rounded bg-muted/30 p-3 text-sm">
-        <div className="flex justify-between">
-          <span>当月使用量</span>
-          <span className={isOverLimit ? 'font-bold text-destructive' : 'font-bold'}>
-            {formatBytes(info.storageBytesUsed)} / {formatBytes(info.storageLimitBytes)}
-          </span>
-        </div>
-        <div className="mt-2 h-2 w-full overflow-hidden rounded bg-muted">
-          <div
-            className={`h-full ${
-              isOverLimit
-                ? 'bg-destructive'
-                : usagePercent >= 80
-                  ? 'bg-amber-500'
-                  : 'bg-info'
-            }`}
-            style={{ width: `${Math.min(100, usagePercent)}%` }}
-          />
-        </div>
-        <p className="mt-1 text-xs text-muted-foreground">
-          使用率 {usagePercent}% (キャッシュ値、最終更新: {info.storageBytesUsedAt ?? '未計測'})
-        </p>
-      </div>
-
-      {/* Grace period 警告 */}
-      {info.graceState === 'grace_active' && (
-        <div className="mb-3 rounded border border-amber-300 bg-amber-50 p-3 text-sm dark:bg-amber-900/30">
-          <p className="font-semibold">⚠ ストレージ上限超過中 (Grace period)</p>
-          <p>
-            残り {info.graceDaysRemaining} 日以内にデータ削除またはプランアップグレードが必要です。
-            7 日経過すると書き込み操作が停止します。
-          </p>
-        </div>
-      )}
-      {info.graceState === 'write_blocked' && (
-        <div className="mb-3 rounded border border-destructive bg-destructive/10 p-3 text-sm">
-          <p className="font-semibold text-destructive">🚨 書き込み停止中</p>
-          <p>
-            ストレージ上限超過状態が 7 日以上続いたため、書き込み操作が停止しています。
-            データを削除して上限内に戻すか、Storage プランをアップグレードしてください。
-          </p>
-        </div>
-      )}
-
-      {/* 予約済プラン変更 (PR-4: テナント TZ で日付表示) */}
-      {info.scheduledStorageAddonAt && info.scheduledNextStorageAddon && (
-        <div className="mb-3 rounded border border-amber-300 bg-amber-50 p-3 text-sm dark:bg-amber-900/30">
-          <p>
-            <strong>ストレージプラン変更予約あり:</strong>{' '}
-            {formatDate(info.scheduledStorageAddonAt)} に{' '}
-            <span className="font-mono">{info.scheduledNextStorageAddon}</span> へ変更予定
-          </p>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            className="mt-2"
-            onClick={handleCancelScheduled}
-            disabled={submitting}
-          >
-            予約をキャンセル
-          </Button>
-        </div>
-      )}
-
-      {/* プラン選択 */}
-      <form onSubmit={handleSubmit} className="space-y-2">
-        {STORAGE_ADDON_OPTIONS.map((opt) => (
-          <label
-            key={opt.value}
-            className="flex cursor-pointer items-start gap-2 rounded border p-3 hover:bg-muted/30"
-          >
-            <input
-              type="radio"
-              name="storageAddonPlan"
-              value={opt.value}
-              checked={selected === opt.value}
-              onChange={() => setSelected(opt.value)}
-              className="mt-1"
-            />
-            <div>
-              <p className="font-medium">{opt.label}</p>
-              <p className="text-xs text-muted-foreground">{opt.desc}</p>
-              {info.storageAddonPlan === opt.value && (
-                <p className="mt-1 text-xs text-info">現在のプラン</p>
-              )}
-            </div>
-          </label>
-        ))}
-
-        <Button type="submit" disabled={submitting || !planChanged}>
-          {submitting ? '更新中...' : 'ストレージプランを変更'}
-        </Button>
-      </form>
-    </section>
-  );
-}
 
 // ================================================================
 // P-C (2026-05-08): データエクスポートセクション
@@ -1350,9 +1108,33 @@ function DataImportSection() {
     <section className="mt-8 space-y-3 rounded border p-4">
       <h2 className="text-lg font-semibold">データインポート (バックアップ復元 / テナント間移行用)</h2>
       <p className="text-sm text-muted-foreground">
-        <strong>本機能は本サービスから出力した ZIP の取込専用です。</strong>
-        データエクスポート機能で出力した ZIP をアップロードして取り込みます。
+        <strong>本機能は本サービスから出力した ZIP の取込専用です。</strong>{' '}
+        「データエクスポート」セクションでダウンロードした ZIP ファイルを、このセクションでアップロードして取り込みます。
       </p>
+
+      {/* fix/list-export-import-bugs (2026-05-26): 非エンジニアでも分かるよう Step 形式の動作手順を明示 */}
+      <div className="rounded border-l-4 border-info bg-info/5 p-3 text-sm">
+        <p className="mb-2 font-semibold">操作手順 (はじめての方向け)</p>
+        <ol className="ml-4 list-decimal space-y-1 text-xs">
+          <li>
+            <strong>事前準備</strong>: 取り込みたい ZIP ファイルを用意します。
+            {' '}このページ上部の「データエクスポート」セクションから「📦 全データを ZIP でダウンロード」で取得した ZIP のみ受け付けます。
+          </li>
+          <li>
+            <strong>ファイル選択</strong>: 下の「ZIP ファイル」欄の「ファイルを選択」ボタンを押し、用意した ZIP を選びます。
+            {' '}選んだ後にファイル名が表示されます。
+          </li>
+          <li>
+            <strong>取り込み実行</strong>: 「📥 取り込みを実行」ボタンを押します。
+            {' '}確認ダイアログが出るので、内容を確認して「OK」を押すと取り込みが始まります。
+          </li>
+          <li>
+            <strong>結果確認</strong>: 取り込みが終わると下に件数 (プロジェクト・ナレッジ等) が表示されます。
+            {' '}画面左上の「ホーム」リンクから普段の画面に戻り、データが反映されているか確認してください。
+          </li>
+        </ol>
+      </div>
+
       <div className="rounded bg-muted/40 p-3 text-xs text-muted-foreground">
         <p className="font-semibold text-foreground">想定する利用シーン</p>
         <ul className="ml-4 mt-1 list-disc">
@@ -1362,22 +1144,31 @@ function DataImportSection() {
         </ul>
         <p className="mt-2 font-semibold text-foreground">対象外の利用シーン</p>
         <ul className="ml-4 mt-1 list-disc">
-          <li>外部システム (社内 wiki / Excel / 旧プロジェクト管理ツール) からの初回データ移行
-            <br />→ 独自フォーマットの取込は本機能では受け付けません (誤データ混入防止のため)</li>
+          <li>
+            外部システム (社内 wiki / Excel / 旧プロジェクト管理ツール) からの初回データ移行
+            <br />→ 独自フォーマットの取込は本機能では受け付けません (誤データ混入防止のため)
+          </li>
         </ul>
       </div>
-      <ul className="ml-4 list-disc text-xs text-muted-foreground">
-        <li>受付フォーマット: 本サービスのデータエクスポート ZIP のみ (それ以外は拒否)</li>
-        <li>動作: 全件「新規作成」(既存データの上書き / マージはしません)</li>
-        <li>ユーザ: 同じメールアドレスの既存ユーザがいる場合は既存に再マップ。新規ユーザは初回ログイン時にパスワード再設定が必要</li>
-        <li>Beginner プランでは合計 5 席を超えるインポートを拒否</li>
-        <li>同テナントで他のインポートが進行中の場合は受付不可</li>
-      </ul>
 
-      <div className="mt-3 rounded border-l-4 border-info bg-info/5 p-3 text-xs">
-        <p className="font-semibold">外部システム (Excel / 旧 PM ツール 等) から初回データを取り込みたい場合</p>
+      <details className="rounded border bg-muted/20 p-3 text-xs text-muted-foreground">
+        <summary className="cursor-pointer font-semibold text-foreground">⚠ 取り込み前に必ずご確認ください</summary>
+        <ul className="ml-4 mt-2 list-disc space-y-1">
+          <li>受付できるファイル: 本サービスから出力した ZIP のみ。Excel ファイル / 独自フォーマットの ZIP は拒否されます</li>
+          <li>動作: すべての行が <strong>「新規作成」</strong> されます。既存データの上書きやマージは行われません (同じ名前のプロジェクト等が二重に作成される可能性があります)</li>
+          <li>ユーザの扱い: 同じメールアドレスのユーザが既に居れば既存ユーザに再マップされ、新規メールアドレスは新規ユーザとして作成されます (初回ログイン時にパスワード再設定が必要)</li>
+          <li>Beginner プランの制限: 合計 5 席を超える取り込みはエラーになります (席数を確保してから再実行してください)</li>
+          <li>同時実行制限: 同じテナントで別のインポートが進行中の場合は受け付けられません (進行中の処理が終わるまでお待ちください)</li>
+        </ul>
+      </details>
+
+      <div className="mt-3 rounded border-l-4 border-amber-400 bg-amber-50 p-3 text-xs dark:bg-amber-900/20">
+        <p className="font-semibold">📝 外部システム (Excel / 旧 PM ツール 等) から初回データを取り込みたい方へ</p>
         <p className="mt-1 text-muted-foreground">
-          本機能ではなく <a href="/settings/tenant/external-import" className="text-info underline">外部データ移行ウィザード</a> をご利用ください。CSV ファイル (UTF-8) をアップロード → カラムをマッピング → プレビュー → 取込 の 4 ステップでナレッジ + 過去課題を取り込めます。Excel をお使いの場合は「名前を付けて保存」→「CSV (UTF-8)」で変換してください。
+          このセクション (ZIP 取込) ではなく、
+          {' '}<a href="/settings/tenant/external-import" className="text-info underline">外部データ移行ウィザード</a>
+          {' '}をご利用ください。CSV ファイル (UTF-8) をアップロード → カラムをマッピング → プレビュー → 取込 の 4 ステップでナレッジ + 過去課題を取り込めます。
+          {' '}Excel をお使いの場合は Excel で「名前を付けて保存」→ ファイル種類で「CSV UTF-8 (コンマ区切り)」を選んで変換してください。
         </p>
       </div>
 
@@ -1385,6 +1176,7 @@ function DataImportSection() {
         <div>
           <label htmlFor="import-zip" className="text-sm font-medium">
             ZIP ファイル
+            <span className="ml-2 text-xs text-muted-foreground">(.zip 拡張子のみ)</span>
           </label>
           <input
             id="import-zip"
@@ -1394,10 +1186,15 @@ function DataImportSection() {
             className="mt-1 block w-full text-sm"
             disabled={submitting}
           />
+          {file && (
+            <p className="mt-1 text-xs text-muted-foreground">
+              選択中: <span className="font-mono">{file.name}</span> ({Math.round(file.size / 1024).toLocaleString()} KB)
+            </p>
+          )}
         </div>
         {error && <p className="text-sm text-destructive">{error}</p>}
         <Button type="submit" disabled={submitting || !file}>
-          {submitting ? '取込中...' : '📥 取り込みを実行'}
+          {submitting ? '取込中... (画面を閉じずにお待ちください)' : '📥 取り込みを実行'}
         </Button>
       </form>
 

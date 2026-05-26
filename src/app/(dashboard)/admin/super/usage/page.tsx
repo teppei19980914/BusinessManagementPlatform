@@ -292,11 +292,12 @@ function DefaultTenantUsageSection({
             unit=""
             subValue="(請求対象外)"
           />
+          {/* fix/list-export-import-bugs (2026-05-26): Storage プラン表示削除 (ADR-0020/0021 で従量課金化済) */}
           <UsageCard
-            label="Storage プラン / 使用"
-            value={defaultTenant.storageAddonPlan}
+            label="Storage 使用量"
+            value={formatBytesLocal(defaultTenant.storageBytesUsed)}
             unit=""
-            subValue={`${formatBytesLocal(defaultTenant.storageBytesUsed)} / ${formatBytesLocal(defaultTenant.storageLimitBytes)}`}
+            subValue={`/ ${formatBytesLocal(defaultTenant.storageLimitBytes)} (ハードキャップ)`}
           />
         </div>
       )}
