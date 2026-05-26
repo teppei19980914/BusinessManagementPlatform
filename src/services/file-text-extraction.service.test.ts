@@ -66,7 +66,7 @@ describe('extractText — 対応形式', () => {
   });
 
   it('.xlsx → mock parser 経由で抽出', async () => {
-    _setExtractorsForTest({ xlsx: () => '[Sheet1]\na\tb\n1\t2' });
+    _setExtractorsForTest({ xlsx: async () => '[Sheet1]\na\tb\n1\t2' });
     const result = await extractText('book.xlsx', Buffer.from('fake-xlsx'));
     expect(result.kind).toBe('success');
     if (result.kind !== 'success') throw new Error();
@@ -74,7 +74,7 @@ describe('extractText — 対応形式', () => {
   });
 
   it('.xls (旧形式) も同じ xlsx parser 経由', async () => {
-    _setExtractorsForTest({ xlsx: () => 'legacy xls' });
+    _setExtractorsForTest({ xlsx: async () => 'legacy xls' });
     const result = await extractText('legacy.xls', Buffer.from('fake'));
     expect(result.kind).toBe('success');
   });

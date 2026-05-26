@@ -15219,6 +15219,179 @@ git push
 ### 関連
 
 - 関連 PR: PR #445 (ADR-0021 基盤層、本事例 / 2026-05-26)
-- 関連 KDD: なし (初発)
+- 関連 KDD: なし (初発) / 派生: [§5.X+141](#5x141) (xlsx@sheetjs CVE 対応) / [§5.X+142](#5x142) (check-llm-billing-bypass JSDoc 誤検知)
 - 関連 file: [package.json](../../package.json), [pnpm-lock.yaml](../../pnpm-lock.yaml), [src/services/file-text-extraction.service.ts](../../src/services/file-text-extraction.service.ts) (dynamic import 採用箇所)
 - 関連 memory: [feedback_quality_gate_exit_code](../../memory) (本件と同系列で「ローカル成功 → CI fail を見逃す」パターン)、新規 [feedback_pnpm_lockfile_sync](../../memory) を追加 (下記)
+
+---
+
+## 5.X+141 **★severity-high★ xlsx@sheetjs (v0.20.3) は fix なし High CVE 2 件、exceljs に swap + pnpm.overrides で transitive uuid<11.1.1 を fix (2026-05-26 / PR #445)**
+
+### 事象
+
+PR #445 で Excel 抽出に `xlsx@0.20.3` (sheetjs tarball) を採用したところ、OSV-Scanner が即失敗:
+
+```
+| https://osv.dev/GHSA-4r6h-8v6p-xvw6 | 7.8  | npm | xlsx | 0.20.3 | --            | pnpm-lock.yaml |
+| https://osv.dev/GHSA-5pgg-2g8v-p4x9 | 7.5  | npm | xlsx | 0.20.3 | --            | pnpm-lock.yaml |
+Total 1 package affected by 2 known vulnerabilities (0 Critical, 2 High, 0 Medium, 0 Low, 0 Unknown)
+```
+
+OSV-Scanner は **severity 関係なく vuln 1 件で exit 1** ([§5.X+115](#5x115) 参照、PR #430 で確立) のため、High CVE 2 件で CI 失敗確定。
+さらに `FIXED VERSION: --` (= sheetjs 側で fix 予定なし) のため、`pnpm.overrides` でバージョン固定する従来のパターンも使えない。
+
+### 根本原因
+
+#### xlsx@sheetjs の CVE 内容
+
+- **GHSA-4r6h-8v6p-xvw6 (CVSS 7.8)**: prototype pollution via crafted Excel file
+- **GHSA-5pgg-2g8v-p4x9 (CVSS 7.5)**: ReDoS (regular expression denial of service)
+
+sheetjs 公式は **「これらは expected behavior であり fix しない」** という方針を公にしており、npm registry 経由 (legacy `xlsx`) には CVE が残ったまま。CDN 提供の tarball も同じコードベース。
+
+#### なぜ最初に xlsx を選んだか
+
+ADR-0021 実装時、Excel 抽出のデファクト = sheetjs/xlsx と認識して採用。CVE database を install 前に確認しなかった。
+
+### 対応
+
+**exceljs@^4.4.0 にライブラリ swap**:
+
+```diff
+- "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
++ "exceljs": "^4.4.0",
+```
+
+ただし exceljs は transitive で `uuid < 11.1.1` (GHSA-w5hq-g745-h8pq, Moderate) を依存しており、OSV は moderate も拒否する可能性があるため、`pnpm.overrides` で固定:
+
+```diff
+  "overrides": {
+    ...
++   "uuid": ">=11.1.1"
+  }
+```
+
+`pnpm audit --audit-level=moderate` で **No known vulnerabilities** 確認。
+
+#### exceljs と xlsx の API 差分対応
+
+[file-text-extraction.service.ts](../../src/services/file-text-extraction.service.ts) の extractXlsx を書き換え:
+
+```typescript
+// 旧 (xlsx):
+const workbook = XLSX.read(buffer, { type: 'buffer' });
+for (const sheetName of workbook.SheetNames) {
+  const csv = XLSX.utils.sheet_to_csv(workbook.Sheets[sheetName], { FS: '\t', RS: '\n' });
+  ...
+}
+
+// 新 (exceljs):
+const workbook = new ExcelJS.Workbook();
+await workbook.xlsx.load(arrayBuffer);  // ★ ArrayBuffer 要求 (後述)
+workbook.eachSheet((worksheet) => {
+  worksheet.eachRow({ includeEmpty: false }, (row) => {
+    row.eachCell({ includeEmpty: false }, (cell) => {
+      // RichText / Formula / Date の polymorphic value を順次 unwrap
+      const value = cell.value;
+      if (typeof value === 'object' && 'text' in value) ...   // RichText
+      else if (typeof value === 'object' && 'result' in value) ...  // Formula
+      else if (value instanceof Date) ...
+      ...
+    });
+  });
+});
+```
+
+#### exceljs の TS 型不一致 hack
+
+exceljs の型定義は古い `Buffer` シグネチャを要求するため、Node 22+ の `Buffer<ArrayBufferLike>` ジェネリックと不一致で TS2345 になる:
+
+```typescript
+// NG: TS2345
+await workbook.xlsx.load(buffer);
+
+// OK: ArrayBuffer に変換して渡す
+await workbook.xlsx.load(
+  buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength) as ArrayBuffer
+);
+```
+
+### 再発防止
+
+- **新規 npm package 追加時のチェックリスト**:
+  1. `pnpm install` で実体取得 → `pnpm audit --audit-level=moderate` で **vuln 0 件** を確認
+  2. transitive にも High/Critical CVE がないか追加確認 (npm 表示は直接 deps のみ)
+  3. CVE があっても fix version が出ていれば `pnpm.overrides` で固定可能 ([§5.X+115](#5x115) パターン)
+  4. fix version が `--` (= 出ない) の場合は **ライブラリ自体を swap**
+- **特に sheetjs/xlsx は今後採用しない**: 上記 2 CVE が放置されている事実 + 公式の「fix しない」姿勢を踏まえ、Excel 抽出が必要なら最初から exceljs / read-excel-file を選ぶ
+- 関連 KDD: [§5.X+115](#5x115) (PR #430、`pnpm.overrides` で transitive CVE fix する初出パターン)
+
+### 教訓 (転用可能)
+
+- **OSV-Scanner は severity 関係なく vuln 1 件で fail**。pnpm-audit (`--audit-level=high`) より厳格、moderate も無視できない
+- **`FIXED VERSION: --` の CVE は overrides で救えない**。ライブラリそのものを swap するしか手がない
+- **デファクト = 安全とは限らない**: sheetjs/xlsx は npm 週 1500 万 DL あるデファクトだが、メンテナの「fix しない」方針により実質危険。**人気 ≠ 安全性**、CVE database で個別検証必須
+- **npm 型定義の `Buffer` 不整合は ArrayBuffer 変換で回避**: Node 22+ の Buffer ジェネリック化により古い型定義との不一致が頻発。`buffer.buffer.slice(...)` で ArrayBuffer を取り出して渡すのが定石
+
+### 関連
+
+- 関連 PR: PR #445 (ADR-0021 基盤層、本事例 / 2026-05-26)
+- 関連 KDD: [§5.X+140](#5x140) (本 PR-A 初回 CI 失敗の根本 fix、本件はその下流発覚) / [§5.X+115](#5x115) (`pnpm.overrides` パターン)
+- 関連 file: [package.json](../../package.json), [src/services/file-text-extraction.service.ts](../../src/services/file-text-extraction.service.ts)
+
+---
+
+## 5.X+142 **★severity-medium★ scripts/check-llm-billing-bypass.ts は JSDoc コメント内の `voyageEmbed()` 表記も誤検知する、ADR-0019 アンチパターン記述時は別表記を使う (2026-05-26 / PR #445)**
+
+### 事象
+
+ADR-0019 LLM 課金バイパス防止のため [embedding.service.ts](../../src/services/embedding.service.ts) `generateEmbedding()` 経由に refactor 完了後、`pnpm check:llm-billing-bypass` を実行すると **JSDoc コメント内で flagged**:
+
+```
+[check-llm-billing-bypass] ❌ 課金バイパス検出
+  src/services/attachment-embedding.service.ts:15 — voyageEmbed()
+    voyageEmbed() を直接呼んでいます。
+```
+
+該当行 (JSDoc):
+```typescript
+ * Voyage 呼出:
+ *   - embedding.service.ts の generateEmbedding() 経由 (withMeteredLLM 内包)
+ *   - 直接 voyageEmbed() を呼ばないこと (= ADR-0019 LLM 課金バイパス防止、scripts/check-llm-billing-bypass.ts)  // ← line 15 で flag
+```
+
+### 根本原因
+
+[scripts/check-llm-billing-bypass.ts](../../scripts/check-llm-billing-bypass.ts) は単純な正規表現で `voyageEmbed(` パターンを grep するため、**JSDoc / 通常コメント内の文字列もコード本体と同じく検出**してしまう。
+
+「ここでは禁止です」というアンチパターン説明を JSDoc に書いた瞬間、それ自体が違反として検出される **「アンチパターンを記述すると違反になる」パラドックス**。
+
+### 対応
+
+JSDoc の文言を `voyageEmbed()` から `Voyage client` に変更:
+
+```diff
+- *   - 直接 voyageEmbed() を呼ばないこと (= ADR-0019 LLM 課金バイパス防止、...)
++ *   - 直接 Voyage client を呼ばないこと (= ADR-0019 LLM 課金バイパス防止、...)
+```
+
+意味は保たれ、check は PASS する。
+
+### 再発防止
+
+- **ADR-0019 違反防止系の説明をコメントに書く時は、関数名そのままではなく「Voyage client」「Anthropic SDK 直叩き」等の抽象語で表現する**
+- 将来的に check-llm-billing-bypass.ts を改善するなら:
+  1. JSDoc コメント (`/** ... */`) 内の表記は除外
+  2. 行頭 `*` または `//` で始まる行は除外
+  3. ただし「コメントで bypass を隠す」攻撃を防ぐため、`// eslint-disable-line` 風の意図的回避は別途検知
+
+### 教訓 (転用可能)
+
+- **静的解析は文字列マッチで動くため、自分のアンチパターン説明も flag されうる**: lint / banned-pattern check / security scan 系のツールに共通する trap。アンチパターン記述では **「禁止された関数名そのもの」を書かず、抽象語で表現** が安全
+- **「対策を書いた瞬間に違反扱い」は誤検知のシグナル**: 対策・防止策を doc に書いたら check で落ちるなら、**check 側の文字列マッチが甘い**可能性。誤検知を allowlist に積む前に、コメント側を書き換える方が低コストかつ意味も保たれる
+
+### 関連
+
+- 関連 PR: PR #445 (ADR-0021 基盤層、本事例 / 2026-05-26)
+- 関連 KDD: [§5.X+140](#5x140) (本 PR-A 初回 CI 失敗の根本 fix、本件はその下流発覚) / ADR-0019 (LLM 課金バイパス防止)
+- 関連 file: [src/services/attachment-embedding.service.ts](../../src/services/attachment-embedding.service.ts), [scripts/check-llm-billing-bypass.ts](../../scripts/check-llm-billing-bypass.ts)

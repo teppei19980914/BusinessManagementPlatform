@@ -10,6 +10,10 @@
  *   理由: 提案エンジン/チャット精度向上のため運営負担で無料化。
  *         ApiCallLog には記録するが costJpy=0、counter / Stripe queue いずれも更新しない。
  *
+ * Voyage 呼出:
+ *   - embedding.service.ts の generateEmbedding() 経由 (withMeteredLLM 内包)
+ *   - 直接 Voyage client を呼ばないこと (= ADR-0019 LLM 課金バイパス防止、scripts/check-llm-billing-bypass.ts)
+ *
  * 並行制御:
  *   - per-tenant 同時 embedding job 上限 = 5 (= MAX_CONCURRENT_EMBEDDING_PER_TENANT)
  *   - global 同時上限 = 50 (= MAX_GLOBAL_EMBEDDING_CONCURRENT、Voyage rate limit 防御)
@@ -22,15 +26,13 @@
  *
  * 関連:
  *   - テキスト抽出: src/services/file-text-extraction.service.ts
- *   - Voyage 呼出: src/lib/llm/voyage-client.ts voyageEmbed()
+ *   - Voyage 呼出 (経由): src/services/embedding.service.ts generateEmbedding()
  *   - 計測 wrapper: src/lib/llm/metered.ts withMeteredLLM()
  *   - cron: src/services/attachment-embedding-cron.service.ts (P3-embedding-cron)
  */
 
-import { randomUUID } from 'node:crypto';
 import { prisma } from '@/lib/db';
-import { voyageEmbed } from '@/lib/llm/voyage-client';
-import { LLM_MODELS } from '@/config/llm';
+import { generateEmbedding } from '@/services/embedding.service';
 import {
   EMBEDDING_MAX_RETRY,
   MAX_CONCURRENT_EMBEDDING_PER_TENANT,
@@ -75,7 +77,7 @@ function releaseSlot(tenantId: string): void {
 // ================================================================
 
 export type EmbedAttachmentResult =
-  | { kind: 'success'; tokens: number }
+  | { kind: 'success' }
   | { kind: 'throttled' } // 並行上限到達 → cron が後で retry
   | { kind: 'failed_will_retry'; error: string; nextRetryCount: number }
   | { kind: 'failed_permanent'; error: string };
@@ -99,86 +101,75 @@ export async function embedAttachment(args: {
     return { kind: 'throttled' };
   }
 
-  const startedAt = Date.now();
   try {
-    // featureUnit='attachment-embedding' は FREE — costJpy=0、counter / Stripe queue 不変
-    // withMeteredLLM を使うとオーバーヘッドが大きい (rate limit / plan 解決等) ため、
-    // 直接 voyageEmbed + ApiCallLog INSERT で記録する (= db-capacity-overage と同方式)
-    const result = await voyageEmbed({
-      texts: [args.text],
+    // generateEmbedding 内部で withMeteredLLM を経由するため、
+    // ApiCallLog 記録 / rate limit / fair use limit / counter 制御は自動で行われる。
+    // attachment-embedding は BILLABLE_FEATURE_UNITS 非掲載 = FREE のため costJpy=0。
+    const embedResult = await generateEmbedding({
+      text: args.text,
+      featureUnit: 'attachment-embedding',
+      tenantId: args.tenantId,
+      // userId は undefined (= cron / システム実行扱い、rate limit スキップ)
       inputType: 'document',
     });
-    const vector = result.embeddings[0];
-    if (!vector || vector.length !== 1024) {
-      throw new Error(`unexpected embedding length: ${vector?.length}`);
+
+    if (!embedResult.ok) {
+      // withMeteredLLM の縮退モード (rate_limited / tenant_inactive / fair_use_exceeded 等)
+      // はリトライで解消しないことが多いが、cron 側で次回試行させるため failed_will_retry 扱い
+      return await handleFailure(args.attachmentId, embedResult.message ?? embedResult.reason);
     }
 
     // contentEmbedding は Unsupported('vector(1024)') のため raw SQL で UPDATE
     // pgvector の配列リテラル '[v1,v2,...]' 形式
-    const vectorLiteral = `[${vector.join(',')}]`;
-    const latencyMs = Date.now() - startedAt;
-    const requestId = randomUUID();
-    await prisma.$transaction([
-      prisma.$executeRaw`
-        UPDATE attachments
-           SET content_embedding = ${vectorLiteral}::vector(1024),
-               embedding_status = 'completed',
-               extracted_text_hash = ${args.sha256},
-               embedding_generated_at = NOW()
-         WHERE id = ${args.attachmentId}::uuid
-      `,
-      prisma.apiCallLog.create({
-        data: {
-          tenantId: args.tenantId,
-          userId: null,
-          // ADR-0021: 'attachment-embedding' は FREE (= isBillableFeatureUnit=false)
-          // 監査用に記録するが costJpy=0、counter / Stripe queue は更新しない
-          featureUnit: 'attachment-embedding',
-          modelName: LLM_MODELS.EMBEDDING,
-          llmInputTokens: null,
-          llmOutputTokens: null,
-          embeddingTokens: result.totalTokens,
-          costJpy: 0,
-          latencyMs,
-          requestId,
-        },
-      }),
-    ]);
+    const vectorLiteral = `[${embedResult.embedding.join(',')}]`;
+    await prisma.$executeRaw`
+      UPDATE attachments
+         SET content_embedding = ${vectorLiteral}::vector(1024),
+             embedding_status = 'completed',
+             extracted_text_hash = ${args.sha256},
+             embedding_generated_at = NOW()
+       WHERE id = ${args.attachmentId}::uuid
+         AND tenant_id = ${args.tenantId}::uuid
+    `;
 
-    return { kind: 'success', tokens: result.totalTokens };
+    return { kind: 'success' };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+    return await handleFailure(args.attachmentId, msg);
+  } finally {
+    releaseSlot(args.tenantId);
+  }
+}
 
-    // リトライ判定
-    const att = await prisma.attachment.findUnique({
-      where: { id: args.attachmentId },
-      select: { embeddingRetryCount: true },
-    });
-    const nextCount = (att?.embeddingRetryCount ?? 0) + 1;
+async function handleFailure(
+  attachmentId: string,
+  errorMessage: string,
+): Promise<EmbedAttachmentResult> {
+  const att = await prisma.attachment.findUnique({
+    where: { id: attachmentId },
+    select: { embeddingRetryCount: true },
+  });
+  const nextCount = (att?.embeddingRetryCount ?? 0) + 1;
 
-    if (nextCount >= EMBEDDING_MAX_RETRY) {
-      await prisma.attachment.update({
-        where: { id: args.attachmentId },
-        data: {
-          embeddingStatus: 'failed',
-          embeddingRetryCount: nextCount,
-          embeddingLastRetryAt: new Date(),
-        },
-      });
-      return { kind: 'failed_permanent', error: msg };
-    }
-
-    // 'pending' に戻して cron が次回試行
+  if (nextCount >= EMBEDDING_MAX_RETRY) {
     await prisma.attachment.update({
-      where: { id: args.attachmentId },
+      where: { id: attachmentId },
       data: {
-        embeddingStatus: 'pending',
+        embeddingStatus: 'failed',
         embeddingRetryCount: nextCount,
         embeddingLastRetryAt: new Date(),
       },
     });
-    return { kind: 'failed_will_retry', error: msg, nextRetryCount: nextCount };
-  } finally {
-    releaseSlot(args.tenantId);
+    return { kind: 'failed_permanent', error: errorMessage };
   }
+
+  await prisma.attachment.update({
+    where: { id: attachmentId },
+    data: {
+      embeddingStatus: 'pending',
+      embeddingRetryCount: nextCount,
+      embeddingLastRetryAt: new Date(),
+    },
+  });
+  return { kind: 'failed_will_retry', error: errorMessage, nextRetryCount: nextCount };
 }
