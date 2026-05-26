@@ -31,6 +31,58 @@ import type { CommentEntityType } from '@/lib/validators/comment';
 import type { CommentDTO } from '@/services/comment.service';
 import type { MentionInput, MentionKind } from '@/lib/validators/mention';
 
+/**
+ * fix/mention-count-reconcile (2026-05-26): mention 件数表示の累積バグ修正用の local 型。
+ *
+ * 旧仕様の `MentionInput[]` (= サーバ送信形) には `label` フィールドが無いため、
+ * 「textarea 上の `@xxx` 文字列が削除されたら mention array からも除外する」
+ * reconcile 処理を行う際に、どの mention がどの label に対応するかを追跡できなかった。
+ *
+ * client 側のみで使う本拡張型は `label` を保持し、textarea onChange 時に
+ * `reconcileMentions(text, draftMentions)` で「現在 text に存在する mention のみ」に
+ * 絞り込む。サーバ送信時は `({ label, ...rest }) => rest` で label を剥がして
+ * MentionInput[] として送る (schema 変更不要)。
+ */
+type DraftMention = MentionInput & { label: string };
+
+/**
+ * fix/mention-count-reconcile (2026-05-26): textarea 内容と draftMentions を再同期する純関数。
+ *
+ * アルゴリズム:
+ *   1. mentions 配列を順に走査し、各要素の label に対し text 内の `@${label}` 出現回数を数える
+ *   2. 同一 label が複数 mention にある場合は、出現回数の範囲内で先頭からのみ残す
+ *   3. text に出現しない label の mention は全削除
+ *
+ * 例:
+ *   - mentions = [{alice}, {bob}], text = "@alice and @bob"      → [{alice}, {bob}] (全保持)
+ *   - mentions = [{alice}, {bob}], text = "@bob only"            → [{bob}]
+ *   - mentions = [{alice}, {alice}], text = "@alice @alice"       → [{alice}, {alice}]
+ *   - mentions = [{alice}, {alice}], text = "@alice"             → [{alice}] (1 つに削減)
+ *   - mentions = [{alice}], text = "@alice2"                     → [] (語境界一致しないため除外)
+ *
+ * 語境界判定: `@${label}` の直後が「単語構成文字 (Unicode letter / digit / `_` / `-`) 以外」
+ * もしくは「文字列終端」のとき match。 これにより `@alice` が `@alice2` を誤 match しない。
+ *
+ * @internal export はテスト用のみ。production code は本コンポーネント内のみで使用する。
+ */
+export function reconcileMentions(text: string, mentions: DraftMention[]): DraftMention[] {
+  const keptByLabel = new Map<string, number>();
+  const result: DraftMention[] = [];
+  for (const m of mentions) {
+    const kept = keptByLabel.get(m.label) ?? 0;
+    const escapedLabel = m.label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    // 直後が単語構成文字 (Unicode letter / digit / `_` / `-`) 以外 or 文字列終端
+    const re = new RegExp(`@${escapedLabel}(?=[^\\p{L}\\p{N}_-]|$)`, 'gu');
+    const matches = text.match(re);
+    const inTextCount = matches ? matches.length : 0;
+    if (kept < inTextCount) {
+      result.push(m);
+      keptByLabel.set(m.label, kept + 1);
+    }
+  }
+  return result;
+}
+
 type Props = {
   entityType: CommentEntityType;
   entityId: string;
@@ -94,8 +146,9 @@ function MentionAutocompleteTextarea({
 }: {
   value: string;
   onChange: (v: string) => void;
-  mentions: MentionInput[];
-  onMentionsChange: (m: MentionInput[]) => void;
+  // fix/mention-count-reconcile (2026-05-26): label 付き local 型に変更
+  mentions: DraftMention[];
+  onMentionsChange: (m: DraftMention[]) => void;
   entityType: CommentEntityType;
   entityId: string;
   context: 'wbs' | 'project_list' | 'cross_list';
@@ -124,6 +177,14 @@ function MentionAutocompleteTextarea({
   function handleChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
     const newValue = e.target.value;
     onChange(newValue);
+    // fix/mention-count-reconcile (2026-05-26): 旧仕様は mention array が insertMention 経由
+    //   でしか書かれず、ユーザが textarea から `@xxx` を削除しても array に残り続けて
+    //   「2 件のメンション」と累積表示される & 既に消したはずの人に通知メールが飛ぶ事故。
+    //   毎回の text 変更で reconcile し、現在 text 上に存在する mention のみ保持する。
+    const reconciled = reconcileMentions(newValue, mentions);
+    if (reconciled.length !== mentions.length) {
+      onMentionsChange(reconciled);
+    }
     const cursor = e.target.selectionStart;
     const match = detectMentionMatch(newValue, cursor);
     if (match) {
@@ -153,14 +214,16 @@ function MentionAutocompleteTextarea({
   }
 
   function handleSelectGroup(g: { kind: MentionKind; label: string }) {
-    insertMention(`@${g.label} `, { kind: g.kind });
+    // fix/mention-count-reconcile (2026-05-26): label を DraftMention に保持
+    insertMention(`@${g.label} `, { kind: g.kind, label: g.label });
   }
 
   function handleSelectUser(u: { id: string; name: string }) {
-    insertMention(`@${u.name} `, { kind: 'user', targetUserId: u.id });
+    // fix/mention-count-reconcile (2026-05-26): label を DraftMention に保持
+    insertMention(`@${u.name} `, { kind: 'user', targetUserId: u.id, label: u.name });
   }
 
-  function insertMention(insertText: string, mention: MentionInput) {
+  function insertMention(insertText: string, mention: DraftMention) {
     const ta = textareaRef.current;
     if (!ta) return;
     const cursor = ta.selectionStart;
@@ -263,7 +326,10 @@ export function CommentSection({ entityType, entityId, canPost = true, postDisab
   const [listState, setListState] = useState<ListState>({ loaded: false });
   const [error, setError] = useState('');
   const [draft, setDraft] = useState('');
-  const [draftMentions, setDraftMentions] = useState<MentionInput[]>([]);
+  // fix/mention-count-reconcile (2026-05-26): label 付き local 型に変更。
+  //   サーバ送信時 (handlePost) は ({ label, ...rest }) で label を剥がして
+  //   MentionInput[] に戻すため、server schema は無変更で互換維持。
+  const [draftMentions, setDraftMentions] = useState<DraftMention[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingContent, setEditingContent] = useState('');
 
@@ -327,11 +393,14 @@ export function CommentSection({ entityType, entityId, canPost = true, postDisab
       setError(t('empty'));
       return;
     }
+    // fix/mention-count-reconcile (2026-05-26): label は client-side のみ保持し、
+    //   サーバには MentionInput[] (= label 無し) として送る。schema 変更不要で互換維持。
+    const mentionsForServer: MentionInput[] = draftMentions.map(({ label: _label, ...rest }) => rest);
     const res = await withLoading(() =>
       fetch('/api/comments', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ entityType, entityId, content, mentions: draftMentions }),
+        body: JSON.stringify({ entityType, entityId, content, mentions: mentionsForServer }),
       }),
     );
     if (!res.ok) {
