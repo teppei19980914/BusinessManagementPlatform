@@ -568,9 +568,9 @@ END $$;
 
 Netlify Scheduled Functions は使わず、**[cron-job.org](https://cron-job.org)** から `/api/cron/*` ルートを HTTP POST で叩く運用とする。
 
-### 6.1 設定対象 (7 件)
+### 6.1 設定対象 (9 件)
 
-旧 `vercel.json` から移行した cron schedule:
+旧 `vercel.json` から移行した cron schedule + ADR-0021 で追加:
 
 | エンドポイント | schedule (UTC) | 用途 |
 |---|---|---|
@@ -582,6 +582,7 @@ Netlify Scheduled Functions は使わず、**[cron-job.org](https://cron-job.org
 | `/api/cron/stripe-usage-flush` | `0 5 * * *` (日次 05:00) | Stripe 利用量 flush |
 | `/api/cron/stripe-auto-suspend` | `0 4 * * *` (日次 04:00) | 滞納テナント自動 suspend |
 | `/api/cron/stripe-reconcile` | `0 6 1 * *` (月初 06:00) | Stripe ↔ DB 状態照合 (PR-V7 #5 / 2026-05-19) |
+| **`/api/cron/attachment-embedding`** | **`*/15 * * * *` (15 分毎)** | **ADR-0021 (2026-05-26): 添付ファイル本文 embedding 背景処理 (pending → completed、指数 backoff 3 回 retry、per-tenant=5 / global=50 throttle)** |
 
 ### 6.2 cron-job.org 設定手順
 

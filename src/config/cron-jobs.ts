@@ -143,6 +143,17 @@ export const CRON_JOBS: Record<string, CronJobMetadata> = {
     endpoint: '/api/cron/diagnostics-daily-alert',
     expectedMaxGapHours: 25,
   },
+  // ADR-0021 (2026-05-26): 添付ファイル本文 embedding の背景処理 cron
+  'attachment-embedding': {
+    description:
+      'embeddingStatus=pending の Attachment を batch 処理 (最大 20 件/回)。'
+      + ' Supabase Storage から download → file-text-extraction (PDF/Excel/CSV/text/docx)'
+      + ' → Voyage embedding 生成 → contentEmbedding カラム更新。指数 backoff (1/5min)'
+      + ' で 3 回までリトライ、それ以降は failed 確定。per-tenant=5 / global=50 throttle。',
+    schedule: '15 分毎 (00:00,15,30,45 JST)',
+    endpoint: '/api/cron/attachment-embedding',
+    expectedMaxGapHours: 2, // 15min 間隔 + 余裕 (= 2h 経過なら異常)
+  },
 } as const;
 
 /**

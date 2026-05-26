@@ -180,6 +180,8 @@ export async function saveMonthlyUsageSnapshots(now: Date = new Date()): Promise
       currentMonthApiCostJpy: true,
       storageAddonPlan: true,
       storageBytesUsed: true,
+      // ADR-0021 (2026-05-26): ファイルストレージ peak を snapshot に永続化
+      storageFileBytesPeakThisMonth: true,
     },
   });
 
@@ -244,6 +246,19 @@ export async function saveMonthlyUsageSnapshots(now: Date = new Date()): Promise
       const reconciledCallCount = apiAgg._count._all;
       const reconciledCostJpy = apiAgg._sum.costJpy ?? 0;
 
+      // ADR-0021 (2026-05-26): file_storage_overage 部分を独立 SUM して history 列に保存。
+      //   feedback_3layer_sync_filter: history で DB / file storage を分離表示するため。
+      //   reconciledCostJpy (= 全 billable SUM) には既に含まれているので、本値は内訳表示専用。
+      const fileStorageAgg = await prisma.apiCallLog.aggregate({
+        where: {
+          tenantId: tenant.id,
+          createdAt: { gte: prevMonthStart, lt: currentMonthStart },
+          featureUnit: 'storage-file-overage',
+        },
+        _sum: { costJpy: true },
+      });
+      const fileStorageOverageJpy = fileStorageAgg._sum.costJpy ?? 0;
+
       const rawAddonPlan = tenant.storageAddonPlan ?? 'standard';
       const storageAddonPlan = isStorageAddonPlan(rawAddonPlan) ? rawAddonPlan : 'standard';
       const storageAddonJpy = STORAGE_ADDON_MONTHLY_JPY[storageAddonPlan];
@@ -263,6 +278,9 @@ export async function saveMonthlyUsageSnapshots(now: Date = new Date()): Promise
           storageBytesUsed: tenant.storageBytesUsed,
           storageAddonPlan,
           storageAddonJpy,
+          // ADR-0021 (2026-05-26): ファイルストレージ peak + 当月課金内訳
+          fileStorageBytesPeak: tenant.storageFileBytesPeakThisMonth,
+          fileStorageOverageJpy,
           totalJpy,
         },
         update: {
@@ -273,6 +291,8 @@ export async function saveMonthlyUsageSnapshots(now: Date = new Date()): Promise
           storageBytesUsed: tenant.storageBytesUsed,
           storageAddonPlan,
           storageAddonJpy,
+          fileStorageBytesPeak: tenant.storageFileBytesPeakThisMonth,
+          fileStorageOverageJpy,
           totalJpy,
         },
       });

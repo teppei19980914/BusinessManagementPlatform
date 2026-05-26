@@ -207,9 +207,14 @@ export async function POST(req: NextRequest) {
       { status: 201 },
     );
   } catch (e) {
-    // ハードキャップ超過時は Storage 側のオブジェクトも削除
+    // ★ KDD §5.X+146: finalize transaction が失敗した時は **どの例外でも** Storage 上のオブジェクトを削除。
+    //   ハードキャップ超過 (FileStorageLimitExceededError) のみ削除する旧実装では、
+    //   DB conflict / FK 制約違反 / network blip 等の予期せぬ例外で orphan Storage object が
+    //   残り、bucket 使用量に課金されてしまう (= 数 % drift の原因)。
+    //   失敗時にこの cleanup を実行 → 例外を再 throw する設計に統一する。
+    await deleteObject(input.objectKey).catch(() => undefined);
+
     if (e instanceof FileStorageLimitExceededError) {
-      await deleteObject(input.objectKey).catch(() => undefined);
       const mapped = mapFileStorageGuardErrorToResponse(e);
       if (mapped) return NextResponse.json(mapped.body, { status: mapped.status });
     }

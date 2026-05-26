@@ -1512,6 +1512,13 @@ model TenantMonthlyUsageHistory {
   storageBytesUsed BigInt   @default(0) @map("storage_bytes_used")
   storageAddonPlan String   @default("standard") @map("storage_addon_plan") @db.VarChar(20)
   storageAddonJpy  Int      @default(0) @map("storage_addon_jpy")
+  /// ADR-0021 (2026-05-26): ファイルストレージ peak (バイト)。月初 cron 時の peak を保存。
+  ///   過去月の super_admin / テナント請求 UI で「DB 容量 / ファイルストレージ」の内訳を表示するため独立カラム化。
+  ///   feedback_3layer_sync_filter: 現在値 (Tenant) / 月初 snapshot (本カラム) / 履歴 (本カラム) の 3 レイヤ同期。
+  fileStorageBytesPeak BigInt? @map("file_storage_bytes_peak")
+  /// ADR-0021 (2026-05-26): ファイルストレージ超過課金額 (円整数)。
+  ///   storage-file-overage featureUnit の当月分 SUM (= ApiCallLog 真値ベース)。
+  fileStorageOverageJpy Int?   @map("file_storage_overage_jpy")
   /// 当月総課金額 (LLM + Storage の合算)。super_admin ダッシュボードでの集計に使う。
   totalJpy         Int      @default(0) @map("total_jpy")
   /// snapshot 生成日時 (= 月初リセット cron の起動時刻)

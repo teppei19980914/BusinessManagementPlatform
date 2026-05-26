@@ -36,6 +36,15 @@ import {
 /** 抽出テキストの最大文字数。Voyage 1 input ~32K tokens (≒ 100K 文字) を上限とする */
 export const MAX_EXTRACTED_TEXT_CHARS = 100_000;
 
+/**
+ * ★ KDD §5.X+149: parser に渡す buffer の上限 (= OOM 対策)。
+ *   pdf-parse / exceljs / mammoth はバイナリ全体をメモリにロードして処理する。
+ *   50MB の Excel に数千の formula があると Netlify Function (1GB 上限) で OOM 発生。
+ *   ファイル本体上限は 50MB (= FILE_STORAGE_MAX_FILE_SIZE_BYTES) のため、
+ *   それと同じ 50MB を本値の上限とする。これを超える buffer は 'unsupported' 扱い。
+ */
+export const MAX_EXTRACTION_BUFFER_BYTES = 50 * 1_000_000;
+
 export type ExtractionResult =
   | { kind: 'success'; text: string; sha256: string; sourceFormat: string }
   | { kind: 'unsupported'; reason: string }
@@ -76,6 +85,15 @@ export async function extractText(
 
   if (!EMBEDDING_SUPPORTED_EXTENSIONS.includes(ext)) {
     return { kind: 'unsupported', reason: `extension ${ext || '(none)'} is not supported` };
+  }
+
+  // KDD §5.X+149: OOM 対策。50MB 超 buffer は parser に渡さず 'unsupported' で返却。
+  //   (実運用ではアップロード時に 50MB cap されているが defense-in-depth)
+  if (buffer.byteLength > MAX_EXTRACTION_BUFFER_BYTES) {
+    return {
+      kind: 'unsupported',
+      reason: `buffer too large (${buffer.byteLength} bytes > ${MAX_EXTRACTION_BUFFER_BYTES} bytes)`,
+    };
   }
 
   try {

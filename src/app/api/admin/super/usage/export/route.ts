@@ -43,6 +43,8 @@ import {
 //   真値として書き出す (= drift があっても請求書根拠は真値で出力)。drift があれば
 //   警告列で明示する。
 import { reconcileAllTenantsApiUsage } from '@/services/api-usage-recalc.service';
+// ADR-0021 (2026-05-26): ファイルストレージ peak から想定請求額算出
+import { calculateFileStorageOverageJpy } from '@/config/file-storage-pricing';
 
 /** "YYYY-MM" 形式 (1-12 月の 0 埋め必須)。 */
 const YearMonthSchema = z
@@ -140,6 +142,9 @@ const HEADERS_CURRENT = [
   'Storageプラン',
   'Storage使用量(バイト)',
   'Storage月額(円)',
+  // ADR-0021 (2026-05-26): ファイルストレージ peak + 想定請求額 (= 当月 cron 確定前の予測値)
+  'ファイルストレージ peak (バイト)',
+  'ファイルストレージ超過 (円・想定)',
   '合計月額(円)',
   // 2026-05-14: 月途中解約の請求対象期間判別用 (空欄=アクティブ、ISO 日時=解約済)
   '解約日',
@@ -169,6 +174,9 @@ const HEADERS_HISTORY = [
   'Storageプラン',
   'Storage使用量(バイト)',
   'Storage月額(円)',
+  // ADR-0021 (2026-05-26): スナップショット時点のファイルストレージ peak + 当月課金
+  'ファイルストレージ peak (バイト)',
+  'ファイルストレージ超過 (円)',
   '合計月額(円)',
   // 2026-05-14: 月途中解約の請求対象期間判別用 (空欄=アクティブ、ISO 日時=解約済)
   '解約日',
@@ -212,6 +220,9 @@ function buildCurrentMonthCsv(
         csvEscape(t.storageAddonPlan),
         t.storageBytesUsed.toString(),
         t.storageAddonMonthlyJpy.toString(),
+        // ADR-0021 (2026-05-26): ファイルストレージ peak + 想定請求額 (cron 確定前の予測)
+        t.storageFileBytesPeakThisMonth.toString(),
+        calculateFileStorageOverageJpy(BigInt(t.storageFileBytesPeakThisMonth)).toString(),
         // 合計月額: SUM ベースで再計算 (= drift 分を反映)
         (sumCostJpy + t.storageAddonMonthlyJpy).toString(),
         // 2026-05-14: 解約日 (空欄=アクティブ)
@@ -250,6 +261,9 @@ function buildHistoryCsv(rows: Awaited<ReturnType<typeof listMonthlyUsageHistory
         csvEscape(r.storageAddonPlan),
         r.storageBytesUsed.toString(),
         r.storageAddonJpy.toString(),
+        // ADR-0021 (2026-05-26): スナップショット時点のファイルストレージ peak + 当月課金
+        (r.fileStorageBytesPeak ?? 0).toString(),
+        (r.fileStorageOverageJpy ?? 0).toString(),
         r.totalJpy.toString(),
         // 2026-05-14: 親テナントの解約日 (空欄=アクティブ)
         r.tenantDeletedAt != null ? r.tenantDeletedAt.toISOString() : '',

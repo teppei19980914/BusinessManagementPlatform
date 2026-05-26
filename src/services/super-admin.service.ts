@@ -25,6 +25,8 @@ import { BILLABLE_FEATURE_UNITS } from '@/config/billing-feature-units';
 //   Storage add-on 等の固定費が永続引落されるのを防ぐため。
 import { isStripeEnabled } from '@/lib/stripe';
 import { cancelTenantStripeSubscription } from './stripe-billing.service';
+// ADR-0021 (2026-05-26): purgeXxx の Supabase Storage cascade 失敗を記録
+import { recordError } from '@/services/error-log.service';
 
 /**
  * super_admin ダッシュボードの **顧客集計** (=請求対象テナントの合算) から除外するテナント。
@@ -105,6 +107,8 @@ export type TenantSummaryRow = {
   storageAddonPlan: string;
   storageBytesUsed: number;
   storageAddonMonthlyJpy: number;
+  /** ADR-0021 (2026-05-26): ファイルストレージ peak (バイト)、CSV 内訳列 + 想定請求額算出に使用 */
+  storageFileBytesPeakThisMonth: number;
   /** LLM 部分 + Storage add-on の合算課金。請求書生成根拠 */
   totalCurrentMonthJpy: number;
 };
@@ -161,6 +165,8 @@ export async function listAllTenants(
       // Storage add-on (Phase 2 / 2026-05-08): CSV エクスポート用
       storageAddonPlan: true,
       storageBytesUsed: true,
+      // ADR-0021 (2026-05-26): ファイルストレージ peak (CSV 内訳列用)
+      storageFileBytesPeakThisMonth: true,
     },
   });
 
@@ -211,6 +217,8 @@ export async function listAllTenants(
     storageAddonMonthlyJpy: SUPER_ADMIN_ADDON_MONTHLY_JPY[
       isStorageAddonPlanStr(t.storageAddonPlan) ? t.storageAddonPlan : 'standard'
     ],
+    // ADR-0021 (2026-05-26): ファイルストレージ peak (= CSV 内訳列 + 想定請求額算出に使用)
+    storageFileBytesPeakThisMonth: Number(t.storageFileBytesPeakThisMonth),
     totalCurrentMonthJpy:
       t.currentMonthApiCostJpy +
       SUPER_ADMIN_ADDON_MONTHLY_JPY[
@@ -357,6 +365,8 @@ export async function getTenantDetail(tenantId: string): Promise<TenantDetail | 
     entityCounts: { projects, knowledges, risksIssues, retrospectives, memos },
     // Storage add-on (Phase 2 / 2026-05-08): キャッシュ値ベースの容量・課金情報
     ...computeStorageDetailFields(t),
+    // ADR-0021 (2026-05-26): ファイルストレージ peak (= TenantSummaryRow 継承で必須)
+    storageFileBytesPeakThisMonth: Number(t.storageFileBytesPeakThisMonth),
   };
 }
 
@@ -855,6 +865,10 @@ export type MonthlyUsageHistoryRow = {
   storageBytesUsed: number;
   storageAddonPlan: string;
   storageAddonJpy: number;
+  /** ADR-0021 (2026-05-26): 月初 snapshot 時点のファイルストレージ peak (バイト)、未稼働月は null */
+  fileStorageBytesPeak: number | null;
+  /** ADR-0021 (2026-05-26): 当月の storage-file-overage 課金額 (円)、未稼働月は null */
+  fileStorageOverageJpy: number | null;
   /** 当月の合計課金 (apiCostJpy + storageAddonJpy)。請求書根拠 */
   totalJpy: number;
   /**
@@ -910,6 +924,9 @@ export async function listMonthlyUsageHistory(
     storageBytesUsed: Number(r.storageBytesUsed),
     storageAddonPlan: r.storageAddonPlan,
     storageAddonJpy: r.storageAddonJpy,
+    // ADR-0021 (2026-05-26): ファイルストレージ peak + 当月課金 (snapshot 時点)
+    fileStorageBytesPeak: r.fileStorageBytesPeak != null ? Number(r.fileStorageBytesPeak) : null,
+    fileStorageOverageJpy: r.fileStorageOverageJpy ?? null,
     totalJpy: r.totalJpy,
     // 2026-05-14: 親テナントの解約日 (請求対象期間判別用)
     tenantDeletedAt: r.tenant.deletedAt,
@@ -1626,6 +1643,36 @@ export async function purgeOldDeletedTenants(
 
   for (const t of targets) {
     try {
+      // ★ ADR-0021 (2026-05-26): Supabase Storage cascade delete (= GDPR 「忘れられる権利」遵守)
+      //   DB の Attachment row を deleteMany する前に Supabase Storage 上の本体を batch 削除。
+      //   失敗時は recordError + DB 削除は続行 (= Supabase 一時不通でも purge 完了させる)。
+      //   後で super_admin が手動 reconcile 可能。
+      try {
+        const supabaseAttachments = await prisma.attachment.findMany({
+          where: { tenantId: t.id, storageProvider: 'supabase', storageObjectKey: { not: null } },
+          select: { storageObjectKey: true },
+        });
+        const objectKeys = supabaseAttachments
+          .map((a) => a.storageObjectKey)
+          .filter((k): k is string => k !== null);
+        if (objectKeys.length > 0) {
+          const { deleteObjects } = await import('@/lib/supabase-storage');
+          await deleteObjects(objectKeys);
+        }
+      } catch (e) {
+        await recordError({
+          severity: 'warn',
+          source: 'cron',
+          message: '[purgeOldDeletedTenants] Supabase Storage cascade delete 失敗、DB purge は続行',
+          stack: e instanceof Error ? e.stack : undefined,
+          context: {
+            kind: 'tenant_purge_storage_cascade_failed',
+            tenantId: t.id,
+            error: e instanceof Error ? e.message : String(e),
+          },
+        });
+      }
+
       // 単一 transaction で関連データを削除 (途中失敗時の半端状態を避ける)。
       // FK の依存関係順 (子 → 親) に削除する: child first, parent last。
       // 2026-05-09 (#18 方針変更): users を物理削除しない。
@@ -1795,6 +1842,34 @@ export async function purgeExpiredBeginnerTenants(
 
   for (const t of targets) {
     try {
+      // ★ ADR-0021 (2026-05-26): Supabase Storage cascade delete (= purgeOldDeletedTenants と同パターン)
+      //   90 日 Beginner 期限切れテナントも Supabase Storage 上のファイル本体を batch 削除する。
+      try {
+        const supabaseAttachments = await prisma.attachment.findMany({
+          where: { tenantId: t.id, storageProvider: 'supabase', storageObjectKey: { not: null } },
+          select: { storageObjectKey: true },
+        });
+        const objectKeys = supabaseAttachments
+          .map((a) => a.storageObjectKey)
+          .filter((k): k is string => k !== null);
+        if (objectKeys.length > 0) {
+          const { deleteObjects } = await import('@/lib/supabase-storage');
+          await deleteObjects(objectKeys);
+        }
+      } catch (e) {
+        await recordError({
+          severity: 'warn',
+          source: 'cron',
+          message: '[purgeExpiredBeginnerTenants] Supabase Storage cascade delete 失敗、DB purge は続行',
+          stack: e instanceof Error ? e.stack : undefined,
+          context: {
+            kind: 'tenant_purge_storage_cascade_failed',
+            tenantId: t.id,
+            error: e instanceof Error ? e.message : String(e),
+          },
+        });
+      }
+
       // 単一 transaction で業務データ削除 + tenant 論理削除セットを実行。
       // 削除順序は purgeOldDeletedTenants と同一: 子テーブル → 親テーブル → tenant 本体。
       const [

@@ -119,9 +119,15 @@ describe('checkAllCronHealth', () => {
   it('全 cron をチェックして配列で返す', async () => {
     const now = new Date('2026-05-19T12:00:00Z');
     // 全 cron に対して find が呼ばれる (success + failure で 2 回ずつ)
-    vi.mocked(prisma.cronExecutionLog.findFirst).mockResolvedValue({
-      startedAt: new Date('2026-05-19T00:00:00Z'),
-    } as never);
+    // ADR-0021: attachment-embedding は expectedMaxGapHours=2h と短いため、cron 名ごとに startedAt を分岐。
+    vi.mocked(prisma.cronExecutionLog.findFirst).mockImplementation((arg) => {
+      const cronName = (arg as { where: { cronName: string } }).where.cronName;
+      // attachment-embedding は 2h gap で stale → 直近 30 分前を返す
+      if (cronName === 'attachment-embedding') {
+        return Promise.resolve({ startedAt: new Date('2026-05-19T11:30:00Z') }) as never;
+      }
+      return Promise.resolve({ startedAt: new Date('2026-05-19T00:00:00Z') }) as never;
+    });
 
     const results = await checkAllCronHealth(now);
     // CRON_JOBS に登録されている全 cron 分の結果が返る
@@ -158,6 +164,10 @@ describe('listUnhealthyCrons', () => {
       if (cronName === 'tenant-monthly-reset') {
         return Promise.resolve(null) as never;
       }
+      // ADR-0021: attachment-embedding の 2h gap 制約に合わせて直近 30 分前を返す
+      if (cronName === 'attachment-embedding') {
+        return Promise.resolve({ startedAt: new Date('2026-05-19T11:30:00Z') }) as never;
+      }
       return Promise.resolve({ startedAt: new Date('2026-05-19T00:00:00Z') }) as never;
     });
 
@@ -169,9 +179,14 @@ describe('listUnhealthyCrons', () => {
 
   it('全て healthy なら空配列', async () => {
     const now = new Date('2026-05-19T12:00:00Z');
-    vi.mocked(prisma.cronExecutionLog.findFirst).mockResolvedValue({
-      startedAt: new Date('2026-05-19T00:00:00Z'),
-    } as never);
+    // ADR-0021: 同上、attachment-embedding は 30 分前で返す
+    vi.mocked(prisma.cronExecutionLog.findFirst).mockImplementation((arg) => {
+      const cronName = (arg as { where: { cronName: string } }).where.cronName;
+      if (cronName === 'attachment-embedding') {
+        return Promise.resolve({ startedAt: new Date('2026-05-19T11:30:00Z') }) as never;
+      }
+      return Promise.resolve({ startedAt: new Date('2026-05-19T00:00:00Z') }) as never;
+    });
 
     const unhealthy = await listUnhealthyCrons(now);
     expect(unhealthy).toHaveLength(0);

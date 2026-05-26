@@ -36,6 +36,13 @@ import { recordError } from '@/services/error-log.service';
 export const ATTACHMENT_EMBEDDING_BATCH_SIZE = 20;
 
 /**
+ * ★ KDD §5.X+145: stale 'generating' 行を再 pickup するまでの時間 (15 分)。
+ *   atomic claim で 'pending' → 'generating' に遷移後、Netlify Function crash 等で
+ *   process が完了しないと 'generating' のまま永久に残る。本値経過後に再 pickup する。
+ */
+export const STALE_GENERATING_MS = 15 * 60 * 1000;
+
+/**
  * 指数 backoff スケジュール (ADR-0021 §3.3)。
  *   retryCount=0 → 即座に再試行可
  *   retryCount=1 → 1 min 後
@@ -96,13 +103,20 @@ export async function processAttachmentEmbeddingQueue(
     unsupported: 0,
   };
 
-  // 1. 対象 fetch (pending + storageProvider='supabase' + deletedAt=null)
+  // 1. 対象 fetch (pending + stale generating + supabase + deletedAt=null + tenant active)
   //    意図的に全テナント横断 (= cron で全テナント対象、tenant 認可は不要)
+  //    ADR-0021: suspended / 論理削除済テナントは Voyage 予算リーク防止のため除外
+  //    KDD §5.X+145: stale 'generating' (= 15min 以上 claim 経過の中断 row) も再 pickup
+  const staleThreshold = new Date(now.getTime() - STALE_GENERATING_MS);
   const pendingAttachments = await prisma.attachment.findMany({
     where: {
-      embeddingStatus: 'pending',
       storageProvider: 'supabase',
       deletedAt: null,
+      tenant: { suspendedAt: null, deletedAt: null },
+      OR: [
+        { embeddingStatus: 'pending' },
+        { embeddingStatus: 'generating', embeddingLastRetryAt: { lt: staleThreshold } },
+      ],
     },
     select: {
       id: true,
@@ -110,6 +124,7 @@ export async function processAttachmentEmbeddingQueue(
       storageObjectKey: true,
       url: true,
       displayName: true,
+      embeddingStatus: true,
       embeddingRetryCount: true,
       embeddingLastRetryAt: true,
     },
@@ -120,6 +135,28 @@ export async function processAttachmentEmbeddingQueue(
   for (const a of pendingAttachments) {
     if (result.processed >= ATTACHMENT_EMBEDDING_BATCH_SIZE) break;
     if (!isReadyForRetry(a.embeddingRetryCount, a.embeddingLastRetryAt, now)) continue;
+
+    // ★ KDD §5.X+145: atomic claim で同時実行 cron による double-pickup 防止
+    //    findMany → process の間に他 cron 実行が同 row を pickup する race を遮断。
+    //    updateMany count=0 なら他に取られた / もう pending でない → skip。
+    //    pending → 'generating' は claim 成功、stale generating → 'generating' は再 claim 成功。
+    //    cross-tenant: 意図的に全テナント横断 (= 上記 findMany で tenant フィルタ済み、
+    //    id (UUID) 主キー指定なので越境不可能、cron で全テナント対象)。
+    const claim = await prisma.attachment.updateMany({
+      where: {
+        id: a.id,
+        deletedAt: null,
+        OR: [
+          { embeddingStatus: 'pending' },
+          { embeddingStatus: 'generating', embeddingLastRetryAt: { lt: staleThreshold } },
+        ],
+      },
+      data: { embeddingStatus: 'generating', embeddingLastRetryAt: now },
+    });
+    if (claim.count === 0) {
+      // 同じ row を別 cron 実行が先に取得済 → スキップ (= double-pickup 防止)
+      continue;
+    }
 
     result.processed += 1;
 

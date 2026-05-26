@@ -17,6 +17,8 @@ vi.mock('@/lib/db', () => ({
     attachment: {
       findMany: vi.fn(),
       update: vi.fn(),
+      // ADR-0021 (2026-05-26) KDD §5.X+145: atomic claim 用 updateMany
+      updateMany: vi.fn(),
     },
   },
 }));
@@ -51,6 +53,8 @@ const TENANT_ID = 'aaaaaaaa-1111-4111-8111-111111111111';
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // ADR-0021 (2026-05-26) KDD §5.X+145: 各テストで atomic claim 成功をデフォルトに
+  vi.mocked(prisma.attachment.updateMany).mockResolvedValue({ count: 1 } as never);
 });
 
 describe('isReadyForRetry — 指数 backoff', () => {
@@ -94,6 +98,7 @@ describe('processAttachmentEmbeddingQueue', () => {
     storageObjectKey: `tenants/${TENANT_ID}/project/x/uuid-spec.pdf`,
     url: `tenants/${TENANT_ID}/project/x/uuid-spec.pdf`,
     displayName: 'spec.pdf',
+    embeddingStatus: 'pending', // KDD §5.X+145: stale recovery 判定で必要
     embeddingRetryCount: 0,
     embeddingLastRetryAt: null,
   };

@@ -18,6 +18,8 @@ vi.mock('@/lib/db', () => ({
       findMany: vi.fn(),
       findUnique: vi.fn(),
       update: vi.fn(),
+      // ADR-0021 (2026-05-26) KDD §5.X+145: atomic claim
+      updateMany: vi.fn(),
     },
     $executeRaw: vi.fn(),
   },
@@ -46,6 +48,8 @@ const TENANT_ID = 'aaaaaaaa-1111-4111-8111-111111111111';
 beforeEach(() => {
   vi.clearAllMocks();
   _resetEmbeddingConcurrencyForTest();
+  // ADR-0021 (2026-05-26) KDD §5.X+145: atomic claim 成功をデフォルトに
+  vi.mocked(prisma.attachment.updateMany).mockResolvedValue({ count: 1 } as never);
 });
 
 describe('Scenario E: Attachment Embedding 全フロー', () => {
@@ -57,7 +61,7 @@ describe('Scenario E: Attachment Embedding 全フロー', () => {
       storageObjectKey: `tenants/${TENANT_ID}/project/x/uuid-spec.pdf`,
       url: `tenants/${TENANT_ID}/project/x/uuid-spec.pdf`,
       displayName: 'プロジェクト仕様書.pdf',
-      embeddingRetryCount: 0,
+      embeddingStatus: 'pending', embeddingRetryCount: 0,
       embeddingLastRetryAt: null,
     };
 
@@ -113,7 +117,7 @@ describe('Scenario E: Attachment Embedding 全フロー', () => {
       storageObjectKey: `tenants/${TENANT_ID}/project/x/uuid-photo.jpg`,
       url: `tenants/${TENANT_ID}/project/x/uuid-photo.jpg`,
       displayName: 'photo.jpg',
-      embeddingRetryCount: 0,
+      embeddingStatus: 'pending', embeddingRetryCount: 0,
       embeddingLastRetryAt: null,
     };
 
@@ -142,7 +146,7 @@ describe('Scenario E: Attachment Embedding 全フロー', () => {
       storageObjectKey: `tenants/${TENANT_ID}/project/x/uuid-spec.pdf`,
       url: `tenants/${TENANT_ID}/project/x/uuid-spec.pdf`,
       displayName: 'spec.pdf',
-      embeddingRetryCount: 0,
+      embeddingStatus: 'pending', embeddingRetryCount: 0,
       embeddingLastRetryAt: null,
     };
 
@@ -163,7 +167,7 @@ describe('Scenario E: Attachment Embedding 全フロー', () => {
 
     // attachment-embedding.service の handleFailure 内で retryCount 取得用 findUnique を mock
     vi.mocked(prisma.attachment.findUnique).mockResolvedValueOnce({
-      embeddingRetryCount: 0,
+      embeddingStatus: 'pending', embeddingRetryCount: 0,
     } as never);
 
     const result = await processAttachmentEmbeddingQueue();

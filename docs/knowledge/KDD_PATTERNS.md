@@ -15578,3 +15578,212 @@ PR で **直接** 変更していない画面 (project detail) が baseline mism
 - 関連 §: [E2E_LESSONS.md §4.52](../test/E2E_LESSONS.md#452-dashboard-header-に-top-nav-グループを追加すると-chromium-mobile-の-fullpage-snapshot-幅が成長する罠-pr-292--pr-i-で遭遇), [§4.56](../test/E2E_LESSONS.md#456-全ページに常時表示するグローバル-ui-要素-fab--floating-button-を追加すると-dashboard-系の全-visual-baseline-がモバイル-viewport-で-fail-する-pr-432-で遭遇) (前例: 全画面共通コンポーネント変更の伝播)
 - 該当コード: [src/components/attachments/attachment-list.tsx:328-347](../../src/components/attachments/attachment-list.tsx#L328-L347) (新規追加された upload UI セクション)
 - 該当 CI run: [GitHub Actions run 26429155365](https://github.com/teppei19980914/BusinessManagementPlatform/actions/runs/26429155365/job/77798624559?pr=446)
+
+## 5.X+145 背景処理 cron の double-pickup race ─ findMany→process の間に atomic claim が無いと同一 row を 2 つの cron 実行が処理する (PR #446 post-PR full-scan で検出)
+
+### 事象
+
+PR #446 で実装した `processAttachmentEmbeddingQueue` (cron 推奨間隔 5-15min) は素朴な findMany → process ループだった。cron A が findMany した直後、cron B も同じ pending 行を findMany する race が成立。両方が `embedAttachment` を実行し **Voyage API を 2 回叩き** (= 無料 API 枠の二重消費)、結果も先勝ち上書きで一方の generation が捨てられる。
+
+JSDoc には「embeddingStatus は generating に既に遷移済 (= 重複実行防止)」と書かれていたが、**実装は遷移していなかった**。docs と実装の乖離。
+
+### 根本原因
+
+「findMany → process」のループは典型的な TOCTOU (Time-of-check to time-of-use) 脆弱性。DB 上で「自分が処理を取った」ことを atomic にマークするステップが無いと、複数並行実行で必ず重複する。
+
+### 対応
+
+`updateMany` の WHERE 句に「pending かつ未取得」を組込み、count===0 (= 他に取られた) なら skip する atomic claim を導入。`generating` ステータスを claim マーカーとして使用。stale recovery (15min) で crash 時の永続詰まりも回避。
+
+### 再発防止
+
+- 「findMany → process」パターンを書く時は必ず atomic claim を併設。Prisma の `updateMany` を where に状態フィルタ込みで使う技法。
+- JSDoc と実装の乖離は危険なシグナル。「〜済」と書かれているコードが本当に書かれているか実装側で grep で確認する習慣。
+- stale recovery を必ず併設: claim マーカー方式は crash で row が「処理中」のまま詰まるリスクがある。lastRetryAt < now - N min で再 claim 許容することでリカバー性確保。
+
+### 関連
+
+- 関連 PR: PR #446 ADR-0021 ファイルストレージ従量課金 + Attachment Embedding
+- 該当コード: [src/services/attachment-embedding-cron.service.ts:101-150](../../src/services/attachment-embedding-cron.service.ts#L101-L150)
+
+---
+
+## 5.X+146 多段 transaction (Storage PUT → DB row 作成) の失敗時 cleanup は「全エラー」を対象にする ─ 特定例外のみだと orphan 残留する (PR #446)
+
+### 事象
+
+`POST /api/attachments/finalize` は: ① Pre-signed URL で PUT 済の Storage object を `getObjectInfo` で実サイズ確認 → ② DB transaction で Attachment row 作成 + `assertFileStorageLimitInTx` (50GB ハードキャップ) を実行する。
+
+旧実装の catch ブロックは「`FileStorageLimitExceededError` のみ cleanup」していたため、DB FK 制約違反 / prisma timeout / network blip では Storage object が orphan として残留。bucket に課金され、daily drift cron が検知するまで気付かない。
+
+### 対応
+
+catch ブロックは「失敗したら掃除」を例外型に依存させない設計に統一: `await deleteObject(input.objectKey).catch(()=>{})` を catch 冒頭で実行 → response は instanceof で分岐 → re-throw。
+
+### 再発防止
+
+- 「多段で副作用を残す処理」の cleanup は「失敗の理由を問わず実行」が原則。Storage upload / DB insert / 外部 API call が複合する箇所で必ず確認する。
+- catch 内の instanceof チェックは response 形のみに使う。cleanup の発動条件には使わない。
+- e instanceof X で response を変える → cleanup は固定実行 → re-throw の 3 段構造で書く。
+
+### 関連
+
+- 関連 PR: PR #446
+- 該当コード: [src/app/api/attachments/finalize/route.ts:209-220](../../src/app/api/attachments/finalize/route.ts#L209-L220)
+
+---
+
+## 5.X+147 同 Pre-signed URL の concurrent finalize で重複 Attachment row が作られる race ─ partial unique index で防御 (PR #446)
+
+### 事象
+
+upload → ブラウザ PUT → finalize のフローで、ブラウザ側のバグ/二重 click 等で **同じ objectKey に対する POST /finalize が 2 回連続発火** すると、`prisma.attachment.create` が 2 行作成され、`assertFileStorageLimitInTx` が両方で +sizeBytes するため **storageFileBytesUsed が 2 倍計上** される。
+
+### 根本原因
+
+`Attachment.storageObjectKey` カラムに unique constraint が無い。
+
+### 対応
+
+partial unique index (= 論理削除済を除く active 行のみで unique) を migration で追加。NULL は対象外、論理削除済 (deletedAt IS NOT NULL) は対象外、active な supabase 行のみで重複拒否。Prisma の `@unique` は partial に未対応のため raw SQL migration で作成する技法。
+
+### 再発防止
+
+- 外部システムの一意識別子を DB に保存する場合、まず unique constraint の必要性を疑う。Stripe customerId / Supabase objectKey / S3 key 等。
+- soft delete を採用しているテーブルでは partial unique index を検討。
+- 「ブラウザの二重 click」「ネットワーク再送」「冪等性キーの欠落」など、フロントエンド経由で同一リクエストが複数回届くシナリオを想像する。
+
+### 関連
+
+- 関連 PR: PR #446
+- 該当 migration: [prisma/migrations/20260526_file_storage_post_pr_hardening/migration.sql](../../prisma/migrations/20260526_file_storage_post_pr_hardening/migration.sql)
+
+---
+
+## 5.X+148 3 レイヤ請求モデルの SKU 追加は migration / snapshot / 表示 / CSV の 4 経路 同時 fix が必須 (PR #446)
+
+### 事象
+
+PR #446 で 新 SKU `storage-file-overage` を追加。ApiCallLog への INSERT、Tenant.currentMonthApiCostJpy increment、Stripe Meter queue 投入は正しく実装されたが、**TenantMonthlyUsageHistory (= 過去月 snapshot 永続化先) には独立カラムが追加されていなかった**。
+
+→ 過去月の super_admin CSV / テナント請求書 UI で「DB 容量 ¥10 / ファイルストレージ ¥30」のような **内訳が永久に判別不能**。後追いで column を増やしても、過去月の集計は復元不能 (= ApiCallLog 個別 re-aggregate しないと取れない)。
+
+### 根本原因
+
+3 レイヤ請求モデル (= memory `feedback_3layer_sync_filter`) の 1 レイヤ抜け:
+1. 現在値レイヤ (Tenant)
+2. 月初 cron snapshot レイヤ (TenantMonthlyUsageHistory) ← ここが抜けていた
+3. 履歴クエリレイヤ (UI / CSV)
+
+### 対応
+
+schema に `fileStorageBytesPeak` / `fileStorageOverageJpy` 列追加 + migration + saveMonthlyUsageSnapshots で per-SKU aggregate + listMonthlyUsageHistory DTO + CSV 列追加。
+
+### 再発防止
+
+新 SKU / 新 featureUnit を追加する PR では:
+- Tenant スキーマに現在値カラム追加 (現在値レイヤ)
+- TenantMonthlyUsageHistory にスナップショット列追加 (snapshot レイヤ)
+- migration with NULLABLE default (= 既存月への影響を NULL=0 解釈で吸収)
+- saveMonthlyUsageSnapshots で per-SKU aggregate
+- UI / CSV / 請求書テンプレートに新列追加 (表示レイヤ)
+- super_admin CSV (current + history) で内訳列追加 (super_admin レイヤ)
+
+### 関連
+
+- 関連 PR: PR #446
+- 関連 memory: `feedback_3layer_sync_filter`
+
+---
+
+## 5.X+149 外部ファイル parser に渡す buffer は size guard が必須 ─ pdf-parse / exceljs / mammoth はバイナリ全体を memory load する (PR #446)
+
+### 事象
+
+`extractText(fileName, buffer)` は対応拡張子なら parser に Buffer をそのまま渡すが、pdf-parse / exceljs / mammoth は **バイナリ全体をメモリ上にロードして処理** する。50MB Excel に数千の formula があると exceljs が中間構造を展開して **Netlify Function の 1GB メモリ上限を突破** → 502 でクラッシュ → embedding cron が永久リトライループ。
+
+### 対応
+
+`extractText` 入口で size guard を追加。50MB 超 buffer は parser に渡さず 'unsupported' を返却。実運用ではアップロード時に 50MB cap されているため通常は到達しないが defense-in-depth として extraction 層でも guard。
+
+### 再発防止
+
+- 3rd party の parser ライブラリは「streaming 対応か」を必ず確認。streaming 非対応なら入口で size guard が必須。
+- pdf-parse / exceljs / mammoth は streaming 非対応 (= バイナリ全体メモリ load) であることを KDD に明記。
+- 将来 大容量ファイル対応が要件化したら parser swap (streaming 対応版) を検討。
+
+### 関連
+
+- 関連 PR: PR #446
+- 該当コード: [src/services/file-text-extraction.service.ts:40-50](../../src/services/file-text-extraction.service.ts#L40-L50)
+
+---
+
+## 5.X+150 テナント物理削除時の外部ストレージ cascade 漏れ ─ GDPR 「忘れられる権利」違反 + bucket 容量リーク (PR #446)
+
+### 事象
+
+`purgeOldDeletedTenants` (= 90 日経過テナント物理削除) / `purgeExpiredBeginnerTenants` (= 180 日 Beginner 期限切れ) は DB の Attachment 行を `deleteMany` するが、**Supabase Storage 上の本体ファイルは削除されない**。
+
+結果: テナント削除から 90/180 日経過後、DB row は消えているのに bucket には PDF/Excel が残り続け、**運営者が課金され続ける** + **個人情報を含むファイルが永久保持される** (= GDPR 違反相当)。
+
+### 根本原因
+
+ADR-0020 までの実装は「全データは DB 内」前提だったため、purge は `deleteMany` だけで完結していた。ADR-0021 で外部ストレージ (Supabase Storage) を追加したが、purge 関数への cascade 追加を失念。
+
+### 対応
+
+`prisma.attachment.deleteMany` の前に Supabase Storage の batch delete を実行:
+
+```ts
+const attachments = await prisma.attachment.findMany({
+  where: { tenantId: t.id, storageProvider: 'supabase', storageObjectKey: { not: null } },
+  select: { storageObjectKey: true },
+});
+const keys = attachments.map(a => a.storageObjectKey).filter((k): k is string => k !== null);
+if (keys.length > 0) await deleteObjects(keys);
+```
+
+失敗時は recordError + DB 削除は続行 (= Supabase 一時不通でも purge 完了させる)。super_admin が後で手動 reconcile 可能。
+
+### 再発防止
+
+- **DB に保存しない外部リソース (Stripe Customer / Supabase Storage / Voyage cache 等) を扱う SKU を追加する PR では、tenant 物理削除フローの cascade を必ずチェック**。
+- 「DB の delete = 全部消える」前提のコードベースに外部ストレージを導入する時の典型罠。
+- GDPR / プライバシーポリシー監査の観点で、「個人データの完全削除可能性」を保つには cascade 漏れがあってはいけない。
+
+### 関連
+
+- 関連 PR: PR #446
+- 該当コード: [src/services/super-admin.service.ts:1627-1655](../../src/services/super-admin.service.ts#L1627-L1655) (purgeOldDeletedTenants), [src/services/super-admin.service.ts:1826-1855](../../src/services/super-admin.service.ts#L1826-L1855) (purgeExpiredBeginnerTenants)
+- 関連 memory: `feedback_tenant_isolation` (severity-1 個人情報)
+
+---
+
+## 5.X+151 cron 新設は cron-jobs.ts への登録漏れで watchdog の死角化する (PR #446)
+
+### 事象
+
+PR #446 で `/api/cron/attachment-embedding` を新設したが、`src/config/cron-jobs.ts` の `CRON_JOBS` 一覧への登録を失念。`cron-health.service.ts` の `detectStaleCron` watchdog は本 dict 内の `expectedMaxGapHours` を参照するため、**未登録 cron は「長期停止」を検知不能**。
+
+cron が silent stop (= cron-job.org の登録忘れ / 認証エラーで全 fail) しても super_admin に通知されず、添付ファイルの embedding が永久に pending のまま放置される事故になる。
+
+### 対応
+
+`cron-jobs.ts` の `CRON_JOBS` に `attachment-embedding` エントリ追加。`expectedMaxGapHours: 2` (= 15min 間隔 + 余裕)。
+
+### 再発防止
+
+新規 cron route (`src/app/api/cron/xxx/route.ts`) を追加する PR では:
+- [ ] `withCronExecutionLogging(name, ...)` の name を決定
+- [ ] **`src/config/cron-jobs.ts` の `CRON_JOBS` に同じ name で登録** (description / schedule / endpoint / expectedMaxGapHours)
+- [ ] `docs/operations/DEPLOYMENT.md` §6.1 の cron 一覧表に追記
+- [ ] cron-job.org への登録 (= ユーザ作業、release notes に記載)
+
+関連 memory: `feedback_cron_watchdog_pattern` (= 「未登録の cron は cron_execution_logs 自体が空のため status=failure では検知不能」)
+
+### 関連
+
+- 関連 PR: PR #446
+- 該当コード: [src/config/cron-jobs.ts:146-156](../../src/config/cron-jobs.ts#L146-L156)
+- 関連 memory: `feedback_cron_watchdog_pattern`

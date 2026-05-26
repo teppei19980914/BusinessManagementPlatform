@@ -146,7 +146,7 @@ describe('当月分 CSV (= 現在値、yearMonth パラメータなし)', () => 
         billingStreetAddress: '1-1', billingBuildingName: 'Aビル',
         billingPhoneNumber: '03-1234-5678', paymentMethod: 'invoice',
         storageAddonPlan: 'plus', storageBytesUsed: 100 * 1024 * 1024,
-        storageAddonMonthlyJpy: 500, totalCurrentMonthJpy: 2000,
+        storageAddonMonthlyJpy: 500, storageFileBytesPeakThisMonth: 0, totalCurrentMonthJpy: 2000,
         deletedAt: null,
       },
     ] as never);
@@ -193,7 +193,7 @@ describe('当月分 CSV (= 現在値、yearMonth パラメータなし)', () => 
         billingCity: null, billingStreetAddress: null, billingBuildingName: null,
         billingPhoneNumber: null, paymentMethod: 'invoice',
         storageAddonPlan: 'standard', storageBytesUsed: 0,
-        storageAddonMonthlyJpy: 0, totalCurrentMonthJpy: 0,
+        storageAddonMonthlyJpy: 0, storageFileBytesPeakThisMonth: 0, totalCurrentMonthJpy: 0,
         deletedAt: null,
       },
       {
@@ -208,7 +208,7 @@ describe('当月分 CSV (= 現在値、yearMonth パラメータなし)', () => 
         billingCity: null, billingStreetAddress: null, billingBuildingName: null,
         billingPhoneNumber: null, paymentMethod: 'invoice',
         storageAddonPlan: 'pro_storage', storageBytesUsed: 500 * 1024 * 1024,
-        storageAddonMonthlyJpy: 1500, totalCurrentMonthJpy: 24000,
+        storageAddonMonthlyJpy: 1500, storageFileBytesPeakThisMonth: 0, totalCurrentMonthJpy: 24000,
         deletedAt: null,
       },
     ] as never);
@@ -237,7 +237,7 @@ describe('当月分 CSV (= 現在値、yearMonth パラメータなし)', () => 
         billingCity: null, billingStreetAddress: null, billingBuildingName: null,
         billingPhoneNumber: null, paymentMethod: 'invoice',
         storageAddonPlan: 'standard', storageBytesUsed: 0,
-        storageAddonMonthlyJpy: 0, totalCurrentMonthJpy: 0,
+        storageAddonMonthlyJpy: 0, storageFileBytesPeakThisMonth: 0, totalCurrentMonthJpy: 0,
         deletedAt: null,
       },
     ] as never);
@@ -401,7 +401,7 @@ describe('includeDeleted フラグ (月途中解約の請求検知)', () => {
         billingCity: null, billingStreetAddress: null, billingBuildingName: null,
         billingPhoneNumber: null, paymentMethod: 'invoice',
         storageAddonPlan: 'standard', storageBytesUsed: 0,
-        storageAddonMonthlyJpy: 0, totalCurrentMonthJpy: 400,
+        storageAddonMonthlyJpy: 0, storageFileBytesPeakThisMonth: 0, totalCurrentMonthJpy: 400,
         deletedAt: new Date('2026-05-20T03:00:00.000Z'),
       },
     ] as never);
@@ -434,7 +434,7 @@ describe('includeDeleted フラグ (月途中解約の請求検知)', () => {
         billingCity: null, billingStreetAddress: null, billingBuildingName: null,
         billingPhoneNumber: null, paymentMethod: 'invoice',
         storageAddonPlan: 'standard', storageBytesUsed: 0,
-        storageAddonMonthlyJpy: 0, totalCurrentMonthJpy: 500,
+        storageAddonMonthlyJpy: 0, storageFileBytesPeakThisMonth: 0, totalCurrentMonthJpy: 500,
         deletedAt: null,
       },
     ] as never);
@@ -500,7 +500,7 @@ describe('★PR-V8 請求 regression★ CSV エクスポートは ApiCallLog SUM
         billingCity: null, billingStreetAddress: null, billingBuildingName: null,
         billingPhoneNumber: null, paymentMethod: 'invoice',
         storageAddonPlan: 'standard', storageBytesUsed: 0,
-        storageAddonMonthlyJpy: 0, totalCurrentMonthJpy: 5,
+        storageAddonMonthlyJpy: 0, storageFileBytesPeakThisMonth: 0, totalCurrentMonthJpy: 5,
         deletedAt: null,
       },
     ] as never);
@@ -556,7 +556,7 @@ describe('★PR-V8 請求 regression★ CSV エクスポートは ApiCallLog SUM
         billingCity: null, billingStreetAddress: null, billingBuildingName: null,
         billingPhoneNumber: null, paymentMethod: 'invoice',
         storageAddonPlan: 'standard', storageBytesUsed: 0,
-        storageAddonMonthlyJpy: 0, totalCurrentMonthJpy: 500,
+        storageAddonMonthlyJpy: 0, storageFileBytesPeakThisMonth: 0, totalCurrentMonthJpy: 500,
         deletedAt: null,
       },
     ] as never);
@@ -590,7 +590,7 @@ describe('★PR-V8 請求 regression★ CSV エクスポートは ApiCallLog SUM
         billingCity: null, billingStreetAddress: null, billingBuildingName: null,
         billingPhoneNumber: null, paymentMethod: 'invoice',
         storageAddonPlan: 'standard', storageBytesUsed: 0,
-        storageAddonMonthlyJpy: 0, totalCurrentMonthJpy: 250,
+        storageAddonMonthlyJpy: 0, storageFileBytesPeakThisMonth: 0, totalCurrentMonthJpy: 250,
         deletedAt: null,
       },
     ] as never);
