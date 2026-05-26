@@ -16,14 +16,18 @@
  *
  * 関連:
  *   - 定数: src/config/billing.ts (TAX_RATE / calculateInvoiceDueDate)
- *   - 価格: src/config/storage-addon.ts (ADDON_MONTHLY_JPY)
  *   - cron: src/app/api/cron/billing-monthly-aggregation/route.ts
+ *
+ * 履歴:
+ *   chore/storage-addon-backend-removal (2026-05-26):
+ *     ADR-0020 (DB 容量従量課金) + ADR-0021 (添付ファイル従量課金) で完全従量課金化済のため、
+ *     旧 storage_addon 4 段階プラン (Standard/Plus/Pro/Enterprise) の月額加算を撤去。
+ *     DB 容量 / ファイルストレージの従量課金は別 cron (storage-overage-billing) で算出する。
  */
 
 import { prisma } from '@/lib/db';
 import { MANAGEMENT_TENANT_ID } from '@/lib/tenant';
 import { getTenantMonthStart, getTenantNextMonthStart } from '@/lib/tenant-time';
-import { ADDON_MONTHLY_JPY, type StorageAddonPlan } from '@/config/storage-addon';
 import { calculateTaxJpy, calculateInvoiceDueDate } from '@/config/billing';
 // ADR-0019 (2026-05-24): 請求書生成の元集計は課金対象 featureUnit のみ対象。
 import { BILLABLE_FEATURE_UNITS } from '@/config/billing-feature-units';
@@ -63,7 +67,6 @@ export async function aggregateInvoiceBillingForMonth(
     select: {
       id: true,
       timezone: true,
-      storageAddonPlan: true,
       deletedAt: true,
     },
   });
@@ -103,11 +106,9 @@ export async function aggregateInvoiceBillingForMonth(
       });
       const apiSubtotalJpy = apiAgg._sum.costJpy ?? 0;
 
-      // Storage add-on 月額 (= 月途中ダウングレードでも当月分は丸ごと請求する単純化方針)
-      const storagePlan = (tenant.storageAddonPlan ?? 'standard') as StorageAddonPlan;
-      const storageJpy = ADDON_MONTHLY_JPY[storagePlan] ?? 0;
-
-      const subtotalJpy = apiSubtotalJpy + storageJpy;
+      // chore/storage-addon-backend-removal (2026-05-26): 旧 4 段階プラン月額の加算を撤去。
+      //   DB 容量 / ファイルストレージの従量課金は ADR-0020/0021 の cron で別途集計される。
+      const subtotalJpy = apiSubtotalJpy;
 
       // 「解約済 + ¥0 利用」は請求書発行不要 (= 無意味な空履歴を作らない)
       if (subtotalJpy === 0 && tenant.deletedAt != null) {

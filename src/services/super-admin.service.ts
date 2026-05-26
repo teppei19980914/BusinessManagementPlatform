@@ -48,12 +48,11 @@ import {
   getBeginnerDaysRemaining,
   type BeginnerExpiryState,
 } from './beginner-expiry.service';
-import {
-  ADDON_MONTHLY_JPY as SUPER_ADMIN_ADDON_MONTHLY_JPY,
-  computeStorageLimitBytes,
-  isStorageAddonPlan,
-} from '@/config/storage-addon';
+// chore/storage-addon-backend-removal (2026-05-26):
+//   ADR-0020/0021 で完全従量課金化済のため、旧 4 段階プラン (Standard/Plus/Pro/Enterprise) の
+//   月額固定費 + storageAddonPlan/storageAddonMonthlyJpy/storageLimitBytes 系列を撤去。
 import { getTenantCurrentYearMonth, getTenantMonthStart } from '@/lib/tenant-time';
+import { DB_CAPACITY_L3_HARD_CAP_BYTES } from '@/config/db-capacity-pricing';
 // PR-V8.2 (2026-05-19) ★請求 invariant★: getDefaultTenantOwnSummary / deleteTenant で SUM 真値
 import { reconcileTenantApiUsage } from './api-usage-recalc.service';
 // ADR-0020 (2026-05-25) R5 横断対応: 退会時 DB 容量超過の即時請求
@@ -103,13 +102,12 @@ export type TenantSummaryRow = {
   billingBuildingName: string | null;
   billingPhoneNumber: string | null;
   paymentMethod: string;
-  // Storage add-on (Phase 2 / 2026-05-08): 当月 CSV エクスポートで容量・追加課金を表示
-  storageAddonPlan: string;
+  // chore/storage-addon-backend-removal (2026-05-26): 旧 storage_addon プラン (Standard/Plus/Pro/Enterprise) は撤去。
+  // ストレージ使用量は ADR-0020/0021 で従量課金化済 (= storageBytesUsed + storageFileBytesPeakThisMonth)。
   storageBytesUsed: number;
-  storageAddonMonthlyJpy: number;
   /** ADR-0021 (2026-05-26): ファイルストレージ peak (バイト)、CSV 内訳列 + 想定請求額算出に使用 */
   storageFileBytesPeakThisMonth: number;
-  /** LLM 部分 + Storage add-on の合算課金。請求書生成根拠 */
+  /** LLM 利用料 (= ApiCallLog 集計、DB / file storage 超過の従量課金も含む)。請求書生成根拠 */
   totalCurrentMonthJpy: number;
 };
 
@@ -162,8 +160,6 @@ export async function listAllTenants(
       billingBuildingName: true,
       billingPhoneNumber: true,
       paymentMethod: true,
-      // Storage add-on (Phase 2 / 2026-05-08): CSV エクスポート用
-      storageAddonPlan: true,
       storageBytesUsed: true,
       // ADR-0021 (2026-05-26): ファイルストレージ peak (CSV 内訳列用)
       storageFileBytesPeakThisMonth: true,
@@ -211,19 +207,12 @@ export async function listAllTenants(
     billingBuildingName: t.billingBuildingName,
     billingPhoneNumber: t.billingPhoneNumber,
     paymentMethod: t.paymentMethod,
-    // Storage add-on (Phase 2 / 2026-05-08): 当月課金合計の請求書根拠
-    storageAddonPlan: isStorageAddonPlanStr(t.storageAddonPlan) ? t.storageAddonPlan : 'standard',
+    // chore/storage-addon-backend-removal (2026-05-26): 旧 4 段階プラン月額は撤去。
+    // 請求書根拠は ApiCallLog 集計のみ (= DB / file storage 超過の従量課金も含まれる)。
     storageBytesUsed: Number(t.storageBytesUsed),
-    storageAddonMonthlyJpy: SUPER_ADMIN_ADDON_MONTHLY_JPY[
-      isStorageAddonPlanStr(t.storageAddonPlan) ? t.storageAddonPlan : 'standard'
-    ],
     // ADR-0021 (2026-05-26): ファイルストレージ peak (= CSV 内訳列 + 想定請求額算出に使用)
     storageFileBytesPeakThisMonth: Number(t.storageFileBytesPeakThisMonth),
-    totalCurrentMonthJpy:
-      t.currentMonthApiCostJpy +
-      SUPER_ADMIN_ADDON_MONTHLY_JPY[
-        isStorageAddonPlanStr(t.storageAddonPlan) ? t.storageAddonPlan : 'standard'
-      ],
+    totalCurrentMonthJpy: t.currentMonthApiCostJpy,
   }));
 }
 
@@ -260,17 +249,14 @@ export type TenantDetail = TenantSummaryRow & {
     retrospectives: number;
     memos: number;
   };
-  // Storage add-on (Phase 2 / 2026-05-08): super_admin がテナント別容量と課金を参照
-  storageAddonPlan: string;
+  // chore/storage-addon-backend-removal (2026-05-26):
+  //   ADR-0020 (DB 容量従量課金) + ADR-0021 (ファイル添付従量課金) で完全従量課金化。
+  //   旧 4 段階プラン由来の storageAddonPlan / storageLimitBytes / storageAddonMonthlyJpy /
+  //   storageGracePeriodStartedAt / storageScheduledAt / storageScheduledNext は撤去。
   storageBytesUsed: number;
-  storageLimitBytes: number;
   storageUsageRatio: number;
-  storageAddonMonthlyJpy: number;
-  /** 当月の合計課金額 (LLM 部分 + Storage add-on) */
+  /** 当月の合計課金額 (ApiCallLog 集計 = DB / file storage 超過の従量課金も含む) */
   totalCurrentMonthJpy: number;
-  storageGracePeriodStartedAt: Date | null;
-  storageScheduledAt: Date | null;
-  storageScheduledNext: string | null;
 };
 
 export async function getTenantDetail(tenantId: string): Promise<TenantDetail | null> {
@@ -363,7 +349,8 @@ export async function getTenantDetail(tenantId: string): Promise<TenantDetail | 
       beginnerEverUpgraded: t.beginnerEverUpgraded,
     }),
     entityCounts: { projects, knowledges, risksIssues, retrospectives, memos },
-    // Storage add-on (Phase 2 / 2026-05-08): キャッシュ値ベースの容量・課金情報
+    // chore/storage-addon-backend-removal (2026-05-26): 旧 4 段階プラン由来の容量情報を撤去。
+    //   ADR-0020 ハードキャップは固定値 (50GB)、課金は ApiCallLog 集計に統合。
     ...computeStorageDetailFields(t),
     // ADR-0021 (2026-05-26): ファイルストレージ peak (= TenantSummaryRow 継承で必須)
     storageFileBytesPeakThisMonth: Number(t.storageFileBytesPeakThisMonth),
@@ -371,45 +358,27 @@ export async function getTenantDetail(tenantId: string): Promise<TenantDetail | 
 }
 
 /**
- * Storage add-on 関連フィールドを Tenant row から派生計算する内部 helper。
+ * Storage 関連フィールドを Tenant row から派生計算する内部 helper。
  * super_admin ダッシュボード表示用 (= キャッシュ値の表示で十分)。
  */
 function computeStorageDetailFields(t: {
   plan: string;
-  storageAddonPlan: string;
   storageBytesUsed: bigint;
-  storageGracePeriodStartedAt: Date | null;
-  scheduledStorageAddonAt: Date | null;
-  scheduledNextStorageAddon: string | null;
   currentMonthApiCostJpy: number;
 }): {
-  storageAddonPlan: string;
   storageBytesUsed: number;
-  storageLimitBytes: number;
   storageUsageRatio: number;
-  storageAddonMonthlyJpy: number;
   totalCurrentMonthJpy: number;
-  storageGracePeriodStartedAt: Date | null;
-  storageScheduledAt: Date | null;
-  storageScheduledNext: string | null;
 } {
-  const addonPlan = isStorageAddonPlanStr(t.storageAddonPlan) ? t.storageAddonPlan : 'standard';
-  // PR-3 (2026-05-15): 20MB + add-on 拡張 (LLM プラン非依存)
-  const limitBytes = computeStorageLimitBytes(addonPlan);
   const usedBytes = Number(t.storageBytesUsed);
-  const usageRatio = limitBytes > 0 ? usedBytes / limitBytes : 0;
-  const addonJpy = SUPER_ADMIN_ADDON_MONTHLY_JPY[addonPlan];
-  const totalJpy = t.currentMonthApiCostJpy + addonJpy;
+  // ADR-0020 ハードキャップ (50GB) を上限として使用率を算出
+  const usageRatio = DB_CAPACITY_L3_HARD_CAP_BYTES > 0
+    ? usedBytes / DB_CAPACITY_L3_HARD_CAP_BYTES
+    : 0;
   return {
-    storageAddonPlan: addonPlan,
     storageBytesUsed: usedBytes,
-    storageLimitBytes: limitBytes,
     storageUsageRatio: usageRatio,
-    storageAddonMonthlyJpy: addonJpy,
-    totalCurrentMonthJpy: totalJpy,
-    storageGracePeriodStartedAt: t.storageGracePeriodStartedAt,
-    storageScheduledAt: t.scheduledStorageAddonAt,
-    storageScheduledNext: t.scheduledNextStorageAddon,
+    totalCurrentMonthJpy: t.currentMonthApiCostJpy,
   };
 }
 
@@ -417,9 +386,7 @@ function isTenantPlanString(p: string): p is 'beginner' | 'expert' | 'pro' {
   return p === 'beginner' || p === 'expert' || p === 'pro';
 }
 
-function isStorageAddonPlanStr(p: string): p is 'standard' | 'plus' | 'pro_storage' | 'enterprise' {
-  return p === 'standard' || p === 'plus' || p === 'pro_storage' || p === 'enterprise';
-}
+// chore/storage-addon-backend-removal (2026-05-26): isStorageAddonPlanStr は撤去 (旧 4 段階プラン廃止)
 
 /**
  * Storage 使用量 TOP N テナントを取得 (super_admin ダッシュボード TOP のランキング表示用)。
@@ -434,14 +401,14 @@ export type StorageUsageTopRow = {
   tenantSeq: number | null;
   name: string;
   llmPlan: string;
-  storageAddonPlan: string;
   storageBytesUsed: number;
-  storageLimitBytes: number;
+  /** ADR-0020 50GB ハードキャップを上限とした使用率 (0.0-1.0+) */
   storageUsageRatio: number;
-  graceState: 'active' | 'grace_active' | 'write_blocked';
 };
 
 export async function listStorageUsageTop(limit: number = 10): Promise<StorageUsageTopRow[]> {
+  // chore/storage-addon-backend-removal (2026-05-26): 旧 4 段階プラン上限計算を撤去。
+  //   ADR-0020 で固定の 50GB ハードキャップ + 従量課金に統一。
   const tenants = await prisma.tenant.findMany({
     // 2026-05-09 (PR E / #19): 管理テナント + default テナントを除外
     where: { id: { notIn: SUPER_ADMIN_EXCLUDED_TENANT_IDS }, deletedAt: null },
@@ -452,37 +419,24 @@ export async function listStorageUsageTop(limit: number = 10): Promise<StorageUs
       tenantSeq: true,
       name: true,
       plan: true,
-      storageAddonPlan: true,
       storageBytesUsed: true,
-      storageGracePeriodStartedAt: true,
     },
   });
 
   return tenants.map((t) => {
-    // PR-3 (2026-05-15): llmPlan は表示用のみ (上限計算には使わない)
     const llmPlan = isTenantPlanString(t.plan) ? t.plan : 'beginner';
-    const addonPlan = isStorageAddonPlanStr(t.storageAddonPlan) ? t.storageAddonPlan : 'standard';
-    const limitBytes = computeStorageLimitBytes(addonPlan);
     const usedBytes = Number(t.storageBytesUsed);
-    const usageRatio = limitBytes > 0 ? usedBytes / limitBytes : 0;
-
-    let graceState: StorageUsageTopRow['graceState'] = 'active';
-    if (t.storageGracePeriodStartedAt) {
-      const elapsedDays =
-        (Date.now() - t.storageGracePeriodStartedAt.getTime()) / (1000 * 60 * 60 * 24);
-      graceState = elapsedDays >= 7 ? 'write_blocked' : 'grace_active';
-    }
+    const usageRatio = DB_CAPACITY_L3_HARD_CAP_BYTES > 0
+      ? usedBytes / DB_CAPACITY_L3_HARD_CAP_BYTES
+      : 0;
 
     return {
       id: t.id,
       tenantSeq: t.tenantSeq,
       name: t.name,
       llmPlan,
-      storageAddonPlan: addonPlan,
       storageBytesUsed: usedBytes,
-      storageLimitBytes: limitBytes,
       storageUsageRatio: usageRatio,
-      graceState,
     };
   });
 }
@@ -495,15 +449,11 @@ export type CrossTenantUsageSummary = {
   tenantCount: number;
   totalActiveUsers: number;
   totalCurrentMonthApiCalls: number;
-  /** LLM 部分の当月内部請求額合計 (Storage は除く) */
+  /** 当月の課金対象 ApiCallLog 集計 (DB / file storage 超過の従量課金も含む)。請求書根拠合計 */
   totalCurrentMonthApiCostJpy: number;
-  /**
-   * Storage add-on の月額合計 (= 顧客テナントの storage_addon_plan ベース固定額の総和)。
-   * 2026-05-11: 「ストレージプラン (容量 add-on) も考慮した費用 UI」の実装で追加。
-   */
-  totalCurrentMonthStorageJpy: number;
-  /** LLM + Storage 合算の当月請求額 (請求書の根拠合計) */
-  totalCurrentMonthCombinedJpy: number;
+  // chore/storage-addon-backend-removal (2026-05-26):
+  //   旧 4 段階プラン月額 (totalCurrentMonthStorageJpy / totalCurrentMonthCombinedJpy) は撤去。
+  //   ストレージ従量課金は totalCurrentMonthApiCostJpy に統合される。
   planDistribution: { plan: string; count: number }[];
 };
 
@@ -527,7 +477,7 @@ export async function getCrossTenantUsageSummary(): Promise<CrossTenantUsageSumm
     Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), 1),
   );
 
-  const [tenantCount, apiAgg, planGroups, activeUsersAgg, storageGroups] = await Promise.all([
+  const [tenantCount, apiAgg, planGroups, activeUsersAgg] = await Promise.all([
     prisma.tenant.count({ where: tenantWhere }),
     // ★ ApiCallLog SUM (真値) で集計
     // ADR-0019 (2026-05-24): super_admin ダッシュボードの「当月 API 利用」KPI は
@@ -554,27 +504,15 @@ export async function getCrossTenantUsageSummary(): Promise<CrossTenantUsageSumm
         tenantId: { notIn: SUPER_ADMIN_EXCLUDED_TENANT_IDS },
       },
     }),
-    // 2026-05-11: Storage add-on プラン別件数を取得し、固定月額の合計を計算
-    prisma.tenant.groupBy({
-      by: ['storageAddonPlan'],
-      where: tenantWhere,
-      _count: { id: true },
-    }),
   ]);
 
   const totalCurrentMonthApiCostJpy = apiAgg._sum.costJpy ?? 0;
-  const totalCurrentMonthStorageJpy = storageGroups.reduce((acc, g) => {
-    const plan = isStorageAddonPlanStr(g.storageAddonPlan) ? g.storageAddonPlan : 'standard';
-    return acc + SUPER_ADMIN_ADDON_MONTHLY_JPY[plan] * g._count.id;
-  }, 0);
 
   return {
     tenantCount,
     totalActiveUsers: activeUsersAgg,
     totalCurrentMonthApiCalls: apiAgg._count._all,
     totalCurrentMonthApiCostJpy,
-    totalCurrentMonthStorageJpy,
-    totalCurrentMonthCombinedJpy: totalCurrentMonthApiCostJpy + totalCurrentMonthStorageJpy,
     planDistribution: planGroups.map((p) => ({ plan: p.plan, count: p._count.id })),
   };
 }
@@ -604,9 +542,8 @@ export type DefaultTenantOwnSummary = {
   currentMonthApiCallCount: number;
   /** 内部記録値。Default テナントは請求対象外のため表示は「(請求対象外)」扱い */
   currentMonthApiCostJpy: number;
-  storageAddonPlan: string;
   storageBytesUsed: number;
-  storageLimitBytes: number;
+  /** ADR-0020 50GB ハードキャップ上限の使用率 */
   storageUsageRatio: number;
 };
 
@@ -622,7 +559,6 @@ export async function getDefaultTenantOwnSummary(): Promise<DefaultTenantOwnSumm
       createdAt: true,
       currentMonthApiCallCount: true,
       currentMonthApiCostJpy: true,
-      storageAddonPlan: true,
       storageBytesUsed: true,
     },
   });
@@ -637,13 +573,12 @@ export async function getDefaultTenantOwnSummary(): Promise<DefaultTenantOwnSumm
     reconcileTenantApiUsage(DEFAULT_TENANT_ID).catch(() => null),
   ]);
 
-  // PR-3 (§5.X+27, 2026-05-15): computeStorageLimitBytes は LLM プランから切り離され
-  //   `addonPlan` (Standard 20MB + add-on extra) のみで計算する 1 引数シグネチャ。
-  //   旧 2 引数呼び出しが merge resolution で残存していたため修正 (PR #337 fix)。
-  const addonPlan = isStorageAddonPlanStr(t.storageAddonPlan) ? t.storageAddonPlan : 'standard';
-  const limitBytes = computeStorageLimitBytes(addonPlan);
+  // chore/storage-addon-backend-removal (2026-05-26): 旧 4 段階プラン上限を撤去、
+  //   ADR-0020 の固定 50GB ハードキャップを上限として使用率算出。
   const usedBytes = Number(t.storageBytesUsed);
-  const usageRatio = limitBytes > 0 ? usedBytes / limitBytes : 0;
+  const usageRatio = DB_CAPACITY_L3_HARD_CAP_BYTES > 0
+    ? usedBytes / DB_CAPACITY_L3_HARD_CAP_BYTES
+    : 0;
 
   return {
     id: t.id,
@@ -656,9 +591,7 @@ export async function getDefaultTenantOwnSummary(): Promise<DefaultTenantOwnSumm
     // ★ PR-V8.2: ApiCallLog SUM (真値) を優先。
     currentMonthApiCallCount: reconcile?.reconciledCallCount ?? t.currentMonthApiCallCount,
     currentMonthApiCostJpy: reconcile?.reconciledCostJpy ?? t.currentMonthApiCostJpy,
-    storageAddonPlan: addonPlan,
     storageBytesUsed: usedBytes,
-    storageLimitBytes: limitBytes,
     storageUsageRatio: usageRatio,
   };
 }
@@ -861,15 +794,13 @@ export type MonthlyUsageHistoryRow = {
   apiCallCount: number;
   apiCostJpy: number;
   activeUserCount: number;
-  // Storage add-on (Phase 2 / 2026-05-08): 履歴 snapshot に Storage 関連を追加
+  // chore/storage-addon-backend-removal (2026-05-26): 旧 4 段階プラン (storageAddonPlan / storageAddonJpy) は撤去
   storageBytesUsed: number;
-  storageAddonPlan: string;
-  storageAddonJpy: number;
   /** ADR-0021 (2026-05-26): 月初 snapshot 時点のファイルストレージ peak (バイト)、未稼働月は null */
   fileStorageBytesPeak: number | null;
   /** ADR-0021 (2026-05-26): 当月の storage-file-overage 課金額 (円)、未稼働月は null */
   fileStorageOverageJpy: number | null;
-  /** 当月の合計課金 (apiCostJpy + storageAddonJpy)。請求書根拠 */
+  /** 当月の合計課金 (ApiCallLog 集計 = DB / file storage 超過の従量課金も含む)。請求書根拠 */
   totalJpy: number;
   /**
    * 2026-05-14: 親テナントの解約日 (null = アクティブ、Date = 解約済)。
@@ -920,10 +851,8 @@ export async function listMonthlyUsageHistory(
     apiCallCount: r.apiCallCount,
     apiCostJpy: r.apiCostJpy,
     activeUserCount: r.activeUserCount,
-    // Storage add-on (Phase 2 / 2026-05-08): スナップショット時点の値
+    // chore/storage-addon-backend-removal (2026-05-26): 旧 4 段階プラン snapshot は撤去
     storageBytesUsed: Number(r.storageBytesUsed),
-    storageAddonPlan: r.storageAddonPlan,
-    storageAddonJpy: r.storageAddonJpy,
     // ADR-0021 (2026-05-26): ファイルストレージ peak + 当月課金 (snapshot 時点)
     fileStorageBytesPeak: r.fileStorageBytesPeak != null ? Number(r.fileStorageBytesPeak) : null,
     fileStorageOverageJpy: r.fileStorageOverageJpy ?? null,
@@ -1131,7 +1060,6 @@ export async function deleteTenant(
       timezone: true,
       currentMonthApiCallCount: true,
       currentMonthApiCostJpy: true,
-      storageAddonPlan: true,
       storageBytesUsed: true,
       // ADR-0020 (2026-05-25): 退会時 DB 容量超過の即時請求用
       storageBytesPeakThisMonth: true,
@@ -1176,10 +1104,8 @@ export async function deleteTenant(
     // 後で super_admin が backfillDeletedTenantDbCapacity で手動補填可能。
   }
 
-  // 解約時の yearMonth スナップショットに使うアドオン情報を計算 (TZ 含めて)
-  const rawAddonPlan = tenant.storageAddonPlan ?? 'standard';
-  const storageAddonPlanSafe = isStorageAddonPlan(rawAddonPlan) ? rawAddonPlan : 'standard';
-  const storageAddonJpy = SUPER_ADMIN_ADDON_MONTHLY_JPY[storageAddonPlanSafe];
+  // 解約時の yearMonth スナップショット用 (TZ 含めて)
+  // chore/storage-addon-backend-removal (2026-05-26): 旧 4 段階プラン月額の加算は撤去
   const yearMonth = getTenantCurrentYearMonth(now, tenant.timezone);
 
   // ★ PR-V8.2 (2026-05-19) 請求 invariant: 解約時 snapshot も ApiCallLog SUM (真値) ベース。
@@ -1202,7 +1128,7 @@ export async function deleteTenant(
   });
   const reconciledCallCount = apiAgg._count._all;
   const reconciledCostJpy = apiAgg._sum.costJpy ?? 0;
-  const totalJpy = reconciledCostJpy + storageAddonJpy;
+  const totalJpy = reconciledCostJpy;
 
   // 単一 transaction で一気に論理削除 (途中失敗で部分削除の不整合を避ける)
   // Tenant.update / auditLog.create / tenantMonthlyUsageHistory.upsert の戻り値は破棄。
@@ -1275,8 +1201,6 @@ export async function deleteTenant(
         plan: tenant.plan,
         activeUserCount,
         storageBytesUsed: tenant.storageBytesUsed,
-        storageAddonPlan: storageAddonPlanSafe,
-        storageAddonJpy,
         totalJpy,
       },
       update: {
@@ -1285,8 +1209,6 @@ export async function deleteTenant(
         plan: tenant.plan,
         activeUserCount,
         storageBytesUsed: tenant.storageBytesUsed,
-        storageAddonPlan: storageAddonPlanSafe,
-        storageAddonJpy,
         totalJpy,
       },
     }),

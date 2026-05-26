@@ -341,8 +341,6 @@ describe('runTenantMonthlyReset (バッチ全体)', () => {
       planAppliedCount: 1,
       invalidPlanSkippedCount: 1,
       snapshotSavedCount: 2,
-      storageAddonAppliedCount: 0,
-      storageAddonSkippedCount: 0,
       purgedTenantCount: 0,
       purgedRowCount: 0,
       // 2026-05-14: 縮退モード確定仕様 — runMonthlyEmbeddingBackfill のスタブが空を返す

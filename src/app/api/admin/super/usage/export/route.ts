@@ -138,10 +138,8 @@ const HEADERS_CURRENT = [
   'drift費用差分(円)',
   'アクティブユーザ数',
   '月次予算上限(円)',
-  // Storage add-on (Phase 2 / 2026-05-08): 容量と追加課金 + 合計
-  'Storageプラン',
+  // chore/storage-addon-backend-removal (2026-05-26): 旧 4 段階プラン Storage 列は撤去
   'Storage使用量(バイト)',
-  'Storage月額(円)',
   // ADR-0021 (2026-05-26): ファイルストレージ peak + 想定請求額 (= 当月 cron 確定前の予測値)
   'ファイルストレージ peak (バイト)',
   'ファイルストレージ超過 (円・想定)',
@@ -170,10 +168,8 @@ const HEADERS_HISTORY = [
   'API呼出回数',
   'API課金額(円)',
   'アクティブユーザ数',
-  // Storage add-on (Phase 2 / 2026-05-08): スナップショット時点の Storage 情報
-  'Storageプラン',
+  // chore/storage-addon-backend-removal (2026-05-26): 旧 4 段階プラン Storage 列は撤去
   'Storage使用量(バイト)',
-  'Storage月額(円)',
   // ADR-0021 (2026-05-26): スナップショット時点のファイルストレージ peak + 当月課金
   'ファイルストレージ peak (バイト)',
   'ファイルストレージ超過 (円)',
@@ -216,15 +212,13 @@ function buildCurrentMonthCsv(
         (driftCostDiff >= 0 ? '+' : '') + driftCostDiff.toString(),
         t.activeUserCount.toString(),
         t.monthlyBudgetCapJpy?.toString() ?? '',
-        // Storage add-on
-        csvEscape(t.storageAddonPlan),
+        // chore/storage-addon-backend-removal (2026-05-26): 旧 4 段階プラン列は撤去
         t.storageBytesUsed.toString(),
-        t.storageAddonMonthlyJpy.toString(),
         // ADR-0021 (2026-05-26): ファイルストレージ peak + 想定請求額 (cron 確定前の予測)
         t.storageFileBytesPeakThisMonth.toString(),
         calculateFileStorageOverageJpy(BigInt(t.storageFileBytesPeakThisMonth)).toString(),
-        // 合計月額: SUM ベースで再計算 (= drift 分を反映)
-        (sumCostJpy + t.storageAddonMonthlyJpy).toString(),
+        // 合計月額: SUM ベース (= DB / file storage 超過の従量課金も含む)
+        sumCostJpy.toString(),
         // 2026-05-14: 解約日 (空欄=アクティブ)
         t.deletedAt != null ? t.deletedAt.toISOString() : '',
         // P-G: 請求先列 / PR C (2026-05-09): 個人法人 + 構造化住所
@@ -257,10 +251,8 @@ function buildHistoryCsv(rows: Awaited<ReturnType<typeof listMonthlyUsageHistory
         r.apiCallCount.toString(),
         r.apiCostJpy.toString(),
         r.activeUserCount.toString(),
-        // Storage add-on (Phase 2): snapshot 時点の Storage 関連
-        csvEscape(r.storageAddonPlan),
+        // chore/storage-addon-backend-removal (2026-05-26): 旧 4 段階プラン列は撤去
         r.storageBytesUsed.toString(),
-        r.storageAddonJpy.toString(),
         // ADR-0021 (2026-05-26): スナップショット時点のファイルストレージ peak + 当月課金
         (r.fileStorageBytesPeak ?? 0).toString(),
         (r.fileStorageOverageJpy ?? 0).toString(),

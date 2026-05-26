@@ -161,45 +161,27 @@ export function getStripeWebhookSecret(): string {
  *
  * テスト/本番で異なる ID を持つため、環境ごとに Netlify で別途登録する。
  */
+// chore/storage-addon-backend-removal (2026-05-26):
+//   ADR-0020/0021 で従量課金化されたため、storagePlus / storagePro Price ID と
+//   getStoragePriceId 関数は撤去。Stripe Subscription は Haiku / Sonnet の 2 Meter のみ。
+//   STRIPE_PRICE_STORAGE_PLUS / STRIPE_PRICE_STORAGE_PRO 環境変数も不要に。
 export type StripePriceConfig = {
   haiku: string;
   sonnet: string;
-  storagePlus: string;
-  storagePro: string;
 };
 
 export function getStripePriceConfig(): StripePriceConfig {
   const haiku = process.env['STRIPE_PRICE_HAIKU'];
   const sonnet = process.env['STRIPE_PRICE_SONNET'];
-  const storagePlus = process.env['STRIPE_PRICE_STORAGE_PLUS'];
-  const storagePro = process.env['STRIPE_PRICE_STORAGE_PRO'];
 
-  if (haiku == null || sonnet == null || storagePlus == null || storagePro == null) {
+  if (haiku == null || sonnet == null) {
     throw new Error(
       'STRIPE_PRICE_* environment variables are not all configured. ' +
-        'Required: STRIPE_PRICE_HAIKU, STRIPE_PRICE_SONNET, STRIPE_PRICE_STORAGE_PLUS, STRIPE_PRICE_STORAGE_PRO',
+        'Required: STRIPE_PRICE_HAIKU, STRIPE_PRICE_SONNET',
     );
   }
 
-  return { haiku, sonnet, storagePlus, storagePro };
-}
-
-/**
- * Storage add-on plan 名から対応する Stripe Price ID を解決。
- *
- * - 'standard' = ¥0 (= Stripe Subscription Item を作らない)
- * - 'plus' = STRIPE_PRICE_STORAGE_PLUS
- * - 'pro_storage' = STRIPE_PRICE_STORAGE_PRO
- *
- * @returns Price ID または null (= standard は Stripe 不要)
- */
-export function getStoragePriceId(storageAddonPlan: string): string | null {
-  if (storageAddonPlan === 'standard') return null;
-  const config = getStripePriceConfig();
-  if (storageAddonPlan === 'plus') return config.storagePlus;
-  if (storageAddonPlan === 'pro_storage') return config.storagePro;
-  // 想定外値は null (= Subscription Item を作らない、安全側)
-  return null;
+  return { haiku, sonnet };
 }
 
 /**
