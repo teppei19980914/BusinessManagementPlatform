@@ -765,6 +765,8 @@ export async function bulkUpdateRisksVisibilityFromList(
     select: {
       id: true,
       reporterId: true,
+      // feat/asset-assignee-expansion (2026-05-26): 担当者も bulk 対象に
+      assigneeId: true,
       visibility: true,
       state: true,
       title: true,
@@ -777,7 +779,11 @@ export async function bulkUpdateRisksVisibilityFromList(
     },
   });
   const skippedNotFound = ids.length - targets.length;
-  const owned = targets.filter((t) => t.reporterId === viewerUserId);
+  // feat/asset-assignee-expansion (2026-05-26): 作成者 OR 担当者を bulk 対象に拡張。
+  //   単発 updateRisk と認可ロジックを揃え、引継ぎ後の担当者が UI から bulk 操作可能に。
+  const owned = targets.filter(
+    (t) => t.reporterId === viewerUserId || t.assigneeId === viewerUserId,
+  );
   const skippedNotOwned = targets.length - owned.length;
   const ownedIds = owned.map((t) => t.id);
 
@@ -785,8 +791,17 @@ export async function bulkUpdateRisksVisibilityFromList(
     return { updatedIds: [], skippedNotOwned, skippedNotFound, embeddingsGenerated: 0 };
   }
 
+  // feat/asset-assignee-expansion (2026-05-26): updateMany where も「作成者 OR 担当者」で
+  //   二重防御 (== ownedIds の DB レイヤ再検証、悪意ある id 注入を弾く)。
   await prisma.riskIssue.updateMany({
-    where: { id: { in: ownedIds }, tenantId: viewerTenantId, reporterId: viewerUserId },
+    where: {
+      id: { in: ownedIds },
+      tenantId: viewerTenantId,
+      OR: [
+        { reporterId: viewerUserId },
+        { assigneeId: viewerUserId },
+      ],
+    },
     data: { visibility, updatedBy: viewerUserId },
   });
 

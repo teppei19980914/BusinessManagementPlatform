@@ -55,7 +55,7 @@ export type KnowledgeDTO = {
   creatorName?: string;
   // feat/asset-assignee-expansion (2026-05-26): 担当者 (作成者と並ぶ編集権限保持者)
   assigneeId: string | null;
-  assigneeName?: string | null;
+  assigneeName: string | null;
   createdAt: string;
   updatedAt: string;
   projectIds?: string[];
@@ -697,6 +697,8 @@ export async function bulkUpdateKnowledgeVisibilityFromList(
     select: {
       id: true,
       createdBy: true,
+      // feat/asset-assignee-expansion (2026-05-26): 担当者も bulk 対象に
+      assigneeId: true,
       title: true,
       visibility: true,
       background: true,
@@ -707,7 +709,10 @@ export async function bulkUpdateKnowledgeVisibilityFromList(
     },
   });
   const skippedNotFound = ids.length - targets.length;
-  const owned = targets.filter((t) => t.createdBy === viewerUserId);
+  // feat/asset-assignee-expansion (2026-05-26): 作成者 OR 担当者を bulk 対象に拡張。
+  const owned = targets.filter(
+    (t) => t.createdBy === viewerUserId || t.assigneeId === viewerUserId,
+  );
   const skippedNotOwned = targets.length - owned.length;
 
   // 2026-05-11: 「自分のみ」(draft) で作られたタイトル空のナレッジを一括で「全メンバー」(public)
@@ -728,9 +733,17 @@ export async function bulkUpdateKnowledgeVisibilityFromList(
 
   // updateMany は relation connect 構文を受け付けないため scalar `updatedBy` を直接セットする
   // (単発 updateKnowledge の `updater: { connect }` 経路とは別経路、§5.21 と同方針)
-  // 2026-05-12 severity-1 防御: tenantId / createdBy 明示
+  // 2026-05-12 severity-1 防御: tenantId / 作成者 OR 担当者 明示 (二重防御)
+  // feat/asset-assignee-expansion (2026-05-26): 担当者も対象、OR 句で DB レイヤ再検証
   await prisma.knowledge.updateMany({
-    where: { id: { in: ownedIds }, tenantId: viewerTenantId, createdBy: viewerUserId },
+    where: {
+      id: { in: ownedIds },
+      tenantId: viewerTenantId,
+      OR: [
+        { createdBy: viewerUserId },
+        { assigneeId: viewerUserId },
+      ],
+    },
     data: { visibility, updatedBy: viewerUserId },
   });
 

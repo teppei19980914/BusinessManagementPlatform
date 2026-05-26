@@ -19,5 +19,5 @@
 --   - UI         : src/app/(dashboard)/projects/[projectId]/risks/risks-client.tsx + src/components/dialogs/risk-edit-dialog.tsx
 --   - CSV        : sync-import を 17 列に拡張 (旧 16 列も互換受入)
 --   - docs       : docs/specification/SCREENS.md / DATA_MODEL.md / GLOSSARY.md
-ALTER TABLE "risk_issues"
+ALTER TABLE "risks_issues"
   ADD COLUMN "occurrence" TEXT;

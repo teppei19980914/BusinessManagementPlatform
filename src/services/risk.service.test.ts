@@ -828,9 +828,9 @@ describe('bulkUpdateRisksVisibilityFromList', () => {
 
   it('reporter 本人のレコードのみ visibility 更新される (他人の混入は skip)', async () => {
     vi.mocked(prisma.riskIssue.findMany).mockResolvedValue([
-      { id: 'r-1', reporterId: 'u-1' },
-      { id: 'r-2', reporterId: 'u-1' },
-      { id: 'r-3', reporterId: 'u-OTHER' }, // 他人
+      { id: 'r-1', reporterId: 'u-1', assigneeId: null },
+      { id: 'r-2', reporterId: 'u-1', assigneeId: null },
+      { id: 'r-3', reporterId: 'u-OTHER', assigneeId: null }, // 他人
     ] as never);
     vi.mocked(prisma.riskIssue.updateMany).mockResolvedValue({ count: 2 } as never);
 
@@ -855,12 +855,37 @@ describe('bulkUpdateRisksVisibilityFromList', () => {
     });
 
     const updateCall = vi.mocked(prisma.riskIssue.updateMany).mock.calls[0][0];
+    // feat/asset-assignee-expansion (2026-05-26): where は OR で「作成者 OR 担当者」
     expect(updateCall.where).toMatchObject({
       id: { in: ['r-1', 'r-2'] },
       tenantId: 't-1',
-      reporterId: 'u-1',
+      OR: [
+        { reporterId: 'u-1' },
+        { assigneeId: 'u-1' },
+      ],
     });
     expect(updateCall.data).toEqual({ visibility: 'public', updatedBy: 'u-1' });
+  });
+
+  // feat/asset-assignee-expansion (2026-05-26): 担当者も bulk visibility 更新可能
+  it('担当者本人のレコードも visibility 更新対象に含まれる', async () => {
+    vi.mocked(prisma.riskIssue.findMany).mockResolvedValue([
+      { id: 'r-1', reporterId: 'u-creator', assigneeId: 'u-1' }, // u-1 が担当者
+      { id: 'r-2', reporterId: 'u-1', assigneeId: null },        // u-1 が作成者
+      { id: 'r-3', reporterId: 'u-OTHER', assigneeId: 'u-OTHER' }, // 第3者
+    ] as never);
+    vi.mocked(prisma.riskIssue.updateMany).mockResolvedValue({ count: 2 } as never);
+
+    const r = await bulkUpdateRisksVisibilityFromList(
+      'p-1',
+      ['r-1', 'r-2', 'r-3'],
+      'public',
+      'u-1',
+      't-1',
+    );
+
+    expect(r.updatedIds).toEqual(['r-1', 'r-2']);
+    expect(r.skippedNotOwned).toBe(1);
   });
 
   it('visibility=draft (公開撤回) も同じ経路で動く', async () => {

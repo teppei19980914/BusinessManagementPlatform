@@ -173,6 +173,13 @@ export async function createMemo(
 ): Promise<MemoDTO> {
   // 2026-05-09 feedback Phase 2-4: data.tenantId を明示し schema DB DEFAULT 暗黙依存を解消。
   const visibility = input.visibility ?? 'private';
+  // feat/asset-assignee-expansion (2026-05-26) severity-1 防御:
+  //   private memo に他人 (= userId 以外) を assignee 指定すると、その担当者は memo を
+  //   参照不可になる (private は本人のみ閲覧)。UI 上は selector 非表示だが API 直叩きを
+  //   弾くため service 層で reject する (memo.service.ts migration コメントの方針実装)。
+  if (visibility === 'private' && input.assigneeId && input.assigneeId !== userId) {
+    throw new Error('PRIVATE_MEMO_ASSIGNEE_FORBIDDEN');
+  }
   const created = await prisma.memo.create({
     data: {
       tenantId,
@@ -248,6 +255,22 @@ export async function updateMemo(
     if (!effectiveTitle || effectiveTitle.trim().length === 0) {
       throw new Error('PUBLIC_REQUIRES_TITLE');
     }
+  }
+
+  // feat/asset-assignee-expansion (2026-05-26) severity-1 防御:
+  //   effective visibility が 'private' になる更新では、他人 assignee を許容しない。
+  //   - input.visibility と input.assigneeId の組合せ、または DB 既存値とのマージ後で判定
+  //   - 担当者は private memo を参照不可になるため、authorization 上は edit 可能でも
+  //     業務上は不整合 (作成者しか見えないのに編集権限を持つ意味がない)。
+  const effectiveVisibility = input.visibility ?? existing.visibility;
+  const effectiveAssigneeId =
+    input.assigneeId !== undefined ? input.assigneeId : existing.assigneeId;
+  if (
+    effectiveVisibility === 'private' &&
+    effectiveAssigneeId &&
+    effectiveAssigneeId !== existing.userId
+  ) {
+    throw new Error('PRIVATE_MEMO_ASSIGNEE_FORBIDDEN');
   }
 
   // 2026-05-15: text フィールドが「実値として変わったか」を比較で判定。

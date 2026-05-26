@@ -615,6 +615,8 @@ export async function bulkUpdateRetrospectivesVisibilityFromList(
     select: {
       id: true,
       createdBy: true,
+      // feat/asset-assignee-expansion (2026-05-26): 担当者も bulk 対象に
+      assigneeId: true,
       visibility: true,
       planSummary: true,
       actualSummary: true,
@@ -625,7 +627,10 @@ export async function bulkUpdateRetrospectivesVisibilityFromList(
     },
   });
   const skippedNotFound = ids.length - targets.length;
-  const owned = targets.filter((t) => t.createdBy === viewerUserId);
+  // feat/asset-assignee-expansion (2026-05-26): 作成者 OR 担当者を bulk 対象に拡張。
+  const owned = targets.filter(
+    (t) => t.createdBy === viewerUserId || t.assigneeId === viewerUserId,
+  );
   const skippedNotOwned = targets.length - owned.length;
   const ownedIds = owned.map((t) => t.id);
 
@@ -633,9 +638,17 @@ export async function bulkUpdateRetrospectivesVisibilityFromList(
     return { updatedIds: [], skippedNotOwned, skippedNotFound, embeddingsGenerated: 0 };
   }
 
+  // 2026-05-12 severity-1 防御: tenantId / 作成者 OR 担当者 明示 (DB レイヤ二重防御)
+  // feat/asset-assignee-expansion (2026-05-26): 担当者も対象、OR 句で再検証
   await prisma.retrospective.updateMany({
-    // 2026-05-12 severity-1 防御: tenantId / createdBy 明示
-    where: { id: { in: ownedIds }, tenantId: viewerTenantId, createdBy: viewerUserId },
+    where: {
+      id: { in: ownedIds },
+      tenantId: viewerTenantId,
+      OR: [
+        { createdBy: viewerUserId },
+        { assigneeId: viewerUserId },
+      ],
+    },
     data: { visibility, updatedBy: viewerUserId },
   });
 

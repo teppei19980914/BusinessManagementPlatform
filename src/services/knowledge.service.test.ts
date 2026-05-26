@@ -721,6 +721,21 @@ describe('bulkUpdateKnowledgeVisibilityFromList', () => {
     expect(r.skippedEmptyTitle).toBe(1);
   });
 
+  // feat/asset-assignee-expansion (2026-05-26): 担当者も bulk visibility 更新対象
+  it('担当者本人のレコードも bulk 更新対象に含まれる', async () => {
+    vi.mocked(prisma.knowledge.findMany).mockResolvedValue([
+      { id: 'k-1', createdBy: 'u-creator', assigneeId: 'u-1', title: 't' }, // u-1 が担当者
+      { id: 'k-2', createdBy: 'u-1', assigneeId: null, title: 't' },        // u-1 が作成者
+      { id: 'k-3', createdBy: 'u-OTHER', assigneeId: 'u-OTHER', title: 't' }, // 第3者
+    ] as never);
+    vi.mocked(prisma.knowledge.updateMany).mockResolvedValue({ count: 2 } as never);
+    const r = await bulkUpdateKnowledgeVisibilityFromList(
+      'p-1', ['k-1', 'k-2', 'k-3'], 'public', 'u-1', 't-1',
+    );
+    expect(r.updatedIds).toEqual(['k-1', 'k-2']);
+    expect(r.skippedNotOwned).toBe(1);
+  });
+
   // UI_PATTERNS §35 (2026-05-24): bulk visibility 経路の embedding コスト最適化テスト。
   // 単発 updateKnowledge の判定マトリクスと整合: draft→public 遷移のみ embedding 対象。
   describe('embedding 生成 (コスト最適化)', () => {

@@ -625,14 +625,33 @@ describe('bulkUpdateRetrospectivesVisibilityFromList', () => {
       retrospectiveProjects: { some: { projectId: 'p-1' } },
     });
 
-    // 2026-05-12 severity-1 防御: tenantId / createdBy 明示
+    // 2026-05-12 severity-1 防御: tenantId / 作成者 OR 担当者 明示
+    // feat/asset-assignee-expansion (2026-05-26): OR 句で「作成者 OR 担当者」を再検証
     const call = vi.mocked(prisma.retrospective.updateMany).mock.calls[0][0];
     expect(call.where).toMatchObject({
       id: { in: ['ret-1', 'ret-3'] },
       tenantId: 't-1',
-      createdBy: 'u-1',
+      OR: [
+        { createdBy: 'u-1' },
+        { assigneeId: 'u-1' },
+      ],
     });
     expect(call.data).toEqual({ visibility: 'draft', updatedBy: 'u-1' });
+  });
+
+  // feat/asset-assignee-expansion (2026-05-26): 担当者も bulk visibility 更新対象
+  it('担当者本人のレコードも bulk 更新対象に含まれる', async () => {
+    vi.mocked(prisma.retrospective.findMany).mockResolvedValue([
+      { id: 'ret-1', createdBy: 'u-creator', assigneeId: 'u-1' }, // u-1 が担当者
+      { id: 'ret-2', createdBy: 'u-1', assigneeId: null },        // u-1 が作成者
+      { id: 'ret-3', createdBy: 'u-OTHER', assigneeId: 'u-OTHER' }, // 第3者
+    ] as never);
+    vi.mocked(prisma.retrospective.updateMany).mockResolvedValue({ count: 2 } as never);
+    const r = await bulkUpdateRetrospectivesVisibilityFromList(
+      'p-1', ['ret-1', 'ret-2', 'ret-3'], 'public', 'u-1', 't-1',
+    );
+    expect(r.updatedIds).toEqual(['ret-1', 'ret-2']);
+    expect(r.skippedNotOwned).toBe(1);
   });
 
   it('存在しない id は skippedNotFound にカウント', async () => {

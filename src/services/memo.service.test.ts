@@ -165,6 +165,22 @@ describe('createMemo', () => {
       expect.objectContaining({ data: expect.objectContaining({ visibility: 'public' }) }),
     );
   });
+
+  // feat/asset-assignee-expansion (2026-05-26) severity-1: private memo に他人 assignee を拒否
+  it('private memo + 他人 assignee 指定 (create) → PRIVATE_MEMO_ASSIGNEE_FORBIDDEN', async () => {
+    await expect(
+      createMemo({ title: 't', content: 'c', visibility: 'private', assigneeId: 'user-other' }, 'user-1'),
+    ).rejects.toThrow('PRIVATE_MEMO_ASSIGNEE_FORBIDDEN');
+    expect(prisma.memo.create).not.toHaveBeenCalled();
+  });
+
+  it('public + 他人 assignee 指定 (create) は許容', async () => {
+    vi.mocked(prisma.memo.create).mockResolvedValue(
+      memoRow({ visibility: 'public', assigneeId: 'user-other' }) as never,
+    );
+    await createMemo({ title: 't', content: 'c', visibility: 'public', assigneeId: 'user-other' }, 'user-1');
+    expect(prisma.memo.create).toHaveBeenCalled();
+  });
 });
 
 describe('updateMemo', () => {
@@ -207,6 +223,35 @@ describe('updateMemo', () => {
 
     expect(result?.title).toBe('t2');
     expect(prisma.memo.update).toHaveBeenCalled();
+  });
+
+  // feat/asset-assignee-expansion (2026-05-26) severity-1: private memo に他人 assignee を拒否
+  it('private memo に他人 assignee 指定 → PRIVATE_MEMO_ASSIGNEE_FORBIDDEN', async () => {
+    vi.mocked(prisma.memo.findFirst).mockResolvedValue(
+      { userId: 'user-1', assigneeId: null, visibility: 'private', title: 't', content: 'c' } as never,
+    );
+    await expect(
+      updateMemo('memo-1', { assigneeId: 'user-other' }, 'user-1'),
+    ).rejects.toThrow('PRIVATE_MEMO_ASSIGNEE_FORBIDDEN');
+    expect(prisma.memo.update).not.toHaveBeenCalled();
+  });
+
+  it('public → private 変更時に既存 assignee=他人 が残ると拒否', async () => {
+    vi.mocked(prisma.memo.findFirst).mockResolvedValue(
+      { userId: 'user-1', assigneeId: 'user-other', visibility: 'public', title: 't', content: 'c' } as never,
+    );
+    await expect(
+      updateMemo('memo-1', { visibility: 'private' }, 'user-1'),
+    ).rejects.toThrow('PRIVATE_MEMO_ASSIGNEE_FORBIDDEN');
+  });
+
+  it('private memo でも assignee=本人 (self-assign) は許容', async () => {
+    vi.mocked(prisma.memo.findFirst).mockResolvedValue(
+      { userId: 'user-1', assigneeId: null, visibility: 'private', title: 't', content: 'c' } as never,
+    );
+    vi.mocked(prisma.memo.update).mockResolvedValue(memoRow({ assigneeId: 'user-1' }) as never);
+    const result = await updateMemo('memo-1', { assigneeId: 'user-1' }, 'user-1');
+    expect(result).not.toBeNull();
   });
 });
 
