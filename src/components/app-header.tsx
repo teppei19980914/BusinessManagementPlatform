@@ -47,6 +47,7 @@ import {
   useRef,
   useState,
 } from 'react';
+import Image from 'next/image';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useTranslations } from 'next-intl';
@@ -676,10 +677,32 @@ export function AppHeader({ user }: AppHeaderProps) {
           <div className="flex items-center gap-6">
             <Link
               href={isLoggedIn ? PROJECTS_ROUTE : '/'}
-              className="whitespace-nowrap text-lg font-semibold"
+              className="flex items-center gap-2"
               data-testid="app-header-home"
             >
-              {tAuth('appName')}
+              {/*
+                feat/mascot-owl (2026-05-27): 公式マスコット「たすきフクロウ」を
+                ヘッダ左上に追加。
+                  - デスクトップ (sm+): アイコン + 「たすきば」テキスト
+                  - モバイル (sm 未満): アイコンのみ (画面幅節約 + nav へ譲る)
+                  - alt は appName 文言を再利用しテキスト非表示時のアクセシビリティを担保
+                priority 指定で LCP 候補要素として優先ロードさせる。
+              */}
+              <Image
+                src="/mascot-owl.png"
+                alt={tAuth('appName')}
+                width={28}
+                height={28}
+                priority
+                className="rounded-sm"
+                data-testid="app-header-logo"
+              />
+              <span
+                className="hidden whitespace-nowrap text-lg font-semibold sm:inline"
+                data-testid="app-header-app-name"
+              >
+                {tAuth('appName')}
+              </span>
             </Link>
 
             {isLoggedIn && (

@@ -154,6 +154,33 @@ describe('AppHeader の状態分岐 invariant (ログイン前後)', () => {
   });
 });
 
+describe('AppHeader の公式マスコット表示 invariant (feat/mascot-owl)', () => {
+  it('next/image を import し /mascot-owl.png を data-testid="app-header-logo" で表示する', () => {
+    // 公式マスコット「たすきフクロウ」を Home リンク左に表示。
+    // 画像本体は public/mascot-owl.png (512×512、scripts/generate-mascot-derivatives.cjs で生成)。
+    expect(source).toMatch(/from\s+'next\/image'/);
+    expect(source).toMatch(/data-testid="app-header-logo"/);
+    expect(source).toMatch(/src="\/mascot-owl\.png"/);
+  });
+
+  it('Image の alt は appName 文言 (i18n 経由) を再利用する (モバイルでテキスト非表示時の a11y 担保)', () => {
+    // モバイル (sm 未満) ではサービス名テキストを hidden にするため、Image の alt が
+    // screen reader に対する唯一のサービス識別情報になる。
+    expect(source).toMatch(/alt=\{tAuth\('appName'\)\}/);
+  });
+
+  it('Image に priority を付与し LCP 候補要素として優先ロードさせる', () => {
+    // ヘッダ左上は viewport 内に必ず入る要素。priority を外すと lazy load されて LCP が悪化する。
+    expect(source).toMatch(/priority\b/);
+  });
+
+  it('サービス名テキストは sm: 以上で表示し、モバイル (sm 未満) ではアイコンのみに縮退する', () => {
+    // hidden sm:inline でテキストを sm+ 限定表示。デザイン仕様「モバイルはアイコンのみ」を担保。
+    expect(source).toMatch(/data-testid="app-header-app-name"/);
+    expect(source).toMatch(/hidden\s+whitespace-nowrap[^"]*\s+sm:inline/);
+  });
+});
+
 describe('AppHeader のナビ 1 行化 invariant', () => {
   it('flat ナビ link に whitespace-nowrap を付与している (ラベル中の改行を防ぐ)', () => {
     // FlatNavLink 内で whitespace-nowrap が付いていることを担保。
