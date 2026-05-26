@@ -1,33 +1,72 @@
 # ADR-0021 ハンドオフ: ファイル添付ストレージ従量課金 + Attachment Embedding
 
 > **作成**: 2026-05-26 (前セッション終了時)
-> **ブランチ**: `feat/file-storage-usage-based-billing` (未 commit、ローカル変更のみ)
+> **ブランチ**: `feat/file-storage-usage-based-billing`
+> **PR-A**: [#445](https://github.com/teppei19980914/BusinessManagementPlatform/pull/445) (作成済、CI 確認後に merge 予定)
 > **状況**: 基盤層完成 (7/43 タスク)、残 ~17 タスク。フルテスト 3289/3289 PASS。
+
+## stash 退避済 (本ブランチ作業中に発見した ADR-0021 無関係の変更)
+
+PR-A 作成前に 2 件の stash に退避済 (次セッションで別ブランチ化推奨):
+- `stash@{0}`: admin super UI / my-tasks / projects / settings (14 ファイル小規模変更)
+- `stash@{1}`: gantt-client / app-header / layouts / i18n / page-auth / seed-suggestion (15 ファイル)
+
+復帰方法:
+```bash
+git checkout main && git pull
+git checkout -b chore/misc-pre-existing-changes
+git stash pop stash@{1}  # 古い方から
+git stash pop stash@{0}
+# 内容確認 + 必要なら別 PR 化、不要なら git stash drop
+```
+
+未追跡で残置中 (PR-A に含めず):
+- `docs/operations/MAINTENANCE_OPERATIONS.md` (運用カタログ doc、ADR-0021 無関係)
 
 ---
 
 ## 次セッション開始時に貼り付けるプロンプト
 
+**前提**: PR-A ([#445](https://github.com/teppei19980914/BusinessManagementPlatform/pull/445)) が **CI green → main へ merge 済** の状態で開始。
+
 下記をコピーして次回セッションの最初のメッセージに貼ってください:
 
 ```
-ADR-0021 (ファイル添付ストレージ従量課金 + Attachment Embedding) の実装を継続します。
+ADR-0021 (ファイル添付ストレージ従量課金 + Attachment Embedding) PR-B の実装を継続します。
 
-前セッションで基盤層 (config / migration / schema / 2 service / 1 doc / Stripe 定数 / api-usage-guide) を完成済 (フルテスト 3289/3289 PASS、ブランチ未 commit)。
-
+前セッションで基盤層 (PR-A #445) を merge 済。
 詳細は HANDOFF_ADR_0021.md と memory/project_adr_0021_in_progress.md を読んでください。
 
-このセッションでは以下を「動作保証付き」で完成させたい:
+最初に以下のセットアップを実行:
+1. git checkout main && git pull
+2. git checkout -b feat/file-storage-services
+3. pnpm install (pdf-parse / xlsx / mammoth / @types/pdf-parse を取得)
+4. pnpm prisma generate
+5. pnpm test でフル 3289 件 PASS を再確認 (基盤層が main にマージされている前提)
 
-1. まず `pnpm install` で次セッション必須の packages (pdf-parse / xlsx / mammoth / @types/pdf-parse) を入れる
-2. P3 サービス層 (upload-api / embedding-cron / storage-guard / bucket-calc / attachment-service / chat-search / suggestion-engine / anomaly) を順次実装 + テスト
-3. P4-P6 (cron + withdrawal + Stripe callType) を実装 + テスト
-4. P11 品質ゲート (lint/tsc/test/e2e:coverage/build) を全 green に
-5. P12 commit + PR 作成
+このセッションの目標は「動作保証付き PR-B 完成 → commit + PR 作成」:
 
-UI (P7) と 残 docs (P8) は別 PR (PR-C) に切り分けて、本セッションでは PR-B 完成を最優先にしてください。1 セッションで全完走しようとせず、PR-B が green に出来た段階で commit + PR まで進めて区切る。
+実装順 (依存順):
+1. [P3-storage-guard] storage-guard.service.ts 拡張 (file storage L3 ハードキャップ追加)
+2. [P3-bucket-calc] file-storage-bucket-usage.service.ts 新規 (storage.objects 集計 + peak 更新)
+3. [P3-upload-api] POST /api/attachments/upload + /finalize 新規 (Pre-signed URL / 50MB 検証 / 危険拡張子 / tenant cap / rate limit)
+4. [P3-embedding-cron] embedding pending 背景処理 cron + GET /api/cron/attachment-embedding 新規
+5. [P3-attachment-service] cascade delete / rate limit / soft delete
+6. [P3-chat-search] chat-semantic-search 拡張 (detectFileScopeQuery)
+7. [P3-suggestion-engine] suggestion.service 拡張 (attachment embedding を提案ソースに)
+8. [P3-anomaly] anomaly detection (5GB+/day per tenant → super_admin alert)
+9. [P4-monthly-cron] tenant-monthly-reset 拡張 (processTenantFileStorageOverage)
+10. [P4-daily-cron] daily-notifications 拡張 (update + drift + anomaly)
+11. [P5-withdrawal] tenant-withdrawal-billing 拡張
+12. [P6-stripe-callType] stripe-usage-flush 連携 + STRIPE_SETUP / STRIPE_USAGE_FLUSH 更新
 
-P7/P8 残作業は次回 PR-C で。
+各タスクは: 既存コード読込 → 実装 → 単体テスト → pnpm vitest run で PASS 確認 → 次へ。
+途中で integration test (P9) は scenario E (embedding 全フロー) を追加。
+
+完了後: pnpm lint / tsc / test / e2e:coverage-check / build フル PASS → commit + push + PR-B 作成。
+1 セッションで P3-P6 + P9 までを完走目標。UI (P7) + 残 docs (P8) は PR-C (次々セッション) に切り分け。
+
+stash@{0}/stash@{1} に退避された pre-existing 無関係変更は触らない (別途 chore PR で処理)。
 ```
 
 ---
