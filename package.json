@@ -41,6 +41,9 @@
     "clsx": "^2.1.1",
     "csv-parse": "^6.2.1",
     "diff": "^9.0.0",
+    "exceljs": "^4.4.0",
+    "mammoth": "^1.8.0",
+    "pdf-parse": "^1.1.1",
     "jszip": "^3.10.1",
     "lucide-react": "^1.14.0",
     "next": "16.2.6",
@@ -64,6 +67,7 @@
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/pg": "^8.20.0",
+    "@types/pdf-parse": "^1.1.4",
     "@types/qrcode": "^1.5.6",
     "@types/react": "^19",
     "@types/react-dom": "^19",
@@ -92,7 +96,8 @@
       "postcss": ">=8.5.10",
       "ip-address": ">=10.1.1",
       "fast-uri": ">=3.1.2",
-      "qs": ">=6.15.2"
+      "qs": ">=6.15.2",
+      "uuid": ">=11.1.1"
     }
   }
 }

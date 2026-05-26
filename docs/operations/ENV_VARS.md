@@ -46,6 +46,15 @@
 
 > **ローテーション時の注意**: `NEXTAUTH_SECRET` を変更すると全ユーザのセッション JWT が即時無効化され、強制的に再ログインとなる。
 >
+> **★ さらに重大: MFA 有効ユーザの `mfaSecretEncrypted` も復号不能になり、TOTP 認証時に 500 (`bad decrypt`) が発生する。** これは [src/services/mfa.service.ts](../../src/services/mfa.service.ts) の AES-256-CBC 暗号化が `NEXTAUTH_SECRET` の先頭 32 文字を鍵に流用しているため。ローテーション時は以下の手順を厳守:
+> 1. MFA 有効ユーザを事前一覧化 (= `SELECT id, email FROM users WHERE mfa_enabled = true AND deleted_at IS NULL;`)
+> 2. 対象ユーザに事前告知 (= 「MFA 再 setup が必要」)
+> 3. `NEXTAUTH_SECRET` を変更 + デプロイ
+> 4. 対象ユーザ全員に対して [**MAINTENANCE_OPERATIONS.md §2.2**](./MAINTENANCE_OPERATIONS.md#22-mfa-設定情報の-db-直接削除手順-2026-05-25-追加) の手順で `mfa_secret_encrypted` を NULL 化
+> 5. 各ユーザに MFA 再 setup を依頼
+>
+> 事故事例 2026-05-25: ローテーション直後の super_admin が MFA ログインで詰む事象を確認。
+>
 > **セッション有効期限** (`src/config/security.ts` の `SESSION_JWT_MAX_AGE_SEC`): **9 時間**
 >   (PR #124 で 24h→9h 短縮)。日本の通常就業時間 (8h + 休憩 1h) を超えて無操作なら強制ログアウト。
 >   NextAuth JWT 戦略は各リクエストで token を再署名する sliding 挙動のため、実質「最後の操作から 9 時間」。
@@ -175,8 +184,11 @@ APP_DEFAULT_LOCALE=en-US
 | `STRIPE_PRICE_STORAGE_PLUS` | (未設定) | ~~Storage Plus add-on の Price ID。¥500/月、Recurring 固定。Test / Live で別~~ **ADR-0020 (2026-05-25) で廃止**: 4 段階プラン廃止に伴い、Stripe Dashboard で archive 推奨 (環境変数は削除可) |
 | `STRIPE_PRICE_STORAGE_PRO` | (未設定) | ~~Storage Pro add-on の Price ID。¥1,500/月、Recurring 固定。Test / Live で別~~ **ADR-0020 (2026-05-25) で廃止** (同上) |
 | `STRIPE_PRICE_DB_CAPACITY_OVERAGE` | (未設定) | **ADR-0020 (2026-05-25) 新規**: DB 容量超過 (Meter event `tasukiba_db_capacity_overage_jpy`) の Price ID。**¥1/unit、Metered** (= R6 案 A: quantity に円整数を送る方式で `ApiCallLog.costJpy = Stripe quantity = 請求金額` の完全一致を保証)。詳細 [STRIPE_SETUP.md §2.5](./STRIPE_SETUP.md)。Test / Live で別 |
+| `STRIPE_PRICE_STORAGE_FILE_OVERAGE` | (未設定) | **ADR-0021 (2026-05-26) 新規**: ファイル添付ストレージ超過 (Meter event `tasukiba_storage_file_overage_jpy`) の Price ID。**¥1/unit、Metered** (= R6 案 A invariant)。詳細 [STRIPE_SETUP.md §2.6](./STRIPE_SETUP.md)。Test / Live で別 |
 | `DB_INSTANCE_ALERT_THRESHOLD_BYTES` | (Compute サイズ別 default: Micro=4GB / Small=8GB / Medium=20GB / Large=80GB) | **ADR-0020 (2026-05-25) 新規**: super_admin に Compute upgrade 検討 alert を出すしきい値 (バイト、SI 単位)。env で上書き可、未設定なら `SUPABASE_COMPUTE_SIZE` 環境変数に応じた default を使う |
 | `SUPABASE_COMPUTE_SIZE` | `micro` | **ADR-0020 (2026-05-25) 新規**: Supabase Pro Plan の Compute size。default 'micro' (1GB RAM、推奨 DB 5GB)。Compute upgrade 時に 'small' / 'medium' / 'large' に変更すると `DB_INSTANCE_ALERT_THRESHOLD_BYTES` が連動 |
+| `SUPABASE_STORAGE_BUCKET` | `attachments` | **ADR-0021 (2026-05-26) 新規**: ファイル添付本体を保存する Supabase Storage Bucket 名。テナント越境防止のため key prefix は `tenants/{tenantId}/...` で強制 (RLS Policy で別途検証)。Bucket 作成手順は本ファイル §1.X 参照 |
+| `SUPABASE_SERVICE_ROLE_KEY` | (未設定) | **ADR-0021 (2026-05-26) 新規 (必須化)**: Pre-signed URL 発行・bucket 容量集計・cron 削除で必須。RLS をバイパスする強力キーのため **絶対に client bundle に混入させない** (= `NEXT_PUBLIC_` prefix なし)。値は Supabase Dashboard → Project Settings → API → `service_role` から取得 |
 | `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` | (未設定) | Stripe Publishable Key (= ブラウザ側で使用、機密情報ではない)。**Test mode = `pk_test_xxx` / Live mode = `pk_live_xxx`**。Stripe Elements / Checkout で使用。SECRET_KEY とペアで context 別に切替 |
 | `SYSTEM_USER_ID` | (未設定) | 自動操作 (Webhook ハンドラ / cron) で auditLog の `userId` に記録するシステムユーザ UUID。専用 seed (= `system@internal`、`isActive=false`) で作成済 |
 

@@ -15116,3 +15116,384 @@ for (const name of progressTabsViaMenu) {
 - 関連 KDD: [§5.X+126](#5x126) (`{ force: true }` 導入経緯、chromium-mobile DPR=3 hit-test 問題) / [§5.X+129 Section B](#5x129) (本 fix の前段、「別 PR で fix 推奨」とマークされた本問題) / [§5.X+138](#5x138) (前回 PR #443 で別の chromium 系 flake を根本 fix)
 - 関連 file: [e2e/specs/02-project-detail-tabs.spec.ts](../../e2e/specs/02-project-detail-tabs.spec.ts), [src/app/(dashboard)/projects/[projectId]/project-detail-client.tsx](../../src/app/(dashboard)/projects/[projectId]/project-detail-client.tsx) (修正対象は spec のみ、本体コードは変更なし)
 - 累計 chromium-mobile flake 対処: §5.X+124-126 (force:true 11 件) + §5.X+138 (CSRF cookie 削除除去) + §5.X+139 (本 menuitem 2 段 wait) で **chromium-mobile + Base UI Menu 系の主要 race は構造的解消**
+
+---
+
+## 5.X+140 **★severity-high CI ゲート全滅 — package.json 編集後に `pnpm install` を忘れて `pnpm-lock.yaml` が乖離、CI の `--frozen-lockfile` で 7 ジョブ同時 fail (2026-05-26 / PR #445)**
+
+### 事象
+
+PR #445 (ADR-0021 基盤層) 作成直後、**7 個の CI チェックが同時に fail**:
+
+1. Lint / Test / Build (GitHub Actions)
+2. Security Score Gate (>= 90) (GitHub Actions)
+3. Playwright E2E + Visual Regression (GitHub Actions)
+4. netlify/tasukiba/deploy-preview (Netlify)
+5. Header rules - tasukiba (Netlify、上記 deploy-preview 失敗の派生)
+6. Pages changed - tasukiba (Netlify、同上)
+7. Redirect rules - tasukiba (Netlify、同上)
+
+最初に visible なエラーメッセージは **coverage-summary.json 不在** で、一見「vitest が json-summary reporter を吐いていない」「test step がスキップされた」ように見えるが、これは **下流の症状で根本原因ではない**。
+
+### 根本原因
+
+`pnpm install` 実行ログを掘ると、`Install dependencies` ステップで以下の error が発生していた:
+
+```
+ERR_PNPM_OUTDATED_LOCKFILE  Cannot install with "frozen-lockfile" because pnpm-lock.yaml is not up to date with <ROOT>/package.json
+* 4 dependencies were added: @types/pdf-parse@^1.1.4, mammoth@^1.8.0, pdf-parse@^1.1.1, xlsx@https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz
+```
+
+#### 何が起きていたか
+
+1. ADR-0021 実装中に `package.json` を直接 Edit して 4 つの依存 (pdf-parse / xlsx / mammoth / @types/pdf-parse) を追加
+2. **ローカルで `pnpm install` を実行せずに commit + push**
+3. `pnpm-lock.yaml` は依存追加が反映されない古い状態
+4. CI は **`pnpm install --frozen-lockfile`** を使う (lockfile を信頼して厳密に解決する pnpm のデフォルト production install) ため、package.json と lockfile の乖離を検知して即 fail
+5. `Install dependencies` ステップが exit 1 で終了 → 後続の Lint / Test / Build / Prisma generate / Security check / Netlify build / Playwright が全て skip → ジョブ全体が fail
+6. test step が skip されたため `coverage/coverage-summary.json` が生成されず、最終的に表面化するエラーは `ENOENT: no such file` という **下流の症状**
+
+#### なぜ手元の単体テスト 3289 件 PASS で気付かなかったか
+
+`file-text-extraction.service.ts` は **dynamic import** (`await import('pdf-parse')` 等) で parser を読み込む設計にしていた:
+- 単体テストは `_setExtractorsForTest()` で parser を mock 注入していたため、実際の dynamic import は走らず、`pdf-parse` 等の不在を検知できなかった
+- `pnpm tsc --noEmit` は走らせていたが、`Cannot find module 'pdf-parse'` の TS2307 エラーが出ていた (= **見えていたが許容してしまった**)
+- `pnpm test` が PASS することで「テストレベルでは問題なし」と誤判断、CI が dependency 不在で落ちる可能性を見逃した
+
+これは **「手元 PASS = CI PASS」の典型的な誤前提**。CI 側は `--frozen-lockfile` で lockfile 整合性も検証するため、`pnpm install` を経由しないと CI 側だけで起きる failure mode がある。
+
+### 対応
+
+```bash
+# 1. ローカルで pnpm install して lockfile を実 dependency に同期
+pnpm install
+#   → pnpm-lock.yaml が +4 dependencies で更新される
+#   → "Done in 6.6s" で正常完了 (mammoth 1.12.0 / pdf-parse 1.1.4 / xlsx 0.20.3 / @types/pdf-parse 1.1.5)
+
+# 2. 実 parser で単体テストを再実行 → 157/157 PASS を確認
+pnpm vitest run src/services/file-text-extraction.service.test.ts ...
+
+# 3. tsc を再確認 → file-text-extraction.service.ts の TS2307 が消えていることを確認
+pnpm tsc --noEmit 2>&1 | grep -E "file-text-extraction|attachment-embedding|file-storage-pricing"
+
+# 4. security:gate + build もローカル PASS
+pnpm security:gate
+pnpm build
+
+# 5. pnpm-lock.yaml を commit + push
+git add pnpm-lock.yaml
+git commit -m "fix(ci): pnpm-lock.yaml 更新 (PR #445 で package.json 追加した 4 deps を lockfile 反映)"
+git push
+```
+
+これで CI 全 7 ジョブが green に復帰する見込み。
+
+### 再発防止
+
+#### 即時 (本人ワークフロー)
+
+- **`package.json` 編集 → 必ず `pnpm install` 実行 → `pnpm-lock.yaml` の diff も同 commit に含める** を絶対ルール化
+- commit 前 self-check に「依存変更があるか」を追加。`git diff --name-only HEAD~1 HEAD | grep -E 'package.json|pnpm-lock.yaml'` で抽出可
+- `pnpm tsc --noEmit` で `TS2307: Cannot find module` が出たら **必ず原因確認** (= 未インストール deps の警告である可能性が高い)。今回は「dynamic import だから build には影響しない」と判断して見送ったが、CI の `--frozen-lockfile` で先に落ちる
+
+#### 構造的 (pre-commit hook 候補)
+
+将来的に以下のいずれかを導入し、人為ミスを構造的に防止:
+
+1. **pre-commit hook**: `package.json` が staged だったら `pnpm install --frozen-lockfile` を dry-run し、失敗したら commit を block
+2. **CI lockfile-check job**: 既存 lint/test の前段に「lockfile in sync」専用ジョブを追加し、失敗時にエラーメッセージを明確にする (= 今回の coverage ENOENT のような下流症状で迷子にならない)
+
+#### CI ログの読み方
+
+- **複数ジョブが同時に fail した場合、どれか 1 つに表面化した「目立つエラー」(本件は coverage-summary.json ENOENT) に飛びつかない**
+- 必ず **「失敗の最も早いステップ」** から確認する (本件は Install dependencies)。`gh run view <id>` でステップ一覧を見れば、X 印の最初のステップが root cause 候補
+
+### 教訓 (転用可能)
+
+- **`--frozen-lockfile` は package.json と pnpm-lock.yaml の整合性を 1 ビット単位で検証する**。pnpm v10 のデフォルト CI 動作なので、package.json を編集したら **lockfile も同時に更新するのが義務**
+- **dynamic import は便利だが、単体テストで「依存が実在するか」を検証できない trap がある**。CI 側で frozen-lockfile を経由して初めて発覚する failure mode がある
+- **複数 CI ジョブ同時 fail は単一根本原因のシグナル**: 独立したジョブが同時に落ちるとき、共通の前段 (本件は `Install dependencies` を含む全ジョブ共通の setup) を疑うのが先決。表面化したエラーを個別に追うと迷子になる
+- **「目立つエラー」ではなく「最初に失敗したステップ」を見る**: 本件の表面化エラー `coverage-summary.json` は test ステップが skip された結果でしかなく、上流の Install dependencies failure を発見しないと永久に治らない (= cargo cult debug 防止)
+- **`pnpm tsc --noEmit` の `TS2307: Cannot find module`** は単に「型情報がない」ではなく「**実 dependency が install されていない可能性が高い**」シグナル。`dynamic import` で defer したとしても、CI で frozen-lockfile が失敗する伏線になる
+
+### 関連
+
+- 関連 PR: PR #445 (ADR-0021 基盤層、本事例 / 2026-05-26)
+- 関連 KDD: なし (初発) / 派生: [§5.X+141](#5x141) (xlsx@sheetjs CVE 対応) / [§5.X+142](#5x142) (check-llm-billing-bypass JSDoc 誤検知)
+- 関連 file: [package.json](../../package.json), [pnpm-lock.yaml](../../pnpm-lock.yaml), [src/services/file-text-extraction.service.ts](../../src/services/file-text-extraction.service.ts) (dynamic import 採用箇所)
+- 関連 memory: [feedback_quality_gate_exit_code](../../memory) (本件と同系列で「ローカル成功 → CI fail を見逃す」パターン)、新規 [feedback_pnpm_lockfile_sync](../../memory) を追加 (下記)
+
+---
+
+## 5.X+141 **★severity-high★ xlsx@sheetjs (v0.20.3) は fix なし High CVE 2 件、exceljs に swap + pnpm.overrides で transitive uuid<11.1.1 を fix (2026-05-26 / PR #445)**
+
+### 事象
+
+PR #445 で Excel 抽出に `xlsx@0.20.3` (sheetjs tarball) を採用したところ、OSV-Scanner が即失敗:
+
+```
+| https://osv.dev/GHSA-4r6h-8v6p-xvw6 | 7.8  | npm | xlsx | 0.20.3 | --            | pnpm-lock.yaml |
+| https://osv.dev/GHSA-5pgg-2g8v-p4x9 | 7.5  | npm | xlsx | 0.20.3 | --            | pnpm-lock.yaml |
+Total 1 package affected by 2 known vulnerabilities (0 Critical, 2 High, 0 Medium, 0 Low, 0 Unknown)
+```
+
+OSV-Scanner は **severity 関係なく vuln 1 件で exit 1** ([§5.X+115](#5x115) 参照、PR #430 で確立) のため、High CVE 2 件で CI 失敗確定。
+さらに `FIXED VERSION: --` (= sheetjs 側で fix 予定なし) のため、`pnpm.overrides` でバージョン固定する従来のパターンも使えない。
+
+### 根本原因
+
+#### xlsx@sheetjs の CVE 内容
+
+- **GHSA-4r6h-8v6p-xvw6 (CVSS 7.8)**: prototype pollution via crafted Excel file
+- **GHSA-5pgg-2g8v-p4x9 (CVSS 7.5)**: ReDoS (regular expression denial of service)
+
+sheetjs 公式は **「これらは expected behavior であり fix しない」** という方針を公にしており、npm registry 経由 (legacy `xlsx`) には CVE が残ったまま。CDN 提供の tarball も同じコードベース。
+
+#### なぜ最初に xlsx を選んだか
+
+ADR-0021 実装時、Excel 抽出のデファクト = sheetjs/xlsx と認識して採用。CVE database を install 前に確認しなかった。
+
+### 対応
+
+**exceljs@^4.4.0 にライブラリ swap**:
+
+```diff
+- "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
++ "exceljs": "^4.4.0",
+```
+
+ただし exceljs は transitive で `uuid < 11.1.1` (GHSA-w5hq-g745-h8pq, Moderate) を依存しており、OSV は moderate も拒否する可能性があるため、`pnpm.overrides` で固定:
+
+```diff
+  "overrides": {
+    ...
++   "uuid": ">=11.1.1"
+  }
+```
+
+`pnpm audit --audit-level=moderate` で **No known vulnerabilities** 確認。
+
+#### exceljs と xlsx の API 差分対応
+
+[file-text-extraction.service.ts](../../src/services/file-text-extraction.service.ts) の extractXlsx を書き換え:
+
+```typescript
+// 旧 (xlsx):
+const workbook = XLSX.read(buffer, { type: 'buffer' });
+for (const sheetName of workbook.SheetNames) {
+  const csv = XLSX.utils.sheet_to_csv(workbook.Sheets[sheetName], { FS: '\t', RS: '\n' });
+  ...
+}
+
+// 新 (exceljs):
+const workbook = new ExcelJS.Workbook();
+await workbook.xlsx.load(arrayBuffer);  // ★ ArrayBuffer 要求 (後述)
+workbook.eachSheet((worksheet) => {
+  worksheet.eachRow({ includeEmpty: false }, (row) => {
+    row.eachCell({ includeEmpty: false }, (cell) => {
+      // RichText / Formula / Date の polymorphic value を順次 unwrap
+      const value = cell.value;
+      if (typeof value === 'object' && 'text' in value) ...   // RichText
+      else if (typeof value === 'object' && 'result' in value) ...  // Formula
+      else if (value instanceof Date) ...
+      ...
+    });
+  });
+});
+```
+
+#### exceljs の TS 型不一致 hack
+
+exceljs の型定義は古い `Buffer` シグネチャを要求するため、Node 22+ の `Buffer<ArrayBufferLike>` ジェネリックと不一致で TS2345 になる:
+
+```typescript
+// NG: TS2345
+await workbook.xlsx.load(buffer);
+
+// OK: ArrayBuffer に変換して渡す
+await workbook.xlsx.load(
+  buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength) as ArrayBuffer
+);
+```
+
+### 再発防止
+
+- **新規 npm package 追加時のチェックリスト**:
+  1. `pnpm install` で実体取得 → `pnpm audit --audit-level=moderate` で **vuln 0 件** を確認
+  2. transitive にも High/Critical CVE がないか追加確認 (npm 表示は直接 deps のみ)
+  3. CVE があっても fix version が出ていれば `pnpm.overrides` で固定可能 ([§5.X+115](#5x115) パターン)
+  4. fix version が `--` (= 出ない) の場合は **ライブラリ自体を swap**
+- **特に sheetjs/xlsx は今後採用しない**: 上記 2 CVE が放置されている事実 + 公式の「fix しない」姿勢を踏まえ、Excel 抽出が必要なら最初から exceljs / read-excel-file を選ぶ
+- 関連 KDD: [§5.X+115](#5x115) (PR #430、`pnpm.overrides` で transitive CVE fix する初出パターン)
+
+### 教訓 (転用可能)
+
+- **OSV-Scanner は severity 関係なく vuln 1 件で fail**。pnpm-audit (`--audit-level=high`) より厳格、moderate も無視できない
+- **`FIXED VERSION: --` の CVE は overrides で救えない**。ライブラリそのものを swap するしか手がない
+- **デファクト = 安全とは限らない**: sheetjs/xlsx は npm 週 1500 万 DL あるデファクトだが、メンテナの「fix しない」方針により実質危険。**人気 ≠ 安全性**、CVE database で個別検証必須
+- **npm 型定義の `Buffer` 不整合は ArrayBuffer 変換で回避**: Node 22+ の Buffer ジェネリック化により古い型定義との不一致が頻発。`buffer.buffer.slice(...)` で ArrayBuffer を取り出して渡すのが定石
+
+### 関連
+
+- 関連 PR: PR #445 (ADR-0021 基盤層、本事例 / 2026-05-26)
+- 関連 KDD: [§5.X+140](#5x140) (本 PR-A 初回 CI 失敗の根本 fix、本件はその下流発覚) / [§5.X+115](#5x115) (`pnpm.overrides` パターン)
+- 関連 file: [package.json](../../package.json), [src/services/file-text-extraction.service.ts](../../src/services/file-text-extraction.service.ts)
+
+---
+
+## 5.X+142 **★severity-medium★ scripts/check-llm-billing-bypass.ts は JSDoc コメント内の `voyageEmbed()` 表記も誤検知する、ADR-0019 アンチパターン記述時は別表記を使う (2026-05-26 / PR #445)**
+
+### 事象
+
+ADR-0019 LLM 課金バイパス防止のため [embedding.service.ts](../../src/services/embedding.service.ts) `generateEmbedding()` 経由に refactor 完了後、`pnpm check:llm-billing-bypass` を実行すると **JSDoc コメント内で flagged**:
+
+```
+[check-llm-billing-bypass] ❌ 課金バイパス検出
+  src/services/attachment-embedding.service.ts:15 — voyageEmbed()
+    voyageEmbed() を直接呼んでいます。
+```
+
+該当行 (JSDoc):
+```typescript
+ * Voyage 呼出:
+ *   - embedding.service.ts の generateEmbedding() 経由 (withMeteredLLM 内包)
+ *   - 直接 voyageEmbed() を呼ばないこと (= ADR-0019 LLM 課金バイパス防止、scripts/check-llm-billing-bypass.ts)  // ← line 15 で flag
+```
+
+### 根本原因
+
+[scripts/check-llm-billing-bypass.ts](../../scripts/check-llm-billing-bypass.ts) は単純な正規表現で `voyageEmbed(` パターンを grep するため、**JSDoc / 通常コメント内の文字列もコード本体と同じく検出**してしまう。
+
+「ここでは禁止です」というアンチパターン説明を JSDoc に書いた瞬間、それ自体が違反として検出される **「アンチパターンを記述すると違反になる」パラドックス**。
+
+### 対応
+
+JSDoc の文言を `voyageEmbed()` から `Voyage client` に変更:
+
+```diff
+- *   - 直接 voyageEmbed() を呼ばないこと (= ADR-0019 LLM 課金バイパス防止、...)
++ *   - 直接 Voyage client を呼ばないこと (= ADR-0019 LLM 課金バイパス防止、...)
+```
+
+意味は保たれ、check は PASS する。
+
+### 再発防止
+
+- **ADR-0019 違反防止系の説明をコメントに書く時は、関数名そのままではなく「Voyage client」「Anthropic SDK 直叩き」等の抽象語で表現する**
+- 将来的に check-llm-billing-bypass.ts を改善するなら:
+  1. JSDoc コメント (`/** ... */`) 内の表記は除外
+  2. 行頭 `*` または `//` で始まる行は除外
+  3. ただし「コメントで bypass を隠す」攻撃を防ぐため、`// eslint-disable-line` 風の意図的回避は別途検知
+
+### 教訓 (転用可能)
+
+- **静的解析は文字列マッチで動くため、自分のアンチパターン説明も flag されうる**: lint / banned-pattern check / security scan 系のツールに共通する trap。アンチパターン記述では **「禁止された関数名そのもの」を書かず、抽象語で表現** が安全
+- **「対策を書いた瞬間に違反扱い」は誤検知のシグナル**: 対策・防止策を doc に書いたら check で落ちるなら、**check 側の文字列マッチが甘い**可能性。誤検知を allowlist に積む前に、コメント側を書き換える方が低コストかつ意味も保たれる
+
+### 関連
+
+- 関連 PR: PR #445 (ADR-0021 基盤層、本事例 / 2026-05-26)
+- 関連 KDD: [§5.X+140](#5x140) (本 PR-A 初回 CI 失敗の根本 fix、本件はその下流発覚) / ADR-0019 (LLM 課金バイパス防止)
+- 関連 file: [src/services/attachment-embedding.service.ts](../../src/services/attachment-embedding.service.ts), [scripts/check-llm-billing-bypass.ts](../../scripts/check-llm-billing-bypass.ts)
+
+---
+
+## 5.X+143 **★severity-high★ ソースコード内のリテラル NULL バイト (0x00) を埋めると git が source を binary 判定し review が機能しない (2026-05-26 / PR #445 フルスキャン検証で発覚)**
+
+### 事象
+
+PR #445 のフルスキャン検証で `git diff --stat origin/main...HEAD` を実行すると、新規 service ファイルが **binary 扱い** で表示:
+
+```
+src/services/file-text-extraction.service.ts | Bin 0 -> 7520 bytes
+```
+
+通常は `+274 -0` のような行数差分が出るところ、`Bin 0 -> 7520 bytes` (= バイナリファイル) と判定され、**diff 内容が一切表示されない**。レビュワーは変更内容を確認できないし、線形 merge tool も使えない。
+
+### 根本原因
+
+[file-text-extraction.service.ts](../../src/services/file-text-extraction.service.ts) の line 123 に **リテラル NULL バイト (0x00) を含む正規表現**を書いていた:
+
+```typescript
+function normalizeText(s: string): string {
+  return s
+    .replace(/\r\n?/g, '\n')
+    .replace(/<NUL>/g, '')   // ← line 123: ここに literal 0x00 が入っていた
+    .replace(/[ \t]+\n/g, '\n')
+    ...
+}
+```
+
+ソースコード上は **見た目「半角スペース」** に見えていたが、`od -c` で確認すると `/   \0   /` (= NULL バイト) だった。
+意図: PDF 抽出で稀に混入する NULL バイトを除去する正規表現。
+ミス: `\x00` エスケープシーケンスではなく、**リテラル 0x00 をエディタに直接埋めてしまった**。
+
+#### git の binary 自動判定アルゴリズム
+
+git は file content の先頭 8000 バイトを scan し、NULL バイトが 1 つでも含まれていれば **binary** と判定する (`xdiff.c` の `BUFFER_ANALYSIS_BYTES` 定数)。これは:
+- `diff` 表示を抑制 (= 「Binary files differ」)
+- `--stat` で `Bin X -> Y bytes` 表示
+- merge tool の text 編集機能を無効化
+
+ソースコード内に意図的にリテラル NULL を埋めると、その瞬間に source は git にとって binary になる。
+
+#### なぜテストでは検知できなかったか
+
+単体テスト 20 件は `extractText('memo.txt', Buffer.from('hello world', 'utf8'))` 等で短文テキストを入力するため、`normalizeText` の NULL 除去ロジックを **発火させない**。NULL バイト除去テストケースが不在だった。
+
+### 対応
+
+1. **ソースの NULL バイトを `\x00` エスケープに置換**:
+   ```typescript
+   .replace(/\x00/g, '')   // ← \x00 はソース上 4 ASCII 文字、binary 判定回避
+   ```
+   Powershell の byte 単位 search & replace で安全に置換 (Edit ツールは literal NUL を扱えない trap):
+   ```powershell
+   $bytes = [System.IO.File]::ReadAllBytes($path)
+   # NULL を含むパターン → \x00 (literal "\x00" 4 bytes ASCII) に置換
+   ```
+2. **NULL バイト除去テストを追加**:
+   ```typescript
+   it('NULL バイト (\\x00) を除去 — PDF 抽出で稀に混入', async () => {
+     const withNull = `before\x00middle\x00after`;
+     const result = await extractText('memo.txt', Buffer.from(withNull, 'utf8'));
+     if (result.kind !== 'success') throw new Error();
+     expect(result.text).toBe('beforemiddleafter');
+     expect(result.text).not.toContain('\x00');
+   });
+   ```
+3. **`.gitattributes` で `*.ts` 等を text 強制**:
+   ```
+   *.ts text eol=lf
+   *.tsx text eol=lf
+   *.md text eol=lf
+   ...
+   ```
+   将来同種の事故が起きた場合でも git が text として扱い、diff が消えない。
+4. **インラインコメントで罠を明示**:
+   ```typescript
+   // ⚠️ KDD §5.X+143: 必ず \x00 エスケープで書く。リテラル NUL バイトを埋めると
+   // git が source を binary 判定し diff が hide される事故あり (PR #445 で実例)。
+   .replace(/\x00/g, '')
+   ```
+
+### 再発防止
+
+- **正規表現に制御文字を含める時は必ずエスケープシーケンス (`\x00` / `\n` / `\t` 等) を使う**。リテラル制御文字を埋めない。
+- 新規 source ファイル commit 前に `file <path>` で text 判定されることを確認 (`text` / `JavaScript source` / `UTF-8 text` 等が出れば OK、`data` が出たら binary 化している)
+- `.gitattributes` で text-by-extension を declare しておけば、binary 自動判定を override できる (本 PR で追加)
+- `Edit` ツールは literal NUL を含む文字列を扱えない (`String to replace not found`) ため、修正には PowerShell の byte 単位編集が必要。これも罠なので memo
+
+### 教訓 (転用可能)
+
+- **git の binary 判定は NULL バイト 1 個でトリガー**: 設計時点で「ASCII の見た目だから text のはず」と思い込まないこと。テキスト処理ライブラリの実装では制御文字を扱う場面が多く、注意が必要
+- **`file <path>` コマンドはコミット前確認に有効**: `text` 系の判定が出ること = git も text として扱う、`data` が出る = binary 判定確定。3 秒のチェックで重大事故を防げる
+- **エディタの見た目では NULL バイトは検知できない**: VS Code / vim 等は NUL を「見えない文字」または空白として表示する。`od -c` / `xxd` / `perl -e 'open... /\x00/'` 等のバイト単位検査が必要
+- **`Edit` ツールの「文字列不一致」エラーは符号化問題のシグナル**: 通常の文字列に見えるのに Edit が失敗する場合、文字列内に制御文字 / BOM / 別 Unicode が混入している可能性。PowerShell / Python の binary mode に切替
+- **`.gitattributes` の text 強制は予防策として常設すべき**: 新規プロジェクト立ち上げ時に `*.ts text eol=lf` 等を入れておけば、本件のような事故が起きても diff は表示される
+
+### 関連
+
+- 関連 PR: PR #445 (ADR-0021 基盤層、フルスキャン検証で発覚 / 2026-05-26)
+- 関連 KDD: [§5.X+140](#5x140), [§5.X+141](#5x141), [§5.X+142](#5x142) (PR #445 の同一バッチ)
+- 関連 file: [src/services/file-text-extraction.service.ts](../../src/services/file-text-extraction.service.ts), [.gitattributes](../../.gitattributes)

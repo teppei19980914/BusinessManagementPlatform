@@ -76,6 +76,11 @@ export const STRIPE_METER_EVENT_NAMES = {
   //   これにより ApiCallLog.costJpy = Stripe Meter quantity = 請求金額の完全一致を保証。
   //   月額固定 SKU と異なり Meter Event なので「使用量に応じた請求」が請求書に反映される。
   db_capacity_overage: 'tasukiba_db_capacity_overage_jpy',
+  // ADR-0021 (2026-05-26): ファイル添付ストレージ従量課金。
+  //   db_capacity_overage と同じ R6 案 A invariant (Meter unit = ¥1)。
+  //   費用計算は src/config/file-storage-pricing.ts calculateFileStorageOverageJpy()。
+  //   月初 cron (tenant-monthly-reset) で前月 peak から quantity を算出し送信。
+  storage_file_overage: 'tasukiba_storage_file_overage_jpy',
 } as const;
 
 export type StripeMeterCallType = keyof typeof STRIPE_METER_EVENT_NAMES;

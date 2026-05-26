@@ -124,12 +124,14 @@ describe('checkFairUseLimit - 集計対象', () => {
     const callArg = vi.mocked(prisma.apiCallLog.count).mock.calls[0]?.[0];
     // ADR-0019: project-upsert / suggestion-explanation / auto-tag-extract
     // ADR-0020 (2026-05-25): + db-capacity-overage
+    // ADR-0021 (2026-05-26): + storage-file-overage
     expect(callArg?.where?.featureUnit).toEqual({
       notIn: [
         'project-upsert',
         'suggestion-explanation',
         'auto-tag-extract',
         'db-capacity-overage',
+        'storage-file-overage',
       ],
     });
   });

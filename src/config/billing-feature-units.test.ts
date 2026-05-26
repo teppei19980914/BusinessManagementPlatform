@@ -12,20 +12,22 @@ import {
 } from './billing-feature-units';
 
 describe('BILLABLE_FEATURE_UNITS', () => {
-  it('課金対象 featureUnit が ADR-0019/0020 の決定通り 4 件存在する', () => {
+  it('課金対象 featureUnit が ADR-0019/0020/0021 の決定通り 5 件存在する', () => {
     // ADR-0019: project-upsert, suggestion-explanation, auto-tag-extract
     // ADR-0020 (2026-05-25 追加): db-capacity-overage
+    // ADR-0021 (2026-05-26 追加): storage-file-overage
     expect(BILLABLE_FEATURE_UNITS).toEqual([
       'project-upsert',
       'suggestion-explanation',
       'auto-tag-extract',
       'db-capacity-overage',
+      'storage-file-overage',
     ]);
   });
 
   it('配列は readonly (const assertion) で意図しない書き換えを防ぐ', () => {
     const expected: readonly string[] = BILLABLE_FEATURE_UNITS;
-    expect(expected.length).toBe(4);
+    expect(expected.length).toBe(5);
   });
 });
 
@@ -45,6 +47,10 @@ describe('isBillableFeatureUnit', () => {
 
     it('db-capacity-overage は課金対象 (ADR-0020 / DB 容量月次集約)', () => {
       expect(isBillableFeatureUnit('db-capacity-overage')).toBe(true);
+    });
+
+    it('storage-file-overage は課金対象 (ADR-0021 / ファイルストレージ月次集約)', () => {
+      expect(isBillableFeatureUnit('storage-file-overage')).toBe(true);
     });
   });
 
@@ -94,6 +100,12 @@ describe('isBillableFeatureUnit', () => {
     it('external-import-embedding は無料 (CSV 外部インポート)', () => {
       expect(isBillableFeatureUnit('external-import-embedding')).toBe(false);
     });
+
+    it('attachment-embedding は無料 (ADR-0021 / 添付ファイル本文の意味検索用、運営負担)', () => {
+      // 重要: Voyage embedding API 呼出が発生するが、提案エンジン/チャット精度のため運営負担で無料。
+      // ApiCallLog には記録するが costJpy=0、counter / Stripe queue いずれも更新しない。
+      expect(isBillableFeatureUnit('attachment-embedding')).toBe(false);
+    });
   });
 
   describe('未知の値', () => {
@@ -111,12 +123,13 @@ describe('isBillableFeatureUnit', () => {
     it('isBillableFeatureUnit が true なら BillableFeatureUnit 型として narrow される', () => {
       const fu: string = 'project-upsert';
       if (isBillableFeatureUnit(fu)) {
-        // この分岐内では BillableFeatureUnit 型 (= 4 つの union 型)
+        // この分岐内では BillableFeatureUnit 型 (= 5 つの union 型)
         const _check:
           | 'project-upsert'
           | 'suggestion-explanation'
           | 'auto-tag-extract'
-          | 'db-capacity-overage' = fu;
+          | 'db-capacity-overage'
+          | 'storage-file-overage' = fu;
         expect(_check).toBe('project-upsert');
       } else {
         throw new Error('expected billable');
