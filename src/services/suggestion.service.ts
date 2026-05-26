@@ -906,6 +906,8 @@ export async function adoptPastIssueAsTemplate(
     select: {
       title: true,
       content: true,
+      // feat/risk-issue-4-section (2026-05-26): clone する source issue から occurrence も伝搬
+      occurrence: true,
       cause: true,
       impact: true,
       likelihood: true,
@@ -924,6 +926,7 @@ export async function adoptPastIssueAsTemplate(
       type: 'issue',
       title: src.title,
       content: src.content,
+      occurrence: src.occurrence,
       cause: src.cause,
       impact: src.impact,
       likelihood: src.likelihood,

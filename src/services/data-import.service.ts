@@ -664,6 +664,8 @@ async function runImport(
         type: String(r.type ?? 'risk'),
         title: String(r.title ?? '').slice(0, 100),
         content: String(r.content ?? ''),
+        // feat/risk-issue-4-section (2026-05-26): import 時の occurrence 反映 (旧 export には未含のため null fallback)
+        occurrence: stringOrNull(r.occurrence),
         cause: stringOrNull(r.cause),
         impact: String(r.impact ?? 'medium'),
         likelihood: stringOrNull(r.likelihood),

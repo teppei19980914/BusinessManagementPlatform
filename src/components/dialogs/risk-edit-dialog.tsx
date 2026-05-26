@@ -37,6 +37,14 @@ type RiskLike = {
   projectId: string | null;
   type: string;
   title: string;
+  // feat/risk-issue-4-section (2026-05-26): 4 セクション化
+  //   - occurrence : 発生事象 (issue) / 考えられる事象 (risk)
+  //   - cause      : 直接原因 (issue) / 考えられる原因 (risk)
+  //   - responsePolicy : 対応策 (issue) / 考えられる対応策 (risk)
+  //   - content    : メモ (両 type 共通、旧「内容」のリネーム)
+  occurrence: string | null;
+  cause: string | null;
+  responsePolicy: string | null;
   content: string;
   impact: string;
   likelihood: string | null;
@@ -90,6 +98,10 @@ export function RiskEditDialog({
   const { fullscreenClassName, FullscreenToggle } = useDialogFullscreen();
   const [form, setForm] = useState({
     title: '',
+    // feat/risk-issue-4-section (2026-05-26): 4 セクション化
+    occurrence: '',
+    cause: '',
+    responsePolicy: '',
     content: '',
     impact: 'medium',
     likelihood: 'medium',
@@ -109,6 +121,10 @@ export function RiskEditDialog({
     setPrevRiskId(risk.id);
     setForm({
       title: risk.title,
+      // feat/risk-issue-4-section (2026-05-26): 4 セクション化
+      occurrence: risk.occurrence ?? '',
+      cause: risk.cause ?? '',
+      responsePolicy: risk.responsePolicy ?? '',
       content: risk.content,
       impact: risk.impact,
       likelihood: risk.likelihood ?? 'medium',
@@ -131,8 +147,13 @@ export function RiskEditDialog({
     if (!risk) return;
     setError('');
     // PR #63: 優先度は UI から撤去したため送信しない (既存値を維持)
+    // feat/risk-issue-4-section (2026-05-26): 4 セクション (occurrence/cause/responsePolicy/content)
+    //   を送信。空文字は null として保存 (DB は nullable)。
     const body: Record<string, unknown> = {
       title: form.title,
+      occurrence: form.occurrence.trim() || null,
+      cause: form.cause.trim() || null,
+      responsePolicy: form.responsePolicy.trim() || null,
       content: form.content,
       impact: form.impact,
       state: form.state,
@@ -227,23 +248,51 @@ export function RiskEditDialog({
               required={form.visibility === 'public'}
             />
           </div>
-          <div className="space-y-2">
-            <Label>{tField('content')} <span className="text-xs text-muted-foreground">{tRisk('optional')}</span></Label>
-            {/* refactor/list-create-content-optional (2026-04-27 #6): 編集時も内容は任意 */}
-            {readOnly ? (
-              <div className="rounded-md border border-input bg-background px-3 py-2 text-sm">
-                <MarkdownDisplay value={form.content} />
+          {/* feat/risk-issue-4-section (2026-05-26): 4 セクション化 (issue/risk で type 別ラベル)
+              共通設計: readOnly 時は MarkdownDisplay (= プレビュー固定)、編集時は MarkdownTextarea。
+              labels は tField('issueOccurrence') vs tField('riskOccurrence') 等で出し分け。 */}
+          {(() => {
+            const labels = risk.type === 'risk'
+              ? { occurrence: 'riskOccurrence', cause: 'riskCause', countermeasure: 'riskCountermeasure' }
+              : { occurrence: 'issueOccurrence', cause: 'issueCause', countermeasure: 'issueCountermeasure' };
+            const renderSection = (
+              labelKey: string,
+              value: string,
+              prevValue: string,
+              onChange: (v: string) => void,
+              isOccurrence = false,
+            ) => (
+              <div className="space-y-2">
+                <Label>
+                  {tField(labelKey)}
+                  {(!isOccurrence || form.visibility !== 'public') && (
+                    <span className="ml-2 text-xs text-muted-foreground">{tRisk('optional')}</span>
+                  )}
+                </Label>
+                {readOnly ? (
+                  <div className="rounded-md border border-input bg-background px-3 py-2 text-sm">
+                    <MarkdownDisplay value={value} />
+                  </div>
+                ) : (
+                  <MarkdownTextarea
+                    value={value}
+                    onChange={onChange}
+                    previousValue={prevValue}
+                    rows={3}
+                    maxLength={MEDIUM_TEXT_MAX_LENGTH}
+                  />
+                )}
               </div>
-            ) : (
-              <MarkdownTextarea
-                value={form.content}
-                onChange={(v) => setForm({ ...form, content: v })}
-                previousValue={risk.content}
-                rows={4}
-                maxLength={MEDIUM_TEXT_MAX_LENGTH}
-              />
-            )}
-          </div>
+            );
+            return (
+              <>
+                {renderSection(labels.occurrence, form.occurrence, risk.occurrence ?? '', (v) => setForm({ ...form, occurrence: v }), true)}
+                {renderSection(labels.cause, form.cause, risk.cause ?? '', (v) => setForm({ ...form, cause: v }))}
+                {renderSection(labels.countermeasure, form.responsePolicy, risk.responsePolicy ?? '', (v) => setForm({ ...form, responsePolicy: v }))}
+                {renderSection('memo', form.content, risk.content, (v) => setForm({ ...form, content: v }))}
+              </>
+            );
+          })()}
           {/*
             PR-γ / 項目 5/6: type=issue では impact ラベルを「重要度」、likelihood ラベルを「緊急度」に。
             DB 列は同じ (impact / likelihood) のままで、UI label のみ type 別に出し分け。

@@ -53,6 +53,9 @@ export type KnowledgeDTO = {
   visibility: string;
   createdBy: string;
   creatorName?: string;
+  // feat/asset-assignee-expansion (2026-05-26): 担当者 (作成者と並ぶ編集権限保持者)
+  assigneeId: string | null;
+  assigneeName?: string | null;
   createdAt: string;
   updatedAt: string;
   projectIds?: string[];
@@ -75,6 +78,9 @@ function toKnowledgeDTO(k: {
   visibility: string;
   createdBy: string;
   creator?: { name: string };
+  // feat/asset-assignee-expansion (2026-05-26)
+  assigneeId: string | null;
+  assignee?: { name: string } | null;
   createdAt: Date;
   updatedAt: Date;
   knowledgeProjects?: { projectId: string }[];
@@ -96,6 +102,8 @@ function toKnowledgeDTO(k: {
     visibility: k.visibility,
     createdBy: k.createdBy,
     creatorName: k.creator?.name,
+    assigneeId: k.assigneeId,
+    assigneeName: k.assignee?.name ?? null,
     createdAt: k.createdAt.toISOString(),
     updatedAt: k.updatedAt.toISOString(),
     projectIds: k.knowledgeProjects?.map((kp) => kp.projectId),
@@ -172,6 +180,8 @@ export async function listKnowledge(
       where,
       include: {
         creator: { select: { name: true } },
+        // feat/asset-assignee-expansion (2026-05-26): 担当者氏名表示用
+        assignee: { select: { name: true } },
         knowledgeProjects: { select: { projectId: true } },
       },
       orderBy: { createdAt: 'desc' },
@@ -234,6 +244,8 @@ export async function listAllKnowledgeForViewer(
     where,
     include: {
       creator: { select: { name: true } },
+      // feat/asset-assignee-expansion (2026-05-26): 担当者氏名表示用
+      assignee: { select: { name: true } },
       updater: { select: { name: true } },
       knowledgeProjects: {
         select: {
@@ -312,6 +324,8 @@ export async function listKnowledgeByProject(
     },
     include: {
       creator: { select: { name: true } },
+      // feat/asset-assignee-expansion (2026-05-26): 担当者氏名表示用
+      assignee: { select: { name: true } },
       knowledgeProjects: { select: { projectId: true } },
     },
     orderBy: { createdAt: 'desc' },
@@ -339,6 +353,8 @@ export async function getKnowledge(
     where: { id: knowledgeId, deletedAt: null, ...tenantWhere },
     include: {
       creator: { select: { name: true } },
+      // feat/asset-assignee-expansion (2026-05-26): 担当者氏名表示用
+      assignee: { select: { name: true } },
       knowledgeProjects: { select: { projectId: true } },
     },
   });
@@ -376,6 +392,8 @@ export async function createKnowledge(
       processTags: (input.processTags || []) as Prisma.InputJsonValue,
       businessDomainTags: (input.businessDomainTags || []) as Prisma.InputJsonValue,
       visibility: input.visibility,
+      // feat/asset-assignee-expansion (2026-05-26): 作成時から担当者指定可
+      assigneeId: input.assigneeId ?? null,
       createdBy: userId,
       updatedBy: userId,
       knowledgeProjects: input.projectIds?.length
@@ -384,6 +402,8 @@ export async function createKnowledge(
     },
     include: {
       creator: { select: { name: true } },
+      // feat/asset-assignee-expansion (2026-05-26): 担当者氏名表示用
+      assignee: { select: { name: true } },
       knowledgeProjects: { select: { projectId: true } },
     },
   });
@@ -470,6 +490,8 @@ export async function updateKnowledge(
     where: { id: knowledgeId, deletedAt: null, tenantId },
     select: {
       createdBy: true,
+      // feat/asset-assignee-expansion (2026-05-26): assigneeId も認可判定対象
+      assigneeId: true,
       title: true,
       background: true,
       content: true,
@@ -481,7 +503,11 @@ export async function updateKnowledge(
     },
   });
   if (!existing) throw new Error('NOT_FOUND');
-  if (existing.createdBy !== userId) throw new Error('FORBIDDEN');
+  // feat/asset-assignee-expansion (2026-05-26): 「作成者 OR 担当者」を編集可。
+  //   引継ぎ後の担当者がナレッジを更新できるよう拡張。
+  if (existing.createdBy !== userId && existing.assigneeId !== userId) {
+    throw new Error('FORBIDDEN');
+  }
 
   // 2026-05-11 defense-in-depth: 「全メンバー」(public) 化する更新で、
   //   title が input でも DB でも空の場合は拒否。
@@ -520,12 +546,20 @@ export async function updateKnowledge(
   if (input.businessDomainTags !== undefined)
     data.businessDomainTags = input.businessDomainTags as Prisma.InputJsonValue;
   if (input.visibility !== undefined) data.visibility = input.visibility;
+  // feat/asset-assignee-expansion (2026-05-26): 担当者を更新 (null は外す扱い)
+  if (input.assigneeId !== undefined) {
+    data.assignee = input.assigneeId === null
+      ? { disconnect: true }
+      : { connect: { id: input.assigneeId } };
+  }
 
   const k = await prisma.knowledge.update({
     where: { id: knowledgeId },
     data,
     include: {
       creator: { select: { name: true } },
+      // feat/asset-assignee-expansion (2026-05-26): 担当者氏名表示用
+      assignee: { select: { name: true } },
       knowledgeProjects: { select: { projectId: true } },
     },
   });
@@ -584,14 +618,17 @@ export async function deleteKnowledge(
   // 2026-05-09 feedback Phase 2-4: 越境削除を遮断するため where に tenantId 必須化。
   const existing = await prisma.knowledge.findFirst({
     where: { id: knowledgeId, deletedAt: null, tenantId: viewerTenantId },
-    select: { createdBy: true },
+    // feat/asset-assignee-expansion (2026-05-26): assigneeId も認可判定対象
+    select: { createdBy: true, assigneeId: true },
   });
   if (!existing) throw new Error('NOT_FOUND');
-  const isCreator = existing.createdBy === userId;
+  // feat/asset-assignee-expansion (2026-05-26): 「作成者 OR 担当者」を編集権限相当に拡張
+  const isCreatorOrAssignee =
+    existing.createdBy === userId || existing.assigneeId === userId;
   const isAdmin = systemRole === 'admin';
   if (context === 'project') {
-    // ○○一覧経路: 作成者本人のみ削除可。admin も他人作成は削除不可 (一覧 UI に admin の削除ボタンを置かない設計と整合)
-    if (!isCreator) throw new Error('FORBIDDEN');
+    // ○○一覧経路: 作成者 OR 担当者 本人のみ削除可。admin も他人作成は削除不可
+    if (!isCreatorOrAssignee) throw new Error('FORBIDDEN');
   } else {
     // 全○○経路: admin のみ削除可。作成者本人であっても横断経路では削除させない (作成者削除は project 経路で行う)
     if (!isAdmin) throw new Error('FORBIDDEN');

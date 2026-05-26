@@ -58,6 +58,9 @@ export type RetroDTO = {
   visibility: string;
   /** 2026-04-24: UI 側で「自分が作成者か」を判定するために DTO に含める */
   createdBy: string;
+  // feat/asset-assignee-expansion (2026-05-26): 担当者 (作成者と並ぶ編集権限保持者)
+  assigneeId: string | null;
+  assigneeName: string | null;
   createdAt: string;
   // PR #199: コメントは polymorphic comments テーブルへ移管。本 DTO には含めない。
   //   UI 側は edit dialog 内の <CommentSection> が /api/comments?entityType=retrospective
@@ -123,14 +126,17 @@ export async function listAllRetrospectivesForViewer(
     orderBy: { conductedDate: 'desc' },
   });
 
-  // createdBy / updatedBy のユーザ名を解決 (PR #199: コメントは別経路 /api/comments で取得)
-  // 2026-05-12: 意図的な cross-tenant lookup。userIds は事前にテナント検証済の retros から
-  //   抽出されるが、createdBy / updatedBy は過去に他テナント所属だった元 user の可能性 (退職後の
-  //   テナント移動など) があり得るため tenantId フィルタは掛けない。氏名のみ select で機微情報なし。
+  // createdBy / updatedBy / assigneeId のユーザ名を解決 (PR #199: コメントは別経路 /api/comments で取得)
   const userIds = [...new Set([
     ...retros.map((r) => r.createdBy),
     ...retros.map((r) => r.updatedBy),
+    // feat/asset-assignee-expansion (2026-05-26): 担当者氏名解決
+    ...retros.map((r) => r.assigneeId).filter((id): id is string => id != null),
   ])];
+  // 2026-05-12: 意図的な cross-tenant lookup。userIds は事前にテナント検証済の retros から
+  //   抽出されるが、createdBy / updatedBy / assigneeId は過去に他テナント所属だった元 user の
+  //   可能性 (退職後のテナント移動など) があり得るため tenantId フィルタは掛けない。
+  //   氏名のみ select で機微情報なし。
   const users = userIds.length > 0
     ? await prisma.user.findMany({ where: { id: { in: userIds } }, select: { id: true, name: true } })
     : [];
@@ -172,6 +178,9 @@ export async function listAllRetrospectivesForViewer(
       state: r.state,
       visibility: r.visibility,
       createdBy: r.createdBy,
+      // feat/asset-assignee-expansion (2026-05-26)
+      assigneeId: r.assigneeId,
+      assigneeName: r.assigneeId ? userMap.get(r.assigneeId) ?? null : null,
       createdAt: r.createdAt.toISOString(),
       updatedAt: r.updatedAt.toISOString(),
       // fix/cross-list-non-member-columns (2026-04-27): 横断ビューの行自体が
@@ -247,6 +256,13 @@ export async function listRetrospectives(
       })) ?? [];
   const memberProjectIds = new Set(memberships.map((m) => m.projectId));
 
+  // feat/asset-assignee-expansion (2026-05-26): 担当者氏名解決 (cross-tenant lookup 許容、name のみ)
+  const assigneeIds = [...new Set(retros.map((r) => r.assigneeId).filter((id): id is string => id != null))];
+  const assigneeUsers = assigneeIds.length > 0
+    ? await prisma.user.findMany({ where: { id: { in: assigneeIds } }, select: { id: true, name: true } })
+    : [];
+  const assigneeMap = new Map(assigneeUsers.map((u) => [u.id, u.name]));
+
   return retros.map((r) => {
     const rawLinks = r.retrospectiveProjects
       .filter((rp) => rp.project != null)
@@ -269,6 +285,8 @@ export async function listRetrospectives(
       state: r.state,
       visibility: r.visibility,
       createdBy: r.createdBy,
+      assigneeId: r.assigneeId,
+      assigneeName: r.assigneeId ? assigneeMap.get(r.assigneeId) ?? null : null,
       createdAt: r.createdAt.toISOString(),
     };
   });
@@ -298,6 +316,8 @@ export async function createRetrospective(
       improvements: input.improvements,
       knowledgeToShare: input.knowledgeToShare,
       visibility: input.visibility ?? 'draft',
+      // feat/asset-assignee-expansion (2026-05-26): 作成時から担当者指定可
+      assigneeId: input.assigneeId ?? null,
       createdBy: userId,
       updatedBy: userId,
     },
@@ -339,6 +359,9 @@ export async function createRetrospective(
     state: r.state,
     visibility: r.visibility,
     createdBy: r.createdBy,
+    // feat/asset-assignee-expansion (2026-05-26)
+    assigneeId: r.assigneeId,
+    assigneeName: null,
     createdAt: r.createdAt.toISOString(),
   };
 }
@@ -419,6 +442,8 @@ export async function updateRetrospective(
     state?: string;
     /** PR #60: 公開範囲 (draft / public) */
     visibility?: string;
+    /** feat/asset-assignee-expansion (2026-05-26): 担当者 (作成者と並ぶ編集権限保持者) */
+    assigneeId?: string | null;
   },
   userId: string,
   tenantId: string,
@@ -430,6 +455,8 @@ export async function updateRetrospective(
     where: { id: retroId, deletedAt: null, tenantId },
     select: {
       createdBy: true,
+      // feat/asset-assignee-expansion (2026-05-26): assigneeId も認可判定対象
+      assigneeId: true,
       planSummary: true,
       actualSummary: true,
       goodPoints: true,
@@ -441,7 +468,10 @@ export async function updateRetrospective(
     },
   });
   if (!existing) throw new Error('NOT_FOUND');
-  if (existing.createdBy !== userId) throw new Error('FORBIDDEN');
+  // feat/asset-assignee-expansion (2026-05-26): 「作成者 OR 担当者」を編集可
+  if (existing.createdBy !== userId && existing.assigneeId !== userId) {
+    throw new Error('FORBIDDEN');
+  }
 
   // PR #5-c + PR D (2026-05-09 / #20): text フィールドが「実値として変わったか」を比較で判定。
   const textFieldsChanging =
@@ -466,6 +496,8 @@ export async function updateRetrospective(
   if (input.knowledgeToShare !== undefined) data.knowledgeToShare = input.knowledgeToShare;
   if (input.state !== undefined) data.state = input.state;
   if (input.visibility !== undefined) data.visibility = input.visibility;
+  // feat/asset-assignee-expansion (2026-05-26): 担当者更新 (null は明示的にクリア)
+  if (input.assigneeId !== undefined) data.assigneeId = input.assigneeId;
 
   const r = await prisma.retrospective.update({ where: { id: retroId }, data });
 
@@ -520,13 +552,16 @@ export async function deleteRetrospective(
   // 2026-05-09 feedback Phase 2-4: 越境削除を遮断するため where に tenantId 必須化。
   const existing = await prisma.retrospective.findFirst({
     where: { id: retroId, deletedAt: null, tenantId: viewerTenantId },
-    select: { createdBy: true },
+    // feat/asset-assignee-expansion (2026-05-26): assigneeId も認可判定対象
+    select: { createdBy: true, assigneeId: true },
   });
   if (!existing) throw new Error('NOT_FOUND');
-  const isCreator = existing.createdBy === userId;
+  // feat/asset-assignee-expansion (2026-05-26): 「作成者 OR 担当者」を編集権限相当に
+  const isCreatorOrAssignee =
+    existing.createdBy === userId || existing.assigneeId === userId;
   const isAdmin = systemRole === 'admin';
   if (context === 'project') {
-    if (!isCreator) throw new Error('FORBIDDEN');
+    if (!isCreatorOrAssignee) throw new Error('FORBIDDEN');
   } else {
     if (!isAdmin) throw new Error('FORBIDDEN');
   }

@@ -179,7 +179,9 @@ export function MemosClient({
     return multiSort(xs, sortState, getMemoSortValue);
   }, [memos, bulkFilter, sortState]);
 
-  const selectableIds = filteredMemos.filter((m) => m.isMine).map((m) => m.id);
+  // feat/asset-assignee-expansion (2026-05-26): isMine だけでなく canEdit (= 作成者 OR 担当者) ベース。
+  //   public メモで自分が担当者に指定された場合も bulk 操作対象に含める。
+  const selectableIds = filteredMemos.filter((m) => m.canEdit).map((m) => m.id);
   const allSelectableSelected
     = selectableIds.length > 0 && selectableIds.every((id) => selectedIds.has(id));
 
@@ -439,12 +441,12 @@ export function MemosClient({
             {filteredMemos.map((m) => (
               <ClickableRow
                 key={m.id}
-                active={m.isMine}
+                active={m.canEdit}
                 onClick={() => setEditing(m)}
               >
                 <TableCell onClick={(e) => e.stopPropagation()}>
                   <BulkSelectCell
-                    canSelect={m.isMine}
+                    canSelect={m.canEdit}
                     selected={selectedIds.has(m.id)}
                     onToggle={() => toggleOneMemo(m.id)}
                     ariaLabel={tMemo('bulkSelectLabel', { title: m.title })}
@@ -469,7 +471,7 @@ export function MemosClient({
                 {/* fix/quick-ux item 5: 編集は行クリックで実行 (line 266 の onClick={setEditing(m)})。
                     旧仕様では「編集」ボタンが冗長だったため削除し、削除のみアクション列に残す。 */}
                 <TableCell onClick={(e) => e.stopPropagation()}>
-                  {m.isMine && (
+                  {m.canEdit && (
                     <Button variant="outline" size="sm" className="text-destructive" onClick={() => handleDelete(m)}>{tAction('delete')}</Button>
                   )}
                 </TableCell>
@@ -540,7 +542,7 @@ export function MemosClient({
               <AttachmentList
                 entityType="memo"
                 entityId={editing.id}
-                canEdit={editing.userId === viewerUserId}
+                canEdit={editing.canEdit}
                 label={tMemo('referenceUrl')}
               />
               <Button type="submit" className="w-full">{tAction('save')}</Button>

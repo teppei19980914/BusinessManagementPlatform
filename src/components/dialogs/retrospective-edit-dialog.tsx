@@ -37,6 +37,8 @@ type RetroLike = {
   problems: string;
   improvements: string;
   visibility: string;
+  // feat/asset-assignee-expansion (2026-05-26): 担当者
+  assigneeId?: string | null;
   // PR feat/asset-multi-linking-ui (Phase 2): 紐付け済プロジェクト一覧
   // feat/crud-permission-redesign (2026-05-20): 横断ビューで非 ProjectMember は name=null
   linkedProjects?: { id: string; name: string | null; deleted: boolean }[];
@@ -48,6 +50,7 @@ type RetroLike = {
  */
 export function RetrospectiveEditDialog({
   retro,
+  members,
   open,
   onOpenChange,
   onSaved,
@@ -55,6 +58,9 @@ export function RetrospectiveEditDialog({
   currentProjectId,
 }: {
   retro: RetroLike | null;
+  /** feat/asset-assignee-expansion (2026-05-26): 担当者 selector の選択肢。
+   *  未指定時は selector を表示しない (cross-list /retrospectives, suggestions パネル等)。 */
+  members?: { userId: string; userName: string }[];
   open: boolean;
   onOpenChange: (v: boolean) => void;
   onSaved: () => Promise<void> | void;
@@ -67,6 +73,7 @@ export function RetrospectiveEditDialog({
   const t = useTranslations('action');
   const tField = useTranslations('field');
   const tRetro = useTranslations('retro');
+  const tRisk = useTranslations('risk');
   const { withLoading } = useLoading();
   const { showSuccess, showError } = useToast();
   // feat/dialog-fullscreen-toggle: 全画面トグル (90vw × 90vh)
@@ -79,6 +86,8 @@ export function RetrospectiveEditDialog({
     problems: '',
     improvements: '',
     visibility: 'draft',
+    // feat/asset-assignee-expansion (2026-05-26)
+    assigneeId: '',
   });
   const [error, setError] = useState('');
   // PR #88: 編集ダイアログを開くたびに DB データを初期表示する。
@@ -95,6 +104,7 @@ export function RetrospectiveEditDialog({
       problems: retro.problems,
       improvements: retro.improvements,
       visibility: retro.visibility,
+      assigneeId: retro.assigneeId ?? '',
     });
     setError('');
   }
@@ -123,6 +133,8 @@ export function RetrospectiveEditDialog({
     if (form.conductedDate === '') {
       delete payload.conductedDate;
     }
+    // feat/asset-assignee-expansion (2026-05-26): 空文字 → null (DB は nullable)
+    payload.assigneeId = form.assigneeId || null;
     const res = await withLoading(() =>
       fetch(`/api/projects/${targetProjectId}/retrospectives/${retro.id}`, {
         method: 'PATCH',
@@ -181,6 +193,21 @@ export function RetrospectiveEditDialog({
               hideClear
             />
           </div>
+          {/* feat/asset-assignee-expansion (2026-05-26): 担当者 selector (members 受領時のみ表示)。
+              作成者と並ぶ編集権限保持者で、引継ぎ完了後の運用者向け。 */}
+          {members && members.length > 0 && (
+            <div className="space-y-2">
+              <Label>{tField('assignee')}</Label>
+              <select
+                value={form.assigneeId}
+                onChange={(e) => setForm({ ...form, assigneeId: e.target.value })}
+                className={nativeSelectClass}
+              >
+                <option value="">{tRisk('notSet')}</option>
+                {members.map((m) => <option key={m.userId} value={m.userId}>{m.userName}</option>)}
+              </select>
+            </div>
+          )}
           {/* refactor/list-create-content-optional (2026-04-27 #6): 5 セクションは全て任意 */}
           {([
             { key: 'planSummary', label: tRetro('planSummary'), rows: 3 },

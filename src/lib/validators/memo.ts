@@ -31,6 +31,10 @@ export const createMemoSchema = z
     // 本文は visibility に関わらず任意 (空文字許容)。
     content: z.string().max(MEMO_CONTENT_MAX_LENGTH).default(''),
     visibility: z.enum(MEMO_VISIBILITIES).default('private'),
+    // feat/asset-assignee-expansion (2026-05-26): 担当者 (作成者と並ぶ編集権限保持者)。
+    //   memo は visibility='private' のとき他人参照不可なので、通常 assignee は public memo 用。
+    //   private に他人 assignee 指定は service 層で拒否する設計 (= assignee は memo 不可視になるため)。
+    assigneeId: z.string().uuid().nullable().optional(),
   })
   .superRefine((data, ctx) => {
     if (data.visibility === 'public' && (!data.title || data.title.trim().length === 0)) {
@@ -47,6 +51,8 @@ const baseUpdateMemoSchema = z.object({
   title: z.string().max(TITLE_MAX_LENGTH).optional(),
   content: z.string().max(MEMO_CONTENT_MAX_LENGTH).optional(),
   visibility: z.enum(MEMO_VISIBILITIES).optional(),
+  // feat/asset-assignee-expansion (2026-05-26): 編集時 assigneeId 更新も受入れ
+  assigneeId: z.string().uuid().nullable().optional(),
 });
 
 export const updateMemoSchema = baseUpdateMemoSchema.superRefine((data, ctx) => {

@@ -452,7 +452,8 @@ function buildKnowledgeCsv(knowledge: Array<Record<string, unknown>>): string {
 function buildRisksIssuesCsv(risksIssues: Array<Record<string, unknown>>): string {
   return buildCsv(
     [
-      'id', 'projectId', 'type', 'title', 'content', 'cause', 'responsePolicy',
+      // feat/risk-issue-4-section (2026-05-26): occurrence を title の直後に追加
+      'id', 'projectId', 'type', 'title', 'occurrence', 'content', 'cause', 'responsePolicy',
       'responseDetail', 'state', 'priority', 'reportedBy', 'assigneeId',
       'reportedAt', 'resolvedAt', 'createdAt', 'updatedAt',
     ],

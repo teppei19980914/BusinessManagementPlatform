@@ -44,6 +44,9 @@ const memoRow = (overrides: Record<string, unknown> = {}) => ({
   title: 'T',
   content: 'C',
   visibility: 'private',
+  // feat/asset-assignee-expansion (2026-05-26)
+  assigneeId: null,
+  assignee: null,
   createdAt: now,
   updatedAt: now,
   author: { name: 'Alice' },
@@ -174,7 +177,9 @@ describe('updateMemo', () => {
   });
 
   it('他人のメモは更新不可 (null)', async () => {
-    vi.mocked(prisma.memo.findFirst).mockResolvedValue({ userId: 'user-2' } as never);
+    vi.mocked(prisma.memo.findFirst).mockResolvedValue(
+      { userId: 'user-2', assigneeId: null } as never,
+    );
     expect(await updateMemo('memo-1', { title: 't2' }, 'user-1')).toBe(null);
     expect(prisma.memo.update).not.toHaveBeenCalled();
   });
@@ -186,6 +191,19 @@ describe('updateMemo', () => {
     );
 
     const result = await updateMemo('memo-1', { title: 't2' }, 'user-1');
+
+    expect(result?.title).toBe('t2');
+    expect(prisma.memo.update).toHaveBeenCalled();
+  });
+
+  // feat/asset-assignee-expansion (2026-05-26): 担当者も update 可能
+  it('担当者 (assigneeId === userId) は更新可能', async () => {
+    vi.mocked(prisma.memo.findFirst).mockResolvedValue(
+      { userId: 'user-creator', assigneeId: 'user-assignee', visibility: 'public' } as never,
+    );
+    vi.mocked(prisma.memo.update).mockResolvedValue(memoRow({ title: 't2' }) as never);
+
+    const result = await updateMemo('memo-1', { title: 't2' }, 'user-assignee');
 
     expect(result?.title).toBe('t2');
     expect(prisma.memo.update).toHaveBeenCalled();
@@ -202,10 +220,22 @@ describe('deleteMemo', () => {
 
   it('他人のメモは false (一般ユーザ)', async () => {
     vi.mocked(prisma.memo.findFirst).mockResolvedValue(
-      { userId: 'user-2', visibility: 'private' } as never,
+      { userId: 'user-2', assigneeId: null, visibility: 'private' } as never,
     );
     expect(await deleteMemo('memo-1', 'user-1', 'tenant-A', 'general')).toBe(false);
     expect(prisma.memo.update).not.toHaveBeenCalled();
+  });
+
+  // feat/asset-assignee-expansion (2026-05-26): 担当者も削除可能
+  it('担当者 (assigneeId === userId) は削除可能', async () => {
+    vi.mocked(prisma.memo.findFirst).mockResolvedValue(
+      { userId: 'user-creator', assigneeId: 'user-assignee', visibility: 'public' } as never,
+    );
+    vi.mocked(prisma.memo.update).mockResolvedValue({} as never);
+    vi.mocked(prisma.attachment.updateMany).mockResolvedValue({ count: 0 } as never);
+
+    expect(await deleteMemo('memo-1', 'user-assignee', 'tenant-A', 'general')).toBe(true);
+    expect(prisma.memo.update).toHaveBeenCalled();
   });
 
   // feat/crud-permission-redesign (2026-05-20): admin の public モデレーション削除

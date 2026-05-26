@@ -132,6 +132,14 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
   const [form, setForm] = useState({
     type: initialType,
     title: '',
+    // feat/risk-issue-4-section (2026-05-26): 4 セクション化
+    //   - occurrence : 発生事象 (issue) / 考えられる事象 (risk) — public 時必須
+    //   - cause      : 直接原因 (issue) / 考えられる原因 (risk)
+    //   - responsePolicy : 対応策 (issue) / 考えられる対応策 (risk)
+    //   - content    : メモ (両 type 共通、旧「内容」のリネーム)
+    occurrence: '',
+    cause: '',
+    responsePolicy: '',
     content: '',
     impact: 'medium',
     likelihood: 'medium',
@@ -233,7 +241,11 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
   // PR #165: 一括選択 + 一括編集ダイアログ
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   // Phase C 要件 18 (2026-04-28): フィルター有無に関わらず、自分が起票した行は常に選択可能。
-  const selectableIds = filteredRisks.filter((r) => r.viewerIsCreator === true).map((r) => r.id);
+  // feat/asset-assignee-expansion (2026-05-26): viewerCanEdit (= 作成者 OR 担当者) ベースに拡張。
+  //   旧 viewerIsCreator 単独判定では引継ぎ後の担当者が bulk 操作できなかった。
+  const selectableIds = filteredRisks
+    .filter((r) => r.viewerCanEdit === true || r.viewerIsCreator === true)
+    .map((r) => r.id);
   const allSelectableSelected
     = selectableIds.length > 0 && selectableIds.every((id) => selectedIds.has(id));
 
@@ -257,6 +269,10 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
     setError('');
     const body = {
       ...form,
+      // feat/risk-issue-4-section (2026-05-26): 空文字は null として送信 (DB は nullable)
+      occurrence: form.occurrence.trim() || null,
+      cause: form.cause.trim() || null,
+      responsePolicy: form.responsePolicy.trim() || null,
       assigneeId: form.assigneeId || undefined,
       likelihood: form.type === 'risk' ? form.likelihood : undefined,
       riskNature: form.type === 'risk' ? form.riskNature : undefined,
@@ -291,6 +307,10 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
     setForm({
       type: initialType,
       title: '',
+      // feat/risk-issue-4-section (2026-05-26): 連続起票時もフィールドをクリア
+      occurrence: '',
+      cause: '',
+      responsePolicy: '',
       content: '',
       impact: 'medium',
       likelihood: 'medium',
@@ -385,10 +405,59 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
                       required={form.visibility === 'public'}
                     />
                   </div>
+                  {/* feat/risk-issue-4-section (2026-05-26): 4 セクション化
+                      type=issue → 発生事象 / 直接原因 / 対応策 / メモ
+                      type=risk  → 考えられる事象 / 考えられる原因 / 考えられる対応策 / メモ
+                      DB 列は両 type 共通 (occurrence / cause / responsePolicy / content) */}
                   <div className="space-y-2">
-                    <Label>{tField('content')} <span className="text-xs text-muted-foreground">{tRisk('optional')}</span></Label>
-                    {/* refactor/list-create-content-optional (2026-04-27 #6): 件名必須、内容は任意 */}
-                    <MarkdownTextarea value={form.content} onChange={(v) => setForm({ ...form, content: v })} rows={4} maxLength={2000} />
+                    <Label>
+                      {form.type === 'risk' ? tField('riskOccurrence') : tField('issueOccurrence')}
+                      {form.visibility !== 'public' && (
+                        <span className="ml-2 text-xs text-muted-foreground">{tRisk('optional')}</span>
+                      )}
+                    </Label>
+                    <MarkdownTextarea
+                      value={form.occurrence}
+                      onChange={(v) => setForm({ ...form, occurrence: v })}
+                      rows={3}
+                      maxLength={2000}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>
+                      {form.type === 'risk' ? tField('riskCause') : tField('issueCause')}{' '}
+                      <span className="text-xs text-muted-foreground">{tRisk('optional')}</span>
+                    </Label>
+                    <MarkdownTextarea
+                      value={form.cause}
+                      onChange={(v) => setForm({ ...form, cause: v })}
+                      rows={3}
+                      maxLength={2000}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>
+                      {form.type === 'risk' ? tField('riskCountermeasure') : tField('issueCountermeasure')}{' '}
+                      <span className="text-xs text-muted-foreground">{tRisk('optional')}</span>
+                    </Label>
+                    <MarkdownTextarea
+                      value={form.responsePolicy}
+                      onChange={(v) => setForm({ ...form, responsePolicy: v })}
+                      rows={3}
+                      maxLength={2000}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>
+                      {tField('memo')}{' '}
+                      <span className="text-xs text-muted-foreground">{tRisk('optional')}</span>
+                    </Label>
+                    <MarkdownTextarea
+                      value={form.content}
+                      onChange={(v) => setForm({ ...form, content: v })}
+                      rows={3}
+                      maxLength={2000}
+                    />
                   </div>
                   {/*
                     PR #65 Phase 2 (c): 入力中に類似する過去課題を inline 提示。
@@ -557,18 +626,23 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
             <SortableResizableHead columnKey="createdAt" defaultWidth={110} label={tRisk('reportedAt')} sortState={sortState} onSortChange={setSortColumn} />
             {/* PR #67: 添付リンク列 */}
             <ResizableHead columnKey="attachments" defaultWidth={200}>{tRisk('attachment')}</ResizableHead>
-            {/* 2026-04-24: 作成者本人だけが削除ボタンを使うので、自分の行が 1 つでもあれば列を出す */}
-            {filteredRisks.some((x) => x.reporterId === currentUserId) && (
+            {/* 2026-04-24: 作成者本人だけが削除ボタンを使うので、自分の行が 1 つでもあれば列を出す。
+                feat/asset-assignee-expansion (2026-05-26): 担当者も削除可能なので OR で拡張。 */}
+            {filteredRisks.some((x) => x.reporterId === currentUserId || x.assigneeId === currentUserId) && (
               <ResizableHead columnKey="actions" defaultWidth={80}>{tRisk('actions')}</ResizableHead>
             )}
           </TableRow>
         </TableHeader>
         <TableBody>
           {filteredRisks.map((r) => {
-            const isOwner = r.reporterId === currentUserId;
+            // feat/asset-assignee-expansion (2026-05-26): 作成者 OR 担当者を編集可能 (= 削除/bulk 対象)
+            const canEdit = r.viewerCanEdit === true
+              || r.reporterId === currentUserId
+              || r.assigneeId === currentUserId;
+            const isOwner = canEdit; // 旧名残: delete ボタン表示判定 (担当者にも開放)
             // Phase B 要件 5 (2026-04-28): 行クリックで dialog を開く動作は **全員** で active 化
-            //   (詳細閲覧の用途を含む)。編集権限は dialog 内で `readOnly={!isOwner}` により分岐し、
-            //   非作成者は readOnly モードで詳細表示のみ可能。
+            //   (詳細閲覧の用途を含む)。編集権限は dialog 内で `readOnly` により分岐し、
+            //   非作成者 & 非担当者は readOnly モードで詳細表示のみ可能。
             return (
             <ClickableRow
               key={r.id}
@@ -576,7 +650,7 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
             >
               <TableCell onClick={(e) => e.stopPropagation()}>
                 <BulkSelectCell
-                  canSelect={r.viewerIsCreator === true}
+                  canSelect={canEdit}
                   selected={selectedIds.has(r.id)}
                   onToggle={() => toggleOneId(r.id)}
                   ariaLabel={tRisk('addToBulkEdit', { title: r.title })}
@@ -642,7 +716,7 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
                   Phase C 要件 18: select 列は常時表示で +1 */}
               <TableCell
                 colSpan={
-                  (filteredRisks.some((x) => x.reporterId === currentUserId) ? 9 : 8)
+                  (filteredRisks.some((x) => x.reporterId === currentUserId || x.assigneeId === currentUserId) ? 9 : 8)
                   + (typeFilter ? 0 : 1)
                 }
                 className="py-8 text-center text-muted-foreground"
@@ -655,6 +729,7 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
       </ResizableTableShell>
 
       {/* Phase B 要件 5: 非作成者は readOnly で詳細表示のみ可。
+          feat/asset-assignee-expansion (2026-05-26): 担当者も編集可能。
           systemRole='admin' は他人作成でも編集可能 (既存仕様維持)。 */}
       <RiskEditDialog
         risk={editingRisk}
@@ -666,6 +741,7 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
         readOnly={
           editingRisk != null
           && editingRisk.reporterId !== currentUserId
+          && editingRisk.assigneeId !== currentUserId
         }
       />
 

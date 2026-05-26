@@ -62,6 +62,9 @@ const kRow = (o: Record<string, unknown> = {}) => ({
   visibility: 'public',
   createdBy: 'u-1',
   creator: { name: 'Alice' },
+  // feat/asset-assignee-expansion (2026-05-26)
+  assigneeId: null,
+  assignee: null,
   createdAt: now,
   updatedAt: now,
   knowledgeProjects: [],
@@ -420,14 +423,28 @@ describe('updateKnowledge / deleteKnowledge', () => {
     );
   });
 
-  it('updateKnowledge: 作成者以外 (admin でも) は FORBIDDEN', async () => {
-    vi.mocked(prisma.knowledge.findFirst).mockResolvedValue({ createdBy: 'u-1' } as never);
+  it('updateKnowledge: 作成者でも担当者でもない (admin でも) は FORBIDDEN', async () => {
+    vi.mocked(prisma.knowledge.findFirst).mockResolvedValue(
+      { createdBy: 'u-1', assigneeId: null } as never,
+    );
     await expect(updateKnowledge('k-1', { title: 'n' }, 'u-other', TEST_TENANT_ID)).rejects.toThrow(
       'FORBIDDEN',
     );
     await expect(updateKnowledge('k-1', { title: 'n' }, 'admin-x', TEST_TENANT_ID)).rejects.toThrow(
       'FORBIDDEN',
     );
+  });
+
+  // feat/asset-assignee-expansion (2026-05-26): 担当者も update 可能
+  it('updateKnowledge: 担当者 (assigneeId === userId) は更新可能', async () => {
+    vi.mocked(prisma.knowledge.findFirst).mockResolvedValue(
+      { createdBy: 'u-creator', assigneeId: 'u-assignee', visibility: 'draft' } as never,
+    );
+    vi.mocked(prisma.knowledge.update).mockResolvedValue(kRow() as never);
+    await updateKnowledge('k-1', { title: 'updated' }, 'u-assignee', TEST_TENANT_ID);
+
+    const call = vi.mocked(prisma.knowledge.update).mock.calls[0][0];
+    expect(call.data.title).toBe('updated');
   });
 
   it('updateKnowledge: 作成者本人なら指定フィールドのみ', async () => {
@@ -614,10 +631,29 @@ describe('updateKnowledge / deleteKnowledge', () => {
   });
 
   it('deleteKnowledge (context=project): 非 admin の第三者は FORBIDDEN', async () => {
-    vi.mocked(prisma.knowledge.findFirst).mockResolvedValue({ createdBy: 'u-1' } as never);
+    vi.mocked(prisma.knowledge.findFirst).mockResolvedValue(
+      { createdBy: 'u-1', assigneeId: null } as never,
+    );
     await expect(
       deleteKnowledge('k-1', 'u-other', 'general', TEST_TENANT_ID, 'project'),
     ).rejects.toThrow('FORBIDDEN');
+  });
+
+  // feat/asset-assignee-expansion (2026-05-26): 担当者も削除可能 (project context)
+  it('deleteKnowledge (context=project): 担当者は削除可能', async () => {
+    vi.mocked(prisma.knowledge.findFirst).mockResolvedValue(
+      { createdBy: 'u-creator', assigneeId: 'u-assignee' } as never,
+    );
+    vi.mocked(prisma.knowledge.update).mockResolvedValue({} as never);
+    vi.mocked(prisma.attachment.updateMany).mockResolvedValue({ count: 0 } as never);
+
+    await deleteKnowledge('k-1', 'u-assignee', 'general', TEST_TENANT_ID, 'project');
+
+    expect(prisma.knowledge.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ deletedAt: expect.any(Date) }),
+      }),
+    );
   });
 });
 

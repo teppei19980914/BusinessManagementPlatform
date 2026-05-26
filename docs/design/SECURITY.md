@@ -80,8 +80,8 @@ function checkPermission(
 | 一覧参照 | `visibility='public'` のみ (admin / 非 admin 共通) | **public + 自分の draft** (非 admin)<br>admin: draft 含め全件 |
 | 個別参照 (view) | public: 全員 OK<br>draft: 作成者本人 + admin のみ | 同左 |
 | 作成 | — (画面から不可) | **実際の ProjectMember** (`pm_tl` / `member`) のみ<br>admin でも非メンバーなら不可 |
-| 編集 | — (画面から不可、全員 read-only) | **作成者本人のみ**<br>admin でも他人の記事は編集不可 |
-| 削除 | **admin のみ** (管理削除、全リスク/課題/振り返り/ナレッジ画面から) | **作成者本人のみ** (admin は全○○ 経由で削除) |
+| 編集 | — (画面から不可、全員 read-only) | **作成者 OR 担当者**<br>admin でも他人の記事は編集不可<br>(2026-05-26 担当者拡張: feat/asset-assignee-expansion) |
+| 削除 | **admin のみ** (管理削除、全リスク/課題/振り返り/ナレッジ画面から) | **作成者 OR 担当者** (admin は全○○ 経由で削除)<br>(2026-05-26 担当者拡張) |
 
 **2026-05-01 変更点 (PR fix/visibility-auth-matrix)**: 「○○一覧」で **自分の draft が表示されるように** filter を緩和
 (`OR [{public}, {draft AND createdBy=自分}]`)。旧仕様 (2026-04-24「自分の draft も一覧から除外」) はユーザが
@@ -92,8 +92,8 @@ function checkPermission(
 - `lib/permissions/membership.ts#getActualProjectRole` で admin 短絡なしの実メンバー判定を提供
 - `lib/api-helpers.ts#requireActualProjectMember` で API POST ルートの作成制約を強制
 - service 層の `listX` (project-scoped) は **`OR [{public}, {draft AND createdBy=viewer}]`** で自己 draft を含める
-- service 層の `updateX` は「作成者と一致しなければ FORBIDDEN」で enforce
-- service 層の `deleteX` は「作成者 OR admin」で enforce
+- service 層の `updateX` は **「作成者 (createdBy/reporterId) OR 担当者 (assigneeId) と一致しなければ FORBIDDEN」** で enforce (2026-05-26 担当者拡張)
+- service 層の `deleteX` は **「作成者 OR 担当者 OR admin」** で enforce (project context は本人系のみ、global context は admin のみ)
 - service 層の `deleteX` は entity 削除時に **`prisma.comment.updateMany` で同 entity のコメントも cascade soft-delete**
 - `getX(id, viewerUserId?, viewerSystemRole?)` は認可引数付きで draft 秘匿 (他人の draft は null 返却 = 存在しない扱い)
 - UI 層 (各 `○○-client.tsx`) では `currentUserId` + `createdBy` / `reporterId` で isOwner 判定し、編集/削除ボタンを出し分け
@@ -218,7 +218,7 @@ GET (一覧/詳細) と DELETE (admin global moderation) のみ提供し、CREAT
 
 | context | 呼出元 route | 認可ルール |
 |---|---|---|
-| `'project'` | `/api/projects/[id]/{knowledge,risks,retrospectives}/[childId]` DELETE | **作成者本人のみ** (admin でも他人の記事は削除不可、UI ボタン非表示と一致) |
+| `'project'` | `/api/projects/[id]/{knowledge,risks,retrospectives}/[childId]` DELETE | **作成者 OR 担当者** (admin でも他人の記事は削除不可、UI ボタン非表示と一致)<br>2026-05-26 担当者拡張 (feat/asset-assignee-expansion) |
 | `'global'` | `/api/{knowledge,risks,retrospectives}/[childId]` DELETE | **admin only** (横断「全○○」画面からのモデレーション削除専用) |
 
 **狙い**: route 層が経路情報を service に明示することで、「同じ delete 関数でも経路により認可が異なる」

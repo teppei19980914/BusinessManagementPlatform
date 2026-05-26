@@ -403,6 +403,10 @@ model User {
   assignedRisks           RiskIssue[]              @relation("RiskAssignee")
   createdKnowledges       Knowledge[]              @relation("KnowledgeCreator")
   updatedKnowledges       Knowledge[]              @relation("KnowledgeUpdater")
+  // feat/asset-assignee-expansion (2026-05-26): 担当 Knowledge / Retrospective / Memo の inverse relation
+  assignedKnowledges      Knowledge[]              @relation("KnowledgeAssignee")
+  assignedRetrospectives  Retrospective[]          @relation("RetrospectiveAssignee")
+  assignedMemos           Memo[]                   @relation("MemoAssignee")
   auditLogs               AuditLog[]
   authEventLogs           AuthEventLog[]
   systemErrorLogs         SystemErrorLog[]
@@ -763,6 +767,14 @@ model RiskIssue {
   projectId        String?                      @map("project_id") @db.Uuid
   type             String                       @db.VarChar(10) // risk | issue
   title            String                       @db.VarChar(100)
+  // feat/risk-issue-4-section (2026-05-26): 4 セクション化対応。
+  //   - occurrence: 発生事象 (issue) / 考えられる事象 (risk) — 新規追加
+  //   - cause     : 直接原因 (issue) / 考えられる原因 (risk) — UI 露出を追加 (既存列再利用)
+  //   - responsePolicy: 対応策 (issue) / 考えられる対応策 (risk) — UI 露出を追加 (既存列再利用)
+  //   - content   : メモ (両 type 共通) — 旧「内容」を「メモ」にリネーム (DB 列名は維持)
+  // 旧データへの影響: occurrence は NULL 許容 (既存行は NULL のまま表示なし、新規入力時のみ値が入る)。
+  // 詳細: docs/specification/SCREENS.md §risk-issue-dialog
+  occurrence       String?                      @db.Text
   content          String                       @db.Text
   cause            String?                      @db.Text
   impact           String                       @db.VarChar(10) // low | medium | high
@@ -916,6 +928,10 @@ model Knowledge {
   contentEmbedding   Unsupported("vector(1024)")? @map("content_embedding")
   createdBy          String                       @map("created_by") @db.Uuid
   updatedBy          String                       @map("updated_by") @db.Uuid
+  // feat/asset-assignee-expansion (2026-05-26): 担当者 (= 作成者 OR 担当者 が編集可能の認可モデル)。
+  //   nullable: 既存 Knowledge は担当者なし (= 作成者のみ編集可)、新規入力時のみ値が入る。
+  //   ON DELETE SET NULL: 担当者の User 物理削除時に担当解除 (Knowledge 自体は残す)。
+  assigneeId         String?                      @map("assignee_id") @db.Uuid
   createdAt          DateTime                     @default(now()) @map("created_at") @db.Timestamptz
   updatedAt          DateTime                     @updatedAt @map("updated_at") @db.Timestamptz
   deletedAt          DateTime?                    @map("deleted_at") @db.Timestamptz
@@ -923,6 +939,7 @@ model Knowledge {
   tenant            Tenant             @relation(fields: [tenantId], references: [id])
   creator           User               @relation("KnowledgeCreator", fields: [createdBy], references: [id])
   updater           User               @relation("KnowledgeUpdater", fields: [updatedBy], references: [id])
+  assignee          User?              @relation("KnowledgeAssignee", fields: [assigneeId], references: [id])
   knowledgeProjects KnowledgeProject[]
   taskKnowledges    TaskKnowledge[]
 
@@ -931,6 +948,8 @@ model Knowledge {
   @@index([tenantId], map: "idx_knowledges_tenant")
   // partial index: シードフィルタ用 (true の行のみ index、Project と同じ最適化)
   @@index([isSampleData], map: "idx_knowledges_is_sample_data")
+  // feat/asset-assignee-expansion (2026-05-26): 担当者引き受け一覧画面用 index
+  @@index([assigneeId], map: "idx_knowledges_assignee")
   @@map("knowledges")
 }
 
@@ -986,6 +1005,8 @@ model Retrospective {
   contentEmbedding       Unsupported("vector(1024)")? @map("content_embedding")
   createdBy              String                       @map("created_by") @db.Uuid
   updatedBy              String                       @map("updated_by") @db.Uuid
+  // feat/asset-assignee-expansion (2026-05-26): 担当者 (= 作成者 OR 担当者 が編集可能)
+  assigneeId             String?                      @map("assignee_id") @db.Uuid
   createdAt              DateTime                     @default(now()) @map("created_at") @db.Timestamptz
   updatedAt              DateTime                     @updatedAt @map("updated_at") @db.Timestamptz
   deletedAt              DateTime?                    @map("deleted_at") @db.Timestamptz
@@ -995,10 +1016,12 @@ model Retrospective {
   // 検索 / 一覧 / cascade は retrospectiveProjects (M:N) 経由で行うこと。
   // ON DELETE SET NULL: 作成元 project 物理削除時に projectId は NULL になる (orphan 許容)。
   project               Project?               @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  assignee              User?                  @relation("RetrospectiveAssignee", fields: [assigneeId], references: [id])
   retrospectiveProjects RetrospectiveProject[]
 
   @@index([projectId], map: "idx_retro_project")
   @@index([tenantId], map: "idx_retro_tenant")
+  @@index([assigneeId], map: "idx_retro_assignee")
   @@map("retrospectives")
 }
 
@@ -1354,18 +1377,26 @@ model Memo {
   visibility       String                       @default("private") @db.VarChar(20)
   // PR #4 (T-03 Phase 2): title + content を結合した text の embedding
   contentEmbedding Unsupported("vector(1024)")? @map("content_embedding")
+  // feat/asset-assignee-expansion (2026-05-26): 担当者 (= 作成者 OR 担当者 が編集可能)。
+  //   memo は visibility='private' のとき他人からそもそも参照不可だが、'public' 化した
+  //   memo に対して担当者を割り当てると引継ぎ運用が可能になる。private memo に他人を
+  //   assignee 指定する UI は service 層で拒否する (assignee は memo を参照不可になるため)。
+  assigneeId       String?                      @map("assignee_id") @db.Uuid
   createdAt        DateTime                     @default(now()) @map("created_at") @db.Timestamptz
   updatedAt        DateTime                     @updatedAt @map("updated_at") @db.Timestamptz
   deletedAt        DateTime?                    @map("deleted_at") @db.Timestamptz
 
-  author User   @relation("MemoAuthor", fields: [userId], references: [id])
-  tenant Tenant @relation(fields: [tenantId], references: [id])
+  author   User   @relation("MemoAuthor", fields: [userId], references: [id])
+  assignee User?  @relation("MemoAssignee", fields: [assigneeId], references: [id])
+  tenant   Tenant @relation(fields: [tenantId], references: [id])
 
   // 自分のメモ一覧 (MyMemos) での並び替えを効率化
   @@index([userId, createdAt(sort: Desc)], map: "idx_memos_user_recent")
   // 全メモ (公開メモ) 画面での並び替えを効率化
   @@index([visibility, createdAt(sort: Desc)], map: "idx_memos_visibility_recent")
   @@index([tenantId], map: "idx_memos_tenant")
+  // feat/asset-assignee-expansion (2026-05-26): 担当 memo 一覧用
+  @@index([assigneeId], map: "idx_memos_assignee")
   @@map("memos")
 }
 

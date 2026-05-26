@@ -32,6 +32,8 @@ type KnowledgeLike = {
   content: string;
   result: string;
   visibility: string;
+  // feat/asset-assignee-expansion (2026-05-26): 担当者 (作成者と並ぶ編集権限保持者)
+  assigneeId?: string | null;
   projectIds?: string[];
   primaryProjectId?: string | null;
 };
@@ -48,6 +50,7 @@ type KnowledgeLike = {
 export function KnowledgeEditDialog({
   knowledge,
   projectId,
+  members,
   open,
   onOpenChange,
   onSaved,
@@ -56,6 +59,9 @@ export function KnowledgeEditDialog({
   knowledge: KnowledgeLike | null;
   /** プロジェクトスコープで編集する場合の projectId。省略時はレガシー /api/knowledge/:id を使う */
   projectId?: string | null;
+  /** feat/asset-assignee-expansion (2026-05-26): 担当者プルダウンの選択肢。
+   *  未指定時は selector を表示しない (cross-list /knowledge や suggestions パネルなど readOnly 主体の経路向け)。 */
+  members?: { userId: string; userName: string }[];
   open: boolean;
   onOpenChange: (v: boolean) => void;
   onSaved: () => Promise<void> | void;
@@ -64,6 +70,8 @@ export function KnowledgeEditDialog({
 }) {
   const t = useTranslations('action');
   const tKnowledge = useTranslations('knowledge');
+  const tField = useTranslations('field');
+  const tRisk = useTranslations('risk');
   const { withLoading } = useLoading();
   const { showSuccess, showError } = useToast();
   // feat/dialog-fullscreen-toggle: 全画面トグル (90vw × 90vh)
@@ -75,6 +83,8 @@ export function KnowledgeEditDialog({
     content: '',
     result: '',
     visibility: 'draft',
+    // feat/asset-assignee-expansion (2026-05-26)
+    assigneeId: '',
   });
   const [error, setError] = useState('');
   // PR #88: 編集ダイアログを開くたびに DB データを初期表示する。
@@ -90,6 +100,7 @@ export function KnowledgeEditDialog({
       content: knowledge.content,
       result: knowledge.result,
       visibility: knowledge.visibility,
+      assigneeId: knowledge.assigneeId ?? '',
     });
     setError('');
   }
@@ -106,11 +117,16 @@ export function KnowledgeEditDialog({
     const url = projectId
       ? `/api/projects/${projectId}/knowledge/${knowledge.id}`
       : `/api/knowledge/${knowledge.id}`;
+    // feat/asset-assignee-expansion (2026-05-26): 担当者は空文字 → null として送信
+    const body = {
+      ...form,
+      assigneeId: form.assigneeId || null,
+    };
     const res = await withLoading(() =>
       fetch(url, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
+        body: JSON.stringify(body),
       }),
     );
     if (!res.ok) {
@@ -171,6 +187,21 @@ export function KnowledgeEditDialog({
               </select>
             </div>
           </div>
+          {/* feat/asset-assignee-expansion (2026-05-26): 担当者 selector (members 受領時のみ表示)。
+              作成者と並ぶ編集権限保持者で、引継ぎ完了後の運用者向け。 */}
+          {members && members.length > 0 && (
+            <div className="space-y-2">
+              <Label>{tField('assignee')}</Label>
+              <select
+                value={form.assigneeId}
+                onChange={(e) => setForm({ ...form, assigneeId: e.target.value })}
+                className={nativeSelectClass}
+              >
+                <option value="">{tRisk('notSet')}</option>
+                {members.map((m) => <option key={m.userId} value={m.userId}>{m.userName}</option>)}
+              </select>
+            </div>
+          )}
           {/* refactor/list-create-content-optional (2026-04-27 #6): 編集時も背景/内容/結果は任意 */}
           <div className="space-y-2">
             <Label>{tKnowledge('background')} <span className="text-xs text-muted-foreground">{tKnowledge('optional')}</span></Label>

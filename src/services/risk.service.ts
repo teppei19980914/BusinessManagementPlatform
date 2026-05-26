@@ -87,6 +87,8 @@ export type RiskDTO = {
   type: string;
   title: string;
   content: string;
+  // feat/risk-issue-4-section (2026-05-26): 発生事象 (issue) / 考えられる事象 (risk) 列
+  occurrence: string | null;
   cause: string | null;
   impact: string;
   likelihood: string | null;
@@ -107,8 +109,13 @@ export type RiskDTO = {
   createdAt: string;
   updatedAt: string;
   /** PR #165: プロジェクト「リスク/課題一覧」での一括編集対象判定。viewer が作成者本人なら true。
-   * undefined の場合は viewerUserId を渡さなかった内部呼び出し経路 (cascade 削除確認等)。 */
+   * undefined の場合は viewerUserId を渡さなかった内部呼び出し経路 (cascade 削除確認等)。
+   * feat/asset-assignee-expansion (2026-05-26): 後方互換のため残置。新規 UI は viewerCanEdit を使う。 */
   viewerIsCreator?: boolean;
+  /** feat/asset-assignee-expansion (2026-05-26): viewer が編集可能 (作成者 OR 担当者)。
+   * UI の readOnly 判定 / 一括選択ロジックは本フラグを使う。
+   * undefined の場合は viewerUserId を渡さなかった内部呼び出し経路。 */
+  viewerCanEdit?: boolean;
 };
 
 function toRiskDTO(r: {
@@ -117,6 +124,7 @@ function toRiskDTO(r: {
   type: string;
   title: string;
   content: string;
+  occurrence: string | null;
   cause: string | null;
   impact: string;
   likelihood: string | null;
@@ -155,6 +163,7 @@ function toRiskDTO(r: {
     type: r.type,
     title: r.title,
     content: r.content,
+    occurrence: r.occurrence,
     cause: r.cause,
     impact: r.impact,
     likelihood: r.likelihood,
@@ -251,13 +260,17 @@ export async function listRisks(
       })) ?? [];
   const memberProjectIds = new Set(memberships.map((m) => m.projectId));
 
-  // PR #165: プロジェクト「リスク/課題一覧」での一括編集対象判定。viewerIsCreator を DTO に乗せる。
+  // PR #165 + feat/asset-assignee-expansion (2026-05-26): viewerIsCreator は後方互換のため残置、
+  //   新規 UI 経路は viewerCanEdit (作成者 OR 担当者) を使う。
   return risks.map((r) => {
     const dto = toRiskDTO(r);
+    const isCreator = r.reporterId === viewerUserId;
+    const isAssignee = r.assigneeId === viewerUserId;
     return {
       ...dto,
       linkedProjects: gateLinkedProjectsName(dto.linkedProjects, memberProjectIds, isAdmin),
-      viewerIsCreator: r.reporterId === viewerUserId,
+      viewerIsCreator: isCreator,
+      viewerCanEdit: isCreator || isAssignee,
     };
   });
 }
@@ -448,6 +461,8 @@ export async function createRisk(
       type: input.type,
       title: input.title,
       content: input.content,
+      // feat/risk-issue-4-section (2026-05-26): 発生事象 (issue) / 考えられる事象 (risk)
+      occurrence: input.occurrence,
       cause: input.cause,
       impact: input.impact,
       likelihood: input.likelihood,
@@ -494,6 +509,8 @@ export async function createRisk(
       text: composeRiskText({
         title: input.title,
         content: input.content,
+        // feat/risk-issue-4-section (2026-05-26): occurrence も検索対象に含める
+        occurrence: input.occurrence ?? null,
         cause: input.cause ?? null,
         responsePolicy: input.responsePolicy ?? null,
         responseDetail: input.responseDetail ?? null,
@@ -519,12 +536,16 @@ export async function createRisk(
 export function composeRiskText(fields: {
   title: string;
   content: string;
+  // feat/risk-issue-4-section (2026-05-26): occurrence (発生事象 / 考えられる事象) も
+  //   検索対象テキストに含める。type で issue/risk のラベルは違っても DB 列は同じ。
+  occurrence?: string | null;
   cause: string | null;
   responsePolicy: string | null;
   responseDetail: string | null;
 }): string {
   return [
     fields.title,
+    fields.occurrence ?? '',
     fields.content,
     fields.cause ?? '',
     fields.responsePolicy ?? '',
@@ -563,8 +584,12 @@ export async function updateRisk(
     where: { id: riskId, deletedAt: null, tenantId },
     select: {
       reporterId: true,
+      // feat/asset-assignee-expansion (2026-05-26): 認可拡張で assignee も編集可能化
+      assigneeId: true,
       title: true,
       content: true,
+      // feat/risk-issue-4-section (2026-05-26): occurrence の差分判定 + embedding 再生成用
+      occurrence: true,
       cause: true,
       responsePolicy: true,
       responseDetail: true,
@@ -575,7 +600,12 @@ export async function updateRisk(
     },
   });
   if (!existing) throw new Error('NOT_FOUND');
-  if (existing.reporterId !== userId) throw new Error('FORBIDDEN');
+  // feat/asset-assignee-expansion (2026-05-26): 「作成者 (reporterId) OR 担当者 (assigneeId)」の
+  //   いずれかと一致すれば編集可。引継ぎ後の担当者が内容更新できるよう拡張。
+  //   admin の他人編集禁止は維持 (= 削除のみ admin 介入可能、編集は本人系のみ)。
+  if (existing.reporterId !== userId && existing.assigneeId !== userId) {
+    throw new Error('FORBIDDEN');
+  }
 
   // 2026-05-11 defense-in-depth: 「全メンバー」(public) 化する更新で、
   //   title が input でも DB でも空の場合は拒否 (個人情報がうっかり公開化されるのを防ぐ)。
@@ -589,9 +619,11 @@ export async function updateRisk(
   }
 
   // PR #5-c + PR D (2026-05-09 / #20): text フィールドが「実値として変わったか」を比較で判定。
+  // feat/risk-issue-4-section (2026-05-26): occurrence も判定対象に追加
   const textFieldsChanging =
     (input.title !== undefined && input.title !== existing.title) ||
     (input.content !== undefined && input.content !== existing.content) ||
+    (input.occurrence !== undefined && input.occurrence !== existing.occurrence) ||
     (input.cause !== undefined && input.cause !== existing.cause) ||
     (input.responsePolicy !== undefined && input.responsePolicy !== existing.responsePolicy) ||
     (input.responseDetail !== undefined && input.responseDetail !== existing.responseDetail);
@@ -600,6 +632,8 @@ export async function updateRisk(
 
   if (input.title !== undefined) data.title = input.title;
   if (input.content !== undefined) data.content = input.content;
+  // feat/risk-issue-4-section (2026-05-26): occurrence の更新を反映
+  if (input.occurrence !== undefined) data.occurrence = input.occurrence;
   if (input.cause !== undefined) data.cause = input.cause;
   // PR-γ: impact / likelihood が変わるたびに priority を再計算する。
   // priority は **input から直接受け取らず**、常に (impact, likelihood, type) から算出。
@@ -676,6 +710,7 @@ export async function updateRisk(
       text: composeRiskText({
         title: r.title,
         content: r.content,
+        occurrence: r.occurrence,
         cause: r.cause,
         responsePolicy: r.responsePolicy,
         responseDetail: r.responseDetail,
@@ -734,6 +769,8 @@ export async function bulkUpdateRisksVisibilityFromList(
       state: true,
       title: true,
       content: true,
+      // feat/risk-issue-4-section (2026-05-26): bulk visibility 更新時の embedding 再生成にも occurrence を含める
+      occurrence: true,
       cause: true,
       responsePolicy: true,
       responseDetail: true,
@@ -773,6 +810,7 @@ export async function bulkUpdateRisksVisibilityFromList(
         text: composeRiskText({
           title: t.title,
           content: t.content,
+          occurrence: t.occurrence,
           cause: t.cause,
           responsePolicy: t.responsePolicy,
           responseDetail: t.responseDetail,
@@ -794,8 +832,10 @@ export async function bulkUpdateRisksVisibilityFromList(
 /**
  * リスク/課題を論理削除する。
  *
- * 認可 (feat/crud-permission-redesign, 2026-05-20 改訂):
- *   - context='project' (○○一覧経由): 作成者本人のみ削除可。admin も他人作成は削除不可。
+ * 認可 (feat/crud-permission-redesign, 2026-05-20 改訂、
+ *       feat/asset-assignee-expansion (2026-05-26) で「担当者」を追加):
+ *   - context='project' (○○一覧経由): **作成者 (reporterId) OR 担当者 (assigneeId)** 本人のみ削除可。
+ *     admin も他人作成は削除不可。
  *   - context='global' (全○○経由): admin のみ削除可。
  *
  * @throws {Error} 'NOT_FOUND' — リスク/課題が存在しない or 既に削除済み
@@ -811,13 +851,16 @@ export async function deleteRisk(
   // 2026-05-09 feedback Phase 2-3: 越境削除を遮断するため where に tenantId 必須化。
   const existing = await prisma.riskIssue.findFirst({
     where: { id: riskId, deletedAt: null, tenantId: viewerTenantId },
-    select: { reporterId: true, type: true },
+    // feat/asset-assignee-expansion (2026-05-26): assigneeId も認可判定対象
+    select: { reporterId: true, assigneeId: true, type: true },
   });
   if (!existing) throw new Error('NOT_FOUND');
-  const isCreator = existing.reporterId === userId;
+  // feat/asset-assignee-expansion (2026-05-26): 「作成者 OR 担当者」を編集権限相当に拡張
+  const isCreatorOrAssignee =
+    existing.reporterId === userId || existing.assigneeId === userId;
   const isAdmin = systemRole === 'admin';
   if (context === 'project') {
-    if (!isCreator) throw new Error('FORBIDDEN');
+    if (!isCreatorOrAssignee) throw new Error('FORBIDDEN');
   } else {
     if (!isAdmin) throw new Error('FORBIDDEN');
   }

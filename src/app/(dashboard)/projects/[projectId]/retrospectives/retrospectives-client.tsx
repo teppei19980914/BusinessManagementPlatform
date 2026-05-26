@@ -98,6 +98,8 @@ function getProjectRetroSortValue(r: RetroDTO, columnKey: string): unknown {
 type Props = {
   projectId: string;
   retros: RetroDTO[];
+  /** feat/asset-assignee-expansion (2026-05-26): 担当者 selector の選択肢 (任意) */
+  members?: { userId: string; userName: string }[];
   /** 2026-04-24: 振り返り作成ボタンの表示可否 (実際の ProjectMember の pm_tl/member のみ true) */
   canCreate: boolean;
   /** 作成者本人判定用 (createdBy === currentUserId で編集/削除許可) */
@@ -106,7 +108,7 @@ type Props = {
   onReload?: () => Promise<void> | void;
 };
 
-export function RetrospectivesClient({ projectId, retros, canCreate, currentUserId, onReload }: Props) {
+export function RetrospectivesClient({ projectId, retros, members, canCreate, currentUserId, onReload }: Props) {
   const t = useTranslations('action');
   const tRetro = useTranslations('retro');
   const tCommon = useTranslations('common');
@@ -171,8 +173,9 @@ export function RetrospectivesClient({ projectId, retros, canCreate, currentUser
     return multiSort(xs, sortState, getProjectRetroSortValue);
   })();
 
+  // feat/asset-assignee-expansion (2026-05-26): 作成者 OR 担当者を編集可能 (= bulk 対象)
   const selectableRetroIds = filteredRetros
-    .filter((r) => r.createdBy === currentUserId)
+    .filter((r) => r.createdBy === currentUserId || r.assigneeId === currentUserId)
     .map((r) => r.id);
   const allRetrosSelected
     = selectableRetroIds.length > 0 && selectableRetroIds.every((id) => selectedIds.has(id));
@@ -394,8 +397,9 @@ export function RetrospectivesClient({ projectId, retros, canCreate, currentUser
             <SortableResizableHead columnKey="createdBy" defaultWidth={120} label={tRetro('createdBy')} sortState={sortState} onSortChange={setSortColumn} />
             <SortableResizableHead columnKey="createdAt" defaultWidth={130} label={tRetro('createdAt')} sortState={sortState} onSortChange={setSortColumn} />
             <ResizableHead columnKey="attachments" defaultWidth={180}>{tRetro('attachment')}</ResizableHead>
-            {/* 2026-04-24 / §35: 作成者本人だけが操作ボタンを使うので、自分の行が 1 つでもあれば列を出す */}
-            {filteredRetros.some((r) => r.createdBy === currentUserId) && (
+            {/* 2026-04-24 / §35: 作成者本人だけが操作ボタンを使うので、自分の行が 1 つでもあれば列を出す。
+                feat/asset-assignee-expansion (2026-05-26): 担当者も操作可能なので OR で拡張。 */}
+            {filteredRetros.some((r) => r.createdBy === currentUserId || r.assigneeId === currentUserId) && (
               <ResizableHead columnKey="actions" defaultWidth={160}>{tRetro('actions')}</ResizableHead>
             )}
           </TableRow>
@@ -404,7 +408,7 @@ export function RetrospectivesClient({ projectId, retros, canCreate, currentUser
           {filteredRetros.length === 0 ? (
             <TableRow>
               <TableCell
-                colSpan={filteredRetros.some((r) => r.createdBy === currentUserId) ? 8 : 7}
+                colSpan={filteredRetros.some((r) => r.createdBy === currentUserId || r.assigneeId === currentUserId) ? 8 : 7}
                 className="py-8 text-center text-muted-foreground"
               >
                 {tRetro('noneInList')}
@@ -412,8 +416,8 @@ export function RetrospectivesClient({ projectId, retros, canCreate, currentUser
             </TableRow>
           ) : (
             filteredRetros.map((retro) => {
-              // 2026-04-24: 作成者本人のみ編集/確定/削除可
-              const isOwner = retro.createdBy === currentUserId;
+              // feat/asset-assignee-expansion (2026-05-26): 作成者 OR 担当者で編集/確定/削除可
+              const isOwner = retro.createdBy === currentUserId || retro.assigneeId === currentUserId;
               return (
                 <ClickableRow key={retro.id} onClick={() => setEditingRetro(retro)}>
                   <TableCell onClick={(e) => e.stopPropagation()}>
@@ -444,7 +448,7 @@ export function RetrospectivesClient({ projectId, retros, canCreate, currentUser
                   <TableCell onClick={(e) => e.stopPropagation()}>
                     <AttachmentsCell items={attachmentsByEntity[retro.id] ?? []} />
                   </TableCell>
-                  {filteredRetros.some((x) => x.createdBy === currentUserId) && (
+                  {filteredRetros.some((x) => x.createdBy === currentUserId || x.assigneeId === currentUserId) && (
                     <TableCell onClick={(e) => e.stopPropagation()}>
                       <div className="flex items-center gap-2">
                         {isOwner && retro.state !== 'confirmed' && (
@@ -477,14 +481,21 @@ export function RetrospectivesClient({ projectId, retros, canCreate, currentUser
         {tCommon('itemCount', { count: filteredRetros.length })}
       </div>
 
-      {/* Phase B 要件 5: 非作成者は readOnly で詳細表示のみ可。 */}
+      {/* Phase B 要件 5: 非作成者は readOnly で詳細表示のみ可。
+          feat/asset-assignee-expansion (2026-05-26): 担当者にも編集権限を付与するため、
+          readOnly 判定は 作成者 OR 担当者 = 編集可 に変更。 */}
       <RetrospectiveEditDialog
         retro={editingRetro}
+        members={members}
         currentProjectId={projectId}
         open={editingRetro != null}
         onOpenChange={(v) => { if (!v) setEditingRetro(null); }}
         onSaved={reload}
-        readOnly={editingRetro != null && editingRetro.createdBy !== currentUserId}
+        readOnly={
+          editingRetro != null &&
+          editingRetro.createdBy !== currentUserId &&
+          editingRetro.assigneeId !== currentUserId
+        }
       />
     </div>
   );

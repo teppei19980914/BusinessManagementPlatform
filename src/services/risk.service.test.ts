@@ -493,15 +493,39 @@ describe('updateRisk', () => {
     );
   });
 
-  it('作成者以外 (admin でも) は FORBIDDEN', async () => {
+  it('作成者でも担当者でもない (admin でも) は FORBIDDEN', async () => {
     vi.mocked(prisma.riskIssue.findFirst).mockResolvedValue(
-      { reporterId: 'u-1' } as never,
+      { reporterId: 'u-1', assigneeId: null } as never,
     );
     await expect(updateRisk('r-1', { title: 'new' }, 'u-other', TEST_TENANT_ID)).rejects.toThrow(
       'FORBIDDEN',
     );
     // admin であっても他人のリスクは編集不可
     await expect(updateRisk('r-1', { title: 'new' }, 'admin-x', TEST_TENANT_ID)).rejects.toThrow(
+      'FORBIDDEN',
+    );
+  });
+
+  // feat/asset-assignee-expansion (2026-05-26): 担当者も update 可能 (引継ぎ後の運用者向け)
+  it('担当者 (assigneeId === userId) は update 可能', async () => {
+    vi.mocked(prisma.riskIssue.findFirst).mockResolvedValue(
+      { reporterId: 'u-creator', assigneeId: 'u-assignee' } as never,
+    );
+    vi.mocked(prisma.riskIssue.update).mockResolvedValue(rRow() as never);
+
+    await updateRisk('r-1', { title: 'new', state: 'resolved' }, 'u-assignee', TEST_TENANT_ID);
+
+    const call = vi.mocked(prisma.riskIssue.update).mock.calls[0][0];
+    expect(call.data.title).toBe('new');
+    expect(call.data.updatedBy).toBe('u-assignee');
+  });
+
+  // 既存テスト「作成者でも担当者でもない FORBIDDEN」とは別に、assigneeId=null パターンも明示
+  it('assigneeId=null かつ呼出ユーザが作成者でも担当者でもない → FORBIDDEN', async () => {
+    vi.mocked(prisma.riskIssue.findFirst).mockResolvedValue(
+      { reporterId: 'u-1', assigneeId: null } as never,
+    );
+    await expect(updateRisk('r-1', { title: 'new' }, 'u-third', TEST_TENANT_ID)).rejects.toThrow(
       'FORBIDDEN',
     );
   });
@@ -708,10 +732,28 @@ describe('deleteRisk', () => {
   });
 
   it('(context=project): 非 admin の第三者は FORBIDDEN', async () => {
-    vi.mocked(prisma.riskIssue.findFirst).mockResolvedValue({ reporterId: 'u-1' } as never);
+    vi.mocked(prisma.riskIssue.findFirst).mockResolvedValue(
+      { reporterId: 'u-1', assigneeId: null } as never,
+    );
     await expect(
       deleteRisk('r-1', 'u-other', 'general', TEST_TENANT_ID, 'project'),
     ).rejects.toThrow('FORBIDDEN');
+  });
+
+  // feat/asset-assignee-expansion (2026-05-26): 担当者も削除可能 (project context)
+  it('(context=project): 担当者 (assigneeId === userId) は削除できる', async () => {
+    vi.mocked(prisma.riskIssue.findFirst).mockResolvedValue(
+      { reporterId: 'u-creator', assigneeId: 'u-assignee', type: 'risk' } as never,
+    );
+    vi.mocked(prisma.riskIssue.update).mockResolvedValue({} as never);
+    vi.mocked(prisma.attachment.updateMany).mockResolvedValue({ count: 0 } as never);
+
+    await deleteRisk('r-1', 'u-assignee', 'general', TEST_TENANT_ID, 'project');
+
+    expect(prisma.riskIssue.update).toHaveBeenCalledWith({
+      where: { id: 'r-1' },
+      data: { deletedAt: expect.any(Date), updatedBy: 'u-assignee' },
+    });
   });
 });
 
@@ -724,6 +766,8 @@ describe('risksToCSV', () => {
     type: 'risk',
     title: 'タイトル',
     content: '',
+    // feat/risk-issue-4-section (2026-05-26)
+    occurrence: null,
     cause: null,
     impact: 'high',
     likelihood: 'low',

@@ -55,6 +55,8 @@ import {
 } from '@/components/attachments/staged-attachments-input';
 import { KNOWLEDGE_TYPES, VISIBILITIES } from '@/types';
 import type { KnowledgeDTO } from '@/services/knowledge.service';
+// feat/asset-assignee-expansion (2026-05-26): 担当者 selector 用 member DTO
+import type { MemberDTO } from '@/services/member.service';
 // PR #168: 一覧画面に添付列を表示 (横展開)
 import { useBatchAttachments } from '@/components/attachments/use-batch-attachments';
 import { AttachmentsCell } from '@/components/attachments/attachments-cell';
@@ -92,6 +94,8 @@ function getProjectKnowledgeSortValue(k: KnowledgeDTO, columnKey: string): unkno
 type Props = {
   projectId: string;
   knowledges: KnowledgeDTO[];
+  /** feat/asset-assignee-expansion (2026-05-26): 担当者 selector の選択肢 (任意) */
+  members?: MemberDTO[];
   /** 2026-04-24: 作成ボタンの表示可否 (実際の ProjectMember の pm_tl/member のみ true) */
   canCreate: boolean;
   /** 2026-04-24: 作成者本人判定 (k.createdBy === currentUserId で編集/削除許可) */
@@ -113,6 +117,7 @@ type Props = {
 export function ProjectKnowledgeClient({
   projectId,
   knowledges,
+  members,
   canCreate,
   currentUserId,
   onReload,
@@ -152,8 +157,9 @@ export function ProjectKnowledgeClient({
     return multiSort(xs, sortState, getProjectKnowledgeSortValue);
   })();
 
+  // feat/asset-assignee-expansion (2026-05-26): 作成者 OR 担当者を編集可能 (= bulk 対象)
   const selectableKnowledgeIds = filteredKnowledges
-    .filter((k) => k.createdBy === currentUserId)
+    .filter((k) => k.createdBy === currentUserId || k.assigneeId === currentUserId)
     .map((k) => k.id);
   const allKnowledgeSelected
     = selectableKnowledgeIds.length > 0 && selectableKnowledgeIds.every((id) => selectedIds.has(id));
@@ -420,8 +426,9 @@ export function ProjectKnowledgeClient({
             <SortableResizableHead columnKey="createdBy" defaultWidth={120} label={tKnowledge('createdBy')} sortState={sortState} onSortChange={setSortColumn} />
             <SortableResizableHead columnKey="updatedAt" defaultWidth={130} label={tKnowledge('updatedAt')} sortState={sortState} onSortChange={setSortColumn} />
             <ResizableHead columnKey="attachments" defaultWidth={180}>{tKnowledge('attachment')}</ResizableHead>
-            {/* 2026-04-24 / §35: 作成者本人だけが削除ボタンを使うので、自分の行が 1 つでもあれば列を出す */}
-            {filteredKnowledges.some((k) => k.createdBy === currentUserId) && (
+            {/* 2026-04-24 / §35: 作成者本人だけが削除ボタンを使うので、自分の行が 1 つでもあれば列を出す。
+                feat/asset-assignee-expansion (2026-05-26): 担当者も削除可能なので OR で拡張。 */}
+            {filteredKnowledges.some((k) => k.createdBy === currentUserId || k.assigneeId === currentUserId) && (
               <ResizableHead columnKey="actions" defaultWidth={64}>{tKnowledge('actions')}</ResizableHead>
             )}
           </TableRow>
@@ -430,7 +437,7 @@ export function ProjectKnowledgeClient({
           {filteredKnowledges.length === 0 ? (
             <TableRow>
               <TableCell
-                colSpan={filteredKnowledges.some((k) => k.createdBy === currentUserId) ? 8 : 7}
+                colSpan={filteredKnowledges.some((k) => k.createdBy === currentUserId || k.assigneeId === currentUserId) ? 8 : 7}
                 className="py-8 text-center text-muted-foreground"
               >
                 {tKnowledge('noneInList')}
@@ -438,7 +445,8 @@ export function ProjectKnowledgeClient({
             </TableRow>
           ) : (
             filteredKnowledges.map((k) => {
-              const isOwner = k.createdBy === currentUserId;
+              // feat/asset-assignee-expansion (2026-05-26): 作成者 OR 担当者を編集可能
+              const isOwner = k.createdBy === currentUserId || k.assigneeId === currentUserId;
               return (
                 <ClickableRow key={k.id} onClick={() => setEditingKnowledge(k)}>
                   <TableCell onClick={(e) => e.stopPropagation()}>
@@ -469,7 +477,7 @@ export function ProjectKnowledgeClient({
                   <TableCell onClick={(e) => e.stopPropagation()}>
                     <AttachmentsCell items={attachmentsByEntity[k.id] ?? []} />
                   </TableCell>
-                  {filteredKnowledges.some((x) => x.createdBy === currentUserId) && (
+                  {filteredKnowledges.some((x) => x.createdBy === currentUserId || x.assigneeId === currentUserId) && (
                     <TableCell onClick={(e) => e.stopPropagation()}>
                       {isOwner && (
                         <Button
@@ -497,14 +505,21 @@ export function ProjectKnowledgeClient({
         {tCommon('itemCount', { count: filteredKnowledges.length })}
       </div>
 
-      {/* Phase B 要件 5: 非作成者は readOnly で詳細表示のみ可。 */}
+      {/* Phase B 要件 5: 非作成者は readOnly で詳細表示のみ可。
+          feat/asset-assignee-expansion (2026-05-26): 担当者にも編集権限を付与するため、
+          readOnly 判定は viewerCanEdit ベース (作成者 OR 担当者 = 編集可) に変更。 */}
       <KnowledgeEditDialog
         knowledge={editingKnowledge}
         projectId={projectId}
+        members={members}
         open={editingKnowledge != null}
         onOpenChange={(v) => { if (!v) setEditingKnowledge(null); }}
         onSaved={async () => { await onReload(); }}
-        readOnly={editingKnowledge != null && editingKnowledge.createdBy !== currentUserId}
+        readOnly={
+          editingKnowledge != null &&
+          editingKnowledge.createdBy !== currentUserId &&
+          editingKnowledge.assigneeId !== currentUserId
+        }
       />
     </div>
   );
