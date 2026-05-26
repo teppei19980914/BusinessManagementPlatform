@@ -44,7 +44,39 @@ export async function POST(req: NextRequest) {
   );
   if (quotaErr) return quotaErr;
 
-  const created = await createMemo(parsed.data, user.id, user.tenantId);
+  let created;
+  try {
+    created = await createMemo(parsed.data, user.id, user.tenantId);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    // feat/asset-assignee-expansion (2026-05-26) severity-1:
+    //   private memo に他人 assignee 指定の拒否。UI は selector 非表示で防御するが、
+    //   API 直叩きを service 層で reject し、route で 400 にマップする。
+    if (msg === 'PRIVATE_MEMO_ASSIGNEE_FORBIDDEN') {
+      return NextResponse.json(
+        {
+          error: {
+            code: 'PRIVATE_MEMO_ASSIGNEE_FORBIDDEN',
+            message: '「自分のみ」のメモには他人を担当者に指定できません',
+          },
+        },
+        { status: 400 },
+      );
+    }
+    // feat/asset-assignee-expansion (2026-05-26) severity-1 越境防御
+    if (msg === 'ASSIGNEE_TENANT_MISMATCH') {
+      return NextResponse.json(
+        {
+          error: {
+            code: 'ASSIGNEE_TENANT_MISMATCH',
+            message: '指定された担当者は同じテナントのメンバーではありません',
+          },
+        },
+        { status: 400 },
+      );
+    }
+    throw e;
+  }
   await recordAuditLog({
     tenantId: user.tenantId,
     userId: user.id,

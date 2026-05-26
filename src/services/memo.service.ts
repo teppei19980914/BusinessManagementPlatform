@@ -21,6 +21,7 @@
  */
 
 import { prisma } from '@/lib/db';
+import { assertAssigneeTenant } from '@/lib/assignee-validation';
 import { generateAndPersistEntityEmbedding, generateAndPersistBatchEmbeddings } from './embedding.service';
 import type { CreateMemoInput, UpdateMemoInput } from '@/lib/validators/memo';
 
@@ -50,10 +51,15 @@ export type MemoDTO = {
   title: string;
   content: string;
   visibility: string;
+  // feat/asset-assignee-expansion (2026-05-26): 担当者 (作成者と並ぶ編集権限保持者)
+  assigneeId: string | null;
+  assigneeName: string | null;
   createdAt: string;
   updatedAt: string;
   /** 閲覧者が本人かどうか (UI で編集ボタン等の出し分け用) */
   isMine: boolean;
+  /** feat/asset-assignee-expansion (2026-05-26): 編集可否 (= 本人 OR 担当者) */
+  canEdit: boolean;
 };
 
 function toDTO(
@@ -63,6 +69,8 @@ function toDTO(
     title: string;
     content: string;
     visibility: string;
+    assigneeId: string | null;
+    assignee?: { name: string } | null;
     createdAt: Date;
     updatedAt: Date;
     author?: { name: string } | null;
@@ -76,9 +84,13 @@ function toDTO(
     title: m.title,
     content: m.content,
     visibility: m.visibility,
+    assigneeId: m.assigneeId,
+    assigneeName: m.assignee?.name ?? null,
     createdAt: m.createdAt.toISOString(),
     updatedAt: m.updatedAt.toISOString(),
     isMine: m.userId === viewerUserId,
+    // feat/asset-assignee-expansion (2026-05-26): 本人 OR 担当者なら編集可
+    canEdit: m.userId === viewerUserId || m.assigneeId === viewerUserId,
   };
 }
 
@@ -96,7 +108,11 @@ export async function listMyMemos(
 ): Promise<MemoDTO[]> {
   const rows = await prisma.memo.findMany({
     where: { deletedAt: null, userId: viewerUserId, tenantId: viewerTenantId },
-    include: { author: { select: { name: true } } },
+    include: {
+      author: { select: { name: true } },
+      // feat/asset-assignee-expansion (2026-05-26): 担当者氏名表示用
+      assignee: { select: { name: true } },
+    },
     orderBy: { createdAt: 'desc' },
   });
   return rows.map((m) => toDTO(m, viewerUserId));
@@ -116,7 +132,11 @@ export async function listPublicMemos(
 ): Promise<MemoDTO[]> {
   const rows = await prisma.memo.findMany({
     where: { deletedAt: null, visibility: 'public', tenantId: viewerTenantId },
-    include: { author: { select: { name: true } } },
+    include: {
+      author: { select: { name: true } },
+      // feat/asset-assignee-expansion (2026-05-26): 担当者氏名表示用
+      assignee: { select: { name: true } },
+    },
     orderBy: { createdAt: 'desc' },
   });
   return rows.map((m) => toDTO(m, viewerUserId));
@@ -134,7 +154,11 @@ export async function getMemoForViewer(
   // 2026-05-09 feedback Phase 2-4: 越境取得を遮断するため where に tenantId 必須化。
   const m = await prisma.memo.findFirst({
     where: { id: memoId, deletedAt: null, tenantId: viewerTenantId },
-    include: { author: { select: { name: true } } },
+    include: {
+      author: { select: { name: true } },
+      // feat/asset-assignee-expansion (2026-05-26): 担当者氏名表示用
+      assignee: { select: { name: true } },
+    },
   });
   if (!m) return null;
   if (m.userId !== viewerUserId && m.visibility !== 'public') {
@@ -150,6 +174,16 @@ export async function createMemo(
 ): Promise<MemoDTO> {
   // 2026-05-09 feedback Phase 2-4: data.tenantId を明示し schema DB DEFAULT 暗黙依存を解消。
   const visibility = input.visibility ?? 'private';
+  // feat/asset-assignee-expansion (2026-05-26) severity-1 防御:
+  //   private memo に他人 (= userId 以外) を assignee 指定すると、その担当者は memo を
+  //   参照不可になる (private は本人のみ閲覧)。UI 上は selector 非表示だが API 直叩きを
+  //   弾くため service 層で reject する (memo.service.ts migration コメントの方針実装)。
+  if (visibility === 'private' && input.assigneeId && input.assigneeId !== userId) {
+    throw new Error('PRIVATE_MEMO_ASSIGNEE_FORBIDDEN');
+  }
+  // feat/asset-assignee-expansion (2026-05-26) severity-1 越境防御:
+  //   担当者として他テナントのユーザを指定する攻撃を service 層で reject。
+  await assertAssigneeTenant(input.assigneeId, tenantId);
   const created = await prisma.memo.create({
     data: {
       tenantId,
@@ -157,8 +191,14 @@ export async function createMemo(
       title: input.title,
       content: input.content,
       visibility,
+      // feat/asset-assignee-expansion (2026-05-26): 作成時から担当者指定可
+      assigneeId: input.assigneeId ?? null,
     },
-    include: { author: { select: { name: true } } },
+    include: {
+      author: { select: { name: true } },
+      // feat/asset-assignee-expansion (2026-05-26): 担当者氏名表示用
+      assignee: { select: { name: true } },
+    },
   });
 
   // (2026-05-15) 公開範囲='全メンバー' のときのみ embedding を生成 + 保存。
@@ -199,10 +239,16 @@ export async function updateMemo(
   // 2026-05-15: embedding 再生成判定のため content と visibility も取得。
   const existing = await prisma.memo.findFirst({
     where: { id: memoId, deletedAt: null, tenantId: viewerTenantId },
-    select: { userId: true, title: true, content: true, visibility: true },
+    // feat/asset-assignee-expansion (2026-05-26): assigneeId も認可判定対象
+    select: { userId: true, assigneeId: true, title: true, content: true, visibility: true },
   });
   if (!existing) return null;
-  if (existing.userId !== userId) return null; // 他人のメモは編集不可
+  // feat/asset-assignee-expansion (2026-05-26): 「作成者 (userId) OR 担当者 (assigneeId)」を編集可。
+  //   memo は visibility='private' のとき他人参照不可なので、通常 assigneeId は public memo 用。
+  //   service 層では assigneeId === userId の場合も編集を許可する (= 引継ぎ完了後の担当者更新)。
+  if (existing.userId !== userId && existing.assigneeId !== userId) {
+    return null; // 他人のメモは編集不可 (= 作成者でも担当者でもない)
+  }
 
   // 2026-05-11 defense-in-depth: 「全メンバー」(public) 化する更新で、
   //   title が input でも DB でも空になる場合は拒否。
@@ -214,6 +260,24 @@ export async function updateMemo(
       throw new Error('PUBLIC_REQUIRES_TITLE');
     }
   }
+
+  // feat/asset-assignee-expansion (2026-05-26) severity-1 防御:
+  //   effective visibility が 'private' になる更新では、他人 assignee を許容しない。
+  //   - input.visibility と input.assigneeId の組合せ、または DB 既存値とのマージ後で判定
+  //   - 担当者は private memo を参照不可になるため、authorization 上は edit 可能でも
+  //     業務上は不整合 (作成者しか見えないのに編集権限を持つ意味がない)。
+  const effectiveVisibility = input.visibility ?? existing.visibility;
+  const effectiveAssigneeId =
+    input.assigneeId !== undefined ? input.assigneeId : existing.assigneeId;
+  if (
+    effectiveVisibility === 'private' &&
+    effectiveAssigneeId &&
+    effectiveAssigneeId !== existing.userId
+  ) {
+    throw new Error('PRIVATE_MEMO_ASSIGNEE_FORBIDDEN');
+  }
+  // feat/asset-assignee-expansion (2026-05-26) severity-1 越境防御
+  await assertAssigneeTenant(input.assigneeId, viewerTenantId);
 
   // 2026-05-15: text フィールドが「実値として変わったか」を比較で判定。
   //   未指定 (undefined) または既存値と同一なら trigger しない (LLM 課金回避)。
@@ -227,8 +291,14 @@ export async function updateMemo(
       title: input.title,
       content: input.content,
       visibility: input.visibility,
+      // feat/asset-assignee-expansion (2026-05-26): 担当者更新 (null は明示的にクリア)
+      ...(input.assigneeId !== undefined ? { assigneeId: input.assigneeId } : {}),
     },
-    include: { author: { select: { name: true } } },
+    include: {
+      author: { select: { name: true } },
+      // feat/asset-assignee-expansion (2026-05-26): 担当者氏名表示用
+      assignee: { select: { name: true } },
+    },
   });
 
   // (2026-05-15) embedding 生成判定マトリクス。Knowledge/RiskIssue/Retrospective と同設計:
@@ -262,7 +332,14 @@ export async function updateMemo(
  * 元実装は PR #162 /all-memos cross-list 用)。
  * Memo は project に紐付かない個人ノートなので scope は **viewerUserId 自身のメモのみ**。
  * Memo は visibility 値域が `private` / `public`。
- * 編集権限は元から作成者本人のみ (admin 特権なし) なので per-row userId 判定で同じ。
+ *
+ * feat/asset-assignee-expansion (2026-05-26): 個別 update/delete は「作成者 OR 担当者」に
+ * 拡張したが、本 bulk は **creator-only 維持**。理由:
+ *   - /memos UI は listMyMemos (= `userId === viewerUserId` のみ) で表示
+ *   - 担当者が他人のメモを bulk 選択する経路が UI から存在しない (= safe by construction)
+ *   - 将来 listMyMemos を「assigned-to-me memo も返す」よう拡張する場合、
+ *     本関数も「`userId OR assigneeId === viewerUserId`」に同期更新が必要
+ *     (= UI と service 認可の乖離を避けるため、KDD §5.X+154 参照)
  */
 export async function bulkUpdateMemosVisibilityFromList(
   ids: string[],
@@ -364,15 +441,18 @@ export async function deleteMemo(
   // 2026-05-09 feedback Phase 2-4: 越境削除を遮断するため where に tenantId 必須化。
   // feat/crud-permission-redesign (2026-05-20): admin の public モデレーション削除のため
   //   visibility カラムも select する。
+  // feat/asset-assignee-expansion (2026-05-26): assigneeId も認可判定対象
   const existing = await prisma.memo.findFirst({
     where: { id: memoId, deletedAt: null, tenantId: viewerTenantId },
-    select: { userId: true, visibility: true },
+    select: { userId: true, assigneeId: true, visibility: true },
   });
   if (!existing) return false;
-  const isCreator = existing.userId === userId;
+  // feat/asset-assignee-expansion (2026-05-26): 「作成者 OR 担当者」は削除可
+  const isCreatorOrAssignee =
+    existing.userId === userId || existing.assigneeId === userId;
   const isAdmin = systemRole === 'admin';
   const isAdminModeration = isAdmin && existing.visibility === 'public';
-  if (!isCreator && !isAdminModeration) return false;
+  if (!isCreatorOrAssignee && !isAdminModeration) return false;
 
   // PR #89: 紐づく Attachment も同時に論理削除 (UI アクセス不可の孤児データ防止)
   const now = new Date();

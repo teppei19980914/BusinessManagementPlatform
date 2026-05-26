@@ -72,6 +72,33 @@ export async function PATCH(
         { status: 400 },
       );
     }
+    // feat/asset-assignee-expansion (2026-05-26) severity-1:
+    //   「自分のみ」(private) のメモに他人を担当者指定すると、担当者は memo 不可視のまま
+    //   編集権限だけ持つ矛盾状態になる。UI は selector 非表示で防御するが、API 直叩きを
+    //   service 層で reject、route で 400 にマップする。
+    if (e instanceof Error && e.message === 'PRIVATE_MEMO_ASSIGNEE_FORBIDDEN') {
+      return NextResponse.json(
+        {
+          error: {
+            code: 'PRIVATE_MEMO_ASSIGNEE_FORBIDDEN',
+            message: '「自分のみ」のメモには他人を担当者に指定できません',
+          },
+        },
+        { status: 400 },
+      );
+    }
+    // feat/asset-assignee-expansion (2026-05-26) severity-1 越境防御
+    if (e instanceof Error && e.message === 'ASSIGNEE_TENANT_MISMATCH') {
+      return NextResponse.json(
+        {
+          error: {
+            code: 'ASSIGNEE_TENANT_MISMATCH',
+            message: '指定された担当者は同じテナントのメンバーではありません',
+          },
+        },
+        { status: 400 },
+      );
+    }
     throw e;
   }
   if (!updated) {

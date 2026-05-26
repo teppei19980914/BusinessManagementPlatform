@@ -34,6 +34,12 @@ vi.mock('./embedding.service', () => ({
   generateAndPersistBatchEmbeddings: vi.fn().mockResolvedValue({ generated: 0, failed: 0, costJpy: 0 }),
 }));
 
+// feat/asset-assignee-expansion (2026-05-26): クロステナント assigneeId 検証を mock
+//   (専用テストは src/lib/assignee-validation.test.ts、本ファイルでは pass 扱い)
+vi.mock('@/lib/assignee-validation', () => ({
+  assertAssigneeTenant: vi.fn().mockResolvedValue(undefined),
+}));
+
 import {
   listRisks,
   listAllRisksForViewer,
@@ -493,15 +499,39 @@ describe('updateRisk', () => {
     );
   });
 
-  it('作成者以外 (admin でも) は FORBIDDEN', async () => {
+  it('作成者でも担当者でもない (admin でも) は FORBIDDEN', async () => {
     vi.mocked(prisma.riskIssue.findFirst).mockResolvedValue(
-      { reporterId: 'u-1' } as never,
+      { reporterId: 'u-1', assigneeId: null } as never,
     );
     await expect(updateRisk('r-1', { title: 'new' }, 'u-other', TEST_TENANT_ID)).rejects.toThrow(
       'FORBIDDEN',
     );
     // admin であっても他人のリスクは編集不可
     await expect(updateRisk('r-1', { title: 'new' }, 'admin-x', TEST_TENANT_ID)).rejects.toThrow(
+      'FORBIDDEN',
+    );
+  });
+
+  // feat/asset-assignee-expansion (2026-05-26): 担当者も update 可能 (引継ぎ後の運用者向け)
+  it('担当者 (assigneeId === userId) は update 可能', async () => {
+    vi.mocked(prisma.riskIssue.findFirst).mockResolvedValue(
+      { reporterId: 'u-creator', assigneeId: 'u-assignee' } as never,
+    );
+    vi.mocked(prisma.riskIssue.update).mockResolvedValue(rRow() as never);
+
+    await updateRisk('r-1', { title: 'new', state: 'resolved' }, 'u-assignee', TEST_TENANT_ID);
+
+    const call = vi.mocked(prisma.riskIssue.update).mock.calls[0][0];
+    expect(call.data.title).toBe('new');
+    expect(call.data.updatedBy).toBe('u-assignee');
+  });
+
+  // 既存テスト「作成者でも担当者でもない FORBIDDEN」とは別に、assigneeId=null パターンも明示
+  it('assigneeId=null かつ呼出ユーザが作成者でも担当者でもない → FORBIDDEN', async () => {
+    vi.mocked(prisma.riskIssue.findFirst).mockResolvedValue(
+      { reporterId: 'u-1', assigneeId: null } as never,
+    );
+    await expect(updateRisk('r-1', { title: 'new' }, 'u-third', TEST_TENANT_ID)).rejects.toThrow(
       'FORBIDDEN',
     );
   });
@@ -708,10 +738,28 @@ describe('deleteRisk', () => {
   });
 
   it('(context=project): 非 admin の第三者は FORBIDDEN', async () => {
-    vi.mocked(prisma.riskIssue.findFirst).mockResolvedValue({ reporterId: 'u-1' } as never);
+    vi.mocked(prisma.riskIssue.findFirst).mockResolvedValue(
+      { reporterId: 'u-1', assigneeId: null } as never,
+    );
     await expect(
       deleteRisk('r-1', 'u-other', 'general', TEST_TENANT_ID, 'project'),
     ).rejects.toThrow('FORBIDDEN');
+  });
+
+  // feat/asset-assignee-expansion (2026-05-26): 担当者も削除可能 (project context)
+  it('(context=project): 担当者 (assigneeId === userId) は削除できる', async () => {
+    vi.mocked(prisma.riskIssue.findFirst).mockResolvedValue(
+      { reporterId: 'u-creator', assigneeId: 'u-assignee', type: 'risk' } as never,
+    );
+    vi.mocked(prisma.riskIssue.update).mockResolvedValue({} as never);
+    vi.mocked(prisma.attachment.updateMany).mockResolvedValue({ count: 0 } as never);
+
+    await deleteRisk('r-1', 'u-assignee', 'general', TEST_TENANT_ID, 'project');
+
+    expect(prisma.riskIssue.update).toHaveBeenCalledWith({
+      where: { id: 'r-1' },
+      data: { deletedAt: expect.any(Date), updatedBy: 'u-assignee' },
+    });
   });
 });
 
@@ -724,6 +772,8 @@ describe('risksToCSV', () => {
     type: 'risk',
     title: 'タイトル',
     content: '',
+    // feat/risk-issue-4-section (2026-05-26)
+    occurrence: null,
     cause: null,
     impact: 'high',
     likelihood: 'low',
@@ -784,9 +834,9 @@ describe('bulkUpdateRisksVisibilityFromList', () => {
 
   it('reporter 本人のレコードのみ visibility 更新される (他人の混入は skip)', async () => {
     vi.mocked(prisma.riskIssue.findMany).mockResolvedValue([
-      { id: 'r-1', reporterId: 'u-1' },
-      { id: 'r-2', reporterId: 'u-1' },
-      { id: 'r-3', reporterId: 'u-OTHER' }, // 他人
+      { id: 'r-1', reporterId: 'u-1', assigneeId: null },
+      { id: 'r-2', reporterId: 'u-1', assigneeId: null },
+      { id: 'r-3', reporterId: 'u-OTHER', assigneeId: null }, // 他人
     ] as never);
     vi.mocked(prisma.riskIssue.updateMany).mockResolvedValue({ count: 2 } as never);
 
@@ -811,12 +861,37 @@ describe('bulkUpdateRisksVisibilityFromList', () => {
     });
 
     const updateCall = vi.mocked(prisma.riskIssue.updateMany).mock.calls[0][0];
+    // feat/asset-assignee-expansion (2026-05-26): where は OR で「作成者 OR 担当者」
     expect(updateCall.where).toMatchObject({
       id: { in: ['r-1', 'r-2'] },
       tenantId: 't-1',
-      reporterId: 'u-1',
+      OR: [
+        { reporterId: 'u-1' },
+        { assigneeId: 'u-1' },
+      ],
     });
     expect(updateCall.data).toEqual({ visibility: 'public', updatedBy: 'u-1' });
+  });
+
+  // feat/asset-assignee-expansion (2026-05-26): 担当者も bulk visibility 更新可能
+  it('担当者本人のレコードも visibility 更新対象に含まれる', async () => {
+    vi.mocked(prisma.riskIssue.findMany).mockResolvedValue([
+      { id: 'r-1', reporterId: 'u-creator', assigneeId: 'u-1' }, // u-1 が担当者
+      { id: 'r-2', reporterId: 'u-1', assigneeId: null },        // u-1 が作成者
+      { id: 'r-3', reporterId: 'u-OTHER', assigneeId: 'u-OTHER' }, // 第3者
+    ] as never);
+    vi.mocked(prisma.riskIssue.updateMany).mockResolvedValue({ count: 2 } as never);
+
+    const r = await bulkUpdateRisksVisibilityFromList(
+      'p-1',
+      ['r-1', 'r-2', 'r-3'],
+      'public',
+      'u-1',
+      't-1',
+    );
+
+    expect(r.updatedIds).toEqual(['r-1', 'r-2']);
+    expect(r.skippedNotOwned).toBe(1);
   });
 
   it('visibility=draft (公開撤回) も同じ経路で動く', async () => {

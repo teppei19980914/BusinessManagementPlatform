@@ -68,7 +68,25 @@ export async function POST(
   );
   if (quotaErr) return quotaErr;
 
-  const risk = await createRisk(projectId, parsed.data, user.id, user.tenantId);
+  let risk;
+  try {
+    risk = await createRisk(projectId, parsed.data, user.id, user.tenantId);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    // feat/asset-assignee-expansion (2026-05-26) severity-1 越境防御
+    if (msg === 'ASSIGNEE_TENANT_MISMATCH') {
+      return NextResponse.json(
+        {
+          error: {
+            code: 'ASSIGNEE_TENANT_MISMATCH',
+            message: '指定された担当者は同じテナントのメンバーではありません',
+          },
+        },
+        { status: 400 },
+      );
+    }
+    throw e;
+  }
 
   await recordAuditLog({
     tenantId: user.tenantId,

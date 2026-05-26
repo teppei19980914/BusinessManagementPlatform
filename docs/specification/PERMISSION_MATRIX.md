@@ -216,4 +216,23 @@ member/viewer の閲覧自体を許可するとプロジェクト棚卸し中の
 - §7.11 参考タブ: 新規セクション (PM/TL + admin 限定)
 - §7.12 全メモ画面: admin の public モデレーション削除特権を明文化、private は admin にも非可視
 
+## 変更履歴 (feat/asset-assignee-expansion, 2026-05-26)
+
+**目的**: リスク/課題/ナレッジ/振り返り/メモの編集権限を「作成者本人のみ」から「作成者 OR 担当者」に拡張。
+退職・配転等で原作成者がアクセスできなくなった資産を、引継ぎ後の担当者が継続管理できるようにする。
+
+- **対象 4 資産**: Risk/Issue (RiskIssue) / Knowledge / Retrospective / Memo
+- **追加列**: Knowledge/Retrospective/Memo に `assignee_id UUID NULL FK→users(id) ON DELETE SET NULL` 列を追加 (RiskIssue は既存)
+- **認可拡張** (service 層):
+  - update / delete: `createdBy === userId OR assigneeId === userId` を編集権限と判定 (旧: createdBy のみ)
+  - admin の越権編集禁止は維持 (= 削除のみ admin 介入可能、編集は本人系のみ)
+  - Memo private は assignee 指定不可方針 (UI 上 selector 非表示)、public memo のみ assignee 設定可
+- **DTO 拡張**: `assigneeId` / `assigneeName` / `viewerCanEdit` (= `createdBy === viewer OR assigneeId === viewer`) を 4 サービスの DTO に追加
+- **UI 反映**:
+  - 編集 dialog: 担当者プルダウン (members prop 受領時のみ表示、未受領は selector 非表示)
+  - 一覧 readOnly 判定: 作成者 OR 担当者なら編集可 (旧: 作成者のみ)
+  - bulk 選択 (selectableIds): 作成者 OR 担当者を対象 (旧: 作成者のみ)
+  - 行アクション (削除ボタン等): 作成者 OR 担当者を対象 (旧: 作成者のみ)
+- **API 受入**: validator (`createXxxSchema` / `updateXxxSchema`) に `assigneeId: z.string().uuid().nullable().optional()` を追加
+
 ---

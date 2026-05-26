@@ -28,6 +28,11 @@ vi.mock('./embedding.service', () => ({
   generateAndPersistBatchEmbeddings: vi.fn().mockResolvedValue({ generated: 0, failed: 0, costJpy: 0 }),
 }));
 
+// feat/asset-assignee-expansion (2026-05-26): クロステナント assigneeId 検証 mock
+vi.mock('@/lib/assignee-validation', () => ({
+  assertAssigneeTenant: vi.fn().mockResolvedValue(undefined),
+}));
+
 import {
   listKnowledge,
   listAllKnowledgeForViewer,
@@ -62,6 +67,9 @@ const kRow = (o: Record<string, unknown> = {}) => ({
   visibility: 'public',
   createdBy: 'u-1',
   creator: { name: 'Alice' },
+  // feat/asset-assignee-expansion (2026-05-26)
+  assigneeId: null,
+  assignee: null,
   createdAt: now,
   updatedAt: now,
   knowledgeProjects: [],
@@ -420,14 +428,28 @@ describe('updateKnowledge / deleteKnowledge', () => {
     );
   });
 
-  it('updateKnowledge: 作成者以外 (admin でも) は FORBIDDEN', async () => {
-    vi.mocked(prisma.knowledge.findFirst).mockResolvedValue({ createdBy: 'u-1' } as never);
+  it('updateKnowledge: 作成者でも担当者でもない (admin でも) は FORBIDDEN', async () => {
+    vi.mocked(prisma.knowledge.findFirst).mockResolvedValue(
+      { createdBy: 'u-1', assigneeId: null } as never,
+    );
     await expect(updateKnowledge('k-1', { title: 'n' }, 'u-other', TEST_TENANT_ID)).rejects.toThrow(
       'FORBIDDEN',
     );
     await expect(updateKnowledge('k-1', { title: 'n' }, 'admin-x', TEST_TENANT_ID)).rejects.toThrow(
       'FORBIDDEN',
     );
+  });
+
+  // feat/asset-assignee-expansion (2026-05-26): 担当者も update 可能
+  it('updateKnowledge: 担当者 (assigneeId === userId) は更新可能', async () => {
+    vi.mocked(prisma.knowledge.findFirst).mockResolvedValue(
+      { createdBy: 'u-creator', assigneeId: 'u-assignee', visibility: 'draft' } as never,
+    );
+    vi.mocked(prisma.knowledge.update).mockResolvedValue(kRow() as never);
+    await updateKnowledge('k-1', { title: 'updated' }, 'u-assignee', TEST_TENANT_ID);
+
+    const call = vi.mocked(prisma.knowledge.update).mock.calls[0][0];
+    expect(call.data.title).toBe('updated');
   });
 
   it('updateKnowledge: 作成者本人なら指定フィールドのみ', async () => {
@@ -614,10 +636,29 @@ describe('updateKnowledge / deleteKnowledge', () => {
   });
 
   it('deleteKnowledge (context=project): 非 admin の第三者は FORBIDDEN', async () => {
-    vi.mocked(prisma.knowledge.findFirst).mockResolvedValue({ createdBy: 'u-1' } as never);
+    vi.mocked(prisma.knowledge.findFirst).mockResolvedValue(
+      { createdBy: 'u-1', assigneeId: null } as never,
+    );
     await expect(
       deleteKnowledge('k-1', 'u-other', 'general', TEST_TENANT_ID, 'project'),
     ).rejects.toThrow('FORBIDDEN');
+  });
+
+  // feat/asset-assignee-expansion (2026-05-26): 担当者も削除可能 (project context)
+  it('deleteKnowledge (context=project): 担当者は削除可能', async () => {
+    vi.mocked(prisma.knowledge.findFirst).mockResolvedValue(
+      { createdBy: 'u-creator', assigneeId: 'u-assignee' } as never,
+    );
+    vi.mocked(prisma.knowledge.update).mockResolvedValue({} as never);
+    vi.mocked(prisma.attachment.updateMany).mockResolvedValue({ count: 0 } as never);
+
+    await deleteKnowledge('k-1', 'u-assignee', 'general', TEST_TENANT_ID, 'project');
+
+    expect(prisma.knowledge.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ deletedAt: expect.any(Date) }),
+      }),
+    );
   });
 });
 
@@ -683,6 +724,21 @@ describe('bulkUpdateKnowledgeVisibilityFromList', () => {
 
     expect(r.updatedIds).toEqual(['k-1']);
     expect(r.skippedEmptyTitle).toBe(1);
+  });
+
+  // feat/asset-assignee-expansion (2026-05-26): 担当者も bulk visibility 更新対象
+  it('担当者本人のレコードも bulk 更新対象に含まれる', async () => {
+    vi.mocked(prisma.knowledge.findMany).mockResolvedValue([
+      { id: 'k-1', createdBy: 'u-creator', assigneeId: 'u-1', title: 't' }, // u-1 が担当者
+      { id: 'k-2', createdBy: 'u-1', assigneeId: null, title: 't' },        // u-1 が作成者
+      { id: 'k-3', createdBy: 'u-OTHER', assigneeId: 'u-OTHER', title: 't' }, // 第3者
+    ] as never);
+    vi.mocked(prisma.knowledge.updateMany).mockResolvedValue({ count: 2 } as never);
+    const r = await bulkUpdateKnowledgeVisibilityFromList(
+      'p-1', ['k-1', 'k-2', 'k-3'], 'public', 'u-1', 't-1',
+    );
+    expect(r.updatedIds).toEqual(['k-1', 'k-2']);
+    expect(r.skippedNotOwned).toBe(1);
   });
 
   // UI_PATTERNS §35 (2026-05-24): bulk visibility 経路の embedding コスト最適化テスト。

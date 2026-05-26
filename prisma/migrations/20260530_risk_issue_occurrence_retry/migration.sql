@@ -1,0 +1,33 @@
+-- feat/risk-issue-4-section (2026-05-26):
+--   課題 (issue) / リスク (risk) dialog を 4 セクション化するための「発生事象 (occurrence)」列追加。
+--
+-- ★★★ 再投稿経緯 (2026-05-26) ★★★
+--   - 旧 migration directory: 20260529_risk_issue_occurrence
+--   - 旧 SQL に typo: `ALTER TABLE "risk_issues"` (正しくは "risks_issues")
+--   - PR #448 初回 push 時に Netlify build が `prisma migrate deploy` 実行 → P3018 で fail
+--   - その結果 _prisma_migrations テーブルに「failed 状態の旧 migration entry」が残存
+--   - SQL を fix しても Prisma が「failed migration がある」状態を解消できず blocker 化
+--   - 解決策: directory を `20260530_risk_issue_occurrence_retry` にリネーム
+--     → Prisma は新規 migration として認識し正しい SQL を適用
+--     → 旧 entry はテーブルに残るが orphan で実害なし (詳細: KDD §5.X+103)
+--
+-- 4 セクション体系 (UI 上、内部値は同一):
+--   - occurrence       : 発生事象 (issue) / 考えられる事象 (risk)  ← 新規追加
+--   - cause            : 直接原因 (issue) / 考えられる原因 (risk)  ← 既存列の UI 露出を追加
+--   - response_policy  : 対応策 (issue)   / 考えられる対応策 (risk) ← 既存列の UI 露出を追加
+--   - content          : メモ (両 type 共通)                       ← 旧「内容」を「メモ」にリネーム
+--
+-- 既存行への影響:
+--   - occurrence は NULL 許容、デフォルト値なし
+--   - 既存行は occurrence = NULL のまま (旧データの content 列を「メモ」として継続表示)
+--   - サーバ側 embedding/suggestion テキスト連結に occurrence を加える (NULL は空文字扱い)
+--
+-- 関連:
+--   - schema 変更: prisma/schema.prisma RiskIssue.occurrence
+--   - validator  : src/lib/validators/risk.ts (visibility='public' 時必須)
+--   - service    : src/services/risk.service.ts / embedding-backfill / suggestion
+--   - UI         : src/app/(dashboard)/projects/[projectId]/risks/risks-client.tsx + src/components/dialogs/risk-edit-dialog.tsx
+--   - CSV        : sync-import を 17 列に拡張 (旧 16 列も互換受入)
+--   - docs       : docs/specification/SCREENS.md / DATA_MODEL.md / GLOSSARY.md
+ALTER TABLE "risks_issues"
+  ADD COLUMN "occurrence" TEXT;

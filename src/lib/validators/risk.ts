@@ -28,7 +28,12 @@ export const createRiskSchema = z
     title: z.string().max(NAME_MAX_LENGTH).default(''),
     // refactor/list-create-content-optional (2026-04-27 ユーザ要望 #6):
     // 内容は visibility に関わらず任意 (空文字許容)。
+    // feat/risk-issue-4-section (2026-05-26): UI 上 content は「メモ」セクションにリネーム。
+    //   フィールド名は変更せず後方互換維持 (DB 列名 / API 入力名 / 既存呼出側に影響しない)。
     content: z.string().max(MEDIUM_TEXT_MAX_LENGTH).default(''),
+    // feat/risk-issue-4-section (2026-05-26): 発生事象 (issue) / 考えられる事象 (risk)。
+    //   visibility='public' のとき superRefine で必須化 (= 共有時に「何が起きたか」明示を強制)。
+    occurrence: z.string().max(MEDIUM_TEXT_MAX_LENGTH).nullable().optional(),
     cause: z.string().max(MEDIUM_TEXT_MAX_LENGTH).nullable().optional(),
     // 2026-05-11: draft 時のデフォルトとして 'medium' を採用 (NOT NULL VarChar(10) を満たす)
     impact: z.enum(['low', 'medium', 'high']).default('medium'),
@@ -53,6 +58,22 @@ export const createRiskSchema = z
         path: ['title'],
       });
     }
+    // feat/risk-issue-4-section (2026-05-26): public 共有時は「発生事象」必須化。
+    //   draft (自分のみ) は気軽に下書きできるよう任意のまま。共有 = 他者に状況伝達するため
+    //   何が起きたか / 何を懸念するか を明示する設計。
+    if (
+      data.visibility === 'public'
+      && (!data.occurrence || data.occurrence.trim().length === 0)
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        message:
+          data.type === 'risk'
+            ? '「全メンバー」に公開する場合は「考えられる事象」を入力してください'
+            : '「全メンバー」に公開する場合は「発生事象」を入力してください',
+        path: ['occurrence'],
+      });
+    }
   });
 
 // updateRiskSchema: superRefine 後では .partial().extend が使えないため、内部 object から再構築。
@@ -60,6 +81,8 @@ const baseUpdateRiskSchema = z.object({
   type: z.enum(['risk', 'issue']).optional(),
   title: z.string().max(NAME_MAX_LENGTH).optional(),
   content: z.string().max(MEDIUM_TEXT_MAX_LENGTH).optional(),
+  // feat/risk-issue-4-section (2026-05-26): 編集時の occurrence 受入
+  occurrence: z.string().max(MEDIUM_TEXT_MAX_LENGTH).nullable().optional(),
   cause: z.string().max(MEDIUM_TEXT_MAX_LENGTH).nullable().optional(),
   impact: z.enum(['low', 'medium', 'high']).optional(),
   likelihood: z.enum(['low', 'medium', 'high']).nullable().optional(),
@@ -81,6 +104,23 @@ export const updateRiskSchema = baseUpdateRiskSchema.superRefine((data, ctx) => 
       code: 'custom',
       message: '「全メンバー」に公開する場合は件名を入力してください',
       path: ['title'],
+    });
+  }
+  // feat/risk-issue-4-section (2026-05-26): public 化更新時の occurrence 必須チェック。
+  //   入力で明示的に空文字を指定するケースのみ拒否 (= undefined はサーバ既存値維持)。
+  if (
+    data.visibility === 'public'
+    && data.occurrence !== undefined
+    && data.occurrence !== null
+    && data.occurrence.trim().length === 0
+  ) {
+    ctx.addIssue({
+      code: 'custom',
+      message:
+        data.type === 'risk'
+          ? '「全メンバー」に公開する場合は「考えられる事象」を入力してください'
+          : '「全メンバー」に公開する場合は「発生事象」を入力してください',
+      path: ['occurrence'],
     });
   }
 });

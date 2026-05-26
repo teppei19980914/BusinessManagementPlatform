@@ -7,15 +7,19 @@
  *   適用した派生実装。
  *
  * 主な公開関数:
- *   - parseRiskSyncImportCsv : 16 列 CSV を RiskSyncImportRow[] に変換
+ *   - parseRiskSyncImportCsv : 17 列 CSV (旧 16 列 互換) を RiskSyncImportRow[] に変換
  *   - computeRiskSyncDiff    : DB 既存と CSV を突合し、blocker / warning / 行ごとの差分を返す
  *                              (dry-run 用、副作用なし)
  *   - applyRiskSyncImport    : 確定実行。失敗時は事前スナップショットから完全復元
  *
- * CSV 列構成 (16 列、編集 dialog 完全網羅、§5.31 アクション充足チェック適用済):
- *   ID / type / title / content / cause / impact / likelihood /
+ * CSV 列構成 (17 列、編集 dialog 完全網羅、§5.31 アクション充足チェック適用済):
+ *   ID / type / title / occurrence / content / cause / impact / likelihood /
  *   responsePolicy / responseDetail / assigneeName / deadline / state /
  *   result / lessonLearned / visibility / riskNature
+ *
+ *   feat/risk-issue-4-section (2026-05-26):
+ *     - occurrence (発生事象 / 考えられる事象) を 4 列目に追加 (合計 17 列)。
+ *     - 旧 16 列 CSV は後方互換: 1 行目データから列数を検出し、16 列なら occurrence=null として parse。
  *
  *   priority は computePriority() で自動算出のため CSV 非対応。
  *
@@ -43,7 +47,7 @@ import { computePriority } from './risk.service';
 // ============================================================
 
 /**
- * 16 列 CSV から解析した 1 行。tempRowIndex は CSV 上の元の行番号 (1 始まり)。
+ * 17 列 CSV (旧 16 列 互換) から解析した 1 行。tempRowIndex は CSV 上の元の行番号 (1 始まり)。
  */
 export type RiskSyncImportRow = {
   tempRowIndex: number;
@@ -51,6 +55,9 @@ export type RiskSyncImportRow = {
   id: string | null;
   type: 'risk' | 'issue';
   title: string;
+  /** feat/risk-issue-4-section (2026-05-26): 発生事象 (issue) / 考えられる事象 (risk)。
+   *  旧 16 列 CSV import 時は null。新 17 列 export では値が入る。 */
+  occurrence: string | null;
   content: string;
   cause: string | null;
   impact: 'low' | 'medium' | 'high';
@@ -109,8 +116,17 @@ export type RemoveMode = 'keep' | 'warn' | 'delete';
 // CSV ヘッダー
 // ============================================================
 
-/** Risk CSV ヘッダー (16 列、編集 dialog 完全網羅) */
+/** Risk CSV ヘッダー (17 列、編集 dialog 完全網羅)。
+ *  feat/risk-issue-4-section (2026-05-26): 「発生事象」を 4 列目に追加して合計 17 列。
+ *  旧 16 列 CSV (= 「発生事象」列なし) も後方互換で parse 可能 (= occurrence=null 扱い)。 */
 export const RISK_CSV_HEADERS = [
+  'ID', '種別', '件名', '発生事象', '内容', '原因', '影響度', '発生確率',
+  '対応方針', '対応詳細', '担当者氏名', '期限', '状態',
+  '結果', '教訓', '公開範囲', 'リスク性質',
+] as const;
+
+/** 旧 16 列 CSV ヘッダー (互換読込用、新規 export は使わない)。 */
+export const RISK_CSV_HEADERS_LEGACY_16 = [
   'ID', '種別', '件名', '内容', '原因', '影響度', '発生確率',
   '対応方針', '対応詳細', '担当者氏名', '期限', '状態',
   '結果', '教訓', '公開範囲', 'リスク性質',
@@ -127,55 +143,82 @@ const VALID_VISIBILITIES = new Set(['draft', 'public']);
 const VALID_NATURES = new Set(['threat', 'opportunity']);
 
 /**
- * 16 列 CSV を解析して RiskSyncImportRow[] を返す。
+ * 17 列 CSV (旧 16 列 互換) を解析して RiskSyncImportRow[] を返す。
  * 列順は RISK_CSV_HEADERS と同じ。厳格 validation は computeRiskSyncDiff 側で行う。
+ *
+ * feat/risk-issue-4-section (2026-05-26): 列数で新旧 layout を切替える後方互換 parser。
+ *   - 17 列: 4 列目が `occurrence` (発生事象)
+ *   - 16 列: 旧 layout (occurrence 無し)、occurrence=null として読み込む
+ *   - 列数判定は **header 行のフィールド数** で行う (data 行は欠損があってもヘッダで確定)。
  */
 export function parseRiskSyncImportCsv(csvText: string): RiskSyncImportRow[] {
   const cleanText = csvText.replace(/^﻿/, '');
   const lines = cleanText.split(/\r?\n/).filter((l) => l.trim());
   if (lines.length < 2) return [];
 
+  // feat/risk-issue-4-section (2026-05-26): header 行で列数を確定 (= 17 or 16)
+  const headerFields = parseCsvLine(lines[0]);
+  const isNewLayout = headerFields.length >= 17;
+
+  // 列 index マッピング (旧 16 列 vs 新 17 列で content 以降が 1 つずれる)
+  const COL = isNewLayout
+    ? {
+        id: 0, type: 1, title: 2, occurrence: 3, content: 4, cause: 5,
+        impact: 6, likelihood: 7, responsePolicy: 8, responseDetail: 9,
+        assigneeName: 10, deadline: 11, state: 12, result: 13,
+        lessonLearned: 14, visibility: 15, riskNature: 16,
+      }
+    : {
+        id: 0, type: 1, title: 2, occurrence: -1, content: 3, cause: 4,
+        impact: 5, likelihood: 6, responsePolicy: 7, responseDetail: 8,
+        assigneeName: 9, deadline: 10, state: 11, result: 12,
+        lessonLearned: 13, visibility: 14, riskNature: 15,
+      };
+  const minColumnsRequired = isNewLayout ? COL.impact : COL.impact;
+
   const dataLines = lines.slice(1);
   const rows: RiskSyncImportRow[] = [];
 
   for (let i = 0; i < dataLines.length; i++) {
     const fields = parseCsvLine(dataLines[i]);
-    // ID + type + title + impact (= 6 列目まで) は最低限必要
-    if (fields.length < 6) continue;
+    // ID + type + title + impact (= impact 列まで) は最低限必要
+    if (fields.length < minColumnsRequired + 1) continue;
 
     const csvRowIndex = i + 2;
 
-    const idRaw = (fields[0] ?? '').trim();
+    const idRaw = (fields[COL.id] ?? '').trim();
     const id = idRaw.length > 0 ? idRaw : null;
 
-    const typeRaw = (fields[1] ?? '').trim();
+    const typeRaw = (fields[COL.type] ?? '').trim();
     const type = (VALID_TYPES.has(typeRaw) ? typeRaw : 'risk') as 'risk' | 'issue';
 
-    const title = (fields[2] ?? '').trim();
+    const title = (fields[COL.title] ?? '').trim();
     if (!title) continue;
 
-    const content = (fields[3] ?? '').trim();
-    const cause = (fields[4] ?? '').trim() || null;
-    const impactRaw = (fields[5] ?? '').trim();
+    // 旧 16 列 CSV では COL.occurrence === -1 → null 強制
+    const occurrence = COL.occurrence >= 0 ? ((fields[COL.occurrence] ?? '').trim() || null) : null;
+    const content = (fields[COL.content] ?? '').trim();
+    const cause = (fields[COL.cause] ?? '').trim() || null;
+    const impactRaw = (fields[COL.impact] ?? '').trim();
     const impact = (VALID_IMPACTS.has(impactRaw) ? impactRaw : 'medium') as 'low' | 'medium' | 'high';
-    const likelihoodRaw = (fields[6] ?? '').trim();
+    const likelihoodRaw = (fields[COL.likelihood] ?? '').trim();
     const likelihood = VALID_IMPACTS.has(likelihoodRaw) ? (likelihoodRaw as 'low' | 'medium' | 'high') : null;
-    const responsePolicy = (fields[7] ?? '').trim() || null;
-    const responseDetail = (fields[8] ?? '').trim() || null;
-    const assigneeName = (fields[9] ?? '').trim() || null;
-    const deadline = (fields[10] ?? '').trim() || null;
-    const stateRaw = (fields[11] ?? '').trim();
+    const responsePolicy = (fields[COL.responsePolicy] ?? '').trim() || null;
+    const responseDetail = (fields[COL.responseDetail] ?? '').trim() || null;
+    const assigneeName = (fields[COL.assigneeName] ?? '').trim() || null;
+    const deadline = (fields[COL.deadline] ?? '').trim() || null;
+    const stateRaw = (fields[COL.state] ?? '').trim();
     const state = (VALID_STATES.has(stateRaw) ? stateRaw : 'open') as 'open' | 'in_progress' | 'monitoring' | 'resolved';
-    const result = (fields[12] ?? '').trim() || null;
-    const lessonLearned = (fields[13] ?? '').trim() || null;
-    const visibilityRaw = (fields[14] ?? '').trim();
+    const result = (fields[COL.result] ?? '').trim() || null;
+    const lessonLearned = (fields[COL.lessonLearned] ?? '').trim() || null;
+    const visibilityRaw = (fields[COL.visibility] ?? '').trim();
     const visibility = (VALID_VISIBILITIES.has(visibilityRaw) ? visibilityRaw : 'public') as 'draft' | 'public';
-    const natureRaw = (fields[15] ?? '').trim();
+    const natureRaw = (fields[COL.riskNature] ?? '').trim();
     const riskNature = VALID_NATURES.has(natureRaw) ? (natureRaw as 'threat' | 'opportunity') : null;
 
     rows.push({
       tempRowIndex: csvRowIndex,
-      id, type, title, content, cause, impact, likelihood,
+      id, type, title, occurrence, content, cause, impact, likelihood,
       responsePolicy, responseDetail, assigneeName, deadline, state,
       result, lessonLearned, visibility, riskNature,
     });
@@ -194,6 +237,8 @@ type DbRiskSnapshot = {
   type: string;
   title: string;
   content: string;
+  // feat/risk-issue-4-section (2026-05-26): occurrence (発生事象 / 考えられる事象)
+  occurrence: string | null;
   cause: string | null;
   impact: string;
   likelihood: string | null;
@@ -277,6 +322,8 @@ export async function computeRiskSyncDiff(
       },
       select: {
         id: true, projectId: true, type: true, title: true, content: true,
+        // feat/risk-issue-4-section (2026-05-26): occurrence を diff / restore に含める
+        occurrence: true,
         cause: true, impact: true, likelihood: true, priority: true,
         responsePolicy: true, responseDetail: true,
         reporterId: true, assigneeId: true, deadline: true, state: true,
@@ -373,6 +420,8 @@ export async function computeRiskSyncDiff(
 
     if (action === 'UPDATE' && dbRisk) {
       compareField(fieldChanges, 'title', dbRisk.title, row.title);
+      // feat/risk-issue-4-section (2026-05-26): occurrence の diff 検知
+      compareField(fieldChanges, 'occurrence', dbRisk.occurrence, row.occurrence);
       compareField(fieldChanges, 'content', dbRisk.content, row.content);
       compareField(fieldChanges, 'cause', dbRisk.cause, row.cause);
       compareField(fieldChanges, 'impact', dbRisk.impact, row.impact);
@@ -551,6 +600,8 @@ export async function applyRiskSyncImport(
         type: row.type,
         title: row.title,
         content: row.content,
+        // feat/risk-issue-4-section (2026-05-26): CSV 経由の occurrence 反映
+        occurrence: row.occurrence,
         cause: row.cause,
         impact: row.impact,
         likelihood: row.likelihood,
@@ -664,6 +715,8 @@ async function rollbackToSnapshot(
         type: orig.type,
         title: orig.title,
         content: orig.content,
+        // feat/risk-issue-4-section (2026-05-26): rollback で occurrence も復元
+        occurrence: orig.occurrence,
         cause: orig.cause,
         impact: orig.impact,
         likelihood: orig.likelihood,
@@ -690,7 +743,8 @@ async function rollbackToSnapshot(
 }
 
 // ============================================================
-// Sync 形式の CSV エクスポート (16 列、編集 dialog 完全網羅)
+// Sync 形式の CSV エクスポート (17 列、編集 dialog 完全網羅)
+//   feat/risk-issue-4-section (2026-05-26): 「発生事象」列を 4 列目に追加
 // ============================================================
 
 /** CSV フィールドエスケープ */
@@ -704,10 +758,13 @@ function escapeCsv(v: string | null | undefined): string {
 }
 
 /**
- * リスク/課題の sync 用 CSV エクスポート (16 列、編集 dialog 完全網羅)。
+ * リスク/課題の sync 用 CSV エクスポート (17 列、編集 dialog 完全網羅)。
  *
  * 既存の `risksToCSV` (PMO 報告用 8 列サマリ) とは別用途で、
  * sync-import の往復編集に使う full-fidelity 形式を出力する。
+ *
+ * feat/risk-issue-4-section (2026-05-26): 4 列目に「発生事象」を追加 (合計 17 列)。
+ *   旧 16 列 CSV を import する場合も parser 側 (parseRiskSyncImportCsv) で互換受入する。
  */
 export async function exportRisksSync(
   projectId: string,
@@ -737,6 +794,8 @@ export async function exportRisksSync(
       r.id,
       r.type,
       escapeCsv(r.title),
+      // feat/risk-issue-4-section (2026-05-26): 4 列目に発生事象を出力
+      escapeCsv(r.occurrence),
       escapeCsv(r.content),
       escapeCsv(r.cause),
       r.impact,

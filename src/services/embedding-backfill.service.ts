@@ -242,17 +242,21 @@ async function collectNullEmbeddingItems(
       //   backfill 対象も state='resolved' に限定する。state='open' / 'in_progress' /
       //   'monitoring' の embedding は永遠に検索されないため、補完しても無駄。
       //   visibility も 'draft' は提案対象外のため除外 ('public' のみ対象に絞り込み)。
+      // feat/risk-issue-4-section (2026-05-26): occurrence (発生事象 / 考えられる事象) を
+      //   backfill 対象テキストに加える。既存行は occurrence=NULL のため composeRiskText 内で
+      //   空文字扱いされ無視される。新規行のみ embedding に含まれる。
       const rows = await prisma.$queryRaw<
         Array<{
           id: string;
           title: string;
           content: string;
+          occurrence: string | null;
           cause: string | null;
           response_policy: string | null;
           response_detail: string | null;
         }>
       >`
-        SELECT id::text AS id, title, content, cause, response_policy, response_detail
+        SELECT id::text AS id, title, content, occurrence, cause, response_policy, response_detail
         FROM "risks_issues"
         WHERE tenant_id = ${tenantId}::uuid
           AND deleted_at IS NULL
@@ -268,6 +272,7 @@ async function collectNullEmbeddingItems(
           text: composeRiskText({
             title: r.title,
             content: r.content,
+            occurrence: r.occurrence,
             cause: r.cause,
             responsePolicy: r.response_policy,
             responseDetail: r.response_detail,

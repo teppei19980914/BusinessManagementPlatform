@@ -80,9 +80,43 @@ describe('createRiskSchema', () => {
 
   // PR #60: 公開範囲とリスク脅威/好機分類
   it('有効な公開範囲を受け入れる', () => {
+    // feat/risk-issue-4-section (2026-05-26): public 時は occurrence 必須化したため
+    //   public ケースには occurrence を明示する。
     for (const v of ['draft', 'public']) {
-      expect(createRiskSchema.safeParse({ ...validRisk, visibility: v }).success).toBe(true);
+      expect(
+        createRiskSchema.safeParse({ ...validRisk, visibility: v, occurrence: 'サンプル事象' }).success,
+      ).toBe(true);
     }
+  });
+
+  // feat/risk-issue-4-section (2026-05-26): occurrence の必須化テスト
+  it('visibility=public で空 occurrence を拒否', () => {
+    expect(
+      createRiskSchema.safeParse({ ...validRisk, visibility: 'public', occurrence: '' }).success,
+    ).toBe(false);
+  });
+
+  it('visibility=public で occurrence 指定なし (undefined) も拒否', () => {
+    expect(
+      createRiskSchema.safeParse({ ...validRisk, visibility: 'public' }).success,
+    ).toBe(false);
+  });
+
+  it('visibility=draft なら空 occurrence を許容', () => {
+    expect(
+      createRiskSchema.safeParse({ ...validRisk, visibility: 'draft', occurrence: '' }).success,
+    ).toBe(true);
+  });
+
+  it('visibility=public + occurrence あり + title あり → 受入れ', () => {
+    expect(
+      createRiskSchema.safeParse({
+        ...validRisk,
+        visibility: 'public',
+        title: '件名',
+        occurrence: '発生した事象',
+      }).success,
+    ).toBe(true);
   });
 
   it('無効な公開範囲を拒否する', () => {

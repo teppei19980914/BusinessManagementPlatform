@@ -35,6 +35,11 @@ vi.mock('./embedding.service', () => ({
   generateAndPersistBatchEmbeddings: vi.fn().mockResolvedValue({ generated: 0, failed: 0, costJpy: 0 }),
 }));
 
+// feat/asset-assignee-expansion (2026-05-26): クロステナント assigneeId 検証 mock
+vi.mock('@/lib/assignee-validation', () => ({
+  assertAssigneeTenant: vi.fn().mockResolvedValue(undefined),
+}));
+
 import {
   listRetrospectives,
   listAllRetrospectivesForViewer,
@@ -69,6 +74,8 @@ const retRow = (o: Record<string, unknown> = {}) => ({
   visibility: 'public',
   createdBy: 'u-1',
   updatedBy: 'u-1',
+  // feat/asset-assignee-expansion (2026-05-26)
+  assigneeId: null,
   createdAt: now,
   updatedAt: now,
   // PR #199: comments は polymorphic comments テーブルへ移行 (DTO に含まれない)
@@ -330,14 +337,29 @@ describe('updateRetrospective', () => {
     ).rejects.toThrow('NOT_FOUND');
   });
 
-  it('作成者以外 (admin でも) は FORBIDDEN', async () => {
-    vi.mocked(prisma.retrospective.findFirst).mockResolvedValue({ createdBy: 'u-1' } as never);
+  it('作成者でも担当者でもない (admin でも) は FORBIDDEN', async () => {
+    vi.mocked(prisma.retrospective.findFirst).mockResolvedValue(
+      { createdBy: 'u-1', assigneeId: null } as never,
+    );
     await expect(
       updateRetrospective('ret-1', { planSummary: 'n' }, 'u-other', TEST_TENANT_ID),
     ).rejects.toThrow('FORBIDDEN');
     await expect(
       updateRetrospective('ret-1', { planSummary: 'n' }, 'admin-x', TEST_TENANT_ID),
     ).rejects.toThrow('FORBIDDEN');
+  });
+
+  // feat/asset-assignee-expansion (2026-05-26): 担当者も update 可能
+  it('担当者 (assigneeId === userId) は update 可能', async () => {
+    vi.mocked(prisma.retrospective.findFirst).mockResolvedValue(
+      { createdBy: 'u-creator', assigneeId: 'u-assignee', visibility: 'draft' } as never,
+    );
+    vi.mocked(prisma.retrospective.update).mockResolvedValue(retRow() as never);
+
+    await updateRetrospective('ret-1', { planSummary: 'updated' }, 'u-assignee', TEST_TENANT_ID);
+
+    const call = vi.mocked(prisma.retrospective.update).mock.calls[0][0];
+    expect(call.data.planSummary).toBe('updated');
   });
 
   it('作成者本人なら指定フィールドのみ data に積む', async () => {
@@ -496,10 +518,29 @@ describe('confirmRetrospective / deleteRetrospective', () => {
   });
 
   it('delete (context=project): 非 admin の第三者は FORBIDDEN', async () => {
-    vi.mocked(prisma.retrospective.findFirst).mockResolvedValue({ createdBy: 'u-1' } as never);
+    vi.mocked(prisma.retrospective.findFirst).mockResolvedValue(
+      { createdBy: 'u-1', assigneeId: null } as never,
+    );
     await expect(
       deleteRetrospective('ret-1', 'u-other', 'general', 'tenant-A', 'project'),
     ).rejects.toThrow('FORBIDDEN');
+  });
+
+  // feat/asset-assignee-expansion (2026-05-26): 担当者も削除可能 (project context)
+  it('delete (context=project): 担当者は削除可能', async () => {
+    vi.mocked(prisma.retrospective.findFirst).mockResolvedValue(
+      { createdBy: 'u-creator', assigneeId: 'u-assignee' } as never,
+    );
+    vi.mocked(prisma.retrospective.update).mockResolvedValue({} as never);
+    vi.mocked(prisma.attachment.updateMany).mockResolvedValue({ count: 0 } as never);
+
+    await deleteRetrospective('ret-1', 'u-assignee', 'general', 'tenant-A', 'project');
+
+    expect(prisma.retrospective.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ deletedAt: expect.any(Date) }),
+      }),
+    );
   });
 });
 
@@ -589,14 +630,33 @@ describe('bulkUpdateRetrospectivesVisibilityFromList', () => {
       retrospectiveProjects: { some: { projectId: 'p-1' } },
     });
 
-    // 2026-05-12 severity-1 防御: tenantId / createdBy 明示
+    // 2026-05-12 severity-1 防御: tenantId / 作成者 OR 担当者 明示
+    // feat/asset-assignee-expansion (2026-05-26): OR 句で「作成者 OR 担当者」を再検証
     const call = vi.mocked(prisma.retrospective.updateMany).mock.calls[0][0];
     expect(call.where).toMatchObject({
       id: { in: ['ret-1', 'ret-3'] },
       tenantId: 't-1',
-      createdBy: 'u-1',
+      OR: [
+        { createdBy: 'u-1' },
+        { assigneeId: 'u-1' },
+      ],
     });
     expect(call.data).toEqual({ visibility: 'draft', updatedBy: 'u-1' });
+  });
+
+  // feat/asset-assignee-expansion (2026-05-26): 担当者も bulk visibility 更新対象
+  it('担当者本人のレコードも bulk 更新対象に含まれる', async () => {
+    vi.mocked(prisma.retrospective.findMany).mockResolvedValue([
+      { id: 'ret-1', createdBy: 'u-creator', assigneeId: 'u-1' }, // u-1 が担当者
+      { id: 'ret-2', createdBy: 'u-1', assigneeId: null },        // u-1 が作成者
+      { id: 'ret-3', createdBy: 'u-OTHER', assigneeId: 'u-OTHER' }, // 第3者
+    ] as never);
+    vi.mocked(prisma.retrospective.updateMany).mockResolvedValue({ count: 2 } as never);
+    const r = await bulkUpdateRetrospectivesVisibilityFromList(
+      'p-1', ['ret-1', 'ret-2', 'ret-3'], 'public', 'u-1', 't-1',
+    );
+    expect(r.updatedIds).toEqual(['ret-1', 'ret-2']);
+    expect(r.skippedNotOwned).toBe(1);
   });
 
   it('存在しない id は skippedNotFound にカウント', async () => {

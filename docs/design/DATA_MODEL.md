@@ -204,8 +204,9 @@ erDiagram
         uuid project_id FK
         enum type "risk | issue"
         varchar title
-        text content
-        text cause
+        text occurrence "発生事象 (issue) / 考えられる事象 (risk)。NULL 許容"
+        text content "メモ (旧「内容」の UI ラベルをリネーム、DB 列名は維持)"
+        text cause "直接原因 (issue) / 考えられる原因 (risk)。NULL 許容"
         enum impact "low | medium | high"
         enum likelihood "low | medium | high"
         enum priority "low | medium | high"
@@ -239,6 +240,7 @@ erDiagram
         varchar process_tags "JSONB array"
         enum visibility "draft | project | company"
         uuid created_by FK
+        uuid assignee_id FK "feat/asset-assignee-expansion (2026-05-26): 担当者 (作成者と並ぶ編集権限保持者)。NULL 許容、ON DELETE SET NULL"
         uuid updated_by FK
         timestamp created_at
         timestamp updated_at
@@ -261,6 +263,7 @@ erDiagram
         text knowledge_to_share
         enum state "draft | confirmed"
         uuid created_by FK
+        uuid assignee_id FK "feat/asset-assignee-expansion (2026-05-26): 担当者。NULL 許容、ON DELETE SET NULL"
         uuid updated_by FK
         timestamp created_at
         timestamp updated_at

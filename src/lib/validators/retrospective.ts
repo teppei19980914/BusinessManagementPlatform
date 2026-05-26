@@ -46,6 +46,8 @@ export const createRetrospectiveSchema = z
     // PR #60: 公開範囲 (draft/public)
     // 2026-05-11: default 'draft' に変更 (= 「自分のみ」として一時保存可)
     visibility: z.enum(['draft', 'public']).default('draft'),
+    // feat/asset-assignee-expansion (2026-05-26): 担当者 (作成者と並ぶ編集権限保持者)
+    assigneeId: z.string().uuid().nullable().optional(),
   })
   .superRefine((data, ctx) => {
     // 2026-05-11: public 時のみ conductedDate を厳格に検証 (draft 時は default で today が入る)
@@ -74,6 +76,8 @@ const baseUpdateRetrospectiveSchema = z.object({
   improvements: z.string().max(LONG_TEXT_MAX_LENGTH).optional(),
   knowledgeToShare: z.string().max(LONG_TEXT_MAX_LENGTH).nullable().optional(),
   visibility: z.enum(['draft', 'public']).optional(),
+  // feat/asset-assignee-expansion (2026-05-26): 編集時 assigneeId 更新も受入れ
+  assigneeId: z.string().uuid().nullable().optional(),
 });
 
 export const updateRetrospectiveSchema = baseUpdateRetrospectiveSchema.superRefine((data, ctx) => {

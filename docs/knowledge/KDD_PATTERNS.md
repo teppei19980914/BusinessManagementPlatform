@@ -15787,3 +15787,365 @@ cron が silent stop (= cron-job.org の登録忘れ / 認証エラーで全 fai
 - 関連 PR: PR #446
 - 該当コード: [src/config/cron-jobs.ts:146-156](../../src/config/cron-jobs.ts#L146-L156)
 - 関連 memory: `feedback_cron_watchdog_pattern`
+
+
+## 5.X+152 ★severity-high★ Prisma migration directory の SQL 内 table 名 typo は failed migration entry を残し以降の deploy を全 block する (PR #448 post-PR フルスキャン検証で発覚)
+
+### 事象
+
+PR #448 (feat/asset-restructure-and-assignee-expansion) で `prisma/migrations/20260529_risk_issue_occurrence/migration.sql` 内に `ALTER TABLE "risk_issues" ADD COLUMN "occurrence" TEXT;` と書いた。実際のテーブル名は `risks_issues` (複数形 + アンダースコア) で、`risk_issues` テーブルは存在しない。
+
+その結果:
+
+1. **Playwright E2E + Visual Regression**: 一時 DB に migration 全件適用しようとして P3018 で fail (`ERROR: relation "risk_issues" does not exist`)
+2. **Netlify Deploy Preview**: production Supabase DB に同 migration を適用しようとして同じく fail。`_prisma_migrations` テーブルに「failed 状態の旧 entry」が残存
+3. **SQL を fix しても deploy 続行不可**: Prisma は `_prisma_migrations` に failed entry がある限り「P3009: migrate found failed migrations in the target database」で全ての後続 migration を block する
+
+ローカル `pnpm test` / `pnpm tsc` / `pnpm build` は migration を実行しないため検出できなかった。
+
+### 原因
+
+- schema.prisma の `@@map("risks_issues")` (実際のテーブル名) と migration SQL の `ALTER TABLE` 直書きが乖離
+- 移行 SQL を手書きする際、schema model 名 (`RiskIssue` 単数形) と table 名 (`risks_issues` 複数形 + 物理命名) を混同
+- review 時に table 名のスペル確認まで踏み込まれなかった
+
+### 解決策
+
+**A. Migration directory を rename して bypass** (PR #448 で採用):
+- `20260529_risk_issue_occurrence` → `20260530_risk_issue_occurrence_retry`
+- Prisma は directory 名から migration_name を生成するため、リネーム後は新規 migration として認識
+- 旧 failed entry は `_prisma_migrations` に残るが、Prisma の deploy 判定対象外になるので block 解除
+- 旧 entry は orphan として残る (実害なし、`pnpm prisma migrate status` で「未管理 entry」として表示される程度)
+
+**B. 手動 resolve** (DB アクセスがある場合):
+```bash
+# 失敗した migration を rolled-back 扱いにする
+pnpm prisma migrate resolve --rolled-back 20260529_risk_issue_occurrence
+# 次回 deploy で新 SQL が適用される
+```
+
+### 再発防止策
+
+1. **Migration SQL 作成時の検証フロー** (新規 migration directory 追加時の必須手順):
+   - `grep -rn 'CREATE TABLE "対象テーブル名"' prisma/migrations/` で実テーブル名を確認
+   - schema.prisma の `@@map("...")` 行で table 名を一次確認
+   - migration SQL を `psql -f` でローカル DB に dry-run 適用 (= 構文 + テーブル存在を事前検証)
+   - PR description に「table 名確認: `risks_issues` (検証済)」と明記する
+
+2. **CI gate 追加 (将来 work)**:
+   - `prisma migrate diff` で migration SQL ↔ schema 整合を自動検証
+   - Lint/Test/Build workflow に migration validation step を追加
+   - これにより table 名 typo は GitHub Actions 段階で検出可能 (= Netlify deploy 前 + production DB 汚染前)
+
+3. **トラブル発生時の対処**: 本セクション参照 (rename approach 採用)
+
+### 関連
+
+- 関連 PR: #448
+- 該当 migration: `prisma/migrations/20260530_risk_issue_occurrence_retry/migration.sql`
+- 関連 memory: `feedback_repeated_verification_request` (= フルスキャン検証 2 回目で重大バグ検出の実績、本件も該当)
+
+---
+
+## 5.X+153 ★severity-1 (情報漏洩リスク)★ 「他人参照不可」可視性 + 「編集権限」の組合せは service 層で明示的に拒否しないと、API 直叩きで可視性矛盾の編集権限が付与される (PR #448)
+
+### 事象
+
+PR #448 で 4 資産 (Risk/Issue/Knowledge/Retrospective/Memo) の編集権限を「作成者のみ」→「作成者 OR 担当者」に拡張した際、Memo については以下の矛盾が発生していた:
+
+- Memo.visibility=`'private'` は「作成者本人のみ閲覧可」(他人には不存在扱い)
+- 担当者 (assigneeId) は編集権限を持つようになったが、private memo を **閲覧** できない
+- → 担当者は memo の中身を見れないのに `PATCH /api/memos/[id]` を叩けば編集可能 (= 内容を上書きしたら参照不可なまま保存)
+
+API 直叩きであれば `{ assigneeId: '他人ID', visibility: 'private' }` を送信できる。UI は selector を非表示にしていたが、防御は service 層で必要だった (validator は generic で `viewerUserId` の文脈を知らないため上記検査不能)。
+
+migration SQL コメント (memo_assignee) には設計意図として記載されていたが、service 実装が抜けていた:
+
+```
+# memo_assignee/migration.sql コメント抜粋
+#   - private memo に他人を assignee 指定すると、assignee は memo を参照不可になるため
+#     service 層 (memo.service.ts) で「assigneeId が他人 かつ visibility='private'」を拒否する
+```
+
+### 影響範囲
+
+- **既存メモへの侵入経路**: API 認証済ユーザが PATCH リクエストを直接送れば、他人を担当者に指定した private memo を作成・更新可能
+- **担当者には情報を見せない**: assignee は private memo を読めないので情報漏洩 (= 機微情報を「担当者と書かれた相手」に見せる) には直接繋がらないが、データ整合性違反
+- **業務インシデント**: 「担当を渡したつもりが、相手は何も見えていない」UI 不整合で運用者が混乱する
+
+### 解決策
+
+`memo.service.ts` の `createMemo` / `updateMemo` 両方に拒否ロジック追加:
+
+```typescript
+// createMemo:
+if (visibility === 'private' && input.assigneeId && input.assigneeId !== userId) {
+  throw new Error('PRIVATE_MEMO_ASSIGNEE_FORBIDDEN');
+}
+
+// updateMemo: effective visibility と effective assigneeId のマージ後で判定
+const effectiveVisibility = input.visibility ?? existing.visibility;
+const effectiveAssigneeId =
+  input.assigneeId !== undefined ? input.assigneeId : existing.assigneeId;
+if (
+  effectiveVisibility === 'private' &&
+  effectiveAssigneeId &&
+  effectiveAssigneeId !== existing.userId
+) {
+  throw new Error('PRIVATE_MEMO_ASSIGNEE_FORBIDDEN');
+}
+```
+
+注意点:
+- **「効果的な可視性」**を判定: input.visibility が省略時は既存値を使う (= 部分更新時の漏れ防止)
+- **self-assign は許容**: `assigneeId === userId` (= 自分を担当者にセット) は意味的に「担当 = 作成者」なので OK
+- **public → private 切替** + 既存 assignee=他人 のケースも拒否対象: UI から「公開範囲だけ private に変更」と送られた場合、既存 assignee の整合性を再評価する
+
+### 再発防止策
+
+1. **migration SQL に「service 層で enforce」と書いたら、必ず実装する**:
+   - migration SQL のコメントは「設計意図」のメモではなく実装契約
+   - PR レビュー時に「コメントで言及された service 層拒否ロジックが実在するか」を確認するチェックリストを追加
+2. **「可視性 × 編集権限」マトリクスを明示的に列挙**:
+   - 4 資産のうち memo だけが visibility='private' = 他人不可視という特殊仕様
+   - 同じ特殊仕様を持つ entity を増やす場合、本セクションを参照して service 層拒否を必ず実装
+3. **テスト**: `private memo に他人 assignee 指定すると PRIVATE_MEMO_ASSIGNEE_FORBIDDEN` などの単体テスト追加 (4 ケース)
+
+### 関連
+
+- 関連 PR: #448 (commit e00eefd)
+- 該当コード: [src/services/memo.service.ts](../../src/services/memo.service.ts) (createMemo / updateMemo)
+- 関連テスト: [src/services/memo.service.test.ts](../../src/services/memo.service.test.ts)
+- 関連 memory: `feedback_tenant_isolation` (= 「個人情報漏洩リスクは最優先」と同じ重大度)
+
+---
+
+## 5.X+154 ★severity-2 (UI と認可の乖離)★ 個別 update と bulk update で認可ロジックが乖離すると、UI から選択可能だが silent skip される行が発生する (PR #448)
+
+### 事象
+
+PR #448 で 4 資産の単発 `updateX` / `deleteX` の認可を「作成者のみ」→「作成者 OR 担当者」に拡張した一方、`bulkUpdateXVisibilityFromList` (一括 visibility 変更) は「作成者のみ」のままだった。
+
+その結果:
+
+- UI の `selectableIds` は「作成者 OR 担当者」を選択可にする (B9 で更新済)
+- 担当者がチェックボックスをチェックして「全メンバーに公開」をクリック
+- bulk API が「担当者は対象外」として silent skip → `skippedNotOwned` カウントが増えるが UI は成功扱い
+- ユーザ視点では「クリックしたのに変わらない」 (= UX バグ)
+
+### 原因
+
+- 単発 update/delete の認可拡張時に bulk 経路の認可を見落とした
+- bulk update の owned filter `t.X === viewerUserId` を担当者まで含めるよう改修されていなかった
+- `selectableIds` (UI) と `owned` filter (service) の認可ロジックが別ファイルで管理されていた
+
+### 解決策
+
+3 サービス (risk / knowledge / retrospective) の bulk update に対し:
+
+1. `findMany` の `select` に `assigneeId: true` を追加
+2. `owned` filter を OR に拡張: `t.X === userId || t.assigneeId === userId`
+3. `updateMany` の `where` も二重防御で OR 句に: `OR: [{ X: userId }, { assigneeId: userId }]`
+
+memo bulk (`bulkUpdateMemosVisibilityFromList`) は対象外:
+- /memos UI が `listMyMemos` (`userId === viewerUserId` のみ) を使うため、UI から担当者の memo を選択不可
+- 将来 `listMyMemos` を「assigned-to-me memo も含む」に拡張する際に、bulk memo の認可も同期更新が必要 (= 関連 work として残置)
+
+### 再発防止策
+
+1. **「認可テーブル」(認可ロジックの一元化)**:
+   - 同じ entity の CRUD で「個別 vs bulk」「create vs update vs delete」「project vs global context」など複数の認可経路が存在
+   - 4 資産 × N 経路 = M セルあり、認可ロジックを横並びで把握できる表 (docs/specification/PERMISSION_MATRIX.md 等) を更新する習慣を作る
+2. **テスト**: 「担当者本人のレコードも bulk 更新対象に含まれる」テストを 3 サービスに追加
+3. **UI と service 層の対称性チェックリスト**:
+   - `selectableIds` (UI) の判定条件
+   - `BulkSelectCell canSelect={...}` の判定条件
+   - service `owned` filter
+   - service `updateMany where` 句
+   - これら 4 つが同じ認可ロジックを表現していること
+
+### 関連
+
+- 関連 PR: #448 (commit e00eefd)
+- 該当コード:
+  - [src/services/risk.service.ts:780-795](../../src/services/risk.service.ts#L780-L795) (bulkUpdateRisksVisibilityFromList)
+  - [src/services/knowledge.service.ts:710-744](../../src/services/knowledge.service.ts#L710-L744)
+  - [src/services/retrospective.service.ts:628-650](../../src/services/retrospective.service.ts#L628-L650)
+- 関連テスト: 各 service の `担当者本人のレコードも bulk 更新対象に含まれる` テスト
+
+---
+
+## 5.X+155 ★severity-1 (テナント越境攻撃)★ 担当者 (assigneeId) フィールドの validator は UUID 形式しかチェックしないため、service 層で tenantId 検証を必須にする (PR #448 post-PR 3 巡目検証で発覚)
+
+### 事象
+
+PR #448 (feat/asset-restructure-and-assignee-expansion) で 4 資産 (Risk/Knowledge/Retrospective/Memo) に `assigneeId` を追加し、認可を「作成者 OR 担当者」に拡張した。validator は `z.string().uuid().nullable().optional()` で UUID 形式のみを確認するため、API で `{ assigneeId: '<他テナントのユーザ id>' }` を送信すると:
+
+1. validator は透過 (UUID 形式は正しい)
+2. service の `where: { tenantId: ... }` は **対象 entity (Risk/Knowledge 等) のテナント一致** を検証するが、`assigneeId` で指定された User の tenantId は検証しない
+3. Prisma の FK は `users.id` の存在のみ確認 (テナント越境を検出しない)
+4. DB に「他テナントの user.id」が assigneeId として保存される
+
+### 漏洩リスク
+
+- `getRisk` / `listRisks` 等で assignee.name を resolve する経路:
+  - `prisma.user.findMany({ where: { id: { in: userIds } } })` (cross-tenant lookup 許容、retrospective.service.ts の userMap 等)
+  - UI に **他テナントのユーザ氏名** が表示される (severity-1 個人情報漏洩)
+- bulk update の `OR: [{ createdBy }, { assigneeId }]` 句で「他テナントのユーザを attacker が自分の id にして assignee 設定 → 自分が編集者となる」攻撃の起点になり得る
+
+### 解決策
+
+`src/lib/assignee-validation.ts` に共通ヘルパ `assertAssigneeTenant(assigneeId, expectedTenantId)` を新設:
+
+```typescript
+export async function assertAssigneeTenant(
+  assigneeId: string | null | undefined,
+  expectedTenantId: string,
+): Promise<void> {
+  if (assigneeId === undefined || assigneeId === null) return; // 未指定/解除は許容
+  const user = await prisma.user.findUnique({
+    where: { id: assigneeId },
+    select: { tenantId: true },
+  });
+  if (!user || user.tenantId !== expectedTenantId) {
+    throw new Error('ASSIGNEE_TENANT_MISMATCH');
+  }
+}
+```
+
+4 service の create/update 関数の冒頭で `await assertAssigneeTenant(input.assigneeId, tenantId);` を呼ぶ。API route 層で `ASSIGNEE_TENANT_MISMATCH` を catch して 400 にマップ。
+
+### 再発防止策
+
+1. **「外部から渡される FK は必ず tenantId 検証する」原則を明文化**:
+   - User リレーションを持つ field を validator で受け入れる場合、validator は UUID 形式しか確認できない
+   - tenantId 整合性は **必ず service 層** で行う
+   - 横展開対象: 既存の reporterId / createdBy 等は API から受け取らないので問題ないが、新規 FK field を追加するたびに本ルールを適用
+2. **チェックリスト**: 新規 schema field 追加時に「外部入力か?」「User/Project 等 tenant 境界を跨ぐ FK か?」を確認
+3. **テスト**: `src/lib/assignee-validation.test.ts` で undefined/null/same-tenant/other-tenant/nonexistent の 5 ケースをカバー
+
+### 関連
+
+- 関連 PR: #448 (post-PR 検証 3 巡目で検出)
+- 該当コード: [src/lib/assignee-validation.ts](../../src/lib/assignee-validation.ts)
+- 関連テスト: [src/lib/assignee-validation.test.ts](../../src/lib/assignee-validation.test.ts)
+- 関連 memory: `feedback_tenant_isolation` (= severity-1 テナント越境)
+- 関連 memory: `feedback_repeated_verification_request` (= フルスキャン検証 N 回目で重大バグ検出の実績)
+
+---
+
+## 5.X+156 ★severity-1 (round-trip 欠陥)★ 新規 schema field を追加したら data-export / data-import 両方に必ず column を追加する (PR #448 post-PR 3 巡目検証で発覚)
+
+### 事象
+
+PR #448 で Knowledge / Retrospective / Memo に `assigneeId` 列を追加したが、`src/services/data-export.service.ts` の `buildKnowledgeCsv` / `buildRetrospectivesCsv` / `buildMemosCsv` のカラムリストに `'assigneeId'` を追加し忘れた。
+
+さらに `src/services/data-import.service.ts` の `tx.knowledge.create / tx.retrospective.create / tx.memo.create` の data オブジェクトでも `assigneeId` を読み取らない (= `data.assigneeId` が `undefined` で create される → null 保存)。
+
+### 影響
+
+- **round-trip 非対称**: 担当者を割り当てた Knowledge を export → import すると `assigneeId` が消える (担当者が外れる)
+- **テナント移行 / バックアップ復旧で担当者情報が喪失**: 業務オペレーション (引継ぎ後の担当 entity) が import で死ぬ
+- **検出困難**: round-trip テストは E2E 想定 (export を保存し再 import して differ) で、本 PR の単体テストではカバーできなかった
+
+### 解決策
+
+1. `data-export.service.ts`:
+   - `buildKnowledgeCsv` カラムに `'assigneeId'` を追加
+   - `buildRetrospectivesCsv` 同
+   - `buildMemosCsv` 同
+   - `buildRisksIssuesCsv` は既に `'assigneeId'` を含む (init 時から) ので不要
+
+2. `data-import.service.ts`:
+   - `tx.knowledge.create` data に `assigneeId: resolveUserFkNullable(k.assigneeId)`
+   - `tx.retrospective.create` data に `assigneeId: resolveUserFkNullable(rt.assigneeId)`
+   - `tx.memo.create` data に `assigneeId: resolveUserFkNullable(m.assigneeId)`
+   - `resolveUserFkNullable` は user id マッピング (export 時の旧 id → import 時の新 id 変換) を行うため必須
+
+### 再発防止策
+
+1. **「新 field 追加時の横展開チェックリスト」を更新**:
+   - migration SQL / schema.prisma
+   - service 層: create / update / list / get (DTO)
+   - validator (zod schema)
+   - UI (form state, display)
+   - **data-export.service.ts の CSV カラムリスト**
+   - **data-import.service.ts の create data オブジェクト**
+   - API route (catch + error code)
+   - tests (single, bulk, cross-tenant, edge case)
+2. **round-trip テスト** (将来 work): `export → import → 同 field 比較` のテストを書く
+3. **schema-driven CSV 生成** (将来 work): Prisma model 定義から CSV カラムを自動生成する仕組みを導入し、手書きで漏れる罠を構造的に防ぐ
+
+### 関連
+
+- 関連 PR: #448 (post-PR 検証 3 巡目で検出)
+- 該当コード:
+  - [src/services/data-export.service.ts](../../src/services/data-export.service.ts) (buildKnowledgeCsv 等 3 関数)
+  - [src/services/data-import.service.ts](../../src/services/data-import.service.ts) (Knowledge/Retrospective/Memo create)
+- 関連 memory: `feedback_repeated_verification_request` (= 「再確認 N 回目で重大バグ」)
+- 関連 memory: `feedback_3layer_sync_filter` (= 「同期更新が必要な 4 経路」、本件は export/import が同種の sync 対象)
+
+---
+
+## 5.X+157 ★severity-2★ User の soft-delete を assignee 検証で考慮しないと、退職者が担当者に指定可能になる罠 (PR #448 post-PR 4 巡目検証で発覚)
+
+### 事象
+
+PR #448 (feat/asset-restructure-and-assignee-expansion) で導入した `src/lib/assignee-validation.ts` の `assertAssigneeTenant()` は以下のロジックだった:
+
+```typescript
+const user = await prisma.user.findUnique({
+  where: { id: assigneeId },
+  select: { tenantId: true },
+});
+if (!user || user.tenantId !== expectedTenantId) {
+  throw new Error('ASSIGNEE_TENANT_MISMATCH');
+}
+```
+
+`findUnique` は `deletedAt` を考慮しないため、**soft-delete された User (退職等)** を assigneeId として指定すると validation を透過してしまう。
+
+### 影響範囲
+
+- **業務 dead-end**: 担当者がログイン不可なのに「編集権限保持者」として残り続ける
+- **UI 表示の混乱**: 担当者列に「削除済ユーザ」名前が表示される (UX 問題)
+- **権限剥奪の機会逸失**: 退職者の権限を assigneeId 経由で実質維持してしまう (= compliance 観点で問題)
+- **重大度判定**: 情報漏洩はないが、業務運用の整合性が崩れるため severity-2
+
+### 解決策
+
+`findUnique` → `findFirst` に変更し、`where` に `deletedAt: null` を追加:
+
+```typescript
+const user = await prisma.user.findFirst({
+  where: { id: assigneeId, deletedAt: null },
+  select: { tenantId: true },
+});
+if (!user || user.tenantId !== expectedTenantId) {
+  throw new Error('ASSIGNEE_TENANT_MISMATCH');
+}
+```
+
+(`findUnique` は primary key 系のみ受け付け、`deletedAt: null` を where に追加できない仕様のため `findFirst` に切替)
+
+### 再発防止策
+
+1. **「外部入力 FK の検証」テンプレート**:
+   - tenantId 検証
+   - deletedAt: null フィルタ
+   - (必要に応じて) isActive=true フィルタ
+   - 3 点セットを「外部から受け取る user FK」全箇所に適用
+2. **横展開対象 (将来 work)**:
+   - Task.assigneeId の入力検証 (現状は別経路だが同パターン)
+   - 他の外部入力 user FK (Customer.handlerUserId 等) を grep して同様の罠がないか確認
+3. **テスト**: assignee-validation.test.ts に「soft-delete user は reject」ケース追加 (= 6 ケース体制)
+
+### 関連
+
+- 関連 PR: #448 (post-PR 検証 4 巡目で検出)
+- 該当コード: [src/lib/assignee-validation.ts](../../src/lib/assignee-validation.ts)
+- 関連テスト: [src/lib/assignee-validation.test.ts](../../src/lib/assignee-validation.test.ts)
+- 関連 memory: `feedback_tenant_isolation` (= 個人情報漏洩は最優先、本件は dead-end 系の severity-2 派生)
+- 関連 memory: `feedback_repeated_verification_request` (= フルスキャン N 回目で重大バグ検出、本件は 4 回目で検出)
+
+---

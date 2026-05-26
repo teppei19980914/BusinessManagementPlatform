@@ -24,6 +24,11 @@ vi.mock('./embedding.service', () => ({
   generateAndPersistBatchEmbeddings: vi.fn().mockResolvedValue({ generated: 0, failed: 0, costJpy: 0 }),
 }));
 
+// feat/asset-assignee-expansion (2026-05-26): クロステナント assigneeId 検証 mock
+vi.mock('@/lib/assignee-validation', () => ({
+  assertAssigneeTenant: vi.fn().mockResolvedValue(undefined),
+}));
+
 import {
   listMyMemos,
   listPublicMemos,
@@ -44,6 +49,9 @@ const memoRow = (overrides: Record<string, unknown> = {}) => ({
   title: 'T',
   content: 'C',
   visibility: 'private',
+  // feat/asset-assignee-expansion (2026-05-26)
+  assigneeId: null,
+  assignee: null,
   createdAt: now,
   updatedAt: now,
   author: { name: 'Alice' },
@@ -162,6 +170,22 @@ describe('createMemo', () => {
       expect.objectContaining({ data: expect.objectContaining({ visibility: 'public' }) }),
     );
   });
+
+  // feat/asset-assignee-expansion (2026-05-26) severity-1: private memo に他人 assignee を拒否
+  it('private memo + 他人 assignee 指定 (create) → PRIVATE_MEMO_ASSIGNEE_FORBIDDEN', async () => {
+    await expect(
+      createMemo({ title: 't', content: 'c', visibility: 'private', assigneeId: 'user-other' }, 'user-1'),
+    ).rejects.toThrow('PRIVATE_MEMO_ASSIGNEE_FORBIDDEN');
+    expect(prisma.memo.create).not.toHaveBeenCalled();
+  });
+
+  it('public + 他人 assignee 指定 (create) は許容', async () => {
+    vi.mocked(prisma.memo.create).mockResolvedValue(
+      memoRow({ visibility: 'public', assigneeId: 'user-other' }) as never,
+    );
+    await createMemo({ title: 't', content: 'c', visibility: 'public', assigneeId: 'user-other' }, 'user-1');
+    expect(prisma.memo.create).toHaveBeenCalled();
+  });
 });
 
 describe('updateMemo', () => {
@@ -174,7 +198,9 @@ describe('updateMemo', () => {
   });
 
   it('他人のメモは更新不可 (null)', async () => {
-    vi.mocked(prisma.memo.findFirst).mockResolvedValue({ userId: 'user-2' } as never);
+    vi.mocked(prisma.memo.findFirst).mockResolvedValue(
+      { userId: 'user-2', assigneeId: null } as never,
+    );
     expect(await updateMemo('memo-1', { title: 't2' }, 'user-1')).toBe(null);
     expect(prisma.memo.update).not.toHaveBeenCalled();
   });
@@ -190,6 +216,48 @@ describe('updateMemo', () => {
     expect(result?.title).toBe('t2');
     expect(prisma.memo.update).toHaveBeenCalled();
   });
+
+  // feat/asset-assignee-expansion (2026-05-26): 担当者も update 可能
+  it('担当者 (assigneeId === userId) は更新可能', async () => {
+    vi.mocked(prisma.memo.findFirst).mockResolvedValue(
+      { userId: 'user-creator', assigneeId: 'user-assignee', visibility: 'public' } as never,
+    );
+    vi.mocked(prisma.memo.update).mockResolvedValue(memoRow({ title: 't2' }) as never);
+
+    const result = await updateMemo('memo-1', { title: 't2' }, 'user-assignee');
+
+    expect(result?.title).toBe('t2');
+    expect(prisma.memo.update).toHaveBeenCalled();
+  });
+
+  // feat/asset-assignee-expansion (2026-05-26) severity-1: private memo に他人 assignee を拒否
+  it('private memo に他人 assignee 指定 → PRIVATE_MEMO_ASSIGNEE_FORBIDDEN', async () => {
+    vi.mocked(prisma.memo.findFirst).mockResolvedValue(
+      { userId: 'user-1', assigneeId: null, visibility: 'private', title: 't', content: 'c' } as never,
+    );
+    await expect(
+      updateMemo('memo-1', { assigneeId: 'user-other' }, 'user-1'),
+    ).rejects.toThrow('PRIVATE_MEMO_ASSIGNEE_FORBIDDEN');
+    expect(prisma.memo.update).not.toHaveBeenCalled();
+  });
+
+  it('public → private 変更時に既存 assignee=他人 が残ると拒否', async () => {
+    vi.mocked(prisma.memo.findFirst).mockResolvedValue(
+      { userId: 'user-1', assigneeId: 'user-other', visibility: 'public', title: 't', content: 'c' } as never,
+    );
+    await expect(
+      updateMemo('memo-1', { visibility: 'private' }, 'user-1'),
+    ).rejects.toThrow('PRIVATE_MEMO_ASSIGNEE_FORBIDDEN');
+  });
+
+  it('private memo でも assignee=本人 (self-assign) は許容', async () => {
+    vi.mocked(prisma.memo.findFirst).mockResolvedValue(
+      { userId: 'user-1', assigneeId: null, visibility: 'private', title: 't', content: 'c' } as never,
+    );
+    vi.mocked(prisma.memo.update).mockResolvedValue(memoRow({ assigneeId: 'user-1' }) as never);
+    const result = await updateMemo('memo-1', { assigneeId: 'user-1' }, 'user-1');
+    expect(result).not.toBeNull();
+  });
 });
 
 describe('deleteMemo', () => {
@@ -202,10 +270,22 @@ describe('deleteMemo', () => {
 
   it('他人のメモは false (一般ユーザ)', async () => {
     vi.mocked(prisma.memo.findFirst).mockResolvedValue(
-      { userId: 'user-2', visibility: 'private' } as never,
+      { userId: 'user-2', assigneeId: null, visibility: 'private' } as never,
     );
     expect(await deleteMemo('memo-1', 'user-1', 'tenant-A', 'general')).toBe(false);
     expect(prisma.memo.update).not.toHaveBeenCalled();
+  });
+
+  // feat/asset-assignee-expansion (2026-05-26): 担当者も削除可能
+  it('担当者 (assigneeId === userId) は削除可能', async () => {
+    vi.mocked(prisma.memo.findFirst).mockResolvedValue(
+      { userId: 'user-creator', assigneeId: 'user-assignee', visibility: 'public' } as never,
+    );
+    vi.mocked(prisma.memo.update).mockResolvedValue({} as never);
+    vi.mocked(prisma.attachment.updateMany).mockResolvedValue({ count: 0 } as never);
+
+    expect(await deleteMemo('memo-1', 'user-assignee', 'tenant-A', 'general')).toBe(true);
+    expect(prisma.memo.update).toHaveBeenCalled();
   });
 
   // feat/crud-permission-redesign (2026-05-20): admin の public モデレーション削除

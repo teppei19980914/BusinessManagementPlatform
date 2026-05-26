@@ -263,9 +263,13 @@ export function ProjectDetailClient({
         break;
       case 'retrospectives':
         retros.load();
+        // feat/asset-assignee-expansion (2026-05-26): 担当者 selector の選択肢
+        members.load();
         break;
       case 'knowledge':
         knowledges.load();
+        // feat/asset-assignee-expansion (2026-05-26): 担当者 selector の選択肢
+        members.load();
         break;
       case 'members':
         members.load();
@@ -991,16 +995,22 @@ export function ProjectDetailClient({
         </TabsContent>
 
         {/* 振り返りタブ */}
+        {/* feat/asset-assignee-expansion (2026-05-26): 担当者 selector 用に members も lazy fetch */}
         <TabsContent value="retrospectives" className="mt-4">
           <LazyTabContent state={retros.state}>
             {(data) => (
-              <RetrospectivesClient
-                projectId={project.id}
-                retros={data}
-                canCreate={canCreateOwnedList}
-                currentUserId={userId}
-                onReload={reloadRetros}
-              />
+              <LazyTabContent state={members.state}>
+                {(membersData) => (
+                  <RetrospectivesClient
+                    projectId={project.id}
+                    retros={data}
+                    members={membersData}
+                    canCreate={canCreateOwnedList}
+                    currentUserId={userId}
+                    onReload={reloadRetros}
+                  />
+                )}
+              </LazyTabContent>
             )}
           </LazyTabContent>
         </TabsContent>
@@ -1011,16 +1021,22 @@ export function ProjectDetailClient({
             - 作成/削除はプロジェクトメンバーのみ (ProjectKnowledgeClient 内で制御)
             - 作成時に projectId を自動で関連付けるため「全ナレッジ」にも即反映
         */}
+        {/* feat/asset-assignee-expansion (2026-05-26): 担当者 selector 用に members も lazy fetch */}
         <TabsContent value="knowledge" className="mt-4">
           <LazyTabContent state={knowledges.state}>
             {(result) => (
-              <ProjectKnowledgeClient
-                projectId={project.id}
-                knowledges={result}
-                canCreate={canCreateOwnedList}
-                currentUserId={userId}
-                onReload={reloadKnowledges}
-              />
+              <LazyTabContent state={members.state}>
+                {(membersData) => (
+                  <ProjectKnowledgeClient
+                    projectId={project.id}
+                    knowledges={result}
+                    members={membersData}
+                    canCreate={canCreateOwnedList}
+                    currentUserId={userId}
+                    onReload={reloadKnowledges}
+                  />
+                )}
+              </LazyTabContent>
             )}
           </LazyTabContent>
         </TabsContent>

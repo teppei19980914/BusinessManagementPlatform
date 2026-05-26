@@ -442,7 +442,10 @@ function buildKnowledgeCsv(knowledge: Array<Record<string, unknown>>): string {
     [
       'id', 'title', 'knowledgeType', 'background', 'content', 'result',
       'conclusion', 'recommendation', 'reusability', 'techTags', 'devMethod',
-      'processTags', 'businessDomainTags', 'visibility', 'createdBy', 'updatedBy',
+      'processTags', 'businessDomainTags', 'visibility',
+      // feat/asset-assignee-expansion (2026-05-26): 担当者を export/import round-trip 対応
+      'assigneeId',
+      'createdBy', 'updatedBy',
       'createdAt', 'updatedAt',
     ],
     knowledge,
@@ -452,7 +455,8 @@ function buildKnowledgeCsv(knowledge: Array<Record<string, unknown>>): string {
 function buildRisksIssuesCsv(risksIssues: Array<Record<string, unknown>>): string {
   return buildCsv(
     [
-      'id', 'projectId', 'type', 'title', 'content', 'cause', 'responsePolicy',
+      // feat/risk-issue-4-section (2026-05-26): occurrence を title の直後に追加
+      'id', 'projectId', 'type', 'title', 'occurrence', 'content', 'cause', 'responsePolicy',
       'responseDetail', 'state', 'priority', 'reportedBy', 'assigneeId',
       'reportedAt', 'resolvedAt', 'createdAt', 'updatedAt',
     ],
@@ -464,7 +468,10 @@ function buildRetrospectivesCsv(retrospectives: Array<Record<string, unknown>>):
   return buildCsv(
     [
       'id', 'projectId', 'conductedDate', 'goodPoints', 'problems', 'improvements',
-      'visibility', 'createdBy', 'createdAt', 'updatedAt',
+      'visibility',
+      // feat/asset-assignee-expansion (2026-05-26): 担当者を export/import round-trip 対応
+      'assigneeId',
+      'createdBy', 'createdAt', 'updatedAt',
     ],
     retrospectives,
   );
@@ -473,7 +480,10 @@ function buildRetrospectivesCsv(retrospectives: Array<Record<string, unknown>>):
 function buildMemosCsv(memos: Array<Record<string, unknown>>): string {
   return buildCsv(
     [
-      'id', 'title', 'content', 'visibility', 'createdBy', 'createdAt', 'updatedAt',
+      'id', 'title', 'content', 'visibility',
+      // feat/asset-assignee-expansion (2026-05-26): 担当者を export/import round-trip 対応
+      'assigneeId',
+      'createdBy', 'createdAt', 'updatedAt',
     ],
     memos,
   );

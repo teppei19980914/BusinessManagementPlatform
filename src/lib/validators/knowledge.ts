@@ -43,6 +43,9 @@ export const createKnowledgeSchema = z
     // 2026-05-11: default 'draft' に変更 (= 「自分のみ」として一時保存可)
     visibility: z.enum(['draft', 'public']).default('draft'),
     projectIds: z.array(z.string().uuid()).optional(),
+    // feat/asset-assignee-expansion (2026-05-26): 担当者 (作成者と並ぶ編集権限保持者)。
+    //   null/undefined は「担当者なし」(従来通り作成者のみ編集可)。
+    assigneeId: z.string().uuid().nullable().optional(),
   })
   .superRefine((data, ctx) => {
     if (data.visibility === 'public' && (!data.title || data.title.trim().length === 0)) {
@@ -72,6 +75,8 @@ const baseUpdateKnowledgeSchema = z.object({
   businessDomainTags: z.array(z.string()).max(TAGS_MAX_COUNT).optional(),
   visibility: z.enum(['draft', 'public']).optional(),
   projectIds: z.array(z.string().uuid()).optional(),
+  // feat/asset-assignee-expansion (2026-05-26): 編集時 assigneeId 更新も受入れ
+  assigneeId: z.string().uuid().nullable().optional(),
 });
 
 export const updateKnowledgeSchema = baseUpdateKnowledgeSchema.superRefine((data, ctx) => {
