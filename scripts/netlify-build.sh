@@ -38,5 +38,29 @@ set -euo pipefail
 # CONTEXT / URL は Netlify build 環境で確認用に出力 (どちらも build 時のみ有効)
 echo "[netlify-build] CONTEXT=${CONTEXT:-unknown} URL=${URL:-unset}"
 
+# ================================================================
+# 2026-05-26 (PR #448, KDD §5.X+152): orphan failed migration の自動解消
+# ================================================================
+# 経緯:
+#   PR #448 初回 push 時、prisma/migrations/20260529_risk_issue_occurrence/migration.sql に
+#   table 名 typo (`risk_issues` → 正しくは `risks_issues`) があり、Netlify build の
+#   `prisma migrate deploy` で P3018 fail。その結果、production Supabase DB の
+#   `_prisma_migrations` テーブルに「failed 状態の旧 entry」が残った。
+#
+#   SQL fix + migration rename (20260530_risk_issue_occurrence_retry) で対処したが、
+#   Prisma の `migrate deploy` は **failed entry が 1 つでもあれば** P3009 で全ての
+#   後続 migration を block する仕様のため、orphan entry が消えるまで deploy 不能。
+#
+# 対処:
+#   `prisma migrate resolve --rolled-back` で failed entry を rolled-back 扱いに変換。
+#   - 初回実行 (failed entry 存在): orphan を解消 → 続く migrate deploy で新 migration 適用
+#   - 2 回目以降 (既に解消済 or entry 存在しない): エラーになるが || で握りつぶす
+#   この block は失敗 entry が DB から消えるまでの hotfix。production deploy 後に削除可。
+echo "[netlify-build] Attempting to resolve orphan failed migration from PR #448..."
+pnpm prisma migrate resolve --rolled-back "20260529_risk_issue_occurrence" 2>&1 \
+  | sed 's/^/[migration-cleanup] /' \
+  || echo "[migration-cleanup] No action needed (already resolved, never failed, or not present)"
+echo "[netlify-build] Continuing with build:netlify..."
+
 # 既存の build:netlify (= prisma generate + migrate deploy + next build) を実行
 exec pnpm build:netlify
