@@ -190,39 +190,10 @@ export const authConfig: NextAuthConfig = {
           }
         }
 
-        // Storage add-on (Phase 2 / 2026-05-08, PR-4 で TZ ベース化): Storage Grace 7 日経過テナントの write 停止。
-        //   Grace 開始日時 (= cron が容量超過検知でセット) から 7 日経過すると write 系停止。
-        //   ユーザがデータを削除して上限内に戻れば、cron が claim をクリア → 次回ログインで通る。
-        //   PR-4 (2026-05-15): 7 日判定もテナント TZ カレンダー日ベース。
-        const graceStartedIso = auth.user.tenantStorageGracePeriodStartedAt;
-        if (typeof graceStartedIso === 'string' && graceStartedIso.length > 0) {
-          const graceStartedAt = new Date(graceStartedIso);
-          if (!Number.isNaN(graceStartedAt.getTime())) {
-            const graceElapsedDays = tenantCalendarDayDiffEdge(
-              graceStartedAt,
-              new Date(),
-              tenantTimezone,
-            );
-            // GRACE_DAYS=7 (= src/config/storage-addon.ts の STORAGE_GRACE_PERIOD_DAYS)。
-            // middleware は config を import できない (Edge runtime + dual import 制約) ため数値リテラル。
-            if (graceElapsedDays >= 7) {
-              return new Response(
-                JSON.stringify({
-                  error: {
-                    code: 'STORAGE_LIMIT_EXCEEDED',
-                    message:
-                      'ストレージ上限を超過した状態が 7 日以上続いたため、書き込み操作は停止しています。' +
-                      'データを削除して上限内に戻すか、Storage プランをアップグレードしてください。',
-                  },
-                }),
-                {
-                  status: 403,
-                  headers: { 'content-type': 'application/json' },
-                },
-              );
-            }
-          }
-        }
+        // chore/storage-addon-backend-removal (2026-05-26):
+        //   旧 Storage add-on 4 段階プラン (Standard/Plus/Pro/Enterprise) の Grace period 7 日経過判定は撤去。
+        //   ADR-0020 で DB 容量は完全従量課金 + 50GB ハードキャップに変更されており、middleware で write を
+        //   塞ぐのではなく、データ削減 or 課金で対応する設計に変わったため。
       }
 
       return true;
@@ -244,10 +215,7 @@ export const authConfig: NextAuthConfig = {
         token.tenantBeginnerEverUpgraded = (
           user as unknown as { tenantBeginnerEverUpgraded: boolean }
         ).tenantBeginnerEverUpgraded;
-        // Storage add-on (Phase 2 / 2026-05-08): Grace 期間判定用 claim
-        token.tenantStorageGracePeriodStartedAt = (
-          user as unknown as { tenantStorageGracePeriodStartedAt: string | null }
-        ).tenantStorageGracePeriodStartedAt ?? null;
+        // chore/storage-addon-backend-removal (2026-05-26): tenantStorageGracePeriodStartedAt claim は撤去
         // 2026-05-14 (PR #372): read-only 強制移行フラグの ISO 文字列。
         token.tenantSuspendedAt = (
           user as unknown as { tenantSuspendedAt: string | null }
@@ -314,9 +282,7 @@ export const authConfig: NextAuthConfig = {
         session.user.tenantCreatedAt = (token.tenantCreatedAt as string | undefined) ?? new Date().toISOString();
         session.user.tenantBeginnerEverUpgraded =
           (token.tenantBeginnerEverUpgraded as boolean | undefined) ?? false;
-        // Storage add-on (Phase 2): Grace 開始日時を session に伝播 (middleware + UI 両方で使用)
-        session.user.tenantStorageGracePeriodStartedAt =
-          (token.tenantStorageGracePeriodStartedAt as string | null | undefined) ?? null;
+        // chore/storage-addon-backend-removal (2026-05-26): tenantStorageGracePeriodStartedAt 伝播は撤去
         // 2026-05-14 (PR #372): read-only 強制移行フラグを session に伝播
         session.user.tenantSuspendedAt =
           (token.tenantSuspendedAt as string | null | undefined) ?? null;

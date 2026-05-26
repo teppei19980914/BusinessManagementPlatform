@@ -485,7 +485,7 @@ export async function processTenantDbCapacityOverage(
       lastResetAt: true,
       storageBytesUsed: true,
       storageBytesPeakThisMonth: true,
-      storageGracePeriodStartedAt: true, // 後続の冪等性チェックで参照
+      // chore/storage-addon-backend-removal (2026-05-26): storageGracePeriodStartedAt は DB から撤去済
     },
   });
 

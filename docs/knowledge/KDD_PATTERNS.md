@@ -16149,3 +16149,48 @@ if (!user || user.tenantId !== expectedTenantId) {
 - 関連 memory: `feedback_repeated_verification_request` (= フルスキャン N 回目で重大バグ検出、本件は 4 回目で検出)
 
 ---
+
+## 5.X+158 ★severity-high★ 旧機能の DB column 撤去は schema + service + UI + JWT claim + 関連 script + ドキュメントの 6 レイヤ同時撤去が必須 (PR #450 storage_addon 全廃)
+
+**結論**: 「廃止」と決まった機能の column を Prisma schema から `DROP` する migration を書く際、コードでその column を参照している場所がすべて消えているか **6 レイヤ横断で確認しないと、migration 適用後に prisma クエリが失敗する**。
+
+### 経緯 (chore/storage-addon-backend-removal, 2026-05-26)
+
+ユーザ要件「ストレージプラン (Standard/Plus/Pro/Enterprise の 4 段階 add-on) の選択は不要、横断的に削除して欲しい」に対応するため、以下を撤去:
+
+- **DB column**: Tenant 4 列 + TenantMonthlyUsageHistory 2 列 + Tenant.stripe_subscription_item_storage_id
+- **Service 層**: tenant-storage.service / billing-aggregation / stripe-billing / monthly-history-regenerate / tenant-monthly-reset / super-admin.service
+- **UI**: 設定画面のプラン選択 UI / super admin 3 画面
+- **環境変数**: STRIPE_PRICE_STORAGE_PLUS / STRIPE_PRICE_STORAGE_PRO
+- **config**: src/config/storage-addon.ts ファイル削除
+
+最初の PR #449 (UI/API) と PR #450 (backend) の 2 段構えで実施したが、PR #450 マージ直前のフルスキャン検証で **以下の残参照を発見**:
+
+1. `src/lib/auth.config.ts` lines 197-225: middleware の Grace 7 日経過判定が JWT claim `tenantStorageGracePeriodStartedAt` を参照していた → **column 削除後は claim が常に null になるので dead code、削除**
+2. `src/lib/auth.config.ts` lines 248-250, 318-319: JWT claim 伝播コード → 削除
+3. `src/types/next-auth.d.ts` lines 60, 84: `tenantStorageGracePeriodStartedAt: string | null` 型宣言 → 削除
+4. **`src/services/tenant-monthly-reset.service.ts` line 488**: `select: { storageGracePeriodStartedAt: true }` で DB から **撤去予定の column を select** していた → **migration 適用後に Prisma error 発生のリスク**、本番事故になる前に発見
+5. `scripts/reset-default-tenant-to-beginner.ts` line 80: `stripeSubscriptionItemStorageId: null` で DB update → **同じく Prisma error リスク**
+
+### 教訓と防御
+
+- `Prisma schema.prisma` で column を削除する PR では、必ず以下の **6 レイヤ全てを grep** する:
+  1. `src/services/**` (= DB 読み書き)
+  2. `src/app/**` (= UI / route)
+  3. `src/lib/auth*` (= JWT claim / middleware)
+  4. `src/types/**` (= 型宣言)
+  5. `scripts/**` (= 運用 script)
+  6. `docs/**` (= ドキュメント、特に技術設計書 / ADR / 脅威モデル)
+
+- grep コマンド (column 名 + camelCase 双方):
+  ```bash
+  grep -rnE "<snake_case_column>|<camelCase_field>" --include="*.ts" --include="*.tsx" --include="*.md" .
+  ```
+
+- **DB select に残った参照は tsc では検出できない** (= Prisma 型は schema 反映済なので、`select: { dropped_field: true }` は型エラーにならず、ランタイムで失敗する)。**手動 grep が唯一の防御**。
+
+### 関連 memory
+
+- `feedback_3layer_sync_filter` (テナント関連フィルタの 3 レイヤ同期)
+- `feedback_repeated_verification_request` (= フルスキャン N 回目で重大バグ検出)
+- `feedback_realistic_1pr_scope` (= 大規模機能の PR 分割)
