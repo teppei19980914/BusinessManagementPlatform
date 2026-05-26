@@ -53,7 +53,7 @@
   - DB 容量 / ファイルストレージ超過分は **月中 peak** 値で月初請求 (ADR-0020 / ADR-0021)
 - **プラン変更は全て即時反映** (2026-05-14 改修): アップグレード・ダウングレード問わず変更後の操作から新単価。Beginner ダウングレードのみ禁止 (ADR-0013)
 - **月途中解約時の請求漏れは構造的に発生しない** (= 退会フローで当月 peak を即時請求、§月途中解約の検知メカニズム 参照)
-- 旧 `storage_addon_plan` (standard / plus / pro_storage / enterprise の固定額 add-on) は ADR-0020 §10 で **除去対象** と決定済 (現コードに残置あり、P9 migration で削除予定)
+- 旧 `storage_addon_plan` (standard / plus / pro_storage / enterprise の固定額 add-on) は **撤去完了** (chore/storage-addon-backend-removal 2026-05-26、migration `20260531_remove_storage_addon`)。ストレージ課金は ADR-0020 (DB 容量) + ADR-0021 (ファイル添付) の従量課金に一本化。
 
 ## 支払い方法ごとの運用フロー分岐 (2026-05-14 / Stripe 連携 v1.x で導入予定)
 

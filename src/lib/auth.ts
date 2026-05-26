@@ -252,8 +252,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           tenantCreatedAt: user.tenant.createdAt.toISOString(),
           tenantBeginnerEverUpgraded: user.tenant.beginnerEverUpgraded,
           // chore/storage-addon-backend-removal (2026-05-26):
-          //   tenantStorageGracePeriodStartedAt は撤去 (旧 4 段階プラン廃止)。middleware の write 制御も連動撤去。
-          tenantStorageGracePeriodStartedAt: null as string | null,
+          //   tenantStorageGracePeriodStartedAt 撤去 (旧 4 段階プラン廃止)。middleware の write 制御も連動撤去。
           // 2026-05-14 (PR #372): read-only 強制移行フラグの ISO 文字列、通常運用は null。
           //   middleware が write 系 HTTP method を 403 TENANT_SUSPENDED で遮断する。
           //   suspend 時には全ユーザの tokenVersion が increment されるため、既存セッションは

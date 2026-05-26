@@ -70,8 +70,8 @@ model Tenant {
   stripeSubscriptionItemHaikuId  String?   @map("stripe_subscription_item_haiku_id") @db.VarChar(50)
   /// Sonnet (Pro) per-call Subscription Item ID
   stripeSubscriptionItemSonnetId String?   @map("stripe_subscription_item_sonnet_id") @db.VarChar(50)
-  /// Storage add-on (月固定額) Subscription Item ID
-  stripeSubscriptionItemStorageId String?  @map("stripe_subscription_item_storage_id") @db.VarChar(50)
+  // chore/storage-addon-backend-removal (2026-05-26):
+  //   stripeSubscriptionItemStorageId は撤去 (ADR-0020/0021 で従量課金化、4 段階プラン廃止)
   /// Default Payment Method ID (= デフォルトの請求用カード)
   stripeDefaultPaymentMethodId   String?   @map("stripe_default_payment_method_id") @db.VarChar(50)
 

@@ -160,14 +160,17 @@ storage-guard の `pg_column_size` 計測が DB connection error 等で失敗し
 
 メール通知を使用量通知に使わない理由: メール枠制限 + spam リスク、テナント管理者は設定画面アクセス時に気づける。
 
-### 10. 旧コード除去 (R19)
+### 10. 旧コード除去 (R19) — **2026-05-26 実施完了**
 
-以下を即時物理削除 (チーム動揺阻止のため未使用機能は残置せず):
-- `src/config/storage-addon.ts` 全体 (ADDON_MONTHLY_JPY / ADDON_EXTRA_BYTES / Grace period 定数)
-- `src/services/storage-guard.service.ts` の旧 Grace ロジック (`StorageLimitExceededError` メッセージは流用)
-- `src/services/tenant-storage.service.ts` の `checkAndStartGracePeriod` / `applyScheduledStorageChanges` / `updateStorageAddonPlan` / Grace 系関数
-- Tenant 列: `storage_addon_plan` / `storage_grace_period_started_at` / `storage_over_limit_notice_sent_at` / `scheduled_storage_addon_at` / `scheduled_next_storage_addon` (P9 で削除 migration)
-- Stripe 関連: `stripe_subscription_item_storage_id` カラム + 関連 sync 処理
+以下を撤去完了 (chore/storage-addon-backend-removal、migration `20260531_remove_storage_addon`):
+- ✅ `src/config/storage-addon.ts` 全体 (ADDON_MONTHLY_JPY / ADDON_EXTRA_BYTES / Grace period 定数)
+- ✅ `src/services/tenant-storage.service.ts` の `getStorageInfo` / `isStorageWriteBlocked` / `updateStorageAddonPlan` / `cancelScheduledStorageAddon` / `checkAndStartGracePeriod` / `applyScheduledStorageChanges` 全関数 + 関連型
+- ✅ Tenant 列: `storage_addon_plan` / `storage_grace_period_started_at` / `scheduled_storage_addon_at` / `scheduled_next_storage_addon` (migration 適用済)
+- ✅ TenantMonthlyUsageHistory 列: `storage_addon_plan` / `storage_addon_jpy`
+- ✅ Stripe 関連: `stripe_subscription_item_storage_id` カラム + `syncStorageAddonToStripe` 関数 + `getStoragePriceId` 関数
+- ✅ 環境変数: `STRIPE_PRICE_STORAGE_PLUS` / `STRIPE_PRICE_STORAGE_PRO` 不要に
+- ✅ JWT claim: `tenantStorageGracePeriodStartedAt` (middleware の Grace 7 日経過判定撤去)
+- ✅ UI: 設定画面のストレージプラン選択 UI / super admin 3 画面の plan 表示
 
 ---
 

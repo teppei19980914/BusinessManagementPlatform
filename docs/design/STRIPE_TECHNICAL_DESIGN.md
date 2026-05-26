@@ -80,10 +80,12 @@ export async function completeStripeSetup(tenantId: string, setupSessionId: stri
   try {
     subscription = await stripe.subscriptions.create({
       customer: customerId,
+      // chore/storage-addon-backend-removal (2026-05-26):
+      //   旧 storage line item は ADR-0020/0021 で従量課金化されたため Subscription Item から撤去。
+      //   Stripe Subscription は Haiku / Sonnet の 2 Meter のみで構成される。
       items: [
         { price: STRIPE_PRICE_HAIKU },
         { price: STRIPE_PRICE_SONNET },
-        { price: getStoragePriceId(tenant.storageAddonPlan) },
       ],
       default_payment_method: paymentMethodId,
       automatic_tax: { enabled: true },
@@ -109,7 +111,7 @@ export async function completeStripeSetup(tenantId: string, setupSessionId: stri
       stripeSubscriptionStatus: subscription.status,
       stripeSubscriptionItemHaikuId: subscription.items.data.find(i => i.price.id === STRIPE_PRICE_HAIKU)?.id,
       stripeSubscriptionItemSonnetId: subscription.items.data.find(i => i.price.id === STRIPE_PRICE_SONNET)?.id,
-      stripeSubscriptionItemStorageId: subscription.items.data.find(i => i.price.id === getStoragePriceId(tenant.storageAddonPlan))?.id,
+      // chore/storage-addon-backend-removal (2026-05-26): stripeSubscriptionItemStorageId は撤去 (ADR-0020/0021)
       paymentMethod: 'credit_card',
       cardLastVerifiedAt: new Date(),
       cardVerificationStatus: 'valid',
@@ -166,7 +168,7 @@ async function clearTenantStripeSubscriptionFields(tenantId: string): Promise<vo
       stripeSubscriptionStatus: 'canceled',
       stripeSubscriptionItemHaikuId: null,
       stripeSubscriptionItemSonnetId: null,
-      stripeSubscriptionItemStorageId: null,
+      // chore/storage-addon-backend-removal (2026-05-26): stripeSubscriptionItemStorageId は撤去 (ADR-0020/0021)
       stripeDefaultPaymentMethodId: null,
       cardVerificationStatus: null,
       cardLastVerifiedAt: null,
