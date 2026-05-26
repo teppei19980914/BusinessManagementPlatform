@@ -55,6 +55,12 @@ import {
   calculateStripeMeterQuantity,
   classifyDbCapacityLevel,
 } from '@/config/db-capacity-pricing';
+// ADR-0021 (2026-05-26): ファイルストレージ従量課金 (月中 peak ベース)
+import {
+  calculateFileStorageOverageJpy,
+  calculateFileStorageStripeQuantity,
+  classifyFileStorageLevel,
+} from '@/config/file-storage-pricing';
 // PR-4 (2026-05-15): テナント TZ ベースの月初判定
 // ADR-0020 (2026-05-25): 退会時請求の current-month 識別子用に getTenantCurrentYearMonth も import
 import {
@@ -102,6 +108,10 @@ export interface TenantMonthlyResetResult {
   dbCapacityBilledTenantCount: number;
   /** ADR-0020: DB 容量超過の合計請求額 (円、当月 cron で billed した分) */
   dbCapacityBilledTotalJpy: number;
+  /** ADR-0021 (2026-05-26): ファイルストレージ超過で ApiCallLog INSERT したテナント件数 */
+  fileStorageBilledTenantCount: number;
+  /** ADR-0021: ファイルストレージ超過の合計請求額 (円、当月 cron で billed した分) */
+  fileStorageBilledTotalJpy: number;
 }
 
 /**
@@ -170,6 +180,8 @@ export async function saveMonthlyUsageSnapshots(now: Date = new Date()): Promise
       currentMonthApiCostJpy: true,
       storageAddonPlan: true,
       storageBytesUsed: true,
+      // ADR-0021 (2026-05-26): ファイルストレージ peak を snapshot に永続化
+      storageFileBytesPeakThisMonth: true,
     },
   });
 
@@ -234,6 +246,19 @@ export async function saveMonthlyUsageSnapshots(now: Date = new Date()): Promise
       const reconciledCallCount = apiAgg._count._all;
       const reconciledCostJpy = apiAgg._sum.costJpy ?? 0;
 
+      // ADR-0021 (2026-05-26): file_storage_overage 部分を独立 SUM して history 列に保存。
+      //   feedback_3layer_sync_filter: history で DB / file storage を分離表示するため。
+      //   reconciledCostJpy (= 全 billable SUM) には既に含まれているので、本値は内訳表示専用。
+      const fileStorageAgg = await prisma.apiCallLog.aggregate({
+        where: {
+          tenantId: tenant.id,
+          createdAt: { gte: prevMonthStart, lt: currentMonthStart },
+          featureUnit: 'storage-file-overage',
+        },
+        _sum: { costJpy: true },
+      });
+      const fileStorageOverageJpy = fileStorageAgg._sum.costJpy ?? 0;
+
       const rawAddonPlan = tenant.storageAddonPlan ?? 'standard';
       const storageAddonPlan = isStorageAddonPlan(rawAddonPlan) ? rawAddonPlan : 'standard';
       const storageAddonJpy = STORAGE_ADDON_MONTHLY_JPY[storageAddonPlan];
@@ -253,6 +278,9 @@ export async function saveMonthlyUsageSnapshots(now: Date = new Date()): Promise
           storageBytesUsed: tenant.storageBytesUsed,
           storageAddonPlan,
           storageAddonJpy,
+          // ADR-0021 (2026-05-26): ファイルストレージ peak + 当月課金内訳
+          fileStorageBytesPeak: tenant.storageFileBytesPeakThisMonth,
+          fileStorageOverageJpy,
           totalJpy,
         },
         update: {
@@ -263,6 +291,8 @@ export async function saveMonthlyUsageSnapshots(now: Date = new Date()): Promise
           storageBytesUsed: tenant.storageBytesUsed,
           storageAddonPlan,
           storageAddonJpy,
+          fileStorageBytesPeak: tenant.storageFileBytesPeakThisMonth,
+          fileStorageOverageJpy,
           totalJpy,
         },
       });
@@ -684,6 +714,199 @@ export async function billOneTenantDbCapacityOverage(args: {
   return { billedJpy: costJpy, apiCallLogId: createdLogId };
 }
 
+// ============================================================
+// ADR-0021 (2026-05-26): ファイルストレージ従量課金
+// ============================================================
+
+/**
+ * ファイルストレージ peak から月次請求を ApiCallLog に記録 (ADR-0021 §4)。
+ *
+ * 順序: processTenantDbCapacityOverage と同じく saveMonthlyUsageSnapshots **前** に呼ぶ。
+ * trans: 1 テナント = 1 transaction (= 真値経路の不整合を物理的に不可能化)。
+ *
+ * 関連: ADR-0021 §4 / src/config/file-storage-pricing.ts
+ */
+export async function processTenantFileStorageOverage(
+  now: Date = new Date(),
+): Promise<{ billedTenantCount: number; totalBilledJpy: number }> {
+  const tenants = await prisma.tenant.findMany({
+    where: {
+      id: { notIn: SNAPSHOT_EXCLUDED_TENANT_IDS },
+      deletedAt: null,
+    },
+    select: {
+      id: true,
+      timezone: true,
+      lastResetAt: true,
+      storageFileBytesUsed: true,
+      storageFileBytesPeakThisMonth: true,
+    },
+  });
+
+  const targets = tenants.filter((t) => {
+    const monthStart = getTenantMonthStart(now, t.timezone);
+    return t.lastResetAt == null || t.lastResetAt < monthStart;
+  });
+
+  const systemUserForAudit = await prisma.user.findFirst({
+    where: { systemRole: 'super_admin', isActive: true, deletedAt: null },
+    select: { id: true },
+    orderBy: { createdAt: 'asc' },
+  });
+
+  let billedTenantCount = 0;
+  let totalBilledJpy = 0;
+
+  for (const tenant of targets) {
+    try {
+      const result = await billOneTenantFileStorageOverage({
+        tenantId: tenant.id,
+        timezone: tenant.timezone,
+        storageFileBytesUsed: tenant.storageFileBytesUsed,
+        storageFileBytesPeakThisMonth: tenant.storageFileBytesPeakThisMonth,
+        billingScope: 'previous-month',
+        now,
+        systemUserIdForAudit: systemUserForAudit?.id ?? null,
+      });
+
+      if (result.billedJpy > 0) {
+        billedTenantCount += 1;
+        totalBilledJpy += result.billedJpy;
+      }
+    } catch (error) {
+      await recordError({
+        severity: 'error',
+        source: 'cron',
+        message: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+        context: {
+          kind: 'tenant_file_storage_overage',
+          tenantId: tenant.id,
+          peakBytes: tenant.storageFileBytesPeakThisMonth.toString(),
+        },
+      });
+    }
+  }
+
+  return { billedTenantCount, totalBilledJpy };
+}
+
+/**
+ * 単一テナントの月次ファイルストレージ請求を ApiCallLog に記録する。
+ * 月初 cron (previous-month) と退会時 (current-month-on-withdrawal) で共通利用。
+ */
+export async function billOneTenantFileStorageOverage(args: {
+  tenantId: string;
+  timezone: string;
+  storageFileBytesUsed: bigint;
+  storageFileBytesPeakThisMonth: bigint;
+  billingScope: 'previous-month' | 'current-month-on-withdrawal';
+  now: Date;
+  systemUserIdForAudit?: string | null;
+}): Promise<{ billedJpy: number; apiCallLogId: string | null }> {
+  const { tenantId, timezone, storageFileBytesUsed, storageFileBytesPeakThisMonth, billingScope, now } = args;
+
+  const peakBytes = storageFileBytesPeakThisMonth;
+  const costJpy = calculateFileStorageOverageJpy(peakBytes);
+  const stripeQuantity = calculateFileStorageStripeQuantity(costJpy);
+
+  const monthStart = getTenantMonthStart(now, timezone);
+  const prevMonthEndInstant = new Date(monthStart.getTime() - 1);
+  const createdAtForBilling =
+    billingScope === 'previous-month' ? prevMonthEndInstant : now;
+  const occurredAtForStripe = createdAtForBilling;
+  const yearMonthForRequest =
+    billingScope === 'previous-month'
+      ? getTenantPreviousYearMonth(now, timezone)
+      : getTenantCurrentYearMonth(now, timezone);
+  const requestId = `storage-file-overage-${tenantId}-${yearMonthForRequest}-${billingScope}`;
+
+  let createdLogId: string | null = null;
+
+  await prisma.$transaction(async (tx) => {
+    if (costJpy > 0) {
+      const log = await tx.apiCallLog.create({
+        data: {
+          tenantId,
+          userId: null,
+          featureUnit: 'storage-file-overage',
+          modelName: 'storage-file',
+          llmInputTokens: null,
+          llmOutputTokens: null,
+          embeddingTokens: null,
+          costJpy,
+          latencyMs: 0,
+          requestId,
+          createdAt: createdAtForBilling,
+        },
+      });
+      createdLogId = log.id;
+
+      await tx.tenant.update({
+        where: { id: tenantId },
+        data: { currentMonthApiCostJpy: { increment: costJpy } },
+      });
+
+      await tx.stripeUsageRecordQueue.create({
+        data: {
+          tenantId,
+          callType: 'storage_file_overage',
+          apiCallLogId: log.id,
+          quantity: stripeQuantity,
+          occurredAt: occurredAtForStripe,
+          nextSendAt: now,
+        },
+      });
+
+      let systemUserId: string | null = args.systemUserIdForAudit ?? null;
+      if (systemUserId === null) {
+        const systemUserForAudit = await tx.user.findFirst({
+          where: { systemRole: 'super_admin', isActive: true, deletedAt: null },
+          select: { id: true },
+          orderBy: { createdAt: 'asc' },
+        });
+        systemUserId = systemUserForAudit?.id ?? null;
+      }
+      if (systemUserId) {
+        await tx.auditLog.create({
+          data: {
+            tenantId,
+            userId: systemUserId,
+            action: 'CREATE',
+            entityType: 'api_call_log',
+            entityId: log.id,
+            beforeValue: { storageFileBytesPeakThisMonth: peakBytes.toString() },
+            afterValue: {
+              featureUnit: 'storage-file-overage',
+              billingScope,
+              costJpy,
+              stripeQuantity,
+              requestId,
+              billedAt: createdAtForBilling.toISOString(),
+              adr: 'ADR-0021',
+            },
+          },
+        });
+      }
+    }
+
+    // peak / level / drift を reset
+    const currentUsedBytes = storageFileBytesUsed;
+    const newLevel = classifyFileStorageLevel(currentUsedBytes);
+    await tx.tenant.update({
+      where: { id: tenantId },
+      data: {
+        storageFileBytesPeakThisMonth: currentUsedBytes,
+        storageFileBytesPeakAt: now,
+        storageBucketBytesPeakThisMonth: null,
+        fileStorageWarningLevel: newLevel,
+      },
+    });
+  });
+
+  return { billedJpy: costJpy, apiCallLogId: createdLogId };
+}
+
 /**
  * 月次バッチのエントリポイント。Vercel Cron が叩く API ルートから呼ばれる。
  *
@@ -703,6 +926,8 @@ export async function runTenantMonthlyReset(
   // ADR-0020 (2026-05-25): まず DB 容量超過分を ApiCallLog として記録する。
   //   これにより後続の saveMonthlyUsageSnapshots が「db-capacity-overage を含んだ正しい SUM」を保存する。
   const dbCapacityResult = await processTenantDbCapacityOverage(now);
+  // ADR-0021 (2026-05-26): ファイルストレージ超過も同様に ApiCallLog 化 (順序重要: snapshot 前)
+  const fileStorageResult = await processTenantFileStorageOverage(now);
 
   // P-5b: リセット直前にスナップショット保存 (順序重要: reset 後だと値が 0 になる)
   const snapshotSavedCount = await saveMonthlyUsageSnapshots(now);
@@ -755,5 +980,7 @@ export async function runTenantMonthlyReset(
     embeddingBackfillGeneratedCount,
     dbCapacityBilledTenantCount: dbCapacityResult.billedTenantCount,
     dbCapacityBilledTotalJpy: dbCapacityResult.totalBilledJpy,
+    fileStorageBilledTenantCount: fileStorageResult.billedTenantCount,
+    fileStorageBilledTotalJpy: fileStorageResult.totalBilledJpy,
   };
 }

@@ -113,8 +113,9 @@ per-user / per-token / per-seat ではなく per-API-call を採用 ([ADR-0002](
 
 ### 月初バッチ (Monthly Batch)
 
-毎月 1 日に実行される cron バッチ。役割: 縮退モード中に生成されなかった NULL embedding を補完、
-プラン切替予約 (Beginner ダウングレード等) の適用、課金確定。
+毎月 1 日に実行される cron バッチ。役割: 月次カウンタリセット、縮退モード中に生成されなかった
+NULL embedding の補完、DB 容量・ファイルストレージ peak の月初請求確定、前月分 snapshot 保存。
+プラン切替予約の適用は **2026-05-14 改修で廃止** (全プラン変更を即時反映に統一、Beginner ダウングレードは完全禁止) されており、月初 cron 内の `applyScheduledPlanChanges` は legacy DB レコード対策として残置中。
 
 ### Grace Period
 

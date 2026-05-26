@@ -65,6 +65,11 @@ export function buildChatHitLink(
         viewerUserId != null && hit.authorUserId != null && hit.authorUserId === viewerUserId;
       return isOwn ? `/memos?memoId=${id}` : `/all-memos?memoId=${id}`;
     }
+    case 'attachment':
+      // ADR-0021 (2026-05-26): 添付ファイルは詳細 page を持たないため、
+      //   ダウンロード API (= GET /api/attachments/{id}/download、Pre-signed URL 発行) に直リンク。
+      //   UI 側で _blank target + download 属性で扱う想定。
+      return `/api/attachments/${id}/download`;
     default: {
       const _exhaustive: never = hit.kind;
       throw new Error(`Unknown chat hit kind: ${String(_exhaustive)}`);

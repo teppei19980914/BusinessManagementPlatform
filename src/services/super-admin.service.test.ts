@@ -162,6 +162,9 @@ describe('listMonthlyUsageHistory (P-5b / 2026-05-08)', () => {
         storageBytesUsed: 50 * 1024 * 1024,
         storageAddonPlan: 'standard',
         storageAddonJpy: 0,
+        // ADR-0021 (2026-05-26): 履歴 DTO に追加された file storage 列
+        fileStorageBytesPeak: null,
+        fileStorageOverageJpy: null,
         totalJpy: 2500,
         tenantDeletedAt: null,
       },
@@ -177,6 +180,8 @@ describe('listMonthlyUsageHistory (P-5b / 2026-05-08)', () => {
         storageBytesUsed: 800 * 1024 * 1024,
         storageAddonPlan: 'plus',
         storageAddonJpy: 500,
+        fileStorageBytesPeak: null,
+        fileStorageOverageJpy: null,
         totalJpy: 45500,
         tenantDeletedAt: null,
       },

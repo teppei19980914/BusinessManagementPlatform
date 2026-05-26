@@ -4675,17 +4675,17 @@ pure metered billing の最大の弱点である「請求額の予測不可能�
 
 第一に、Expert / Pro → Beginner へのダウングレードは、現席数が 5 を超えるテナントに対しては **システムが拒否** する。「先に席数を 5 以下に減らしてください」という警告を表示し、API レベルでも拒否する二重防御とする。
 
-第二に、ダウングレードは **当月末まで現プラン継続、翌月 1 日から Beginner 適用** とする。これは月末ぎりぎりにダウングレードして当月分の従量課金を 0 円にする悪用を防ぐ仕組みで、`Tenant.scheduledPlanChangeAt` と `Tenant.scheduledNextPlan` フィールドで遅延適用を実現する。
+第二に、ダウングレードは **当月末まで現プラン継続、翌月 1 日から Beginner 適用** とする (★ **2026-05-14 改修で撤回** — §5.X+19 参照。Beginner ダウングレードは完全禁止、Pro → Expert は即時反映に統一。`scheduledPlanChangeAt` / `scheduledNextPlan` フィールドは legacy DB レコード対策として残置)。当初は月末ぎりぎりにダウングレードして当月分の従量課金を 0 円にする悪用を防ぐ仕組みとして設計したが、per-call 課金モデルでは call 時点の plan 単価で記録されるため、月途中切替でも悪用が成立しないと判明した。
 
-第三に、ダウングレード操作前の確認 UI で「ダウングレードはこの月の月末から適用されます。当月分の従量課金は通常通り発生します」という注意事項を **明示的に確認させる** 設計とする。
+第三に、ダウングレード操作前の確認 UI で「ダウングレードは **即時反映** されます。当月以降の API 呼出単価は切替後プランの単価に変わります」を **明示的に確認させる** 設計とする (旧仕様の「翌月適用」注意文は 2026-05-14 改修で撤回)。
 
-アップグレード (Beginner → Expert / Pro) と Expert ↔ Pro 切替は即時反映する。
+アップグレード (Beginner → Expert / Pro) も Expert ↔ Pro 切替も即時反映する。ダウングレード (Pro → Expert) も 2026-05-14 改修で即時反映に統一済。Beginner へのダウングレードのみ完全禁止。
 
 #### 抽出した追加ルール
 
 - [ ] **per-API-call の「1 回」はユーザに見える機能単位で定義**: 内部 API 呼び出し数とは独立させることで、内部最適化が請求額に影響しない設計を実現
 - [ ] **pure metered billing には月次予算上限の自己設定機能を必ず併設**: 「使った分だけ」の公平性は、「いくら請求されるか分からない」不安と表裏一体。予算上限機能でこの不安を解消することが法人ユーザの導入を可能にする
-- [ ] **ダウングレードは月の途中に適用しない**: 月末ぎりぎりの操作で当月分の課金を回避する悪用を、遅延適用 (翌月から有効) で構造的に防ぐ
+- [ ] ~~**ダウングレードは月の途中に適用しない**: 月末ぎりぎりの操作で当月分の課金を回避する悪用を、遅延適用 (翌月から有効) で構造的に防ぐ~~ → **2026-05-14 改修で撤回** (§5.X+19): per-call 課金モデルでは call 時点の plan 単価で記録されるため、月途中切替でも回避は成立せず即時反映が安全と判明。Beginner ダウングレードのみ禁止、Expert ↔ Pro は即時反映
 - [ ] **「1 操作 = 1 課金」の単純化はユーザの心理的障壁を下げる**: per-token のような技術的計算ではなく、ユーザが直感的に予測できる単位で課金することで、機能利用への躊躇を最小化する
 - [ ] **価格設定は外出し化して運用中に調整**: 初期値はあくまで叩き台で、実運用データを集めて柔軟に変更できる構造を設計初期から組み込む
 
@@ -15497,3 +15497,293 @@ git は file content の先頭 8000 バイトを scan し、NULL バイトが 1 
 - 関連 PR: PR #445 (ADR-0021 基盤層、フルスキャン検証で発覚 / 2026-05-26)
 - 関連 KDD: [§5.X+140](#5x140), [§5.X+141](#5x141), [§5.X+142](#5x142) (PR #445 の同一バッチ)
 - 関連 file: [src/services/file-text-extraction.service.ts](../../src/services/file-text-extraction.service.ts), [.gitattributes](../../.gitattributes)
+
+## 5.X+144 **共通コンポーネントへの UI 追加で、それを内包する全 dashboard visual baseline が連鎖 fail する (transitive closure trap / PR #446 で発覚)**
+
+### 事象
+
+PR #446 (ADR-0021 ファイルストレージ従量課金) で `src/components/attachments/attachment-list.tsx` に **「ファイルをアップロード (50MB 上限)」セクション** (約 42px 高) を追加。Local lint / tsc / test / build は全 PASS。しかし Linux Playwright CI で:
+
+```
+e2e/visual/dashboard-screens.spec.ts:83
+  プロジェクト詳細 概要タブ 初期表示 (light テーマ)
+
+Error: expect(page).toHaveScreenshot(expected) failed
+  Expected an image 1440px by 985px, received 1440px by 1027px.
+  Snapshot: project-detail-light.png
+```
+
+PR で **直接** 変更していない画面 (project detail) が baseline mismatch で fail した。
+
+### 根本原因
+
+`AttachmentList` は dashboard 配下の **複数の画面/コンポーネント** から間接的に rendering されている:
+
+| 影響画面 | 参照箇所 | コンポーネント参照 |
+|---|---|---|
+| プロジェクト詳細 概要タブ | [project-detail-client.tsx:885](../../src/app/(dashboard)/projects/[projectId]/project-detail-client.tsx#L885) | `<AttachmentList entityType="project" />` |
+| 課題 / リスク dialog | [risk-edit-dialog.tsx](../../src/components/dialogs/risk-edit-dialog.tsx) | `<DialogAttachmentSection entityType="risk" />` |
+| 課題/リスク/ナレッジ/振り返り/タスク/見積 編集 dialog | 各 dialog | `<DialogAttachmentSection entityType="..." />` |
+
+→ `AttachmentList` の 1 行追加 (42px) が、project-detail-light.png の baseline と 42px ずれて visual fail。
+
+**本質**: visual regression test は **コンポーネントツリー全体の transitive closure (推移的閉包)** を検証している。leaf コンポーネントの変更が、それを内包する **全 baseline** に伝播する。「自分が触っていない画面」が fail することは原理的に普通であり、想定外ではない。
+
+### 対応
+
+1. **意図した UI 変化と確認できたら、`[gen-visual]` コミットで baseline 再生成**:
+   ```bash
+   git commit --allow-empty -m "chore: regen visual baselines for AttachmentList upload UI [gen-visual]"
+   git push
+   ```
+2. `e2e-visual-baseline.yml` workflow が発火 → `Update visual baselines (e2e-visual-baseline workflow)` commit が自動 push
+3. 次の通常 E2E run で baseline 一致 → PASS
+
+### 再発防止
+
+#### 「広く使われる共通コンポーネント」を変更する PR では事前認識
+
+下記コンポーネントへの変更は **必ず visual baseline 再生成を伴う** ことを PR 着手時点で予測する:
+
+| 共通コンポーネント | 影響範囲 |
+|---|---|
+| `AttachmentList` ([attachment-list.tsx](../../src/components/attachments/attachment-list.tsx)) | UPLOADABLE_ENTITY_TYPES 全件 (project / task / estimate / risk / retrospective / knowledge / customer dialog) |
+| `CommentSection` ([comment-section.tsx](../../src/components/comments/comment-section.tsx)) | 全 entity の編集 dialog (8 entity 程度) |
+| `AppHeader` / `AppFooter` | **全 dashboard / public / auth 画面** (= 全 baseline) |
+| `DegradedModeBanner` | dashboard 全画面 (degraded 時の baseline は別) |
+| `LoadingProvider` overlay | overlay 表示時のみ (通常 baseline は影響なし) |
+| `Dialog` ([dialog.tsx](../../src/components/ui/dialog.tsx)) | open 状態でスクリーンショットされる baseline 全件 |
+
+#### チェックリスト (PR 着手前)
+
+- [ ] **共通コンポーネント** に新 UI 要素 (input / button / banner / 1 行テキスト) を追加していないか
+- [ ] 追加している場合は、PR 説明欄に **「visual baseline 再生成必要」と明記**
+- [ ] PR 末尾コミット (= リリース直前 commit) を `[gen-visual]` 付きで push する
+- [ ] e2e-visual-baseline workflow の成功確認 → 通常 E2E 再実行 → 全 PASS でマージ
+
+### 教訓 (転用可能)
+
+- **「自分が触っていない画面」が visual で fail するのは原理的に普通**: 直接編集していないファイル群が CI で赤くなっても「謎の retry で直ることを期待しない」。必ず transitive closure を辿って原因コンポーネントを特定する。
+- **leaf コンポーネントの 1 行追加 = 上流すべての画面の高さ変化**: HTML/CSS のレンダリングは合成的。小さな追加でも `fullPage` snapshot は全体差分として表現される。
+- **PR 説明欄に「visual baseline 再生成必要」フラグを書く文化**: 後続レビューア / 自動化 bot が「これは意図的 UI 変更で gen-visual 必要」と即判断できる。
+- **共通コンポーネント変更時の「影響範囲リスト」を本 §の表で固定化**: 次回同じコンポーネントを変更する開発者 / AI が、上記表を参照することで再発防止になる。
+- **`gen-visual` は罪悪感無く使え**: 「prod 影響なし / baseline の整備コスト」と認識する。失敗を見て即時 `[gen-visual]` で対応するのは熟練の応答パターン。
+
+### 関連
+
+- 関連 PR: PR #446 (ADR-0021 ファイルストレージ従量課金、本事例 / 2026-05-26)
+- 関連 §: [E2E_LESSONS.md §4.59](../test/E2E_LESSONS.md#459-共通コンポーネント-attachmentlist-等-に-ui-要素を追加するとそれを-間接的に-内包する-dashboard-visual-baseline-がまとめて壊れる-pr-446-で遭遇) (本事例の E2E 文書側、影響画面表を含む)
+- 関連 §: [E2E_LESSONS.md §4.12 視覚回帰の baseline 生成は Linux CI で自動化する](../test/E2E_LESSONS.md#412-視覚回帰の-baseline-生成は-linux-ci-で自動化する-pr-96) (`[gen-visual]` の基本メカニズム)
+- 関連 §: [E2E_LESSONS.md §4.43 視覚回帰 baseline mismatch の診断・修正フロー](../test/E2E_LESSONS.md#443-視覚回帰-baseline-mismatch-の診断修正フロー-pr-178-で遭遇) (個別事象の診断手順)
+- 関連 §: [E2E_LESSONS.md §4.52](../test/E2E_LESSONS.md#452-dashboard-header-に-top-nav-グループを追加すると-chromium-mobile-の-fullpage-snapshot-幅が成長する罠-pr-292--pr-i-で遭遇), [§4.56](../test/E2E_LESSONS.md#456-全ページに常時表示するグローバル-ui-要素-fab--floating-button-を追加すると-dashboard-系の全-visual-baseline-がモバイル-viewport-で-fail-する-pr-432-で遭遇) (前例: 全画面共通コンポーネント変更の伝播)
+- 該当コード: [src/components/attachments/attachment-list.tsx:328-347](../../src/components/attachments/attachment-list.tsx#L328-L347) (新規追加された upload UI セクション)
+- 該当 CI run: [GitHub Actions run 26429155365](https://github.com/teppei19980914/BusinessManagementPlatform/actions/runs/26429155365/job/77798624559?pr=446)
+
+## 5.X+145 背景処理 cron の double-pickup race ─ findMany→process の間に atomic claim が無いと同一 row を 2 つの cron 実行が処理する (PR #446 post-PR full-scan で検出)
+
+### 事象
+
+PR #446 で実装した `processAttachmentEmbeddingQueue` (cron 推奨間隔 5-15min) は素朴な findMany → process ループだった。cron A が findMany した直後、cron B も同じ pending 行を findMany する race が成立。両方が `embedAttachment` を実行し **Voyage API を 2 回叩き** (= 無料 API 枠の二重消費)、結果も先勝ち上書きで一方の generation が捨てられる。
+
+JSDoc には「embeddingStatus は generating に既に遷移済 (= 重複実行防止)」と書かれていたが、**実装は遷移していなかった**。docs と実装の乖離。
+
+### 根本原因
+
+「findMany → process」のループは典型的な TOCTOU (Time-of-check to time-of-use) 脆弱性。DB 上で「自分が処理を取った」ことを atomic にマークするステップが無いと、複数並行実行で必ず重複する。
+
+### 対応
+
+`updateMany` の WHERE 句に「pending かつ未取得」を組込み、count===0 (= 他に取られた) なら skip する atomic claim を導入。`generating` ステータスを claim マーカーとして使用。stale recovery (15min) で crash 時の永続詰まりも回避。
+
+### 再発防止
+
+- 「findMany → process」パターンを書く時は必ず atomic claim を併設。Prisma の `updateMany` を where に状態フィルタ込みで使う技法。
+- JSDoc と実装の乖離は危険なシグナル。「〜済」と書かれているコードが本当に書かれているか実装側で grep で確認する習慣。
+- stale recovery を必ず併設: claim マーカー方式は crash で row が「処理中」のまま詰まるリスクがある。lastRetryAt < now - N min で再 claim 許容することでリカバー性確保。
+
+### 関連
+
+- 関連 PR: PR #446 ADR-0021 ファイルストレージ従量課金 + Attachment Embedding
+- 該当コード: [src/services/attachment-embedding-cron.service.ts:101-150](../../src/services/attachment-embedding-cron.service.ts#L101-L150)
+
+---
+
+## 5.X+146 多段 transaction (Storage PUT → DB row 作成) の失敗時 cleanup は「全エラー」を対象にする ─ 特定例外のみだと orphan 残留する (PR #446)
+
+### 事象
+
+`POST /api/attachments/finalize` は: ① Pre-signed URL で PUT 済の Storage object を `getObjectInfo` で実サイズ確認 → ② DB transaction で Attachment row 作成 + `assertFileStorageLimitInTx` (50GB ハードキャップ) を実行する。
+
+旧実装の catch ブロックは「`FileStorageLimitExceededError` のみ cleanup」していたため、DB FK 制約違反 / prisma timeout / network blip では Storage object が orphan として残留。bucket に課金され、daily drift cron が検知するまで気付かない。
+
+### 対応
+
+catch ブロックは「失敗したら掃除」を例外型に依存させない設計に統一: `await deleteObject(input.objectKey).catch(()=>{})` を catch 冒頭で実行 → response は instanceof で分岐 → re-throw。
+
+### 再発防止
+
+- 「多段で副作用を残す処理」の cleanup は「失敗の理由を問わず実行」が原則。Storage upload / DB insert / 外部 API call が複合する箇所で必ず確認する。
+- catch 内の instanceof チェックは response 形のみに使う。cleanup の発動条件には使わない。
+- e instanceof X で response を変える → cleanup は固定実行 → re-throw の 3 段構造で書く。
+
+### 関連
+
+- 関連 PR: PR #446
+- 該当コード: [src/app/api/attachments/finalize/route.ts:209-220](../../src/app/api/attachments/finalize/route.ts#L209-L220)
+
+---
+
+## 5.X+147 同 Pre-signed URL の concurrent finalize で重複 Attachment row が作られる race ─ partial unique index で防御 (PR #446)
+
+### 事象
+
+upload → ブラウザ PUT → finalize のフローで、ブラウザ側のバグ/二重 click 等で **同じ objectKey に対する POST /finalize が 2 回連続発火** すると、`prisma.attachment.create` が 2 行作成され、`assertFileStorageLimitInTx` が両方で +sizeBytes するため **storageFileBytesUsed が 2 倍計上** される。
+
+### 根本原因
+
+`Attachment.storageObjectKey` カラムに unique constraint が無い。
+
+### 対応
+
+partial unique index (= 論理削除済を除く active 行のみで unique) を migration で追加。NULL は対象外、論理削除済 (deletedAt IS NOT NULL) は対象外、active な supabase 行のみで重複拒否。Prisma の `@unique` は partial に未対応のため raw SQL migration で作成する技法。
+
+### 再発防止
+
+- 外部システムの一意識別子を DB に保存する場合、まず unique constraint の必要性を疑う。Stripe customerId / Supabase objectKey / S3 key 等。
+- soft delete を採用しているテーブルでは partial unique index を検討。
+- 「ブラウザの二重 click」「ネットワーク再送」「冪等性キーの欠落」など、フロントエンド経由で同一リクエストが複数回届くシナリオを想像する。
+
+### 関連
+
+- 関連 PR: PR #446
+- 該当 migration: [prisma/migrations/20260526_file_storage_post_pr_hardening/migration.sql](../../prisma/migrations/20260526_file_storage_post_pr_hardening/migration.sql)
+
+---
+
+## 5.X+148 3 レイヤ請求モデルの SKU 追加は migration / snapshot / 表示 / CSV の 4 経路 同時 fix が必須 (PR #446)
+
+### 事象
+
+PR #446 で 新 SKU `storage-file-overage` を追加。ApiCallLog への INSERT、Tenant.currentMonthApiCostJpy increment、Stripe Meter queue 投入は正しく実装されたが、**TenantMonthlyUsageHistory (= 過去月 snapshot 永続化先) には独立カラムが追加されていなかった**。
+
+→ 過去月の super_admin CSV / テナント請求書 UI で「DB 容量 ¥10 / ファイルストレージ ¥30」のような **内訳が永久に判別不能**。後追いで column を増やしても、過去月の集計は復元不能 (= ApiCallLog 個別 re-aggregate しないと取れない)。
+
+### 根本原因
+
+3 レイヤ請求モデル (= memory `feedback_3layer_sync_filter`) の 1 レイヤ抜け:
+1. 現在値レイヤ (Tenant)
+2. 月初 cron snapshot レイヤ (TenantMonthlyUsageHistory) ← ここが抜けていた
+3. 履歴クエリレイヤ (UI / CSV)
+
+### 対応
+
+schema に `fileStorageBytesPeak` / `fileStorageOverageJpy` 列追加 + migration + saveMonthlyUsageSnapshots で per-SKU aggregate + listMonthlyUsageHistory DTO + CSV 列追加。
+
+### 再発防止
+
+新 SKU / 新 featureUnit を追加する PR では:
+- Tenant スキーマに現在値カラム追加 (現在値レイヤ)
+- TenantMonthlyUsageHistory にスナップショット列追加 (snapshot レイヤ)
+- migration with NULLABLE default (= 既存月への影響を NULL=0 解釈で吸収)
+- saveMonthlyUsageSnapshots で per-SKU aggregate
+- UI / CSV / 請求書テンプレートに新列追加 (表示レイヤ)
+- super_admin CSV (current + history) で内訳列追加 (super_admin レイヤ)
+
+### 関連
+
+- 関連 PR: PR #446
+- 関連 memory: `feedback_3layer_sync_filter`
+
+---
+
+## 5.X+149 外部ファイル parser に渡す buffer は size guard が必須 ─ pdf-parse / exceljs / mammoth はバイナリ全体を memory load する (PR #446)
+
+### 事象
+
+`extractText(fileName, buffer)` は対応拡張子なら parser に Buffer をそのまま渡すが、pdf-parse / exceljs / mammoth は **バイナリ全体をメモリ上にロードして処理** する。50MB Excel に数千の formula があると exceljs が中間構造を展開して **Netlify Function の 1GB メモリ上限を突破** → 502 でクラッシュ → embedding cron が永久リトライループ。
+
+### 対応
+
+`extractText` 入口で size guard を追加。50MB 超 buffer は parser に渡さず 'unsupported' を返却。実運用ではアップロード時に 50MB cap されているため通常は到達しないが defense-in-depth として extraction 層でも guard。
+
+### 再発防止
+
+- 3rd party の parser ライブラリは「streaming 対応か」を必ず確認。streaming 非対応なら入口で size guard が必須。
+- pdf-parse / exceljs / mammoth は streaming 非対応 (= バイナリ全体メモリ load) であることを KDD に明記。
+- 将来 大容量ファイル対応が要件化したら parser swap (streaming 対応版) を検討。
+
+### 関連
+
+- 関連 PR: PR #446
+- 該当コード: [src/services/file-text-extraction.service.ts:40-50](../../src/services/file-text-extraction.service.ts#L40-L50)
+
+---
+
+## 5.X+150 テナント物理削除時の外部ストレージ cascade 漏れ ─ GDPR 「忘れられる権利」違反 + bucket 容量リーク (PR #446)
+
+### 事象
+
+`purgeOldDeletedTenants` (= 90 日経過テナント物理削除) / `purgeExpiredBeginnerTenants` (= 180 日 Beginner 期限切れ) は DB の Attachment 行を `deleteMany` するが、**Supabase Storage 上の本体ファイルは削除されない**。
+
+結果: テナント削除から 90/180 日経過後、DB row は消えているのに bucket には PDF/Excel が残り続け、**運営者が課金され続ける** + **個人情報を含むファイルが永久保持される** (= GDPR 違反相当)。
+
+### 根本原因
+
+ADR-0020 までの実装は「全データは DB 内」前提だったため、purge は `deleteMany` だけで完結していた。ADR-0021 で外部ストレージ (Supabase Storage) を追加したが、purge 関数への cascade 追加を失念。
+
+### 対応
+
+`prisma.attachment.deleteMany` の前に Supabase Storage の batch delete を実行:
+
+```ts
+const attachments = await prisma.attachment.findMany({
+  where: { tenantId: t.id, storageProvider: 'supabase', storageObjectKey: { not: null } },
+  select: { storageObjectKey: true },
+});
+const keys = attachments.map(a => a.storageObjectKey).filter((k): k is string => k !== null);
+if (keys.length > 0) await deleteObjects(keys);
+```
+
+失敗時は recordError + DB 削除は続行 (= Supabase 一時不通でも purge 完了させる)。super_admin が後で手動 reconcile 可能。
+
+### 再発防止
+
+- **DB に保存しない外部リソース (Stripe Customer / Supabase Storage / Voyage cache 等) を扱う SKU を追加する PR では、tenant 物理削除フローの cascade を必ずチェック**。
+- 「DB の delete = 全部消える」前提のコードベースに外部ストレージを導入する時の典型罠。
+- GDPR / プライバシーポリシー監査の観点で、「個人データの完全削除可能性」を保つには cascade 漏れがあってはいけない。
+
+### 関連
+
+- 関連 PR: PR #446
+- 該当コード: [src/services/super-admin.service.ts:1627-1655](../../src/services/super-admin.service.ts#L1627-L1655) (purgeOldDeletedTenants), [src/services/super-admin.service.ts:1826-1855](../../src/services/super-admin.service.ts#L1826-L1855) (purgeExpiredBeginnerTenants)
+- 関連 memory: `feedback_tenant_isolation` (severity-1 個人情報)
+
+---
+
+## 5.X+151 cron 新設は cron-jobs.ts への登録漏れで watchdog の死角化する (PR #446)
+
+### 事象
+
+PR #446 で `/api/cron/attachment-embedding` を新設したが、`src/config/cron-jobs.ts` の `CRON_JOBS` 一覧への登録を失念。`cron-health.service.ts` の `detectStaleCron` watchdog は本 dict 内の `expectedMaxGapHours` を参照するため、**未登録 cron は「長期停止」を検知不能**。
+
+cron が silent stop (= cron-job.org の登録忘れ / 認証エラーで全 fail) しても super_admin に通知されず、添付ファイルの embedding が永久に pending のまま放置される事故になる。
+
+### 対応
+
+`cron-jobs.ts` の `CRON_JOBS` に `attachment-embedding` エントリ追加。`expectedMaxGapHours: 2` (= 15min 間隔 + 余裕)。
+
+### 再発防止
+
+新規 cron route (`src/app/api/cron/xxx/route.ts`) を追加する PR では:
+- [ ] `withCronExecutionLogging(name, ...)` の name を決定
+- [ ] **`src/config/cron-jobs.ts` の `CRON_JOBS` に同じ name で登録** (description / schedule / endpoint / expectedMaxGapHours)
+- [ ] `docs/operations/DEPLOYMENT.md` §6.1 の cron 一覧表に追記
+- [ ] cron-job.org への登録 (= ユーザ作業、release notes に記載)
+
+関連 memory: `feedback_cron_watchdog_pattern` (= 「未登録の cron は cron_execution_logs 自体が空のため status=failure では検知不能」)
+
+### 関連
+
+- 関連 PR: PR #446
+- 該当コード: [src/config/cron-jobs.ts:146-156](../../src/config/cron-jobs.ts#L146-L156)
+- 関連 memory: `feedback_cron_watchdog_pattern`

@@ -60,6 +60,9 @@ export async function POST(req: NextRequest) {
         // ADR-0020 (2026-05-25): DB 容量超過の月初請求集計結果
         dbCapacityBilledTenantCount: result.dbCapacityBilledTenantCount,
         dbCapacityBilledTotalJpy: result.dbCapacityBilledTotalJpy,
+        // ADR-0021 (2026-05-26): ファイルストレージ超過の月初請求集計結果
+        fileStorageBilledTenantCount: result.fileStorageBilledTenantCount,
+        fileStorageBilledTotalJpy: result.fileStorageBilledTotalJpy,
       },
     };
   });

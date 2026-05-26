@@ -24,6 +24,8 @@ import {
 } from '@/services/tenant-storage.service';
 // ADR-0020 (2026-05-25): DB 容量従量課金セクション (R12)
 import { DbCapacitySection } from './db-capacity-section';
+// ADR-0021 (2026-05-26): ファイルストレージ従量課金セクション
+import { FileStorageSection } from './file-storage-section';
 import {
   reconcileTenantApiUsage,
   type ApiUsageReconcileResult,
@@ -137,6 +139,10 @@ export default async function TenantSettingsPage() {
       {/* ADR-0020 (2026-05-25): DB 容量従量課金の使用量・peak・想定請求額 (server component) */}
       <div className="mx-auto max-w-5xl px-4 pt-4">
         <DbCapacitySection tenantId={session.user.tenantId} />
+      </div>
+      {/* ADR-0021 (2026-05-26): ファイルストレージ従量課金の使用量・peak・想定請求額 (server component) */}
+      <div className="mx-auto max-w-5xl px-4 pt-4">
+        <FileStorageSection tenantId={session.user.tenantId} />
       </div>
       <TenantSettingsClient
         initialInfo={info}

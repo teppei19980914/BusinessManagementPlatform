@@ -155,6 +155,28 @@
 |---|---|---|---|
 | DELETE | /api/memos/:id | メモ削除。**自分のメモ** = 自由に削除可、**他人の public メモ** = service 層に `systemRole` 引数を渡し admin のみモデレーション削除 (PR #416) | 全ロール (自分のメモ) / admin (他人の public メモ) |
 
+#### 添付ファイル (Attachments)
+
+| メソッド | パス | 説明 | ロール |
+|---|---|---|---|
+| GET | /api/attachments?entityType=...&entityId=... | 添付一覧取得 (親 entity スコープ) | 親 entity 認可に従う |
+| POST | /api/attachments | URL 参照型添付の追加 (= 旧式、外部リンクのみ保持) | 親 entity write 権限 |
+| PATCH | /api/attachments/:id | 添付更新 (displayName / url / mimeHint) | 親 entity write 権限 |
+| DELETE | /api/attachments/:id | 論理削除 + Supabase Storage cascade delete (storageProvider='supabase' の場合) + storageFileBytesUsed atomic 減算。**per-tenant rate limit 100/min** (ADR-0021 §10.2.1) | 親 entity write 権限 |
+| **POST** | **/api/attachments/upload** | **ADR-0021 §2.2: Pre-signed Upload URL 発行** (TTL 60s / 50MB / 危険拡張子拒否 / per-tenant 10req/min)。response: `{ uploadUrl, token, objectKey, sanitizedFileName, expiresInSeconds }` | 親 entity write 権限 |
+| **POST** | **/api/attachments/finalize** | **ADR-0021 §10.2.2: アップロード完了確定**。Supabase API で実サイズ検証 (50MB 超は即時削除 + 413) → DB row 作成 (storageProvider='supabase', embeddingStatus='pending'/'unsupported') → assertFileStorageLimitInTx で 50GB ハードキャップ + peak MAX 更新 | 親 entity write 権限 |
+| **GET** | **/api/attachments/:id/download** | **Pre-signed Download URL 発行 → 302 redirect** (TTL 60s)。url 型は外部 URL に直 redirect、supabase 型は Supabase Storage の Pre-signed Download URL | 親 entity read 権限 (visibility=public は認証済全員) |
+| GET | /api/attachments/batch | 複数 entity の添付一括取得 (cross-list dialog 用) | 親 entity 認可に従う |
+
+#### Cron (バックエンド定期処理)
+
+| メソッド | パス | 説明 | 認可 |
+|---|---|---|---|
+| POST | /api/cron/daily-notifications | 日次通知 + DB 容量集計 + **ファイルストレージ bucket 集計 + drift 検知 + anomaly 検知 (ADR-0021)** | Bearer `CRON_SECRET` |
+| POST | /api/cron/tenant-monthly-reset | 月初 cron。リセット + plan 適用 + DB 容量超過請求 + **ファイルストレージ超過請求 (ADR-0021 §4)** + snapshot 保存 + 90 日経過テナント物理削除 | Bearer `CRON_SECRET` |
+| POST | /api/cron/stripe-usage-flush | StripeUsageRecordQueue 送信 cron (haiku/sonnet/db_capacity_overage/**storage_file_overage**) | Bearer `CRON_SECRET` |
+| **POST** | **/api/cron/attachment-embedding** | **ADR-0021 §3.3: 添付ファイル本文 embedding の背景処理 (推奨 5-15 分間隔)**。指数 backoff (1/5min) + 3 回 retry + throttle (per-tenant=5 / global=50) | Bearer `CRON_SECRET` |
+
 #### システム管理
 
 | メソッド | パス | 説明 | ロール |
@@ -215,6 +237,15 @@
 | **TARGET_PARENT_NOT_FOUND** | **404** | **bulk-duplicate: 複製先 parent が削除済 or 存在しない** |
 | **TARGET_PARENT_NOT_WP** | **400** | **bulk-duplicate: 複製先 parent が ACT (WP でない)** |
 | **ACT_CANNOT_BE_ROOT** | **400** | **bulk-duplicate: ACT を root or ACT 配下に置こうとした** |
+| **DANGEROUS_FILE_TYPE** | **400** | **ADR-0021: 危険拡張子 (.exe / .sh 等) のアップロード試行** |
+| **INVALID_OBJECT_KEY** | **400** | **ADR-0021: finalize 時に objectKey が `tenants/{自テナント}/...` prefix と一致しない (path traversal / 越境試行)** |
+| **FILE_TOO_LARGE** | **413** | **ADR-0021: アップロードファイルが 50MB 超過 (申告 or 実サイズ)** |
+| **OBJECT_NOT_FOUND** | **404** | **ADR-0021: finalize 時に Supabase Storage 上のオブジェクトが存在しない (Pre-signed URL 発行後 PUT 未完了)** |
+| **STORAGE_FILE_HARD_CAP_EXCEEDED** | **403** | **ADR-0021: ファイル添付の使用量が 50GB に到達 (download / delete は継続可)** |
+| **STORAGE_UNAVAILABLE** | **503** | **ADR-0021: Supabase Storage API 不通 / 認証情報不正 (リトライ可)** |
+| **UPLOAD_URL_FAILED** | **503** | **ADR-0021: Pre-signed Upload URL 発行失敗 (Supabase 5xx)** |
+| **DOWNLOAD_URL_FAILED** | **503** | **ADR-0021: Pre-signed Download URL 発行失敗 (Supabase 5xx)** |
+| **TOO_MANY_REQUESTS** | **429** | **ADR-0021: per-tenant レート制限超過 (upload 10/min / delete 100/min)** |
 
 ---
 

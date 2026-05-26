@@ -2,6 +2,18 @@
 
 本ドキュメントは、Prisma スキーマと Postgres テーブル定義を集約する (DESIGN.md §4〜§5、§13、§15)。マイグレーション戦略は [../operations/DB_MIGRATION_PROCEDURE.md](../operations/DB_MIGRATION_PROCEDURE.md) を参照。
 
+> ⚠️ **最新スキーマの真値は [prisma/schema.prisma](../../prisma/schema.prisma)**。本ドキュメントは主要な設計判断を要約するもので、細部 (新規カラム追加等) は schema 直接参照を推奨。
+
+## ADR ベースの最近の追加
+
+- **ADR-0019 (2026-05-24)** 課金 featureUnit の中央定義: `src/config/billing-feature-units.ts`
+- **ADR-0020 (2026-05-25)** DB 容量従量課金: `Tenant` に `storageBytesUsed` / `storageBytesPeakThisMonth` / `dbCapacityWarningLevel` / `storageGuardCircuitFailCount` 等を追加
+- **ADR-0021 (2026-05-26)** ファイル添付ストレージ従量課金 + Attachment Embedding:
+  - `Tenant` 7 列追加: `storageFileBytesUsed` / `storageFileBytesUsedAt` / `storageFileBytesPeakThisMonth` / `storageFileBytesPeakAt` / `storageBucketBytesPeakThisMonth` (drift 検知用) / `fileStorageWarningLevel` (none/l1/l2/l3) / `storageFileBytesYesterday` (anomaly baseline)
+  - `Attachment` 9 列追加: `storageProvider` ('url'/'supabase') / `storageObjectKey` / `sizeBytes` / `contentEmbedding` (vector(1024)) / `embeddingStatus` ('pending'/'completed'/'unsupported'/'failed') / `extractedTextHash` (SHA-256) / `embeddingGeneratedAt` / `embeddingRetryCount` / `embeddingLastRetryAt`
+  - 既存 URL 型は backfill で `storageProvider='url'` + `embeddingStatus='unsupported'`
+  - インデックス: `idx_attachments_embedding_status` (cron 部分インデックス) / `idx_attachments_tenant_provider` (集計用)
+
 ---
 
 ## §4. データモデル

@@ -174,6 +174,8 @@
 | `external-import-embedding` (CSV インポート) | 無料 | 無料 | 無料 |
 | `*-embedding-backfill` (月初 cron 補完 5 種) | 無料 | 無料 | 無料 |
 | `db-capacity-overage` ([データ容量超過](./db-capacity-billing-guide.md)) | 月初 cron で 1 件記録 (1GB ごと ¥50) | 同左 | 同左 |
+| `storage-file-overage` ([ファイルストレージ超過](./file-storage-billing-guide.md)) | 月初 cron で 1 件記録 (1GB ごと ¥10、ADR-0021) | 同左 | 同左 |
+| `attachment-embedding` (添付ファイル本文 embedding) | 無料 (= 運営者負担、Voyage 200M token 無料枠で吸収) | 無料 | 無料 |
 
 すべて税抜表示です。日本円建てで Stripe または銀行振込でお支払いいただきます。
 
@@ -196,6 +198,7 @@ Pro プランは Claude Sonnet 4.6 (= 深い推論モデル) を使うため、B
 | 2026-05-15 | (ADR-0002 改定) | 半額化: Expert ¥10 → ¥5 / Pro ¥30 → ¥15 |
 | 2026-05-24 | [ADR-0019](../adr/0019-billable-feature-units-and-free-tier-expansion.md) | **資産入力 + チャット検索を全プラン無料化** / Expert ¥5 → ¥10 (= 課金対象縮小に伴う補正) / Pro ¥15 据置 |
 | 2026-05-25 | [ADR-0020](../adr/0020-db-capacity-usage-based-billing.md) | データ容量 50MB 無料 + 1GB ¥50 の従量課金を追加 |
+| 2026-05-26 | [ADR-0021](../adr/0021-file-storage-usage-based-billing.md) | ファイル添付 100MB 無料 + 1GB ¥10 の従量課金 + 自動 embedding (無料) を追加 |
 
 将来の単価変更も、**効力発生日の 30 日以上前** にメール + ユーザ規約への掲示でお知らせします ([§8 料金変更時のお知らせルール](./plan-guide.md#8-料金変更時のお知らせルール))。
 

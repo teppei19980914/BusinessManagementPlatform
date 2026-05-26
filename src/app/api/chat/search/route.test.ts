@@ -56,8 +56,9 @@ beforeEach(() => {
   mockedChatSearch.mockResolvedValue({
     query: '',
     degraded: false,
-    results: { projects: [], knowledges: [], risksIssues: [], retrospectives: [], memos: [] },
+    results: { projects: [], knowledges: [], risksIssues: [], retrospectives: [], memos: [], attachments: [] },
     totalCount: 0,
+    fileScopeApplied: false,
   });
 });
 
@@ -118,8 +119,9 @@ describe('POST /api/chat/search — 入力バリデーション', () => {
     mockedChatSearch.mockResolvedValueOnce({
       query: '工数',
       degraded: false,
-      results: { projects: [], knowledges: [], risksIssues: [], retrospectives: [], memos: [] },
+      results: { projects: [], knowledges: [], risksIssues: [], retrospectives: [], memos: [], attachments: [] },
       totalCount: 0,
+      fileScopeApplied: false,
     });
     const res = await POST(postReq({ query: '工数' }));
     expect(res.status).toBe(200);
@@ -172,8 +174,10 @@ describe('POST /api/chat/search — 正常系', () => {
         risksIssues: [],
         retrospectives: [],
         memos: [],
+        attachments: [],
       },
       totalCount: 1,
+      fileScopeApplied: false,
     });
 
     const res = await POST(postReq({ query: 'q' }));
@@ -235,8 +239,9 @@ describe('POST /api/chat/search — 正常系', () => {
       query: 'q',
       degraded: true,
       degradeReason: 'rate_limited',
-      results: { projects: [], knowledges: [], risksIssues: [], retrospectives: [], memos: [] },
+      results: { projects: [], knowledges: [], risksIssues: [], retrospectives: [], memos: [], attachments: [] },
       totalCount: 0,
+      fileScopeApplied: false,
     });
 
     const res = await POST(postReq({ query: 'q' }));

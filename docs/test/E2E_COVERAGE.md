@@ -171,6 +171,7 @@
 - [ ] `/api/notifications/[id]` (PATCH) — skip: 単体テストで認可マトリクス (本人/他人/admin/404) を網羅
 - [ ] `/api/notifications/mark-all-read` (POST) — skip: service テストで一括既読を検証
 - [ ] `/api/cron/daily-notifications` (POST) — skip: cron 認可 + dedupeKey + JST 境界の単体テストで担保
+- [ ] `/api/cron/attachment-embedding` (POST) — skip: ADR-0021 (2026-05-26) 添付ファイル本文 embedding の背景処理 cron (推奨 5-15 分間隔)。cron 認可 + 指数 backoff (1/5min) + retry 3 回 + throttle (per-tenant=5 / global=50) は `src/services/attachment-embedding-cron.service.test.ts` (15 件) + `src/services/__tests__/attachment-embedding-flow.integration.test.ts` (3 件 scenario E) で担保。E2E の対象外 (外部 cron 経由のみで UI 経路なし)
 
 ### Tenant 月次リセット (PR #2-d / T-03)
 - [ ] `/api/cron/tenant-monthly-reset` (POST) — skip: cron 認可 + 月初リセット + scheduledPlanChangeAt 適用の単体テスト (`src/services/tenant-monthly-reset.service.test.ts` 11 件 + `src/app/api/cron/tenant-monthly-reset/route.test.ts` 5 件) で担保。E2E の対象外 (Vercel Cron 経由のみで UI 経路なし)

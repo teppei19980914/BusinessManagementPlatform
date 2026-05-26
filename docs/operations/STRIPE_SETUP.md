@@ -134,6 +134,47 @@ Dashboard → **商品カタログ** → **商品を追加**
 - **idempotency**: `identifier = usage:db_capacity_overage:{apiCallLogId}` で 24h 重複防止。
 - **timestamp**: 前月末瞬間 (= 月跨ぎ瞬間) を送信、過去 35 日以内なので正常受領される。
 
+### 2.6 ファイルストレージ従量課金 (ADR-0021 / 2026-05-26)
+
+> **ADR-0021 新規追加**: ファイル添付ストレージを「使った分だけ」階段関数型で課金 (100MB 無料 + 1GB tier × ¥10、50GB hardcap)。
+> §2.5 と同設計 (= R6 案 A、Meter quantity = ¥1 で `ApiCallLog.costJpy = Stripe quantity = 請求金額` の完全一致)。
+
+#### Meter 作成
+
+| 項目 | 値 |
+|---|---|
+| イベント名 (event_name) | `tasukiba_storage_file_overage_jpy` |
+| 表示名 | たすきば ファイルストレージ超過 (円) |
+| ペイロードキー | `value` (= 円整数を文字列で送信) |
+| 集約方式 | sum |
+
+#### Price 作成
+
+| 項目 | 値 |
+|---|---|
+| 商品名 | `たすきば ファイルストレージ超過 (従量課金)` |
+| 説明 | `100MB 超過分を 1GB tier ごとに ¥10 で課金 (R6 案 A: quantity=円整数)` |
+| 料金モデル | **従量課金ベース** (= Meter 連動) |
+| Meter | `tasukiba_storage_file_overage_jpy` (= §2.6 で作成) |
+| **単価** | **¥1 / unit** (= quantity に円整数をそのまま送信) |
+| 請求期間 | 月次 |
+| 検索キー (lookup_key) | `storage_file_overage_jpy` |
+
+→ 環境変数 `STRIPE_PRICE_STORAGE_FILE_OVERAGE` に保存。
+
+#### 動作確認
+
+1. テナント設定で 100MB を超えるファイル添付を作る (例: 200MB の PDF を Pre-signed URL アップロード)
+2. 月初 cron (`/api/cron/tenant-monthly-reset`) を手動実行
+3. Stripe Dashboard → Meter Events で `tasukiba_storage_file_overage_jpy` の event が記録されるか確認
+4. 請求書プレビューで「ファイルストレージ超過: ¥10」が計上されるか確認
+
+#### 注意点
+
+- **Meter quantity の最大値**: 50GB ハードキャップ到達ユーザでも max ¥500 → 余裕で範囲内。
+- **idempotency**: `identifier = usage:storage_file_overage:{apiCallLogId}` で 24h 重複防止。
+- **timestamp**: 前月末瞬間 (= 月跨ぎ瞬間) を送信、過去 35 日以内なので正常受領される。
+
 ---
 
 ## §3. Stripe Tax (任意 - 現時点はスキップ)

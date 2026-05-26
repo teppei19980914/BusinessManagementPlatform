@@ -140,6 +140,24 @@ export type MemoSuggestion = SuggestionScore & {
   authorUserId: string;
 };
 
+/**
+ * ADR-0021 (2026-05-26): 添付ファイル本体 embedding を提案ソースに追加。
+ * 対象は storageProvider='supabase' + embeddingStatus='completed' のみ。
+ * Attachment は tag を持たないため tagScore=0、textScore は displayName ベース、
+ * embeddingScore は contentEmbedding 由来 (= file 本文に対する意味類似度)。
+ */
+export type AttachmentSuggestion = SuggestionScore & {
+  kind: 'attachment';
+  id: string;
+  title: string;
+  snippet: string;
+  /** 親 entity (project / knowledge 等) の type — UI で「📎 Knowledge の添付」表示 */
+  parentEntityType: string;
+  parentEntityId: string;
+  /** ファイル size (bytes)、UI 表示用。null なら未取得 */
+  sizeBytes: number | null;
+};
+
 export type SuggestionsResult = {
   knowledge: KnowledgeSuggestion[];
   pastIssues: PastIssueSuggestion[];
@@ -147,6 +165,8 @@ export type SuggestionsResult = {
   retrospectives: RetrospectiveSuggestion[];
   /** (2026-05-15) 全メンバー公開の Memo 候補 (visibility='public' のみ) */
   memos: MemoSuggestion[];
+  /** ADR-0021 (2026-05-26) 添付ファイル候補 (Supabase 本体 + embedding completed のみ) */
+  attachments: AttachmentSuggestion[];
 };
 
 type ProjectContext = {
@@ -233,7 +253,8 @@ type EmbeddingSimilarityTable =
   | 'knowledges'
   | 'risks_issues'
   | 'retrospectives'
-  | 'memos'; // (2026-05-15) Memo 追加
+  | 'memos' // (2026-05-15) Memo 追加
+  | 'attachments'; // ADR-0021 (2026-05-26) Attachment 本体 embedding
 
 async function computeEmbeddingSimilarities(
   queryEmbeddingText: string | null,
@@ -279,6 +300,18 @@ async function computeEmbeddingSimilarities(
         SELECT id::text AS id,
                1 - (("content_embedding" <=> ${queryEmbeddingText}::vector) / 2) AS score
         FROM "memos"
+        WHERE id = ANY(${ids}::uuid[])
+          AND "content_embedding" IS NOT NULL
+      `;
+      break;
+    case 'attachments':
+      // ADR-0021 (2026-05-26): Attachment 本体 embedding。
+      //   呼出元の prisma.attachment.findMany で tenantId + storageProvider='supabase'
+      //   + embeddingStatus='completed' フィルタ済 (= ids が既に絞り込み済の想定)。
+      rows = await prisma.$queryRaw<Array<{ id: string; score: number }>>`
+        SELECT id::text AS id,
+               1 - (("content_embedding" <=> ${queryEmbeddingText}::vector) / 2) AS score
+        FROM "attachments"
         WHERE id = ANY(${ids}::uuid[])
           AND "content_embedding" IS NOT NULL
       `;
@@ -365,11 +398,11 @@ export async function suggestForProject(
 ): Promise<SuggestionsResult> {
   // PR #8 (T-03): 緊急停止フラグ。SUGGESTION_ENGINE_DISABLED=true で空配列を返す。
   if (isSuggestionEngineDisabled()) {
-    return { knowledge: [], pastIssues: [], pastRisks: [], retrospectives: [], memos: [] };
+    return { knowledge: [], pastIssues: [], pastRisks: [], retrospectives: [], memos: [], attachments: [] };
   }
   const limit = options.limit ?? DEFAULT_LIMIT;
   const ctx = await loadProjectContext(projectId, viewerTenantId);
-  if (!ctx) return { knowledge: [], pastIssues: [], pastRisks: [], retrospectives: [], memos: [] };
+  if (!ctx) return { knowledge: [], pastIssues: [], pastRisks: [], retrospectives: [], memos: [], attachments: [] };
 
   // 2026-05-09 feedback Phase 2-7: severity-1 越境対策。
   //   旧仕様は提案候補に他テナントのデータが混入する設計バグだった。
@@ -743,6 +776,63 @@ export async function suggestForProject(
     };
   });
 
+  // ---------- Attachment 候補 (ADR-0021 / 2026-05-26) ----------
+  // storageProvider='supabase' + embeddingStatus='completed' のみ。
+  // tag は持たないため tagScore=0、textScore は displayName ベース。
+  // embedding 軸を主スコアとして寄与する。
+  const attachments = await prisma.attachment.findMany({
+    where: {
+      deletedAt: null,
+      storageProvider: 'supabase',
+      embeddingStatus: 'completed',
+      ...excludeManagementTenant,
+    },
+    select: {
+      id: true,
+      displayName: true,
+      entityType: true,
+      entityId: true,
+      sizeBytes: true,
+    },
+  });
+
+  const aText = await computeTextSimilarities(
+    ctx.text,
+    attachments.map((a) => ({ id: a.id, text: a.displayName })),
+  );
+  const aEmb = await computeEmbeddingSimilarities(
+    ctx.embeddingText,
+    'attachments',
+    attachments.map((a) => a.id),
+  );
+
+  const attachmentScored: AttachmentSuggestion[] = attachments.map((a) => {
+    const tagScore = 0; // Attachment はタグを持たない
+    const textScore = aText.get(a.id) ?? 0;
+    const embAvailable = ctx.embeddingText != null && aEmb.has(a.id);
+    const embeddingScore = aEmb.get(a.id) ?? 0;
+    const score = combineWithDegradation({
+      tagScore,
+      textScore,
+      embeddingScore,
+      embAvailable,
+    });
+    return {
+      kind: 'attachment' as const,
+      id: a.id,
+      title: a.displayName,
+      snippet: `${a.entityType} 添付`,
+      parentEntityType: a.entityType,
+      parentEntityId: a.entityId,
+      sizeBytes: a.sizeBytes ? Number(a.sizeBytes) : null,
+      score,
+      tagScore,
+      textScore,
+      embeddingScore,
+      tier: classifyTier(score),
+    };
+  });
+
   // PR-X6 (2026-05-07) + P-1 (2026-05-08): スコア降順 + 件数保証 + 件数上限 + パーセンタイル tier。
   //   1. スコア降順で全候補をソート
   //   2. applyMinimumGuarantee で「閾値以上の候補が最低件数未満なら、全候補から Top N を返す」
@@ -775,8 +865,12 @@ export async function suggestForProject(
   const memoResult = assignPercentileTiers(
     applyMinimumGuarantee(sortByScore(memoScored), SCORE_THRESHOLD).slice(0, limit),
   );
+  // ADR-0021 (2026-05-26): Attachment も同 tier 付与で返す
+  const attachmentResult = assignPercentileTiers(
+    applyMinimumGuarantee(sortByScore(attachmentScored), SCORE_THRESHOLD).slice(0, limit),
+  );
 
-  return { knowledge, pastIssues, pastRisks, retrospectives, memos: memoResult };
+  return { knowledge, pastIssues, pastRisks, retrospectives, memos: memoResult, attachments: attachmentResult };
 }
 
 /**
