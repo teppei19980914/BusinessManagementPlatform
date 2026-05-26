@@ -7,3 +7,18 @@
 #   `git rm --cached` で untrack 済 (PR #326 / KDD §5.X+21)。
 #   万一 `git add -f` 等で再 track された場合に conflict を防ぐため `merge=ours` を保険設定。
 .claude/.last-knowledge-check-sha merge=ours
+
+# ADR-0021 (PR #445, KDD §5.X+143): file-text-extraction.service.ts のリテラル NULL バイト
+# 事故を受け、コード/テスト/設定/markdown を必ず text 扱いさせる。
+# git の binary 自動判定 (NULL byte 含むと binary) で diff が hide されることがあるため、
+# 拡張子ベースで明示的に text 強制 + LF を統一する。
+*.ts text eol=lf
+*.tsx text eol=lf
+*.js text eol=lf
+*.jsx text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.sql text eol=lf
+*.prisma text eol=lf

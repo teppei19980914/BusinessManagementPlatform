@@ -15395,3 +15395,105 @@ JSDoc の文言を `voyageEmbed()` から `Voyage client` に変更:
 - 関連 PR: PR #445 (ADR-0021 基盤層、本事例 / 2026-05-26)
 - 関連 KDD: [§5.X+140](#5x140) (本 PR-A 初回 CI 失敗の根本 fix、本件はその下流発覚) / ADR-0019 (LLM 課金バイパス防止)
 - 関連 file: [src/services/attachment-embedding.service.ts](../../src/services/attachment-embedding.service.ts), [scripts/check-llm-billing-bypass.ts](../../scripts/check-llm-billing-bypass.ts)
+
+---
+
+## 5.X+143 **★severity-high★ ソースコード内のリテラル NULL バイト (0x00) を埋めると git が source を binary 判定し review が機能しない (2026-05-26 / PR #445 フルスキャン検証で発覚)**
+
+### 事象
+
+PR #445 のフルスキャン検証で `git diff --stat origin/main...HEAD` を実行すると、新規 service ファイルが **binary 扱い** で表示:
+
+```
+src/services/file-text-extraction.service.ts | Bin 0 -> 7520 bytes
+```
+
+通常は `+274 -0` のような行数差分が出るところ、`Bin 0 -> 7520 bytes` (= バイナリファイル) と判定され、**diff 内容が一切表示されない**。レビュワーは変更内容を確認できないし、線形 merge tool も使えない。
+
+### 根本原因
+
+[file-text-extraction.service.ts](../../src/services/file-text-extraction.service.ts) の line 123 に **リテラル NULL バイト (0x00) を含む正規表現**を書いていた:
+
+```typescript
+function normalizeText(s: string): string {
+  return s
+    .replace(/\r\n?/g, '\n')
+    .replace(/<NUL>/g, '')   // ← line 123: ここに literal 0x00 が入っていた
+    .replace(/[ \t]+\n/g, '\n')
+    ...
+}
+```
+
+ソースコード上は **見た目「半角スペース」** に見えていたが、`od -c` で確認すると `/   \0   /` (= NULL バイト) だった。
+意図: PDF 抽出で稀に混入する NULL バイトを除去する正規表現。
+ミス: `\x00` エスケープシーケンスではなく、**リテラル 0x00 をエディタに直接埋めてしまった**。
+
+#### git の binary 自動判定アルゴリズム
+
+git は file content の先頭 8000 バイトを scan し、NULL バイトが 1 つでも含まれていれば **binary** と判定する (`xdiff.c` の `BUFFER_ANALYSIS_BYTES` 定数)。これは:
+- `diff` 表示を抑制 (= 「Binary files differ」)
+- `--stat` で `Bin X -> Y bytes` 表示
+- merge tool の text 編集機能を無効化
+
+ソースコード内に意図的にリテラル NULL を埋めると、その瞬間に source は git にとって binary になる。
+
+#### なぜテストでは検知できなかったか
+
+単体テスト 20 件は `extractText('memo.txt', Buffer.from('hello world', 'utf8'))` 等で短文テキストを入力するため、`normalizeText` の NULL 除去ロジックを **発火させない**。NULL バイト除去テストケースが不在だった。
+
+### 対応
+
+1. **ソースの NULL バイトを `\x00` エスケープに置換**:
+   ```typescript
+   .replace(/\x00/g, '')   // ← \x00 はソース上 4 ASCII 文字、binary 判定回避
+   ```
+   Powershell の byte 単位 search & replace で安全に置換 (Edit ツールは literal NUL を扱えない trap):
+   ```powershell
+   $bytes = [System.IO.File]::ReadAllBytes($path)
+   # NULL を含むパターン → \x00 (literal "\x00" 4 bytes ASCII) に置換
+   ```
+2. **NULL バイト除去テストを追加**:
+   ```typescript
+   it('NULL バイト (\\x00) を除去 — PDF 抽出で稀に混入', async () => {
+     const withNull = `before\x00middle\x00after`;
+     const result = await extractText('memo.txt', Buffer.from(withNull, 'utf8'));
+     if (result.kind !== 'success') throw new Error();
+     expect(result.text).toBe('beforemiddleafter');
+     expect(result.text).not.toContain('\x00');
+   });
+   ```
+3. **`.gitattributes` で `*.ts` 等を text 強制**:
+   ```
+   *.ts text eol=lf
+   *.tsx text eol=lf
+   *.md text eol=lf
+   ...
+   ```
+   将来同種の事故が起きた場合でも git が text として扱い、diff が消えない。
+4. **インラインコメントで罠を明示**:
+   ```typescript
+   // ⚠️ KDD §5.X+143: 必ず \x00 エスケープで書く。リテラル NUL バイトを埋めると
+   // git が source を binary 判定し diff が hide される事故あり (PR #445 で実例)。
+   .replace(/\x00/g, '')
+   ```
+
+### 再発防止
+
+- **正規表現に制御文字を含める時は必ずエスケープシーケンス (`\x00` / `\n` / `\t` 等) を使う**。リテラル制御文字を埋めない。
+- 新規 source ファイル commit 前に `file <path>` で text 判定されることを確認 (`text` / `JavaScript source` / `UTF-8 text` 等が出れば OK、`data` が出たら binary 化している)
+- `.gitattributes` で text-by-extension を declare しておけば、binary 自動判定を override できる (本 PR で追加)
+- `Edit` ツールは literal NUL を含む文字列を扱えない (`String to replace not found`) ため、修正には PowerShell の byte 単位編集が必要。これも罠なので memo
+
+### 教訓 (転用可能)
+
+- **git の binary 判定は NULL バイト 1 個でトリガー**: 設計時点で「ASCII の見た目だから text のはず」と思い込まないこと。テキスト処理ライブラリの実装では制御文字を扱う場面が多く、注意が必要
+- **`file <path>` コマンドはコミット前確認に有効**: `text` 系の判定が出ること = git も text として扱う、`data` が出る = binary 判定確定。3 秒のチェックで重大事故を防げる
+- **エディタの見た目では NULL バイトは検知できない**: VS Code / vim 等は NUL を「見えない文字」または空白として表示する。`od -c` / `xxd` / `perl -e 'open... /\x00/'` 等のバイト単位検査が必要
+- **`Edit` ツールの「文字列不一致」エラーは符号化問題のシグナル**: 通常の文字列に見えるのに Edit が失敗する場合、文字列内に制御文字 / BOM / 別 Unicode が混入している可能性。PowerShell / Python の binary mode に切替
+- **`.gitattributes` の text 強制は予防策として常設すべき**: 新規プロジェクト立ち上げ時に `*.ts text eol=lf` 等を入れておけば、本件のような事故が起きても diff は表示される
+
+### 関連
+
+- 関連 PR: PR #445 (ADR-0021 基盤層、フルスキャン検証で発覚 / 2026-05-26)
+- 関連 KDD: [§5.X+140](#5x140), [§5.X+141](#5x141), [§5.X+142](#5x142) (PR #445 の同一バッチ)
+- 関連 file: [src/services/file-text-extraction.service.ts](../../src/services/file-text-extraction.service.ts), [.gitattributes](../../.gitattributes)

@@ -157,6 +157,15 @@ describe('extractText — テキスト正規化 / 切詰', () => {
     if (result.kind !== 'success') throw new Error();
     expect(result.text.length).toBe(MAX_EXTRACTED_TEXT_CHARS);
   });
+
+  it('NULL バイト (\\x00) を除去 — PDF 抽出で稀に混入、後段の DB/embedding 投入で事故防止 (KDD §5.X+143)', async () => {
+    const withNull = `before\x00middle\x00after`;
+    const result = await extractText('memo.txt', Buffer.from(withNull, 'utf8'));
+    expect(result.kind).toBe('success');
+    if (result.kind !== 'success') throw new Error();
+    expect(result.text).toBe('beforemiddleafter');
+    expect(result.text).not.toContain('\x00');
+  });
 });
 
 describe('extractText — SHA-256 hash', () => {

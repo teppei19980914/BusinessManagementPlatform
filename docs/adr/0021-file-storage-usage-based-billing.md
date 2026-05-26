@@ -224,7 +224,7 @@ embeddingGeneratedAt DateTime?
 | 拡張子 | text 抽出方法 | embeddingStatus |
 |---|---|---|
 | `.pdf` | `pdf-parse` ライブラリでテキスト抽出 | 成功 → `'generated'` / 失敗 → `'failed'` |
-| `.xlsx` / `.xls` | `xlsx` (sheetjs) ライブラリでセル text 連結 | 成功 → `'generated'` |
+| `.xlsx` / `.xls` | `exceljs` ライブラリでセル text 連結 (※元は `xlsx@sheetjs` 採用予定だったが fix なし High CVE 2 件 = GHSA-4r6h-8v6p-xvw6 / GHSA-5pgg-2g8v-p4x9 のため swap、KDD §5.X+141) | 成功 → `'generated'` |
 | `.csv` | UTF-8 で読込、行単位連結 | 成功 → `'generated'` |
 | `.txt` / `.md` / `.json` | UTF-8 で読込 | 成功 → `'generated'` |
 | `.docx` | `mammoth` ライブラリでテキスト抽出 | 成功 → `'generated'` |

@@ -125,7 +125,7 @@ peak:     100MB  →  10GB    →  10GB   →  10GB  ← 月末請求対象
 | 拡張子 | text 抽出 | embeddingStatus |
 |---|---|---|
 | `.pdf` | `pdf-parse` でテキスト抽出 | 成功 → `'generated'` |
-| `.xlsx` / `.xls` | `xlsx` (sheetjs) でセル text 連結 | 成功 → `'generated'` |
+| `.xlsx` / `.xls` | `exceljs` でセル text 連結 (xlsx@sheetjs から swap、CVE 対応、KDD §5.X+141) | 成功 → `'generated'` |
 | `.csv` | UTF-8 読込 + 行連結 | 成功 → `'generated'` |
 | `.txt` / `.md` / `.json` | UTF-8 読込 | 成功 → `'generated'` |
 | `.docx` | `mammoth` でテキスト抽出 | 成功 → `'generated'` |
