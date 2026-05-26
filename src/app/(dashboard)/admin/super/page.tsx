@@ -33,6 +33,8 @@ import {
 import { getDatabaseCapacityReport } from '@/services/db-capacity.service';
 // ADR-0020 (2026-05-25): DB 容量従量課金アラート (R12-admin / R14)
 import { DbCapacityAlertsCard } from './db-capacity-alerts-card';
+// ADR-0021 (2026-05-26): ファイルストレージ従量課金アラート (drift + anomaly + L1-L3)
+import { FileStorageAlertsCard } from './file-storage-alerts-card';
 import { getEmailSendStats } from '@/services/email-send-log.service';
 import type { DbCapacityStatus } from '@/config/db-capacity';
 import type { EmailLimitStatus } from '@/config/email-limit';
@@ -174,6 +176,9 @@ export default async function SuperAdminTopPage() {
 
       {/* ADR-0020 (2026-05-25): DB 容量従量課金 L1-L4 alert + drift 検知 (R12-admin / R14) */}
       <DbCapacityAlertsCard />
+
+      {/* ADR-0021 (2026-05-26): ファイルストレージ L1-L3 + drift + anomaly */}
+      <FileStorageAlertsCard />
 
       <section className="space-y-2" title="現在の契約プラン別テナント分布 (顧客テナントのみ)。営業・解約予測のベース指標">
         <h2 className="text-lg font-semibold">プラン別テナント数 (顧客テナントのみ)</h2>

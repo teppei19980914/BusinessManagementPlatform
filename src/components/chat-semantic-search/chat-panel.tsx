@@ -282,18 +282,27 @@ function ChatResults({
   onToggleWeak: () => void;
   onCardClick: () => void;
 }) {
-  const allHits: ChatSearchHit[] = [
-    ...result.results.projects,
-    ...result.results.knowledges,
-    ...result.results.risksIssues,
-    ...result.results.retrospectives,
-    ...result.results.memos,
-  ];
+  // ADR-0021 (2026-05-26): file scope query 検出時は attachment のみ、それ以外は 5 資産横断
+  const allHits: ChatSearchHit[] = result.fileScopeApplied
+    ? [...result.results.attachments]
+    : [
+        ...result.results.projects,
+        ...result.results.knowledges,
+        ...result.results.risksIssues,
+        ...result.results.retrospectives,
+        ...result.results.memos,
+      ];
 
   if (allHits.length === 0) {
     return (
       <div className="rounded-md border border-border bg-muted/50 px-3 py-4 text-center text-xs text-muted-foreground">
         💡 関連する資産が見つかりませんでした
+        {result.fileScopeApplied && (
+          <div className="mt-1 text-xs">
+            添付ファイルのみを対象に検索しました ({/* file scope mode の説明 */}
+            「ファイル」「添付」「PDF」等のキーワード検出時に有効)
+          </div>
+        )}
       </div>
     );
   }
@@ -312,8 +321,13 @@ function ChatResults({
 
   return (
     <div>
+      {result.fileScopeApplied && (
+        <div className="mb-2 rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-700">
+          📎 添付ファイルのみを対象に検索しました (= 「ファイル」「添付」「PDF」等のキーワードを検出)
+        </div>
+      )}
       <div className="mb-3 text-xs text-muted-foreground">
-        💡 {result.totalCount}件の関連資産が見つかりました
+        💡 {result.totalCount}件の{result.fileScopeApplied ? '添付ファイル' : '関連資産'}が見つかりました
       </div>
 
       {strong.length > 0 && (

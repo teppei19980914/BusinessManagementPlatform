@@ -641,6 +641,8 @@ prisma.$use(async (params, next) => {
 | POST /api/** (書き込み系) | 30 回 | 1 分 | スパム防止 |
 | GET /api/** (読み取り系) | 120 回 | 1 分 | 通常利用の範囲 |
 | GET /api/**/export | 5 回 | 10 分 | CSV エクスポート等の重い処理 |
+| **POST /api/attachments/upload** (per-tenant) | **10 回** | **1 分** | **ADR-0021 §10.2.1: Pre-signed URL 発行レート (= 大量 URL 漏洩 + 50GB ハードキャップ突破試行 防止)** |
+| **DELETE /api/attachments/:id** (per-tenant) | **100 回** | **1 分** | **ADR-0021 §10.2.1: Supabase API rate limit + storage_objects ロック保護** |
 
 #### 9.7.2 実装方針
 
@@ -772,6 +774,40 @@ Console にも画面にも出さず、必ず DB (system_error_logs) に保存す
   組織判断で「業務詳細を含むので members のみ」にするか、`visibility` を 3 値化する余地あり
 - **SSRF via Attachment URL**: URL 型添付の preview 機能があれば `169.254.169.254` 等内部アドレスに
   アクセス可能になる可能性。現状 preview は未実装だが、将来実装時は URL 安全性検証が必要
+
+#### 9.8.6 ファイル添付ストレージのセキュリティ (ADR-0021 / 2026-05-26)
+
+ファイル本体を Supabase Storage に保存する設計に伴い、以下の多層防御を実装:
+
+| 攻撃ベクトル | リスク | 対策 |
+|---|---|---|
+| **大容量ファイル DoS** | サーバ memory/disk 圧迫、Function timeout | (1) Pre-signed URL 直接アップロード (= サーバ通さない) / (2) 50MB/ファイル サーバ側検証 (`FILE_STORAGE_MAX_FILE_SIZE_BYTES`) |
+| **大量ファイルアップロード DoS** | テナント全体で 50GB 超 / 他テナント cache 圧迫 | (1) 50GB ハードキャップ即時拒否 (`assertFileStorageLimitInTx`) / (2) Pre-signed URL 発行レート制限 (10 req/min/tenant) |
+| **悪意ある実行ファイル** | サーバ・他ユーザへのマルウェア配布 | 危険拡張子 blacklist (.exe / .bat / .sh / .cmd / .scr / .com / .ps1 / .vbs / .apk / .ipa / .rar / .zipx) で拒否、upload + finalize の **2 段階チェック** (defense-in-depth) |
+| **path traversal** | バケット越境、他テナントオブジェクト読取 | ファイル名 sanitize (`sanitizeFileName`: OS 禁止文字 + `..` + 先頭ドット除去 + 200 文字制限) + bucket path に tenant prefix 強制 (`tenants/{tenantId}/{entityType}/{entityId}/{uuid}-{name}`) |
+| **Storage 計測失敗** | drift で課金漏れ + 暴走検知不能 | drift 検知 daily cron (50%/100% で warning/critical alert)、anomaly 検知 (+5GB/day で super_admin 通知) |
+| **embedding job 暴走** | Voyage rate limit 抵触、200M 無料枠食い潰し | per-tenant job 並列上限 (5 件) + global 並列上限 (50 件) + 月次 token 消費 watchdog |
+| **Pre-signed URL 漏洩** | 第三者が tenant データ書込 / 越境 | URL 有効期限 **60 秒** + tenant_id 検証 + ファイル名予約 (UUID 含む) |
+| **delete API 連打** | Supabase API rate limit、storage_objects ロック | per-tenant rate limit (100/min) |
+
+#### RLS Policy (= 2 重防御の DB レイヤ)
+
+`storage.objects` に以下 5 件の Policy を適用 (= docs/operations/SUPABASE_STORAGE_SETUP.md §3):
+1. `service_role_full_access_attachments`: service_role は全アクセス可 (cron / 集計 / Pre-signed URL 発行用)
+2. `deny_direct_select_attachments`: anon / authenticated の直接 SELECT 禁止 (Pre-signed URL 強制)
+3. `deny_direct_insert_attachments`: anon / authenticated の直接 INSERT 禁止
+4. `deny_direct_update_attachments` / `deny_direct_delete_attachments`: 同上
+5. `enforce_tenant_prefix_attachments`: service_role でも `tenants/` prefix が無い path への INSERT を block (= アプリ層のバグで prefix が抜けても DB で拒否)
+
+これにより仮に Pre-signed URL や anon_key が漏洩しても、**テナント越境はデータベースレベルで拒否** される多層防御。
+
+#### ハードキャップ到達時の挙動
+
+50GB 到達テナントの状態:
+- 新規 Pre-signed URL 発行 → 403 `STORAGE_FILE_HARD_CAP_EXCEEDED`
+- 既存ファイルの read / download → 継続可
+- 既存ファイルの delete → 継続可 (= 削減手段の提供)
+- 他テナント → 完全に独立して動作
 
 ---
 

@@ -42,15 +42,18 @@
 
 ## プラン別の課金モデル
 
-| プラン | 月額 (基本) | 月額 (LLM) | Storage 月額 |
-|---|---|---|---|
-| Beginner | 無料 | 月間 100 回上限のため LLM 課金は発生しない | standard (0円) のみ |
-| Expert | なし | **¥5/call** の従量課金 (2026-05-15 改定: ¥10 → ¥5) | standard / plus (¥500) / pro_storage (¥1,500) |
-| Pro | なし | **¥15/call** の従量課金 (2026-05-15 改定: ¥30 → ¥15) | standard / plus / pro_storage |
+| プラン | 基本料金 | LLM 単価 (per-call) | DB 容量 | ファイルストレージ |
+|---|---|---|---|---|
+| Beginner | 無料 | 月間 50 回 billable call 上限 (超過で書込停止) | 50MB 無料、超過 ¥50/GB (peak-based) | 100MB 無料、超過 ¥10/GB (peak-based) |
+| Expert | なし | **¥10/call** (ADR-0019 / 2026-05-24 改定: ¥5 → ¥10) | 同上 | 同上 |
+| Pro | なし | **¥15/call** (project-upsert) + **¥15/call** (suggestion-explanation 「なぜ?」) | 同上 | 同上 |
 
-- LLM 課金は **日割り計算なし** (= 月途中で解約しても従量課金のため過払い・未払いなし)
-- Storage 月額は固定額。月途中で解約したら **その月の Storage 課金分は別途検討する必要あり**
-  (現状の v1 仕様では月途中解約の Storage 課金は full 課金扱い、要顧客合意)
+- **すべての課金が従量制 = 日割り計算なし**:
+  - LLM per-call 課金は call 時点の `Tenant.plan` 単価で記録 → 月途中でプラン変更しても自動分離
+  - DB 容量 / ファイルストレージ超過分は **月中 peak** 値で月初請求 (ADR-0020 / ADR-0021)
+- **プラン変更は全て即時反映** (2026-05-14 改修): アップグレード・ダウングレード問わず変更後の操作から新単価。Beginner ダウングレードのみ禁止 (ADR-0013)
+- **月途中解約時の請求漏れは構造的に発生しない** (= 退会フローで当月 peak を即時請求、§月途中解約の検知メカニズム 参照)
+- 旧 `storage_addon_plan` (standard / plus / pro_storage / enterprise の固定額 add-on) は ADR-0020 §10 で **除去対象** と決定済 (現コードに残置あり、P9 migration で削除予定)
 
 ## 支払い方法ごとの運用フロー分岐 (2026-05-14 / Stripe 連携 v1.x で導入予定)
 
@@ -75,7 +78,7 @@ Vercel Cron が `tenant-monthly-reset` ジョブを実行し、以下を自動�
 
 1. `saveMonthlyUsageSnapshots()` — リセット直前の各テナント使用量を `tenant_monthly_usage_history` に保存 (= 前月分の確定スナップショット)
 2. `resetTenantMonthlyCounters()` — 各テナントの `currentMonthApiCallCount` / `currentMonthApiCostJpy` を 0 にリセット
-3. `applyScheduledPlanChanges()` — `scheduledPlanChangeAt <= now` のテナントにプラン変更を適用
+3. `applyScheduledPlanChanges()` (legacy) — `scheduledPlanChangeAt <= now` のテナントにプラン変更を適用。2026-05-14 改修で **新規にこの予約をセットするコードパスは廃止** (全プラン変更が即時反映、Beginner ダウングレードは完全禁止)。旧コード期間に作られた DB レコード対策として残置中
 4. `applyStorageAddon()` — Storage プラン変更予約があれば適用
 5. `runMonthlyEmbeddingBackfill()` — `content_embedding=NULL` の行を 5 テーブル (`projects` / `knowledges` / `risks_issues` / `retrospectives` / `memos`) から最大 128 件ずつ拾い、当月の予算枠で一括補完。「公開範囲: 自分のみ」は対象外。`generateAndPersistBatchEmbeddings` で **1 業務操作 = 1 ApiCallLog** に集約 (2026-05-15 で `memos` 追加)
 6. `purgeOldDeletedTenants()` — 論理削除から 90 日経過したテナントの業務データを物理削除
@@ -114,7 +117,7 @@ CSV の「解約日」列を **最初に確認** し、以下のルールで請�
 | 解約日列 | 意味 | 請求対象期間 |
 |---|---|---|
 | 空欄 | アクティブテナント | 当月フル (=月末まで使った前提で当月分を請求) |
-| 当月の ISO 形式日時 (例: `2026-05-20T03:00:00.000Z`) | 当月途中で解約済 | 月初から解約日まで (LLM は従量課金のためそのまま、Storage は別途合意) |
+| 当月の ISO 形式日時 (例: `2026-05-20T03:00:00.000Z`) | 当月途中で解約済 | 月初から解約日まで (LLM・DB 容量・ファイルストレージすべて従量課金。退会フローで peak 値が即時記録済み = 追加合意不要) |
 | **前月以前の ISO 形式日時** (例: `2026-04-15T03:00:00.000Z`) | **既に前月以前に解約済** | **請求対象外** (既処理済) |
 
 #### ⚠️ Step 2 の重大な注意: 当月 CSV (現在値) の数値誤読リスク

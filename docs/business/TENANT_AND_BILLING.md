@@ -2,9 +2,9 @@
 
 本ドキュメントは、本サービスのマルチテナント運用フローと、3 プラン構成 (Beginner / Expert / Pro) + 従量課金 (per-API-call) のビジネスロジックを集約する。技術的な実装設計は [../design/SUGGESTION_ENGINE.md](../design/SUGGESTION_ENGINE.md)、ユーザから見える挙動は [../specification/](../specification/) を参照。
 
-## 🆕 最新の料金体系: ADR-0019 + ADR-0020 (2026-05-25)
+## 🆕 最新の料金体系: ADR-0019 + ADR-0020 + ADR-0021 (2026-05-26)
 
-**現行料金体系の確定版は [ADR-0019](../adr/0019-billable-feature-units-and-free-tier-expansion.md) + [ADR-0020](../adr/0020-db-capacity-usage-based-billing.md)** です。
+**現行料金体系の確定版は [ADR-0019](../adr/0019-billable-feature-units-and-free-tier-expansion.md) + [ADR-0020](../adr/0020-db-capacity-usage-based-billing.md) + [ADR-0021](../adr/0021-file-storage-usage-based-billing.md)** です。
 
 ### LLM/Embedding 課金 (ADR-0019 / 2026-05-24)
 
@@ -36,11 +36,38 @@
 
 詳細根拠 (実コスト構造の再検証、Supabase 原価、4 層防御、circuit breaker 等) は [ADR-0019](../adr/0019-billable-feature-units-and-free-tier-expansion.md) + [ADR-0020](../adr/0020-db-capacity-usage-based-billing.md) 参照。
 
+### ファイルストレージ課金 (ADR-0021 / 2026-05-26)
+
+ファイル添付本体 (Supabase Storage 保存) を月中 peak ベースで階段関数型に従量課金する。設計パターンは ADR-0020 を踏襲し、計算式 / 4 層防御 / 退会時即時請求 / drift 検知 / circuit breaker / billing invariant をすべて流用。
+
+| 項目 | 値 |
+|---|---|
+| 課金モデル | **階段関数型従量課金** (= ADR-0020 と同設計) |
+| 無料枠 | **100MB / tenant** (SI 単位、PDF 10MB を 10 件無料イメージ) |
+| 超過単価 | **¥10 / GB tier** (1MB 未満切上 + 1GB tier 切上、Supabase 原価 ¥3.20/GB の +193% マージン) |
+| 計測時点 | **月中 peak** (= 月末削除→月初再投入の抜け道防止) |
+| ハードキャップ | **50GB / tenant** (= 月額最大 ¥500、説明性確保) |
+| ファイル上限 | **50MB / 1 ファイル** (= Supabase Free 同等、業務 PDF/Excel/画像 を十分カバー) |
+| 危険拡張子 | **blacklist** (.exe / .sh / .bat / .ps1 / .vbs / .apk / .ipa / .rar / .zipx 等) |
+| Egress | **当面無料** (= Supabase Pro 250GB/月 含有で十分) |
+
+請求例:
+- 0-100MB → **¥0**
+- 101MB-1,100MB → **¥10** (= tier 1)
+- 1,101MB-2,100MB → **¥20** (= tier 2)
+- 50GB (ハードキャップ到達) → **¥500** (= tier 50)
+
+#### Attachment Embedding (= 無料 API)
+
+添付ファイルは自動で本文テキスト抽出 → Voyage embedding 生成され、**チャット意味検索 + 提案エンジン** の対象になります (= 無料 API 枠、運営者負担)。対応形式: PDF / Excel (xlsx/xls) / CSV / Word (docx) / テキスト (txt/md/json)。画像 / 動画 / ZIP は OCR 未対応のため 'unsupported' 扱い。
+
+詳細根拠 (Pre-signed URL アーキテクチャ、bucket prefix 構造、RLS Policy、DoS 対策、anomaly 検知等) は [ADR-0021](../adr/0021-file-storage-usage-based-billing.md) 参照。
+
 ### 横断的な改修 (R5 退会時請求漏れ修正)
 
 旧仕様の月初 cron は `deletedAt IS NULL` フィルタで退会済テナント除外 → 月途中退会の当月分使用量が **永久に課金されない** 抜け道があった。
 
-ADR-0020 で **退会時即時請求集計** ([src/services/tenant-withdrawal-billing.service.ts](../../src/services/tenant-withdrawal-billing.service.ts)) を導入し、退会 API ([deleteTenant](../../src/services/super-admin.service.ts)) から呼び出して **DB 容量 + API 利用量を抜け漏れなく請求** できる構造に。
+ADR-0020 + ADR-0021 で **退会時即時請求集計** ([src/services/tenant-withdrawal-billing.service.ts](../../src/services/tenant-withdrawal-billing.service.ts)) を導入し、退会 API ([deleteTenant](../../src/services/super-admin.service.ts)) から呼び出して **DB 容量 + ファイルストレージ + API 利用量を抜け漏れなく請求** できる構造に。
 
 ### 単価変更ルール
 

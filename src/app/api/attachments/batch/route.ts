@@ -293,6 +293,10 @@ export async function POST(req: NextRequest) {
           addedByName: r.addedByUser?.name ?? null,
           createdAt: r.createdAt.toISOString(),
           updatedAt: r.updatedAt.toISOString(),
+          // ADR-0021 (2026-05-26)
+          storageProvider: r.storageProvider ?? 'url',
+          sizeBytes: r.sizeBytes != null ? Number(r.sizeBytes) : null,
+          embeddingStatus: r.embeddingStatus ?? null,
         };
         if (!byEntityK[r.entityId]) byEntityK[r.entityId] = [];
         byEntityK[r.entityId].push(dto);
@@ -341,6 +345,10 @@ export async function POST(req: NextRequest) {
       addedByName: r.addedByUser?.name ?? null,
       createdAt: r.createdAt.toISOString(),
       updatedAt: r.updatedAt.toISOString(),
+      // ADR-0021 (2026-05-26)
+      storageProvider: r.storageProvider ?? 'url',
+      sizeBytes: r.sizeBytes != null ? Number(r.sizeBytes) : null,
+      embeddingStatus: r.embeddingStatus ?? null,
     };
     if (!byEntity[r.entityId]) byEntity[r.entityId] = [];
     byEntity[r.entityId].push(dto);

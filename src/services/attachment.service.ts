@@ -29,6 +29,13 @@ export type AttachmentDTO = {
   addedByName: string | null;
   createdAt: string;
   updatedAt: string;
+  // ADR-0021 (2026-05-26): Supabase 本体保存型を識別するフィールド
+  /** 'url' (= 旧 URL 参照型) / 'supabase' (= 本体保存) */
+  storageProvider: string;
+  /** ファイル本体サイズ (bytes)、url 型は null */
+  sizeBytes: number | null;
+  /** embedding 状態 ('pending' / 'completed' / 'unsupported' / 'failed')、url 型は null */
+  embeddingStatus: string | null;
 };
 
 function toDTO(a: {
@@ -43,6 +50,9 @@ function toDTO(a: {
   addedByUser?: { name: string } | null;
   createdAt: Date;
   updatedAt: Date;
+  storageProvider?: string;
+  sizeBytes?: bigint | null;
+  embeddingStatus?: string | null;
 }): AttachmentDTO {
   return {
     id: a.id,
@@ -56,6 +66,9 @@ function toDTO(a: {
     addedByName: a.addedByUser?.name ?? null,
     createdAt: a.createdAt.toISOString(),
     updatedAt: a.updatedAt.toISOString(),
+    storageProvider: a.storageProvider ?? 'url',
+    sizeBytes: a.sizeBytes != null ? Number(a.sizeBytes) : null,
+    embeddingStatus: a.embeddingStatus ?? null,
   };
 }
 

@@ -13,7 +13,7 @@
  *   <a rel="noopener noreferrer" target="_blank"> を徹底し tabnabbing を防ぐ。
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -22,6 +22,16 @@ import { useLoading } from '@/components/loading-overlay';
 import { useToast } from '@/components/toast-provider';
 import type { AttachmentEntityType } from '@/lib/validators/attachment';
 import type { AttachmentDTO } from '@/services/attachment.service';
+// ADR-0021 (2026-05-26): 添付ファイル本体アップロード対応
+const UPLOADABLE_ENTITY_TYPES = new Set<AttachmentEntityType>([
+  'project',
+  'task',
+  'estimate',
+  'risk',
+  'retrospective',
+  'knowledge',
+]);
+const FILE_MAX_BYTES = 50 * 1_000_000; // 50MB SI (file-storage-pricing.ts と一致)
 
 type Props = {
   entityType: AttachmentEntityType;
@@ -55,6 +65,10 @@ export function AttachmentList({
   const [error, setError] = useState('');
   const [newDisplayName, setNewDisplayName] = useState('');
   const [newUrl, setNewUrl] = useState('');
+  // ADR-0021 (2026-05-26): ファイル本体アップロード state
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const uploadEnabled = UPLOADABLE_ENTITY_TYPES.has(entityType);
 
   const reload = useCallback(async () => {
     const url = `/api/attachments?entityType=${entityType}&entityId=${entityId}&slot=${slot}`;
@@ -119,6 +133,90 @@ export function AttachmentList({
     await reload();
   }
 
+  // ADR-0021 (2026-05-26): Pre-signed URL → PUT → finalize の 3 段階アップロード
+  async function handleUpload(file: File) {
+    setError('');
+    if (file.size > FILE_MAX_BYTES) {
+      setError(`ファイル サイズが上限 ${Math.floor(FILE_MAX_BYTES / 1_000_000)}MB を超えています`);
+      showError('ファイル サイズ上限を超えています');
+      return;
+    }
+    setUploading(true);
+    try {
+      // 1. Pre-signed Upload URL 発行
+      const uploadRes = await withLoading(() =>
+        fetch('/api/attachments/upload', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            entityType,
+            entityId,
+            slot,
+            fileName: file.name,
+            sizeBytes: file.size,
+            mimeType: file.type || undefined,
+          }),
+        }),
+      );
+      if (!uploadRes.ok) {
+        const j = await uploadRes.json().catch(() => ({}));
+        const msg = j.error?.message ?? j.error?.code ?? 'アップロード URL の発行に失敗しました';
+        setError(msg);
+        showError(msg);
+        return;
+      }
+      const upload = await uploadRes.json();
+      const { uploadUrl, token, objectKey, sanitizedFileName } = upload.data;
+
+      // 2. ブラウザから Supabase Storage へ直接 PUT (= server 経由しない)
+      const putRes = await fetch(uploadUrl, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': file.type || 'application/octet-stream',
+          // Supabase Storage の Pre-signed Upload は token をクエリ or x-upsert と共に PUT で利用。
+          // createSignedUploadUrl が返す signedUrl は token をクエリに含む形式 (Supabase SDK v2 標準)。
+          // 念のため Authorization も付加。
+          Authorization: `Bearer ${token}`,
+          'x-upsert': 'false',
+        },
+        body: file,
+      });
+      if (!putRes.ok) {
+        setError('Supabase へのアップロードに失敗しました');
+        showError('Supabase へのアップロードに失敗しました');
+        return;
+      }
+
+      // 3. finalize で DB row + storage-guard 更新
+      const finalizeRes = await fetch('/api/attachments/finalize', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          entityType,
+          entityId,
+          slot,
+          objectKey,
+          fileName: sanitizedFileName,
+          displayName: sanitizedFileName,
+          sizeBytes: file.size,
+          mimeType: file.type || undefined,
+        }),
+      });
+      if (!finalizeRes.ok) {
+        const j = await finalizeRes.json().catch(() => ({}));
+        const msg = j.error?.message ?? j.error?.code ?? 'finalize に失敗しました';
+        setError(msg);
+        showError(msg);
+        return;
+      }
+      showSuccess('ファイルをアップロードしました (検索インデックス作成中)');
+      await reload();
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  }
+
   async function handleDelete(id: string) {
     if (!confirm(t('deleteConfirm'))) return;
     const res = await withLoading(() =>
@@ -145,36 +243,47 @@ export function AttachmentList({
 
       {items.length > 0 && (
         <ul className="space-y-1">
-          {items.map((a) => (
-            <li key={a.id} className="flex items-start gap-2 rounded border px-2 py-1 text-sm">
-              <a
-                href={a.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                // 2026-05-11: 長い displayName 対応を「末尾省略 (truncate)」→「複数行折り返し」に変更。
-                //   旧仕様 (`min-w-0 flex-1 truncate`) は <a> が display:inline のため
-                //   text-overflow:ellipsis が機能せず、内容がダイアログの max-w を超えて
-                //   描画され、横スクロール + ヘッダの全画面ボタンずれが発生していた (UX 報告)。
-                //   新仕様: `wrap-anywhere` で任意位置で改行可能にし、行高が伸びても全文表示。
-                //   親 <li> は `items-start` にして、ボタンが上端寄せされるよう調整。
-                className="min-w-0 flex-1 wrap-anywhere text-info hover:underline"
-                title={a.url}
-              >
-                {a.displayName}
-              </a>
-              {canEdit && (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="shrink-0 text-destructive"
-                  onClick={() => handleDelete(a.id)}
+          {items.map((a) => {
+            // ADR-0021 (2026-05-26): supabase 本体は /api/attachments/[id]/download に
+            //   遷移して Pre-signed Download URL の 302 redirect を受ける (= 表示時に都度発行)。
+            //   url 型は外部リンク URL に直接遷移。
+            const href = a.storageProvider === 'supabase' ? `/api/attachments/${a.id}/download` : a.url;
+            const isSupabase = a.storageProvider === 'supabase';
+            const statusBadge =
+              isSupabase && a.embeddingStatus === 'pending'
+                ? ' (検索インデックス作成中)'
+                : isSupabase && a.embeddingStatus === 'failed'
+                  ? ' (インデックス作成失敗)'
+                  : '';
+            const sizeLabel = a.sizeBytes ? ` ${Math.ceil(a.sizeBytes / 1000).toLocaleString()}KB` : '';
+            return (
+              <li key={a.id} className="flex items-start gap-2 rounded border px-2 py-1 text-sm">
+                <a
+                  href={href}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="min-w-0 flex-1 wrap-anywhere text-info hover:underline"
+                  title={a.url}
                 >
-                  {tAction('delete')}
-                </Button>
-              )}
-            </li>
-          ))}
+                  {isSupabase ? '📎 ' : ''}
+                  {a.displayName}
+                  {sizeLabel && <span className="ml-1 text-xs text-muted-foreground">{sizeLabel}</span>}
+                  {statusBadge && <span className="ml-1 text-xs text-muted-foreground">{statusBadge}</span>}
+                </a>
+                {canEdit && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="shrink-0 text-destructive"
+                    onClick={() => handleDelete(a.id)}
+                  >
+                    {tAction('delete')}
+                  </Button>
+                )}
+              </li>
+            );
+          })}
         </ul>
       )}
 
@@ -213,6 +322,27 @@ export function AttachmentList({
           <Button type="button" size="sm" onClick={() => void handleAdd()}>
             {tAction('add')}
           </Button>
+        </div>
+      )}
+
+      {/* ADR-0021 (2026-05-26): ファイル本体アップロード (Pre-signed URL 経由) */}
+      {canEdit && uploadEnabled && (
+        <div className="flex items-center gap-2 rounded border bg-muted p-2 text-sm">
+          <Label htmlFor={`attachment-upload-${entityId}`} className="text-xs">
+            ファイルをアップロード (50MB 上限)
+          </Label>
+          <input
+            ref={fileInputRef}
+            id={`attachment-upload-${entityId}`}
+            type="file"
+            disabled={uploading}
+            className="text-xs"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) void handleUpload(f);
+            }}
+          />
+          {uploading && <span className="text-xs text-muted-foreground">アップロード中…</span>}
         </div>
       )}
     </div>
