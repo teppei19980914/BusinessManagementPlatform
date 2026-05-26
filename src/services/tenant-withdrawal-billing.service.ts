@@ -30,13 +30,20 @@
 
 import { prisma } from '@/lib/db';
 import { recordError } from '@/services/error-log.service';
-import { billOneTenantDbCapacityOverage } from '@/services/tenant-monthly-reset.service';
+import {
+  billOneTenantDbCapacityOverage,
+  billOneTenantFileStorageOverage,
+} from '@/services/tenant-monthly-reset.service';
 
 export type WithdrawalBillingResult = {
   /** DB 容量超過分の請求額 (円、0 なら無料枠内) */
   dbCapacityOverageJpy: number;
-  /** 作成された ApiCallLog の ID (= 監査用 / Stripe idempotency_key)、課金 0 なら null */
+  /** DB 容量超過分の ApiCallLog ID (課金 0 なら null) */
   apiCallLogId: string | null;
+  /** ADR-0021 (2026-05-26): ファイルストレージ超過分の請求額 (円、0 なら無料枠内) */
+  fileStorageOverageJpy: number;
+  /** ADR-0021: ファイルストレージ超過分の ApiCallLog ID (課金 0 なら null) */
+  fileStorageApiCallLogId: string | null;
 };
 
 /**
@@ -55,12 +62,24 @@ export async function billTenantWithdrawal(args: {
   timezone: string;
   storageBytesUsed: bigint;
   storageBytesPeakThisMonth: bigint;
+  /** ADR-0021 (2026-05-26): ファイルストレージ peak (退会時即時請求) */
+  storageFileBytesUsed: bigint;
+  storageFileBytesPeakThisMonth: bigint;
   now?: Date;
 }): Promise<WithdrawalBillingResult> {
   const now = args.now ?? new Date();
 
+  let dbResult: { billedJpy: number; apiCallLogId: string | null } = {
+    billedJpy: 0,
+    apiCallLogId: null,
+  };
+  let fileResult: { billedJpy: number; apiCallLogId: string | null } = {
+    billedJpy: 0,
+    apiCallLogId: null,
+  };
+
   try {
-    const result = await billOneTenantDbCapacityOverage({
+    dbResult = await billOneTenantDbCapacityOverage({
       tenantId: args.tenantId,
       timezone: args.timezone,
       storageBytesUsed: args.storageBytesUsed,
@@ -68,13 +87,7 @@ export async function billTenantWithdrawal(args: {
       billingScope: 'current-month-on-withdrawal',
       now,
     });
-
-    return {
-      dbCapacityOverageJpy: result.billedJpy,
-      apiCallLogId: result.apiCallLogId,
-    };
   } catch (error) {
-    // 課金失敗は事業継続性 severity-1 案件: 即時 error ログ + super_admin に通知
     await recordError({
       severity: 'error',
       source: 'server',
@@ -82,19 +95,53 @@ export async function billTenantWithdrawal(args: {
       stack: error instanceof Error ? error.stack : undefined,
       context: {
         kind: 'tenant_withdrawal_billing',
+        subKind: 'db_capacity',
         tenantId: args.tenantId,
         peakBytes: args.storageBytesPeakThisMonth.toString(),
         severity: 'requires_manual_action',
       },
     });
-
-    // 退会自体は止めない (= ユーザ操作優先、課金漏れは事後手動補填)
-    // ただし呼出側で「課金失敗 + 退会継続」の状態を判別できるよう例外を再 throw する
     throw error;
   }
+
+  // ADR-0021 (2026-05-26): ファイルストレージ請求も同 transaction の論理単位として実施。
+  //   DB 容量請求が成功した後で file storage を試みる。失敗時も recordError + throw、
+  //   DB 容量請求は別途完了済 (= 二重課金には ApiCallLog の requestId が idempotency 担保)。
+  try {
+    fileResult = await billOneTenantFileStorageOverage({
+      tenantId: args.tenantId,
+      timezone: args.timezone,
+      storageFileBytesUsed: args.storageFileBytesUsed,
+      storageFileBytesPeakThisMonth: args.storageFileBytesPeakThisMonth,
+      billingScope: 'current-month-on-withdrawal',
+      now,
+    });
+  } catch (error) {
+    await recordError({
+      severity: 'error',
+      source: 'server',
+      message: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+      context: {
+        kind: 'tenant_withdrawal_billing',
+        subKind: 'file_storage',
+        tenantId: args.tenantId,
+        peakBytes: args.storageFileBytesPeakThisMonth.toString(),
+        severity: 'requires_manual_action',
+      },
+    });
+    throw error;
+  }
+
+  return {
+    dbCapacityOverageJpy: dbResult.billedJpy,
+    apiCallLogId: dbResult.apiCallLogId,
+    fileStorageOverageJpy: fileResult.billedJpy,
+    fileStorageApiCallLogId: fileResult.apiCallLogId,
+  };
 }
 
-/** 退会済テナントの未請求 DB 容量を手動補填するための super_admin 用関数 (= billTenantWithdrawal 失敗時の救済) */
+/** 退会済テナントの未請求 DB 容量 + ファイルストレージを手動補填するための super_admin 用関数 (= billTenantWithdrawal 失敗時の救済) */
 export async function backfillDeletedTenantDbCapacity(
   tenantId: string,
 ): Promise<WithdrawalBillingResult | null> {
@@ -105,6 +152,8 @@ export async function backfillDeletedTenantDbCapacity(
       timezone: true,
       storageBytesUsed: true,
       storageBytesPeakThisMonth: true,
+      storageFileBytesUsed: true,
+      storageFileBytesPeakThisMonth: true,
       deletedAt: true,
     },
   });
@@ -116,6 +165,8 @@ export async function backfillDeletedTenantDbCapacity(
     timezone: tenant.timezone,
     storageBytesUsed: tenant.storageBytesUsed,
     storageBytesPeakThisMonth: tenant.storageBytesPeakThisMonth,
+    storageFileBytesUsed: tenant.storageFileBytesUsed,
+    storageFileBytesPeakThisMonth: tenant.storageFileBytesPeakThisMonth,
     now: tenant.deletedAt ?? new Date(),
   });
 }

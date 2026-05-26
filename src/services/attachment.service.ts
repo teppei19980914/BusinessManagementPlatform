@@ -10,6 +10,7 @@
  */
 
 import { prisma } from '@/lib/db';
+import { checkMembership, isAdminOrAbove } from '@/lib/permissions';
 import type {
   AttachmentEntityType,
   CreateAttachmentInput,
@@ -170,9 +171,57 @@ export async function deleteAttachment(
   viewerTenantId: string,
 ): Promise<void> {
   // 2026-05-09 feedback Phase 2-5: 越境削除を遮断するため updateMany で tenantId 検証。
-  await prisma.attachment.updateMany({
-    where: { id, tenantId: viewerTenantId },
-    data: { deletedAt: new Date() },
+  // ADR-0021 (2026-05-26): storageProvider='supabase' の場合は Supabase Storage 上の
+  //   オブジェクトも cascade 削除 + storageFileBytesUsed を atomic に減算する。
+  const existing = await prisma.attachment.findFirst({
+    where: { id, deletedAt: null, tenantId: viewerTenantId },
+    select: { id: true, storageProvider: true, storageObjectKey: true, sizeBytes: true },
+  });
+  if (!existing) {
+    // 越境 / 既削除 → no-op (= updateMany 0 件と同等)
+    return;
+  }
+
+  // Supabase Storage 上のオブジェクトを先に削除 (DB rollback でも残らないよう順序固定)
+  // 失敗時は recordError で記録し DB 側 soft delete は継続 (= cron で daily 集計が補正)
+  if (existing.storageProvider === 'supabase' && existing.storageObjectKey) {
+    try {
+      const { deleteObject } = await import('@/lib/supabase-storage');
+      await deleteObject(existing.storageObjectKey);
+    } catch (e) {
+      try {
+        const { recordError } = await import('@/services/error-log.service');
+        await recordError({
+          severity: 'warn',
+          source: 'server',
+          message: '[attachment.delete] Supabase Storage cascade delete 失敗、daily cron で補正',
+          stack: e instanceof Error ? e.stack : undefined,
+          context: {
+            kind: 'attachment_cascade_delete_failed',
+            attachmentId: id,
+            tenantId: viewerTenantId,
+            storageObjectKey: existing.storageObjectKey,
+            error: e instanceof Error ? e.message : String(e),
+          },
+        });
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  // DB: soft delete + storageFileBytesUsed の atomic 減算
+  await prisma.$transaction(async (tx) => {
+    await tx.attachment.updateMany({
+      where: { id, tenantId: viewerTenantId, deletedAt: null },
+      data: { deletedAt: new Date() },
+    });
+
+    if (existing.storageProvider === 'supabase' && existing.sizeBytes) {
+      const { assertFileStorageLimitInTx } = await import('@/services/storage-guard.service');
+      // 負値で減算 (使用量を下げる方向)、peak は MAX で巻戻らない設計
+      await assertFileStorageLimitInTx(tx, viewerTenantId, -Number(existing.sizeBytes));
+    }
   });
 }
 
@@ -299,6 +348,58 @@ export async function resolveProjectIds(
     default:
       return null;
   }
+}
+
+/**
+ * 添付の作成/読取認可を統合判定する (ADR-0021 / 2026-05-26)。
+ *
+ *   - project / task / estimate: project member 必須 (admin 短絡)
+ *   - risk / retrospective / knowledge:
+ *       read on visibility='public' は認証済全員可、それ以外は project member
+ *   - memo: 作成者本人のみ (admin 特権なし)
+ *
+ * 既存の /api/attachments/route.ts に inline されていた authorize() を再利用可能に抽出。
+ * 戻り値は { ok, status, code } の素朴な構造体 (NextResponse は呼出側で組み立て)。
+ */
+export async function authorizeForAttachmentEntity(args: {
+  user: { id: string; systemRole: string; tenantId: string };
+  entityType: AttachmentEntityType;
+  entityId: string;
+  mode: 'read' | 'write';
+}): Promise<
+  | { ok: true }
+  | { ok: false; status: 403 | 404; code: 'FORBIDDEN' | 'NOT_FOUND' }
+> {
+  const { user, entityType, entityId, mode } = args;
+
+  if (entityType === 'memo') {
+    const r = await authorizeMemoAttachment(entityId, user.id, mode, user.tenantId);
+    if (r.notFound) return { ok: false, status: 404, code: 'NOT_FOUND' };
+    if (!r.ok) return { ok: false, status: 403, code: 'FORBIDDEN' };
+    return { ok: true };
+  }
+
+  if (isAdminOrAbove(user)) return { ok: true };
+
+  if (mode === 'read') {
+    const visInfo = await getEntityVisibility(entityType, entityId, user.tenantId);
+    if (visInfo === 'not-found') return { ok: false, status: 404, code: 'NOT_FOUND' };
+    if (visInfo !== null) {
+      if (visInfo.visibility === 'public') return { ok: true };
+      if (visInfo.creatorId === user.id) return { ok: true };
+      return { ok: false, status: 403, code: 'FORBIDDEN' };
+    }
+  }
+
+  const projectIds = await resolveProjectIds(entityType, entityId, user.tenantId);
+  if (projectIds === null) return { ok: false, status: 404, code: 'NOT_FOUND' };
+  if (projectIds.length === 0) return { ok: false, status: 403, code: 'FORBIDDEN' };
+
+  for (const pid of projectIds) {
+    const membership = await checkMembership(pid, user.id, user.systemRole, user.tenantId);
+    if (membership.isMember) return { ok: true };
+  }
+  return { ok: false, status: 403, code: 'FORBIDDEN' };
 }
 
 /**

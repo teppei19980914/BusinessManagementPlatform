@@ -49,10 +49,15 @@ import {
   mapStorageGuardErrorToResponse,
   StorageLimitExceededError,
   StorageGuardCircuitOpenError,
+  precheckFileStorageLimit,
+  assertFileStorageLimitInTx,
+  mapFileStorageGuardErrorToResponse,
+  FileStorageLimitExceededError,
 } from './storage-guard.service';
 import { prisma } from '@/lib/db';
 import { calculateTenantStorageBytesDynamic } from '@/services/tenant-storage-tables.service';
 import { recordError } from '@/services/error-log.service';
+import { FILE_STORAGE_L3_HARD_CAP_BYTES, SI_MB_BYTES } from '@/config/file-storage-pricing';
 
 const TENANT_ID = '11111111-1111-1111-1111-111111111111';
 
@@ -404,5 +409,184 @@ describe('mapStorageGuardErrorToResponse', () => {
     expect(mapStorageGuardErrorToResponse(new Error('other'))).toBeNull();
     expect(mapStorageGuardErrorToResponse(null)).toBeNull();
     expect(mapStorageGuardErrorToResponse('string error')).toBeNull();
+  });
+});
+
+// ================================================================
+// ファイルストレージ guard (ADR-0021)
+// ================================================================
+
+describe('precheckFileStorageLimit (ADR-0021 50GB ハードキャップ)', () => {
+  it('使用量 + payload が 50GB 内 → ok=true', async () => {
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce({
+      storageFileBytesUsed: BigInt(10 * SI_GB_BYTES),
+    } as never);
+
+    const r = await precheckFileStorageLimit(TENANT_ID, 1 * SI_GB_BYTES);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.limitBytes).toBe(FILE_STORAGE_L3_HARD_CAP_BYTES);
+  });
+
+  it('使用量 + payload が 50GB 超過 → ok=false', async () => {
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce({
+      storageFileBytesUsed: BigInt(49 * SI_GB_BYTES),
+    } as never);
+
+    const r = await precheckFileStorageLimit(TENANT_ID, 2 * SI_GB_BYTES);
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.code).toBe('STORAGE_FILE_HARD_CAP_EXCEEDED');
+      expect(r.limitBytes).toBe(FILE_STORAGE_L3_HARD_CAP_BYTES);
+    }
+  });
+
+  it('テナント不在は defensive に通す', async () => {
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce(null as never);
+    const r = await precheckFileStorageLimit(TENANT_ID, 0);
+    expect(r.ok).toBe(true);
+  });
+});
+
+describe('assertFileStorageLimitInTx — 通常系', () => {
+  it('追加サイズ加算後 < 50GB → throw しない + cache / peak 更新', async () => {
+    tx.tenant.findFirst.mockResolvedValueOnce({
+      id: TENANT_ID,
+      storageFileBytesUsed: BigInt(0),
+      storageFileBytesPeakThisMonth: BigInt(0),
+      fileStorageWarningLevel: 'none',
+    });
+
+    await expect(
+      assertFileStorageLimitInTx(tx as never, TENANT_ID, 50 * SI_MB_BYTES),
+    ).resolves.not.toThrow();
+
+    expect(tx.tenant.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: TENANT_ID },
+        data: expect.objectContaining({
+          storageFileBytesUsed: BigInt(50 * SI_MB_BYTES),
+          storageFileBytesPeakThisMonth: BigInt(50 * SI_MB_BYTES),
+        }),
+      }),
+    );
+  });
+
+  it('加算後 > 50GB → FileStorageLimitExceededError', async () => {
+    tx.tenant.findFirst.mockResolvedValueOnce({
+      id: TENANT_ID,
+      storageFileBytesUsed: BigInt(49 * SI_GB_BYTES),
+      storageFileBytesPeakThisMonth: BigInt(49 * SI_GB_BYTES),
+      fileStorageWarningLevel: 'l2',
+    });
+
+    await expect(
+      assertFileStorageLimitInTx(tx as never, TENANT_ID, 2 * SI_GB_BYTES),
+    ).rejects.toBeInstanceOf(FileStorageLimitExceededError);
+  });
+
+  it('境界値: 加算後 = 50GB ちょうど → throw しない', async () => {
+    tx.tenant.findFirst.mockResolvedValueOnce({
+      id: TENANT_ID,
+      storageFileBytesUsed: BigInt(0),
+      storageFileBytesPeakThisMonth: BigInt(0),
+      fileStorageWarningLevel: 'none',
+    });
+
+    await expect(
+      assertFileStorageLimitInTx(tx as never, TENANT_ID, FILE_STORAGE_L3_HARD_CAP_BYTES),
+    ).resolves.not.toThrow();
+  });
+
+  it('peak は MAX で更新 (= 削除→write でも巻戻らない)', async () => {
+    // 既存 peak が 30GB、今回は削除 -5GB → 使用量 25GB だが peak は 30GB のまま
+    tx.tenant.findFirst.mockResolvedValueOnce({
+      id: TENANT_ID,
+      storageFileBytesUsed: BigInt(30 * SI_GB_BYTES),
+      storageFileBytesPeakThisMonth: BigInt(30 * SI_GB_BYTES),
+      fileStorageWarningLevel: 'l2',
+    });
+
+    await assertFileStorageLimitInTx(tx as never, TENANT_ID, -5 * SI_GB_BYTES);
+
+    const updateCall = tx.tenant.update.mock.calls[0]?.[0] as {
+      data: { storageFileBytesUsed: bigint; storageFileBytesPeakThisMonth?: bigint };
+    };
+    expect(updateCall.data.storageFileBytesUsed).toBe(BigInt(25 * SI_GB_BYTES));
+    expect(updateCall.data.storageFileBytesPeakThisMonth).toBeUndefined();
+  });
+
+  it('削除で使用量が負になる場合は 0 で clamp', async () => {
+    tx.tenant.findFirst.mockResolvedValueOnce({
+      id: TENANT_ID,
+      storageFileBytesUsed: BigInt(100),
+      storageFileBytesPeakThisMonth: BigInt(100),
+      fileStorageWarningLevel: 'none',
+    });
+
+    await assertFileStorageLimitInTx(tx as never, TENANT_ID, -200);
+
+    const updateCall = tx.tenant.update.mock.calls[0]?.[0] as {
+      data: { storageFileBytesUsed: bigint };
+    };
+    expect(updateCall.data.storageFileBytesUsed).toBe(BigInt(0));
+  });
+
+  it('warning Level 昇格時のみ通知 (none → l2)', async () => {
+    tx.tenant.findFirst.mockResolvedValueOnce({
+      id: TENANT_ID,
+      storageFileBytesUsed: BigInt(0),
+      storageFileBytesPeakThisMonth: BigInt(0),
+      fileStorageWarningLevel: 'none',
+    });
+
+    await assertFileStorageLimitInTx(tx as never, TENANT_ID, 10 * SI_GB_BYTES);
+
+    expect(recordError).toHaveBeenCalledWith(
+      expect.objectContaining({
+        context: expect.objectContaining({ kind: 'file_storage_warning', newLevel: 'l2' }),
+      }),
+    );
+  });
+
+  it('Level 横ばい時は通知しない (= spam 防止)', async () => {
+    tx.tenant.findFirst.mockResolvedValueOnce({
+      id: TENANT_ID,
+      storageFileBytesUsed: BigInt(3 * SI_GB_BYTES),
+      storageFileBytesPeakThisMonth: BigInt(3 * SI_GB_BYTES),
+      fileStorageWarningLevel: 'l1',
+    });
+
+    await assertFileStorageLimitInTx(tx as never, TENANT_ID, 1 * SI_GB_BYTES);
+
+    const fileStorageWarnCalls = vi
+      .mocked(recordError)
+      .mock.calls.filter(
+        (c) => (c[0] as { context?: { kind?: string } })?.context?.kind === 'file_storage_warning',
+      );
+    expect(fileStorageWarnCalls.length).toBe(0);
+  });
+});
+
+describe('mapFileStorageGuardErrorToResponse', () => {
+  it('FileStorageLimitExceededError → 403 + STORAGE_FILE_HARD_CAP_EXCEEDED', () => {
+    const err = new FileStorageLimitExceededError({
+      tenantId: TENANT_ID,
+      currentBytes: 51 * SI_GB_BYTES,
+      limitBytes: FILE_STORAGE_L3_HARD_CAP_BYTES,
+    });
+
+    const res = mapFileStorageGuardErrorToResponse(err);
+    expect(res).not.toBeNull();
+    if (res) {
+      expect(res.status).toBe(403);
+      expect(res.body.error.code).toBe('STORAGE_FILE_HARD_CAP_EXCEEDED');
+      expect(res.body.error.message).toContain('50GB');
+      expect(res.body.error.message).toContain('ダウンロードは引き続き可能');
+    }
+  });
+
+  it('他の Error は null を返す', () => {
+    expect(mapFileStorageGuardErrorToResponse(new Error('other'))).toBeNull();
+    expect(mapFileStorageGuardErrorToResponse(null)).toBeNull();
   });
 });

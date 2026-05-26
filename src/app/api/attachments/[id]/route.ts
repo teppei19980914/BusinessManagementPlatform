@@ -16,6 +16,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getTranslations } from 'next-intl/server';
 import { getAuthenticatedUser } from '@/lib/api-helpers';
+import { applySubjectRateLimit } from '@/lib/rate-limit';
 import { checkMembership, isAdminOrAbove } from '@/lib/permissions';
 import { updateAttachmentSchema } from '@/lib/validators/attachment';
 import type { AttachmentEntityType } from '@/lib/validators/attachment';
@@ -27,6 +28,7 @@ import {
   updateAttachment,
 } from '@/services/attachment.service';
 import { recordAuditLog } from '@/services/audit.service';
+import { DELETE_API_RATE_LIMIT_PER_MIN } from '@/config/file-storage-pricing';
 
 /**
  * 対象添付の親エンティティをたどり、リクエストユーザが権限を持つかを確認する。
@@ -135,6 +137,14 @@ export async function DELETE(
 ) {
   const user = await getAuthenticatedUser();
   if (user instanceof NextResponse) return user;
+
+  // ADR-0021 §10.2.1: per-tenant delete API rate limit (100/min)
+  const limited = applySubjectRateLimit({
+    key: 'attachment-delete',
+    subjectId: user.tenantId,
+    max: DELETE_API_RATE_LIMIT_PER_MIN,
+  });
+  if (limited) return limited;
 
   const { id } = await params;
   const t = await getTranslations('message');

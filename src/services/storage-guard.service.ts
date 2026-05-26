@@ -50,6 +50,11 @@ import {
   classifyDbCapacityLevel,
   type DbCapacityWarningLevel,
 } from '@/config/db-capacity-pricing';
+import {
+  FILE_STORAGE_L3_HARD_CAP_BYTES,
+  classifyFileStorageLevel,
+  type FileStorageWarningLevel,
+} from '@/config/file-storage-pricing';
 import { calculateTenantStorageBytesDynamic } from '@/services/tenant-storage-tables.service';
 import { recordError } from '@/services/error-log.service';
 
@@ -409,6 +414,208 @@ export function mapStorageGuardErrorToResponse(error: unknown):
           code: 'STORAGE_GUARD_CIRCUIT_OPEN',
           message:
             '一時的にデータの書き込みができません。管理者に通知済みです。しばらくしてから再度お試しください。',
+        },
+      },
+    };
+  }
+  return null;
+}
+
+// ================================================================
+// ファイルストレージ Pre-check / Post-check (ADR-0021 §10.7)
+// ================================================================
+
+/**
+ * ファイルストレージ 50GB ハードキャップ超過例外 (ADR-0021 §10.7)。
+ * DB 容量とは独立した SKU のため別エラー型として定義。
+ */
+export class FileStorageLimitExceededError extends Error {
+  readonly code = 'STORAGE_FILE_HARD_CAP_EXCEEDED';
+  readonly currentBytes: number;
+  readonly limitBytes: number;
+
+  constructor(args: { tenantId: string; currentBytes: number; limitBytes: number }) {
+    super(
+      `Tenant ${args.tenantId} file storage usage ${args.currentBytes} bytes exceeds hard cap ${args.limitBytes} bytes`,
+    );
+    this.name = 'FileStorageLimitExceededError';
+    this.currentBytes = args.currentBytes;
+    this.limitBytes = args.limitBytes;
+  }
+}
+
+/**
+ * Pre-check — Pre-signed URL 発行前にハードキャップ判定。
+ *
+ * - cache (storageFileBytesUsed) + 申告サイズで判定
+ * - 真値は finalize 時の Post-check で再担保
+ * - DB 容量と異なり「動的計測コスト」が高い (Supabase API 呼出) ため、
+ *   キャッシュ + post-check で十分とする (= drift は daily cron で補正)
+ *
+ * @param tenantId 対象テナント
+ * @param estimatedNewBytes アップロード予定サイズ
+ */
+export async function precheckFileStorageLimit(
+  tenantId: string,
+  estimatedNewBytes: number,
+): Promise<
+  | { ok: true; cachedUsedBytes: number; limitBytes: number }
+  | {
+      ok: false;
+      code: 'STORAGE_FILE_HARD_CAP_EXCEEDED';
+      cachedUsedBytes: number;
+      limitBytes: number;
+    }
+> {
+  const tenant = await prisma.tenant.findFirst({
+    where: { id: tenantId, deletedAt: null },
+    select: { storageFileBytesUsed: true },
+  });
+  if (!tenant) {
+    return { ok: true, cachedUsedBytes: 0, limitBytes: FILE_STORAGE_L3_HARD_CAP_BYTES };
+  }
+
+  const cachedUsedBytes = Number(tenant.storageFileBytesUsed);
+  if (cachedUsedBytes + estimatedNewBytes > FILE_STORAGE_L3_HARD_CAP_BYTES) {
+    return {
+      ok: false,
+      code: 'STORAGE_FILE_HARD_CAP_EXCEEDED',
+      cachedUsedBytes,
+      limitBytes: FILE_STORAGE_L3_HARD_CAP_BYTES,
+    };
+  }
+  return { ok: true, cachedUsedBytes, limitBytes: FILE_STORAGE_L3_HARD_CAP_BYTES };
+}
+
+/**
+ * Post-check — transaction 内でファイルストレージ集計を atomic 更新。
+ *
+ *   1. SELECT FOR UPDATE で tenant 行ロック
+ *   2. storageFileBytesUsed += addedBytes (delete の場合は負値で減算)
+ *   3. storageFileBytesPeakThisMonth = MAX(現値, 新使用量)
+ *   4. fileStorageWarningLevel を classify 結果で更新 (= 通知 spam 防止)
+ *   5. ハードキャップ超過なら FileStorageLimitExceededError throw
+ *
+ * 呼出側パターン (POST /api/attachments/finalize):
+ *   ```ts
+ *   await prisma.$transaction(async (tx) => {
+ *     await tx.attachment.create({ data: { sizeBytes, ... } });
+ *     await assertFileStorageLimitInTx(tx, tenantId, sizeBytes);
+ *   });
+ *   ```
+ *
+ * @param tx Prisma transaction client
+ * @param tenantId 対象テナント
+ * @param addedBytes 増減バイト数 (アップロード時 +n、削除時 -n)
+ *
+ * @throws FileStorageLimitExceededError ハードキャップ超過時
+ */
+export async function assertFileStorageLimitInTx(
+  tx: TxClient,
+  tenantId: string,
+  addedBytes: number,
+): Promise<void> {
+  await (tx as unknown as { $queryRaw: typeof prisma.$queryRaw }).$queryRaw`
+    SELECT id FROM tenants WHERE id = ${tenantId}::uuid FOR UPDATE
+  `;
+
+  const tenant = await tx.tenant.findFirst({
+    where: { id: tenantId, deletedAt: null },
+    select: {
+      id: true,
+      storageFileBytesUsed: true,
+      storageFileBytesPeakThisMonth: true,
+      fileStorageWarningLevel: true,
+    },
+  });
+  if (!tenant) {
+    throw new Error(`Tenant not found: ${tenantId}`);
+  }
+
+  const currentUsed = tenant.storageFileBytesUsed;
+  const added = BigInt(addedBytes);
+  const newUsed = currentUsed + added;
+  const safeNewUsed = newUsed < BigInt(0) ? BigInt(0) : newUsed;
+  const currentPeak = tenant.storageFileBytesPeakThisMonth;
+  const newPeak = safeNewUsed > currentPeak ? safeNewUsed : currentPeak;
+  const peakChanged = safeNewUsed > currentPeak;
+  const newLevel: FileStorageWarningLevel = classifyFileStorageLevel(newPeak);
+  const levelChanged = newLevel !== tenant.fileStorageWarningLevel;
+
+  await tx.tenant.update({
+    where: { id: tenantId },
+    data: {
+      storageFileBytesUsed: safeNewUsed,
+      storageFileBytesUsedAt: new Date(),
+      ...(peakChanged
+        ? { storageFileBytesPeakThisMonth: safeNewUsed, storageFileBytesPeakAt: new Date() }
+        : {}),
+      ...(levelChanged ? { fileStorageWarningLevel: newLevel } : {}),
+    },
+  });
+
+  if (
+    levelChanged &&
+    newLevel !== 'none' &&
+    shouldNotifyFileStorageAdmin(newLevel, tenant.fileStorageWarningLevel as FileStorageWarningLevel)
+  ) {
+    await recordError({
+      severity: newLevel === 'l3' ? 'error' : newLevel === 'l2' ? 'warn' : 'info',
+      source: 'server',
+      message: `[file-storage] Tenant ${tenantId} reached Level ${newLevel.toUpperCase()} (peak=${Number(newPeak)} bytes)`,
+      context: {
+        kind: 'file_storage_warning',
+        tenantId,
+        peakBytes: Number(newPeak),
+        previousLevel: tenant.fileStorageWarningLevel,
+        newLevel,
+      },
+    });
+  }
+
+  if (safeNewUsed > BigInt(FILE_STORAGE_L3_HARD_CAP_BYTES)) {
+    throw new FileStorageLimitExceededError({
+      tenantId,
+      currentBytes: Number(safeNewUsed),
+      limitBytes: FILE_STORAGE_L3_HARD_CAP_BYTES,
+    });
+  }
+}
+
+function shouldNotifyFileStorageAdmin(
+  newLevel: FileStorageWarningLevel,
+  oldLevel: FileStorageWarningLevel,
+): boolean {
+  const order: Record<FileStorageWarningLevel, number> = { none: 0, l1: 1, l2: 2, l3: 3 };
+  return order[newLevel] > order[oldLevel];
+}
+
+/**
+ * ファイルストレージエラーの API レスポンスマッピング。
+ */
+export function mapFileStorageGuardErrorToResponse(error: unknown):
+  | {
+      status: 403;
+      body: {
+        error: {
+          code: 'STORAGE_FILE_HARD_CAP_EXCEEDED';
+          message: string;
+          currentBytes: number;
+          limitBytes: number;
+        };
+      };
+    }
+  | null {
+  if (error instanceof FileStorageLimitExceededError) {
+    return {
+      status: 403,
+      body: {
+        error: {
+          code: 'STORAGE_FILE_HARD_CAP_EXCEEDED',
+          message:
+            'ファイル添付の容量が上限 50GB に達しました。不要なファイルを削除してから再度お試しください。既存ファイルのダウンロードは引き続き可能です。',
+          currentBytes: error.currentBytes,
+          limitBytes: error.limitBytes,
         },
       },
     };

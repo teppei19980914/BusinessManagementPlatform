@@ -1118,6 +1118,9 @@ export async function deleteTenant(
       storageBytesUsed: true,
       // ADR-0020 (2026-05-25): 退会時 DB 容量超過の即時請求用
       storageBytesPeakThisMonth: true,
+      // ADR-0021 (2026-05-26): 退会時ファイルストレージ超過の即時請求用
+      storageFileBytesUsed: true,
+      storageFileBytesPeakThisMonth: true,
     },
   });
   if (!tenant) {
@@ -1146,9 +1149,12 @@ export async function deleteTenant(
       timezone: tenant.timezone,
       storageBytesUsed: tenant.storageBytesUsed,
       storageBytesPeakThisMonth: tenant.storageBytesPeakThisMonth,
+      // ADR-0021 (2026-05-26): ファイルストレージも同時請求
+      storageFileBytesUsed: tenant.storageFileBytesUsed,
+      storageFileBytesPeakThisMonth: tenant.storageFileBytesPeakThisMonth,
       now,
     });
-  } catch (e) {
+  } catch {
     // billTenantWithdrawal 内部で既に recordError 済。ここでは退会処理を継続する。
     // 後で super_admin が backfillDeletedTenantDbCapacity で手動補填可能。
   }

@@ -27,6 +27,8 @@ const KIND_META: Record<ChatSearchKind, { icon: string; label: string }> = {
   issue: { icon: '⚠️', label: '課題' },
   retrospective: { icon: '📋', label: '振り返り' },
   memo: { icon: '📝', label: 'メモ' },
+  // ADR-0021 (2026-05-26): 添付ファイル本体検索結果
+  attachment: { icon: '📎', label: '添付ファイル' },
 };
 
 export function ChatSearchResultCard({

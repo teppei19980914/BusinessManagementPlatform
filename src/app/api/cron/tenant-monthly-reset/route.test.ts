@@ -49,6 +49,9 @@ describe('POST /api/cron/tenant-monthly-reset', () => {
       // ADR-0020 (2026-05-25): DB 容量超過の月初請求集計結果
       dbCapacityBilledTenantCount: 0,
       dbCapacityBilledTotalJpy: 0,
+      // ADR-0021 (2026-05-26): ファイルストレージ超過の月初請求集計結果
+      fileStorageBilledTenantCount: 0,
+      fileStorageBilledTotalJpy: 0,
     });
 
     const res = await POST(makeReq('Bearer test-cron-secret-xyz-32chars-or-more-xxxxxxxxxxxx'));
@@ -70,6 +73,9 @@ describe('POST /api/cron/tenant-monthly-reset', () => {
       // ADR-0020 (2026-05-25)
       dbCapacityBilledTenantCount: 0,
       dbCapacityBilledTotalJpy: 0,
+      // ADR-0021 (2026-05-26)
+      fileStorageBilledTenantCount: 0,
+      fileStorageBilledTotalJpy: 0,
     });
     expect(runTenantMonthlyReset).toHaveBeenCalledTimes(1);
   });

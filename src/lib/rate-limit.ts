@@ -132,3 +132,70 @@ export function applyRateLimit(
 export function _resetRateLimitBucketsForTest(): void {
   buckets.clear();
 }
+
+// ============================================================
+// per-subject (tenantId / userId 等) レート制限 (ADR-0021 / 2026-05-26)
+// ============================================================
+
+interface SubjectRateLimitOptions {
+  /** バケット名 (action 識別) */
+  key: string;
+  /** subject ID (tenantId / userId 等) */
+  subjectId: string;
+  /** window サイズ (ms)。既定 1 分。 */
+  windowMs?: number;
+  /** window 内の最大件数。既定 10。 */
+  max?: number;
+}
+
+/**
+ * subject (tenantId / userId 等) ベースのレート制限を適用する。IP ベースとは独立。
+ *
+ *   - per-tenant Pre-signed URL 発行: max=10/min (ADR-0021 §10.2.1)
+ *   - per-tenant delete API: max=100/min (ADR-0021 §10.2.1)
+ *
+ * 戻り値: 超過時は 429 NextResponse、OK なら null。
+ *
+ * 注意:
+ *   in-memory 実装 (= rate-limit.ts と同じ instance-local バケット)。
+ *   Vercel/Netlify serverless では instance ごとに状態が分離されるが、
+ *   1 instance に集中する典型攻撃には有効 (= 多層防御の 1 層)。
+ */
+export function applySubjectRateLimit(opts: SubjectRateLimitOptions): NextResponse | null {
+  const windowMs = opts.windowMs ?? 60 * 1000;
+  const max = opts.max ?? DEFAULT_MAX;
+  const bucketKey = `${opts.key}:subject:${opts.subjectId}`;
+  const now = Date.now();
+
+  gcExpired(now);
+
+  const entry = buckets.get(bucketKey);
+  if (!entry || entry.resetAt <= now) {
+    buckets.set(bucketKey, { count: 1, resetAt: now + windowMs });
+    return null;
+  }
+
+  if (entry.count >= max) {
+    const retryAfterSec = Math.ceil((entry.resetAt - now) / 1000);
+    return NextResponse.json(
+      {
+        error: {
+          code: 'TOO_MANY_REQUESTS',
+          message: 'リクエスト回数が制限を超過しました。しばらく時間をおいて再度お試しください。',
+        },
+      },
+      {
+        status: 429,
+        headers: {
+          'Retry-After': String(retryAfterSec),
+          'X-RateLimit-Limit': String(max),
+          'X-RateLimit-Remaining': '0',
+          'X-RateLimit-Reset': String(Math.ceil(entry.resetAt / 1000)),
+        },
+      },
+    );
+  }
+
+  entry.count += 1;
+  return null;
+}

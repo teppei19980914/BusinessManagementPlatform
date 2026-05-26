@@ -41,12 +41,22 @@ import {
   classifyTier,
   type SuggestionTier,
 } from '@/config/suggestion';
+// ADR-0021 (2026-05-26): ファイル/添付キーワード検出で attachment scope に絞る
+import { detectFileScopeQuery } from '@/config/file-storage-pricing';
 
 // ================================================================
 // 公開型
 // ================================================================
 
-export type ChatSearchKind = 'project' | 'knowledge' | 'risk' | 'issue' | 'retrospective' | 'memo';
+export type ChatSearchKind =
+  | 'project'
+  | 'knowledge'
+  | 'risk'
+  | 'issue'
+  | 'retrospective'
+  | 'memo'
+  // ADR-0021 (2026-05-26): 添付ファイル本体 embedding を新規 scope として追加
+  | 'attachment';
 
 /** 結果カード 1 件の共通形状。 */
 export interface ChatSearchHit {
@@ -87,7 +97,14 @@ export interface ChatSearchResult {
     risksIssues: ChatSearchHit[];
     retrospectives: ChatSearchHit[];
     memos: ChatSearchHit[];
+    // ADR-0021 (2026-05-26): file scope query 検出時のみ非空、通常検索では常に空配列
+    attachments: ChatSearchHit[];
   };
+  /**
+   * ADR-0021 (2026-05-26): file scope query (= 「ファイル」「添付」「PDF」等) を検出したか。
+   * UI は本フラグで attachment 一覧 / 通常 5 資産の表示切替を行う。
+   */
+  fileScopeApplied: boolean;
   /** 全資産の合計件数 (UI で「N件の関連資産が見つかりました」表示用)。 */
   totalCount: number;
 }
@@ -109,7 +126,14 @@ export interface ChatSearchInput {
  * 検索対象テーブル名 (SQL injection 対策で TypeScript union 型として静的固定)。
  * embedding.service.ts と独立して定義 (visibility フィルタ等が違うため)。
  */
-type SearchTable = 'projects' | 'knowledges' | 'risks_issues' | 'retrospectives' | 'memos';
+type SearchTable =
+  | 'projects'
+  | 'knowledges'
+  | 'risks_issues'
+  | 'retrospectives'
+  | 'memos'
+  // ADR-0021 (2026-05-26): attachment content_embedding scope
+  | 'attachments';
 
 interface RawHit {
   id: string;
@@ -198,6 +222,22 @@ async function pgvectorSearch(
         ORDER BY "content_embedding" <=> ${queryEmbeddingText}::vector
         LIMIT ${limit}
       `;
+    case 'attachments':
+      // ADR-0021 (2026-05-26): file scope query 時のみ呼ばれる。
+      // storageProvider='supabase' かつ embeddingStatus='completed' を対象。
+      // 添付の親 entity 認可は表示時の Pre-signed URL 発行で別途検証する。
+      return prisma.$queryRaw<RawHit[]>`
+        SELECT id::text AS id,
+               1 - (("content_embedding" <=> ${queryEmbeddingText}::vector) / 2) AS score
+        FROM "attachments"
+        WHERE "content_embedding" IS NOT NULL
+          AND "tenant_id" = ANY(${tenantIds}::uuid[])
+          AND "deleted_at" IS NULL
+          AND "storage_provider" = 'supabase'
+          AND "embedding_status" = 'completed'
+        ORDER BY "content_embedding" <=> ${queryEmbeddingText}::vector
+        LIMIT ${limit}
+      `;
     default: {
       const _exhaustive: never = table;
       throw new Error(`Invalid table for chat search: ${String(_exhaustive)}`);
@@ -268,6 +308,19 @@ async function pgTrgmSearch(
         WHERE "tenant_id" = ANY(${tenantIds}::uuid[])
           AND "deleted_at" IS NULL
           AND ("visibility" = 'public' OR "user_id" = ${viewerUserId}::uuid)
+        ORDER BY score DESC
+        LIMIT ${limit}
+      `;
+    case 'attachments':
+      // ADR-0021 (2026-05-26): embedding が無い場合の fallback。
+      // 添付には本文 column が無いため display_name のみで類似度判定 (= 精度は低いが degraded mode)。
+      return prisma.$queryRaw<RawHit[]>`
+        SELECT id::text AS id,
+               similarity(${query}, "display_name")::float AS score
+        FROM "attachments"
+        WHERE "tenant_id" = ANY(${tenantIds}::uuid[])
+          AND "deleted_at" IS NULL
+          AND "storage_provider" = 'supabase'
         ORDER BY score DESC
         LIMIT ${limit}
       `;
@@ -441,6 +494,54 @@ async function loadMemos(
   });
 }
 
+/**
+ * Attachment hits を ChatSearchHit へ整形 (ADR-0021 §9.5)。
+ * defense-in-depth: tenantId + storageProvider='supabase' + deletedAt=null + embeddingStatus='completed'
+ * を findMany でも再度フィルタ (= pgvector で絞っていても安全のため明示)。
+ */
+async function loadAttachments(
+  hits: RawHit[],
+  tenantIds: string[],
+): Promise<ChatSearchHit[]> {
+  if (hits.length === 0) return [];
+  const ids = hits.map((h) => h.id);
+  const rows = await prisma.attachment.findMany({
+    where: {
+      id: { in: ids },
+      tenantId: { in: tenantIds },
+      deletedAt: null,
+      storageProvider: 'supabase',
+    },
+    select: {
+      id: true,
+      displayName: true,
+      entityType: true,
+      entityId: true,
+      mimeHint: true,
+      sizeBytes: true,
+      addedBy: true,
+    },
+  });
+  const byId = new Map(rows.map((r) => [r.id, r] as const));
+  return hits.flatMap((h) => {
+    const row = byId.get(h.id);
+    if (!row) return [];
+    const sizeKb = row.sizeBytes ? Math.ceil(Number(row.sizeBytes) / 1000) : null;
+    const snippet = `${row.entityType} 添付 ${row.mimeHint ?? ''}${sizeKb ? ` (${sizeKb}KB)` : ''}`.trim();
+    return [{
+      kind: 'attachment' as const,
+      id: row.id,
+      title: row.displayName,
+      snippet,
+      score: h.score,
+      tier: classifyTier(h.score),
+      sourceProjectId: null,
+      sourceProjectName: null,
+      authorUserId: row.addedBy,
+    }];
+  });
+}
+
 // ================================================================
 // 公開関数
 // ================================================================
@@ -458,6 +559,11 @@ export async function chatSemanticSearch(
   const limit = input.limit ?? SUGGESTION_DEFAULT_LIMIT;
   const tenantIds = buildTenantIdList(input.viewerTenantId, input.viewerSeedDataEnabled);
 
+  // ADR-0021 (2026-05-26): file scope query 検出 (= 「ファイル」「添付」「PDF」等)
+  //   true: 添付ファイルのみ検索、他資産は空
+  //   false: 既存 5 資産横断検索 (= 既存挙動)
+  const fileScopeApplied = detectFileScopeQuery(trimmed);
+
   if (trimmed.length === 0) {
     return {
       query: input.query,
@@ -468,8 +574,10 @@ export async function chatSemanticSearch(
         risksIssues: [],
         retrospectives: [],
         memos: [],
+        attachments: [],
       },
       totalCount: 0,
+      fileScopeApplied: false,
     };
   }
 
@@ -483,8 +591,37 @@ export async function chatSemanticSearch(
   });
 
   if (embeddingResult.ok) {
-    // 正常: pgvector で 5 資産並列検索
     const vectorText = `[${embeddingResult.embedding.join(',')}]`;
+
+    // file scope query: attachment のみ検索 (= ADR-0021 §9.5.2)
+    if (fileScopeApplied) {
+      const attHits = await pgvectorSearch(
+        'attachments',
+        vectorText,
+        tenantIds,
+        input.viewerUserId,
+        limit,
+      );
+      const attachments = await loadAttachments(attHits, tenantIds).then((arr) =>
+        assignPercentileTiers(applyMinimumGuarantee(arr, SUGGESTION_SCORE_THRESHOLD)),
+      );
+      return {
+        query: input.query,
+        degraded: false,
+        results: {
+          projects: [],
+          knowledges: [],
+          risksIssues: [],
+          retrospectives: [],
+          memos: [],
+          attachments,
+        },
+        totalCount: attachments.length,
+        fileScopeApplied: true,
+      };
+    }
+
+    // 通常検索: 5 資産並列 (attachment は含めない)
     const [projectHits, knowledgeHits, riskIssueHits, retroHits, memoHits] = await Promise.all([
       pgvectorSearch('projects', vectorText, tenantIds, input.viewerUserId, limit),
       pgvectorSearch('knowledges', vectorText, tenantIds, input.viewerUserId, limit),
@@ -504,12 +641,41 @@ export async function chatSemanticSearch(
     return {
       query: input.query,
       degraded: false,
-      results: { projects, knowledges, risksIssues, retrospectives, memos },
+      results: { projects, knowledges, risksIssues, retrospectives, memos, attachments: [] },
       totalCount: projects.length + knowledges.length + risksIssues.length + retrospectives.length + memos.length,
+      fileScopeApplied: false,
     };
   }
 
   // 縮退モード: pg_trgm fallback (テキスト類似度のみ)
+  if (fileScopeApplied) {
+    const attHits = await pgTrgmSearch(
+      'attachments',
+      trimmed,
+      tenantIds,
+      input.viewerUserId,
+      limit,
+    );
+    const attachments = await loadAttachments(attHits, tenantIds).then((arr) =>
+      assignPercentileTiers(applyMinimumGuarantee(arr, SUGGESTION_SCORE_THRESHOLD)),
+    );
+    return {
+      query: input.query,
+      degraded: true,
+      degradeReason: embeddingResult.reason,
+      results: {
+        projects: [],
+        knowledges: [],
+        risksIssues: [],
+        retrospectives: [],
+        memos: [],
+        attachments,
+      },
+      totalCount: attachments.length,
+      fileScopeApplied: true,
+    };
+  }
+
   const [projectHits, knowledgeHits, riskIssueHits, retroHits, memoHits] = await Promise.all([
     pgTrgmSearch('projects', trimmed, tenantIds, input.viewerUserId, limit),
     pgTrgmSearch('knowledges', trimmed, tenantIds, input.viewerUserId, limit),
@@ -530,7 +696,8 @@ export async function chatSemanticSearch(
     query: input.query,
     degraded: true,
     degradeReason: embeddingResult.reason,
-    results: { projects, knowledges, risksIssues, retrospectives, memos },
+    results: { projects, knowledges, risksIssues, retrospectives, memos, attachments: [] },
     totalCount: projects.length + knowledges.length + risksIssues.length + retrospectives.length + memos.length,
+    fileScopeApplied: false,
   };
 }

@@ -275,6 +275,24 @@ describe('runTenantMonthlyReset (バッチ全体)', () => {
       return fn;
     }) as never);
 
+    // 0-b. processTenantFileStorageOverage (ADR-0021): peak=0 のテナントを返す → ApiCallLog INSERT なし
+    vi.mocked(prisma.tenant.findMany).mockResolvedValueOnce([
+      {
+        id: 'tenant-a',
+        timezone: 'Asia/Tokyo',
+        lastResetAt: null,
+        storageFileBytesUsed: BigInt(0),
+        storageFileBytesPeakThisMonth: BigInt(0),
+      },
+      {
+        id: 'tenant-b',
+        timezone: 'Asia/Tokyo',
+        lastResetAt: null,
+        storageFileBytesUsed: BigInt(0),
+        storageFileBytesPeakThisMonth: BigInt(0),
+      },
+    ] as never);
+
     // 1. saveMonthlyUsageSnapshots: 対象 2 件
     vi.mocked(prisma.tenant.findMany).mockResolvedValueOnce([
       {
@@ -333,6 +351,9 @@ describe('runTenantMonthlyReset (バッチ全体)', () => {
       // ADR-0020 (2026-05-25): 全テナント無料枠内 → 課金 0
       dbCapacityBilledTenantCount: 0,
       dbCapacityBilledTotalJpy: 0,
+      // ADR-0021 (2026-05-26): 全テナント無料枠内 → 課金 0
+      fileStorageBilledTenantCount: 0,
+      fileStorageBilledTotalJpy: 0,
     });
   });
 });

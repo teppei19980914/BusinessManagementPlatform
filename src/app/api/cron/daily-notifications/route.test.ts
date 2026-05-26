@@ -17,6 +17,12 @@ vi.mock('@/services/tenant-storage.service', () => ({
   detectDbCapacityDrift: vi.fn(),
 }));
 
+// ADR-0021 (2026-05-26): ファイルストレージ集計 + drift
+vi.mock('@/services/file-storage-bucket-usage.service', () => ({
+  updateAllTenantFileStorageUsage: vi.fn(),
+  detectFileStorageDrift: vi.fn(),
+}));
+
 import { POST, GET } from './route';
 import {
   generateDailyNotifications,
@@ -27,6 +33,10 @@ import {
   updateAllStorageBytesUsed,
   detectDbCapacityDrift,
 } from '@/services/tenant-storage.service';
+import {
+  updateAllTenantFileStorageUsage,
+  detectFileStorageDrift,
+} from '@/services/file-storage-bucket-usage.service';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -37,6 +47,17 @@ beforeEach(() => {
   vi.mocked(detectDbCapacityDrift).mockResolvedValue({
     tenantPeakSumBytes: BigInt(0),
     dbInstanceSizeBytes: BigInt(0),
+    driftRatio: 0,
+    driftLevel: 'ok',
+  });
+  vi.mocked(updateAllTenantFileStorageUsage).mockResolvedValue({
+    updatedCount: 0,
+    anomalyCount: 0,
+    levelChangedCount: 0,
+  });
+  vi.mocked(detectFileStorageDrift).mockResolvedValue({
+    attachmentSumBytes: BigInt(0),
+    bucketSumBytes: BigInt(0),
     driftRatio: 0,
     driftLevel: 'ok',
   });
@@ -87,6 +108,13 @@ describe('POST /api/cron/daily-notifications', () => {
       cleaned: { deleted: 5 },
       expiredPreviewsDeleted: 2,
       storage: { bytesUpdated: 7, driftRatio: 0, driftLevel: 'ok' },
+      fileStorage: {
+        tenantsUpdated: 0,
+        anomalyCount: 0,
+        levelChangedCount: 0,
+        driftRatio: 0,
+        driftLevel: 'ok',
+      },
     });
     expect(generateDailyNotifications).toHaveBeenCalledOnce();
     expect(cleanupReadNotifications).toHaveBeenCalledOnce();

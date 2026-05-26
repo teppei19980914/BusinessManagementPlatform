@@ -1,22 +1,39 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-vi.mock('@/lib/db', () => ({
-  prisma: {
-    attachment: {
-      findMany: vi.fn(),
-      findFirst: vi.fn(),
-      create: vi.fn(),
-      update: vi.fn(),
-      updateMany: vi.fn(),
+vi.mock('@/lib/db', () => {
+  const txAttachment = { updateMany: vi.fn() };
+  const tx = { attachment: txAttachment };
+  return {
+    prisma: {
+      attachment: {
+        findMany: vi.fn(),
+        findFirst: vi.fn(),
+        create: vi.fn(),
+        update: vi.fn(),
+        updateMany: vi.fn(),
+      },
+      project: { findFirst: vi.fn() },
+      task: { findFirst: vi.fn() },
+      estimate: { findFirst: vi.fn() },
+      riskIssue: { findFirst: vi.fn() },
+      retrospective: { findFirst: vi.fn() },
+      knowledge: { findFirst: vi.fn() },
+      memo: { findFirst: vi.fn() },
+      $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn(tx)),
+      __tx: tx,
     },
-    project: { findFirst: vi.fn() },
-    task: { findFirst: vi.fn() },
-    estimate: { findFirst: vi.fn() },
-    riskIssue: { findFirst: vi.fn() },
-    retrospective: { findFirst: vi.fn() },
-    knowledge: { findFirst: vi.fn() },
-    memo: { findFirst: vi.fn() },
-  },
+  };
+});
+
+// ADR-0021: cascade delete で Supabase Storage を呼ぶ + storage-guard を atomic 減算
+vi.mock('@/lib/supabase-storage', () => ({
+  deleteObject: vi.fn(),
+}));
+vi.mock('@/services/storage-guard.service', () => ({
+  assertFileStorageLimitInTx: vi.fn(),
+}));
+vi.mock('@/services/error-log.service', () => ({
+  recordError: vi.fn(),
 }));
 
 import {
@@ -156,17 +173,72 @@ describe('updateAttachment / deleteAttachment', () => {
     expect(prisma.attachment.update).toHaveBeenCalled();
   });
 
-  it('deleteAttachment は論理削除 (updateMany で tenantId 検証)', async () => {
-    vi.mocked(prisma.attachment.updateMany).mockResolvedValue({ count: 1 } as never);
+  it('deleteAttachment (URL 型) は論理削除のみ (Storage 呼出なし)', async () => {
+    vi.mocked(prisma.attachment.findFirst).mockResolvedValueOnce({
+      id: 'att-1',
+      storageProvider: 'url',
+      storageObjectKey: null,
+      sizeBytes: null,
+    } as never);
+    const tx = (prisma as unknown as { __tx: { attachment: { updateMany: ReturnType<typeof vi.fn> } } })
+      .__tx;
+    tx.attachment.updateMany.mockResolvedValue({ count: 1 } as never);
 
     await deleteAttachment('att-1', 'tenant-A');
 
-    expect(prisma.attachment.updateMany).toHaveBeenCalledWith(
+    expect(tx.attachment.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: 'att-1', tenantId: 'tenant-A' },
+        where: { id: 'att-1', tenantId: 'tenant-A', deletedAt: null },
         data: { deletedAt: expect.any(Date) },
       }),
     );
+  });
+
+  it('deleteAttachment (Supabase 型) は Storage cascade + storage-guard 減算', async () => {
+    const { deleteObject } = await import('@/lib/supabase-storage');
+    const { assertFileStorageLimitInTx } = await import('@/services/storage-guard.service');
+    vi.mocked(prisma.attachment.findFirst).mockResolvedValueOnce({
+      id: 'att-1',
+      storageProvider: 'supabase',
+      storageObjectKey: 'tenants/T/project/E/uuid-spec.pdf',
+      sizeBytes: BigInt(1_000_000),
+    } as never);
+    vi.mocked(deleteObject).mockResolvedValueOnce(undefined);
+
+    await deleteAttachment('att-1', 'tenant-A');
+
+    expect(deleteObject).toHaveBeenCalledWith('tenants/T/project/E/uuid-spec.pdf');
+    expect(assertFileStorageLimitInTx).toHaveBeenCalledWith(
+      expect.anything(),
+      'tenant-A',
+      -1_000_000,
+    );
+  });
+
+  it('deleteAttachment (Supabase) Storage 削除失敗でも DB soft delete は実行', async () => {
+    const { deleteObject } = await import('@/lib/supabase-storage');
+    vi.mocked(prisma.attachment.findFirst).mockResolvedValueOnce({
+      id: 'att-1',
+      storageProvider: 'supabase',
+      storageObjectKey: 'tenants/T/project/E/uuid-x.pdf',
+      sizeBytes: BigInt(500_000),
+    } as never);
+    vi.mocked(deleteObject).mockRejectedValueOnce(new Error('storage 5xx'));
+
+    await deleteAttachment('att-1', 'tenant-A');
+
+    // DB の updateMany は呼ばれる (Storage 失敗を吸収して継続)
+    const tx = (prisma as unknown as { __tx: { attachment: { updateMany: ReturnType<typeof vi.fn> } } })
+      .__tx;
+    expect(tx.attachment.updateMany).toHaveBeenCalled();
+  });
+
+  it('deleteAttachment 越境試行 (他テナント) → no-op', async () => {
+    vi.mocked(prisma.attachment.findFirst).mockResolvedValueOnce(null);
+    await deleteAttachment('att-1', 'tenant-X');
+    const tx = (prisma as unknown as { __tx: { attachment: { updateMany: ReturnType<typeof vi.fn> } } })
+      .__tx;
+    expect(tx.attachment.updateMany).not.toHaveBeenCalled();
   });
 });
 

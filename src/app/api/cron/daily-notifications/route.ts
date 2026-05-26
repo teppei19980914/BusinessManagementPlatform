@@ -29,6 +29,11 @@ import {
   updateAllStorageBytesUsed,
   detectDbCapacityDrift,
 } from '@/services/tenant-storage.service';
+// ADR-0021 (2026-05-26): ファイルストレージの bucket 集計 + drift 検知 + anomaly
+import {
+  updateAllTenantFileStorageUsage,
+  detectFileStorageDrift,
+} from '@/services/file-storage-bucket-usage.service';
 // 2026-05-13 (security/auth-secret-hardening, B-6): タイミング攻撃耐性のある共通 cron 認可ヘルパに統一。
 // 2026-05-18 (PR feat/cron-execution-log): 実行履歴を super_admin から確認可能にするためロギング組込。
 import { isCronAuthorized } from '@/lib/cron-auth';
@@ -62,6 +67,23 @@ export async function POST(req: NextRequest) {
       };
     });
 
+    // ADR-0021 (2026-05-26): ファイルストレージの日次集計 + drift + anomaly
+    //   各テナントの bucket / Attachment SUM を再計算し peak / level / yesterday を更新。
+    //   anomaly (+5GB/day) は内部で super_admin recordError。
+    const fileStorageUpdate = await updateAllTenantFileStorageUsage().catch((e) => ({
+      updatedCount: 0,
+      anomalyCount: 0,
+      levelChangedCount: 0,
+      error: e instanceof Error ? e.message : String(e),
+    }));
+    const fileStorageDrift = await detectFileStorageDrift().catch((e) => ({
+      attachmentSumBytes: BigInt(0),
+      bucketSumBytes: BigInt(0),
+      driftRatio: 0,
+      driftLevel: 'ok' as const,
+      error: e instanceof Error ? e.message : String(e),
+    }));
+
     return {
       data: {
         source: 'cron',
@@ -72,6 +94,13 @@ export async function POST(req: NextRequest) {
           bytesUpdated: storageBytesUpdated,
           driftRatio: driftResult.driftRatio,
           driftLevel: driftResult.driftLevel,
+        },
+        fileStorage: {
+          tenantsUpdated: fileStorageUpdate.updatedCount,
+          anomalyCount: fileStorageUpdate.anomalyCount,
+          levelChangedCount: fileStorageUpdate.levelChangedCount,
+          driftRatio: fileStorageDrift.driftRatio,
+          driftLevel: fileStorageDrift.driftLevel,
         },
       },
     };
