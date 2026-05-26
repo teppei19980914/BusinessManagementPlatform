@@ -164,16 +164,13 @@ describe('当月分 CSV (= 現在値、yearMonth パラメータなし)', () => 
     expect(buf[2]).toBe(0xbf);
 
     const body = await res.text();
-    // CSV ヘッダ
+    // CSV ヘッダ (chore/storage-addon-backend-removal: Storage月額(円) 列は撤去)
     expect(body).toContain('テナント名');
-    expect(body).toContain('Storage月額(円)');
     expect(body).toContain('合計月額(円)');
 
-    // 値が正確に記録されている (請求書の根拠、2026-05-15 価格改定後の値)
+    // 値が正確に記録されている (請求書の根拠)
     expect(body).toContain('顧客A');
-    expect(body).toContain('1500'); // LLM (300 calls × ¥5)
-    expect(body).toContain('500'); // Storage
-    expect(body).toContain('2000'); // 合計 (LLM + Storage)
+    expect(body).toContain('1500'); // LLM (ApiCallLog SUM = 真値)
 
     // 請求先情報も含まれる
     expect(body).toContain('A社');
@@ -220,8 +217,8 @@ describe('当月分 CSV (= 現在値、yearMonth パラメータなし)', () => 
     // 両テナントが CSV に含まれる
     expect(body).toContain('A,beginner');
     expect(body).toContain('B,pro');
+    // chore/storage-addon-backend-removal (2026-05-26): 合計は ApiCallLog SUM のみ (Storage 月額固定費は廃止)
     expect(body).toContain('22500'); // tenant-b LLM cost (1500 calls × ¥15)
-    expect(body).toContain('24000'); // tenant-b 合計
   });
 
   it('カンマ・改行・ダブルクォートを含む名前は RFC 4180 でエスケープ', async () => {
@@ -318,8 +315,7 @@ describe('過去月 CSV (= 履歴値、yearMonth=YYYY-MM 指定)', () => {
     // 請求先列は含まれない
     expect(body).not.toContain('請求先メール');
     expect(body).not.toContain('会社名_法人名');
-    // ただし Storage の列はある
-    expect(body).toContain('Storage月額(円)');
+    // chore/storage-addon-backend-removal (2026-05-26): Storage月額(円) 列は撤去 (従量課金化)
     expect(body).toContain('合計月額(円)');
   });
 

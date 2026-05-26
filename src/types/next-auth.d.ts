@@ -53,12 +53,6 @@ declare module 'next-auth' {
       tenantCreatedAt: string; // ISO 8601 文字列 (Edge で Date を再構築しやすいよう)
       tenantBeginnerEverUpgraded: boolean;
       /**
-       * Storage add-on (Phase 2 / 2026-05-08): Storage Grace period 開始日時 ISO。
-       * middleware (Edge runtime) で `NOW() - parse() >= 7 日` 判定で write 系 API を弾く。
-       * Grace 未開始は null。
-       */
-      tenantStorageGracePeriodStartedAt: string | null;
-      /**
        * 2026-05-14 (PR #372): super_admin による read-only 強制移行フラグ ISO 文字列。
        * null = 通常運用、文字列 = read-only モード (= middleware が write 系 HTTP method を 403 遮断)。
        * suspend 時に対象テナントの全ユーザ tokenVersion が increment されるため、既存セッションは
@@ -80,8 +74,6 @@ declare module 'next-auth/jwt' {
     tenantPlan?: string;
     tenantCreatedAt?: string;
     tenantBeginnerEverUpgraded?: boolean;
-    /** Storage add-on (Phase 2 / 2026-05-08): Grace period 開始日時 ISO (未開始は null) */
-    tenantStorageGracePeriodStartedAt?: string | null;
     /** 2026-05-14 (PR #372): read-only 強制移行フラグ ISO (通常運用は null) */
     tenantSuspendedAt?: string | null;
     /** 2026-05-13 (security/jwt-invalidation, L-1): JWT 失効カウンタ */

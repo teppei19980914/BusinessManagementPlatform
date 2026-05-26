@@ -39,8 +39,6 @@ describe('POST /api/cron/tenant-monthly-reset', () => {
       planAppliedCount: 1,
       invalidPlanSkippedCount: 0,
       snapshotSavedCount: 3,
-      storageAddonAppliedCount: 0,
-      storageAddonSkippedCount: 0,
       purgedTenantCount: 0,
       purgedRowCount: 0,
       // 2026-05-14: 縮退モード確定仕様 (embedding backfill)
@@ -64,8 +62,6 @@ describe('POST /api/cron/tenant-monthly-reset', () => {
       planAppliedCount: 1,
       invalidPlanSkippedCount: 0,
       snapshotSavedCount: 3,
-      storageAddonAppliedCount: 0,
-      storageAddonSkippedCount: 0,
       purgedTenantCount: 0,
       purgedRowCount: 0,
       embeddingBackfillTenantCount: 0,

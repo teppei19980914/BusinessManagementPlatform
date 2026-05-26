@@ -138,12 +138,13 @@ export default async function SuperAdminTopPage() {
           value={summary.totalCurrentMonthApiCalls.toLocaleString()}
           tooltip="顧客テナント全体の当月 LLM/Embedding 呼出回数。月初 (UTC) にリセット (Default テナント除く)"
         />
-        {/* 2026-05-11: 合算課金 (LLM + Storage add-on) を表示し、内訳を補助行で併記 */}
+        {/* chore/storage-addon-backend-removal (2026-05-26): 旧 Storage add-on 月額を撤去。
+            ApiCallLog 集計のみで合算 (DB / file storage 超過の従量課金も含まれる) */}
         <SummaryCard
-          label="今月の合計課金 (LLM + Storage)"
-          value={`¥${summary.totalCurrentMonthCombinedJpy.toLocaleString()}`}
-          subValue={`内訳: LLM ¥${summary.totalCurrentMonthApiCostJpy.toLocaleString()} + Storage ¥${summary.totalCurrentMonthStorageJpy.toLocaleString()}`}
-          tooltip="顧客テナント全体の当月内部請求額。LLM 部分 (プラン別従量課金) + Storage add-on (固定月額) の合算。Default テナント (運営者自身) は請求対象外のため含まれません"
+          label="今月の合計課金"
+          value={`¥${summary.totalCurrentMonthApiCostJpy.toLocaleString()}`}
+          subValue="ApiCallLog 集計 (DB / ファイルストレージ超過の従量課金を含む)"
+          tooltip="顧客テナント全体の当月内部請求額。ApiCallLog の課金対象 featureUnit 合計。Default テナント (運営者自身) は請求対象外のため含まれません"
         />
       </section>
 
@@ -323,12 +324,12 @@ function DefaultTenantSection({
           subValue="(請求対象外、ApiCallLog 集計値)"
           tooltip="ApiCallLog 集計値。Default テナントは請求対象外のため実際の請求は発生しません (PR-V8.1)"
         />
-        {/* fix/list-export-import-bugs (2026-05-26): Storage プラン表示削除 (ADR-0020/0021 で従量課金化済) */}
+        {/* chore/storage-addon-backend-removal (2026-05-26): ADR-0020 50GB ハードキャップを上限として表示 */}
         <SummaryCard
           label="Storage 使用量"
-          value={`${formatBytes(defaultTenant.storageBytesUsed)} / ${formatBytes(defaultTenant.storageLimitBytes)}`}
-          subValue={`${usagePercent}%`}
-          tooltip="添付ファイル等の合算サイズ / 上限"
+          value={formatBytes(defaultTenant.storageBytesUsed)}
+          subValue={`${usagePercent}% (50GB ハードキャップ)`}
+          tooltip="添付ファイル等の合算サイズ。ADR-0020 で 50GB ハードキャップ、超過は従量課金"
         />
       </div>
     </section>
@@ -780,8 +781,9 @@ function StorageUsageTopCard({ rows }: { rows: StorageUsageTopRow[] }) {
               </div>
               <div className="flex items-center gap-2">
                 <div className="text-right">
+                  {/* chore/storage-addon-backend-removal (2026-05-26): 50GB ハードキャップを上限として表示 */}
                   <p className="text-xs">
-                    {formatBytes(r.storageBytesUsed)} / {formatBytes(r.storageLimitBytes)}
+                    {formatBytes(r.storageBytesUsed)} (50GB ハードキャップ比)
                   </p>
                   <p
                     className={`text-xs font-semibold ${
@@ -789,8 +791,6 @@ function StorageUsageTopCard({ rows }: { rows: StorageUsageTopRow[] }) {
                     }`}
                   >
                     {usagePct}%
-                    {r.graceState === "grace_active" && " ⚠"}
-                    {r.graceState === "write_blocked" && " 🚨"}
                   </p>
                 </div>
                 {/* 2026-05-14: 個別テナント再集計 */}

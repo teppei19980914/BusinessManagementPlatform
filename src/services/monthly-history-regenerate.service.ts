@@ -32,10 +32,11 @@ import { getTenantMonthStart, getTenantNextMonthStart } from '@/lib/tenant-time'
 import { DEFAULT_TIMEZONE } from '@/config/i18n';
 // ADR-0019 (2026-05-24): 月次履歴再生成も課金対象 featureUnit のみで集計。
 import { BILLABLE_FEATURE_UNITS } from '@/config/billing-feature-units';
-import {
-  ADDON_MONTHLY_JPY as STORAGE_ADDON_MONTHLY_JPY,
-  isStorageAddonPlan,
-} from '@/config/storage-addon';
+
+// chore/storage-addon-backend-removal (2026-05-26):
+//   ADR-0020 (DB 容量従量課金) + ADR-0021 (添付ファイル従量課金) で完全従量課金化済のため、
+//   旧 storage_addon 4 段階プラン (Standard/Plus/Pro/Enterprise) は撤去。
+//   storageAddonPlan / storageAddonJpy のスナップショット保存は中止。
 
 // ================================================================
 // 公開型
@@ -86,7 +87,6 @@ export async function regenerateMonthlyHistoryFromApiCallLog(
       id: true,
       plan: true,
       timezone: true,
-      storageAddonPlan: true,
       storageBytesUsed: true,
     },
   });
@@ -123,11 +123,9 @@ export async function regenerateMonthlyHistoryFromApiCallLog(
   const reconciledCallCount = aggregate._count._all;
   const reconciledCostJpy = aggregate._sum.costJpy ?? 0;
 
-  // storage_addon_jpy / storage_bytes_used は ApiCallLog から計算不能のため、現在値を使う
-  const rawAddonPlan = tenant.storageAddonPlan ?? 'standard';
-  const storageAddonPlan = isStorageAddonPlan(rawAddonPlan) ? rawAddonPlan : 'standard';
-  const storageAddonJpy = STORAGE_ADDON_MONTHLY_JPY[storageAddonPlan];
-  const totalJpy = reconciledCostJpy + storageAddonJpy;
+  // chore/storage-addon-backend-removal (2026-05-26): 旧 storage_addon 4 段階プランは廃止のため
+  //   月額固定費の加算は無し。totalJpy = API 利用料 (storage 従量課金は別 cron で計算)。
+  const totalJpy = reconciledCostJpy;
 
   // upsert + audit を 1 transaction で
   await prisma.$transaction([
@@ -141,8 +139,6 @@ export async function regenerateMonthlyHistoryFromApiCallLog(
         plan: tenant.plan,
         activeUserCount,
         storageBytesUsed: tenant.storageBytesUsed,
-        storageAddonPlan,
-        storageAddonJpy,
         totalJpy,
       },
       update: {
@@ -151,8 +147,6 @@ export async function regenerateMonthlyHistoryFromApiCallLog(
         plan: tenant.plan,
         activeUserCount,
         storageBytesUsed: tenant.storageBytesUsed,
-        storageAddonPlan,
-        storageAddonJpy,
         totalJpy,
       },
     }),

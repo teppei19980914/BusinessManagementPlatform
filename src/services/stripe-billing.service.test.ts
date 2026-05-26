@@ -71,15 +71,7 @@ vi.mock('@/lib/stripe', () => ({
   getStripePriceConfig: () => ({
     haiku: 'price_haiku_test',
     sonnet: 'price_sonnet_test',
-    storagePlus: 'price_storage_plus_test',
-    storagePro: 'price_storage_pro_test',
   }),
-  getStoragePriceId: (plan: string) => {
-    if (plan === 'standard') return null;
-    if (plan === 'plus') return 'price_storage_plus_test';
-    if (plan === 'pro_storage') return 'price_storage_pro_test';
-    return null;
-  },
   // PR-V8 (2026-05-19): Meter API event name 定数
   STRIPE_METER_EVENT_NAMES: {
     haiku: 'tasukiba_haiku_api_call',
@@ -97,8 +89,6 @@ import {
   reportUsage,
   // PR-V7 #1 (2026-05-19)
   cancelTenantStripeSubscription,
-  // PR-V7 #2 (2026-05-19)
-  syncStorageAddonToStripe,
 } from './stripe-billing.service';
 
 const TENANT_ID = '00000000-0000-0000-0000-000000000abc';
@@ -419,9 +409,9 @@ describe('createSubscriptionForTenant', () => {
       status: 'active',
     });
 
+    // chore/storage-addon-backend-removal (2026-05-26): storageAddonPlan 引数撤去
     await createSubscriptionForTenant({
       tenantId: TENANT_ID,
-      storageAddonPlan: 'plus',
       billingCycleAnchor: 1717200000,
       paymentMethodId: 'pm_xxx',
     });
@@ -431,7 +421,6 @@ describe('createSubscriptionForTenant', () => {
     expect(params.items).toEqual([
       { price: 'price_haiku_test' },
       { price: 'price_sonnet_test' },
-      { price: 'price_storage_plus_test' },
     ]);
     expect(params.default_payment_method).toBe('pm_xxx');
     expect(params.automatic_tax).toEqual({ enabled: true });
@@ -446,28 +435,6 @@ describe('createSubscriptionForTenant', () => {
     expect(opts.idempotencyKey).toBe(`subscription:create:${TENANT_ID}:pm_xxx`);
   });
 
-  it('storage=standard なら storage Item は含めない (= ¥0、Subscription 不要)', async () => {
-    vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce({
-      stripeCustomerId: 'cus_xxx',
-    } as never);
-    mockStripeClient.subscriptions.create.mockResolvedValueOnce({ id: 'sub_xxx' });
-
-    await createSubscriptionForTenant({
-      tenantId: TENANT_ID,
-      storageAddonPlan: 'standard',
-      billingCycleAnchor: null,
-      paymentMethodId: 'pm_xxx',
-    });
-
-    const params = mockStripeClient.subscriptions.create.mock.calls[0]![0]!;
-    expect(params.items).toEqual([
-      { price: 'price_haiku_test' },
-      { price: 'price_sonnet_test' },
-    ]);
-    // billing_cycle_anchor null なら指定しない
-    expect(params.billing_cycle_anchor).toBeUndefined();
-  });
-
   it('Customer 未登録なら invalid_request', async () => {
     vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce({
       stripeCustomerId: null,
@@ -475,7 +442,6 @@ describe('createSubscriptionForTenant', () => {
 
     const result = await createSubscriptionForTenant({
       tenantId: TENANT_ID,
-      storageAddonPlan: 'standard',
       billingCycleAnchor: null,
       paymentMethodId: 'pm_xxx',
     });
@@ -671,134 +637,3 @@ describe('cancelTenantStripeSubscription', () => {
   });
 });
 
-// ============================================================
-// §8. syncStorageAddonToStripe (PR-V7 #2 / 2026-05-19)
-// ============================================================
-
-describe('syncStorageAddonToStripe', () => {
-  it('paymentMethod=invoice (= 元から非 credit_card) → no-op', async () => {
-    vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce({
-      paymentMethod: 'invoice',
-      stripeSubscriptionId: null,
-      stripeSubscriptionItemStorageId: null,
-    } as never);
-
-    const result = await syncStorageAddonToStripe(TENANT_ID, 'standard', 'plus');
-
-    expect(result.ok).toBe(true);
-    if (result.ok) expect(result.value.action).toBe('noop');
-    expect(mockStripeClient.subscriptionItems.create).not.toHaveBeenCalled();
-  });
-
-  it('standard → plus: subscriptionItems.create + DB に新 itemId 保存', async () => {
-    vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce({
-      paymentMethod: 'credit_card',
-      stripeSubscriptionId: 'sub_xxx',
-      stripeSubscriptionItemStorageId: null,
-    } as never);
-    mockStripeClient.subscriptionItems.create.mockResolvedValueOnce({
-      id: 'si_storage_plus_new',
-      object: 'subscription_item',
-    });
-
-    const result = await syncStorageAddonToStripe(TENANT_ID, 'standard', 'plus');
-
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.value.action).toBe('created');
-      expect(result.value.itemId).toBe('si_storage_plus_new');
-    }
-    expect(mockStripeClient.subscriptionItems.create).toHaveBeenCalledWith(
-      {
-        subscription: 'sub_xxx',
-        price: 'price_storage_plus_test',
-        proration_behavior: 'none',
-      },
-      expect.objectContaining({ idempotencyKey: expect.stringContaining('storage:') }),
-    );
-    expect(prisma.tenant.update).toHaveBeenCalledWith({
-      where: { id: TENANT_ID },
-      data: { stripeSubscriptionItemStorageId: 'si_storage_plus_new' },
-    });
-  });
-
-  it('plus → standard: subscriptionItems.del + DB の itemId を null クリア', async () => {
-    vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce({
-      paymentMethod: 'credit_card',
-      stripeSubscriptionId: 'sub_xxx',
-      stripeSubscriptionItemStorageId: 'si_existing_plus',
-    } as never);
-    mockStripeClient.subscriptionItems.del.mockResolvedValueOnce({
-      id: 'si_existing_plus',
-      deleted: true,
-    });
-
-    const result = await syncStorageAddonToStripe(TENANT_ID, 'plus', 'standard');
-
-    expect(result.ok).toBe(true);
-    if (result.ok) expect(result.value.action).toBe('deleted');
-    expect(mockStripeClient.subscriptionItems.del).toHaveBeenCalledWith('si_existing_plus', {
-      proration_behavior: 'none',
-    });
-    expect(prisma.tenant.update).toHaveBeenCalledWith({
-      where: { id: TENANT_ID },
-      data: { stripeSubscriptionItemStorageId: null },
-    });
-  });
-
-  it('plus → pro_storage: subscriptionItems.update で price 差替 (= itemId は同じ)', async () => {
-    vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce({
-      paymentMethod: 'credit_card',
-      stripeSubscriptionId: 'sub_xxx',
-      stripeSubscriptionItemStorageId: 'si_existing_plus',
-    } as never);
-    mockStripeClient.subscriptionItems.update.mockResolvedValueOnce({
-      id: 'si_existing_plus',
-      object: 'subscription_item',
-    });
-
-    const result = await syncStorageAddonToStripe(TENANT_ID, 'plus', 'pro_storage');
-
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.value.action).toBe('updated');
-      expect(result.value.itemId).toBe('si_existing_plus');
-    }
-    expect(mockStripeClient.subscriptionItems.update).toHaveBeenCalledWith('si_existing_plus', {
-      price: 'price_storage_pro_test',
-      proration_behavior: 'none',
-    });
-  });
-
-  it('standard → enterprise: 両方とも Stripe 対象外 → no-op (= enterprise は manual billing)', async () => {
-    vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce({
-      paymentMethod: 'credit_card',
-      stripeSubscriptionId: 'sub_xxx',
-      stripeSubscriptionItemStorageId: null,
-    } as never);
-
-    const result = await syncStorageAddonToStripe(TENANT_ID, 'standard', 'enterprise');
-
-    expect(result.ok).toBe(true);
-    if (result.ok) expect(result.value.action).toBe('noop');
-    expect(mockStripeClient.subscriptionItems.create).not.toHaveBeenCalled();
-  });
-
-  it('DB 不整合 (plus → pro_storage で itemId=null) → 新規 create にフォールバック', async () => {
-    vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce({
-      paymentMethod: 'credit_card',
-      stripeSubscriptionId: 'sub_xxx',
-      stripeSubscriptionItemStorageId: null, // 本来あるべきだが欠落
-    } as never);
-    mockStripeClient.subscriptionItems.create.mockResolvedValueOnce({
-      id: 'si_fallback_created',
-      object: 'subscription_item',
-    });
-
-    const result = await syncStorageAddonToStripe(TENANT_ID, 'plus', 'pro_storage');
-
-    expect(result.ok).toBe(true);
-    if (result.ok) expect(result.value.action).toBe('created');
-    expect(mockStripeClient.subscriptionItems.create).toHaveBeenCalled();
-  });
-});
