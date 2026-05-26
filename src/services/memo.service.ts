@@ -326,7 +326,14 @@ export async function updateMemo(
  * 元実装は PR #162 /all-memos cross-list 用)。
  * Memo は project に紐付かない個人ノートなので scope は **viewerUserId 自身のメモのみ**。
  * Memo は visibility 値域が `private` / `public`。
- * 編集権限は元から作成者本人のみ (admin 特権なし) なので per-row userId 判定で同じ。
+ *
+ * feat/asset-assignee-expansion (2026-05-26): 個別 update/delete は「作成者 OR 担当者」に
+ * 拡張したが、本 bulk は **creator-only 維持**。理由:
+ *   - /memos UI は listMyMemos (= `userId === viewerUserId` のみ) で表示
+ *   - 担当者が他人のメモを bulk 選択する経路が UI から存在しない (= safe by construction)
+ *   - 将来 listMyMemos を「assigned-to-me memo も返す」よう拡張する場合、
+ *     本関数も「`userId OR assigneeId === viewerUserId`」に同期更新が必要
+ *     (= UI と service 認可の乖離を避けるため、KDD §5.X+154 参照)
  */
 export async function bulkUpdateMemosVisibilityFromList(
   ids: string[],
