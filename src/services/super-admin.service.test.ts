@@ -127,8 +127,6 @@ describe('listMonthlyUsageHistory (P-5b / 2026-05-08)', () => {
         activeUserCount: 4,
         // Storage add-on (Phase 2): スナップショット時点の値
         storageBytesUsed: BigInt(50 * 1024 * 1024),
-        storageAddonPlan: 'standard',
-        storageAddonJpy: 0,
         totalJpy: 2500,
         tenant: { tenantSeq: 2, name: 'カスタマーA', deletedAt: null },
       },
@@ -140,8 +138,6 @@ describe('listMonthlyUsageHistory (P-5b / 2026-05-08)', () => {
         apiCostJpy: 45000,
         activeUserCount: 12,
         storageBytesUsed: BigInt(800 * 1024 * 1024),
-        storageAddonPlan: 'plus',
-        storageAddonJpy: 500,
         totalJpy: 45500,
         tenant: { tenantSeq: 3, name: 'カスタマーB', deletedAt: null },
       },
@@ -160,8 +156,6 @@ describe('listMonthlyUsageHistory (P-5b / 2026-05-08)', () => {
         apiCostJpy: 2500,
         activeUserCount: 4,
         storageBytesUsed: 50 * 1024 * 1024,
-        storageAddonPlan: 'standard',
-        storageAddonJpy: 0,
         // ADR-0021 (2026-05-26): 履歴 DTO に追加された file storage 列
         fileStorageBytesPeak: null,
         fileStorageOverageJpy: null,
@@ -178,8 +172,6 @@ describe('listMonthlyUsageHistory (P-5b / 2026-05-08)', () => {
         apiCostJpy: 45000,
         activeUserCount: 12,
         storageBytesUsed: 800 * 1024 * 1024,
-        storageAddonPlan: 'plus',
-        storageAddonJpy: 500,
         fileStorageBytesPeak: null,
         fileStorageOverageJpy: null,
         totalJpy: 45500,
@@ -199,8 +191,6 @@ describe('listMonthlyUsageHistory (P-5b / 2026-05-08)', () => {
         apiCostJpy: 800,
         activeUserCount: 2,
         storageBytesUsed: BigInt(0),
-        storageAddonPlan: 'standard',
-        storageAddonJpy: 0,
         totalJpy: 800,
         // join で deletedAt が取れる (deleteTenant の upsert で記録された 5/20 解約)
         tenant: {
@@ -416,7 +406,6 @@ describe('deleteTenant (P-A / 2026-05-08)', () => {
       timezone: 'Asia/Tokyo',
       currentMonthApiCallCount: 250,
       currentMonthApiCostJpy: 2500,
-      storageAddonPlan: 'standard',
       storageBytesUsed: BigInt(0),
     } as never);
 
@@ -553,7 +542,6 @@ describe('deleteTenant (P-A / 2026-05-08)', () => {
       timezone: 'Asia/Tokyo',
       currentMonthApiCallCount: 0,
       currentMonthApiCostJpy: 0,
-      storageAddonPlan: 'standard',
       storageBytesUsed: BigInt(0),
     } as never);
 
@@ -610,9 +598,7 @@ describe('deleteTenant (P-A / 2026-05-08)', () => {
             apiCostJpy: 2500, // ★ SUM 真値
             plan: 'expert',
             activeUserCount: 3,
-            storageAddonPlan: 'standard',
-            // Storage standard プランは無料 (0 円)
-            storageAddonJpy: 0,
+            // chore/storage-addon-backend-removal (2026-05-26): 旧 4 段階プランの storageAddonPlan/Jpy は撤去、totalJpy = ApiCallLog SUM
             totalJpy: 2500,
           }),
           update: expect.objectContaining({
@@ -1084,13 +1070,8 @@ describe('getCrossTenantUsageSummary (2026-05-11: Storage add-on 合算)', () =>
       .mockResolvedValueOnce([
         { plan: 'beginner', _count: { id: 1 } },
         { plan: 'expert', _count: { id: 2 } },
-      ] as never)
-      // storageAddonPlan groupBy: 1 standard (¥0) + 1 plus (¥500) + 1 pro_storage (¥1500)
-      .mockResolvedValueOnce([
-        { storageAddonPlan: 'standard', _count: { id: 1 } },
-        { storageAddonPlan: 'plus', _count: { id: 1 } },
-        { storageAddonPlan: 'pro_storage', _count: { id: 1 } },
       ] as never);
+    // chore/storage-addon-backend-removal (2026-05-26): storageAddonPlan groupBy は撤去
     vi.mocked(prisma.user.count).mockResolvedValueOnce(15 as never);
 
     const r = await getCrossTenantUsageSummary();
@@ -1099,10 +1080,6 @@ describe('getCrossTenantUsageSummary (2026-05-11: Storage add-on 合算)', () =>
     expect(r.totalActiveUsers).toBe(15);
     expect(r.totalCurrentMonthApiCalls).toBe(1200);
     expect(r.totalCurrentMonthApiCostJpy).toBe(8000);
-    // Storage: 0 + 500 + 1500 = 2000
-    expect(r.totalCurrentMonthStorageJpy).toBe(2000);
-    // 合算: 8000 + 2000 = 10000
-    expect(r.totalCurrentMonthCombinedJpy).toBe(10000);
     expect(r.planDistribution).toEqual([
       { plan: 'beginner', count: 1 },
       { plan: 'expert', count: 2 },
@@ -1115,17 +1092,13 @@ describe('getCrossTenantUsageSummary (2026-05-11: Storage add-on 合算)', () =>
       _count: { _all: 0 },
       _sum: { costJpy: null },
     } as never);
-    vi.mocked(prisma.tenant.groupBy)
-      .mockResolvedValueOnce([] as never)
-      .mockResolvedValueOnce([] as never);
+    vi.mocked(prisma.tenant.groupBy).mockResolvedValueOnce([] as never);
     vi.mocked(prisma.user.count).mockResolvedValueOnce(0 as never);
 
     const r = await getCrossTenantUsageSummary();
 
     expect(r.tenantCount).toBe(0);
     expect(r.totalCurrentMonthApiCostJpy).toBe(0);
-    expect(r.totalCurrentMonthStorageJpy).toBe(0);
-    expect(r.totalCurrentMonthCombinedJpy).toBe(0);
   });
 
   it('管理テナント + Default テナントを集計から除外する', async () => {
@@ -1134,9 +1107,7 @@ describe('getCrossTenantUsageSummary (2026-05-11: Storage add-on 合算)', () =>
       _count: { _all: 0 },
       _sum: { costJpy: null },
     } as never);
-    vi.mocked(prisma.tenant.groupBy)
-      .mockResolvedValueOnce([] as never)
-      .mockResolvedValueOnce([] as never);
+    vi.mocked(prisma.tenant.groupBy).mockResolvedValueOnce([] as never);
     vi.mocked(prisma.user.count).mockResolvedValueOnce(0 as never);
 
     await getCrossTenantUsageSummary();
@@ -1192,7 +1163,6 @@ describe('getDefaultTenantOwnSummary (2026-05-11)', () => {
       createdAt: new Date('2026-01-01T00:00:00Z'),
       currentMonthApiCallCount: 42,
       currentMonthApiCostJpy: 420,
-      storageAddonPlan: 'standard',
       storageBytesUsed: BigInt(10 * 1024 * 1024), // 10MB
     } as never);
     vi.mocked(prisma.user.count).mockResolvedValueOnce(5 as never);
@@ -1205,9 +1175,9 @@ describe('getDefaultTenantOwnSummary (2026-05-11)', () => {
     expect(r?.currentMonthApiCallCount).toBe(42);
     expect(r?.currentMonthApiCostJpy).toBe(420);
     expect(r?.storageBytesUsed).toBe(10 * 1024 * 1024);
-    // PR-3 (§5.X+27, 2026-05-15): LLM プラン非依存。standard add-on = 20MB 共通ベース。
-    expect(r?.storageLimitBytes).toBe(20 * 1024 * 1024);
-    expect(r?.storageUsageRatio).toBeCloseTo((10 * 1024 * 1024) / (20 * 1024 * 1024), 5);
+    // chore/storage-addon-backend-removal (2026-05-26): ADR-0020 50GB ハードキャップ上限を使用率算出に使用
+    expect(r?.storageUsageRatio).toBeGreaterThan(0);
+    expect(r?.storageUsageRatio).toBeLessThan(1);
 
     // findFirst が DEFAULT_TENANT_ID を引いていること (運営者自身のテナント)
     const whereArg = vi.mocked(prisma.tenant.findFirst).mock.calls[0]![0]!.where!;
@@ -1227,7 +1197,7 @@ describe('getDefaultTenantOwnSummary (2026-05-11)', () => {
     expect(prisma.user.count).not.toHaveBeenCalled();
   });
 
-  it('不正な plan / storageAddonPlan は beginner / standard へフォールバック', async () => {
+  it('不正な plan は beginner へフォールバック', async () => {
     vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce({
       id: '00000000-0000-0000-0000-000000000001',
       tenantSeq: null,
@@ -1237,16 +1207,15 @@ describe('getDefaultTenantOwnSummary (2026-05-11)', () => {
       createdAt: new Date('2026-01-01T00:00:00Z'),
       currentMonthApiCallCount: 0,
       currentMonthApiCostJpy: 0,
-      storageAddonPlan: 'unknown_addon',
       storageBytesUsed: BigInt(0),
     } as never);
     vi.mocked(prisma.user.count).mockResolvedValueOnce(0 as never);
 
     const r = await getDefaultTenantOwnSummary();
 
-    // PR-3 (§5.X+27, 2026-05-15): LLM プラン非依存。standard fallback = 20MB 共通ベース。
-    expect(r?.storageLimitBytes).toBe(20 * 1024 * 1024);
-    expect(r?.storageAddonPlan).toBe('standard');
+    // chore/storage-addon-backend-removal (2026-05-26): 旧 4 段階プラン廃止、ADR-0020 50GB ハードキャップ上限
+    expect(r?.storageBytesUsed).toBeGreaterThanOrEqual(0);
+    expect(r?.storageUsageRatio).toBeGreaterThanOrEqual(0);
   });
 });
 
@@ -1474,7 +1443,7 @@ describe('listAllTenants — 請求対象テナント一覧 (顧客のみ)', () 
         billingAddress: null, billingPostalCode: null, billingPrefecture: null,
         billingCity: null, billingStreetAddress: null, billingBuildingName: null,
         billingPhoneNumber: null, paymentMethod: 'invoice',
-        storageAddonPlan: 'standard', storageBytesUsed: BigInt(0),
+        storageBytesUsed: BigInt(0),
         deletedAt: null,
       },
       // expert plan, plus storage (¥500): LLM ¥1500 (300 calls × ¥5/call、2026-05-15 改定後) + Storage ¥500 = ¥2000
@@ -1487,7 +1456,7 @@ describe('listAllTenants — 請求対象テナント一覧 (顧客のみ)', () 
         billingAddress: null, billingPostalCode: null, billingPrefecture: null,
         billingCity: null, billingStreetAddress: null, billingBuildingName: null,
         billingPhoneNumber: null, paymentMethod: 'credit_card',
-        storageAddonPlan: 'plus', storageBytesUsed: BigInt(100 * 1024 * 1024),
+        storageBytesUsed: BigInt(100 * 1024 * 1024),
         deletedAt: null,
       },
       // pro plan, pro_storage (¥1500): LLM ¥15000 (1000 calls × ¥15/call、2026-05-15 改定後) + Storage ¥1500 = ¥16500
@@ -1500,7 +1469,7 @@ describe('listAllTenants — 請求対象テナント一覧 (顧客のみ)', () 
         billingAddress: null, billingPostalCode: null, billingPrefecture: null,
         billingCity: null, billingStreetAddress: null, billingBuildingName: null,
         billingPhoneNumber: null, paymentMethod: 'invoice',
-        storageAddonPlan: 'pro_storage', storageBytesUsed: BigInt(500 * 1024 * 1024),
+        storageBytesUsed: BigInt(500 * 1024 * 1024),
         deletedAt: null,
       },
     ] as never);
@@ -1513,40 +1482,11 @@ describe('listAllTenants — 請求対象テナント一覧 (顧客のみ)', () 
     const rows = await listAllTenants();
 
     expect(rows).toHaveLength(3);
-    // tenant-a: ¥800 + ¥0 = ¥800
-    expect(rows[0]!.storageAddonMonthlyJpy).toBe(0);
+    // chore/storage-addon-backend-removal (2026-05-26): 旧 4 段階プラン月額廃止、ApiCallLog 集計のみ
     expect(rows[0]!.totalCurrentMonthJpy).toBe(800);
     expect(rows[0]!.activeUserCount).toBe(3);
-    // tenant-b: ¥1500 + ¥500 = ¥2000 (2026-05-15 価格改定後)
-    expect(rows[1]!.storageAddonMonthlyJpy).toBe(500);
-    expect(rows[1]!.totalCurrentMonthJpy).toBe(2000);
-    // tenant-c: ¥15000 + ¥1500 = ¥16500 (2026-05-15 価格改定後)
-    expect(rows[2]!.storageAddonMonthlyJpy).toBe(1500);
-    expect(rows[2]!.totalCurrentMonthJpy).toBe(16500);
-  });
-
-  it('不正な storageAddonPlan は standard へフォールバック (DB 不整合への防御)', async () => {
-    vi.mocked(prisma.tenant.findMany).mockResolvedValueOnce([
-      {
-        id: 'tenant-x', tenantSeq: 99, slug: 'x', name: 'X', plan: 'expert',
-        currentMonthApiCallCount: 0, currentMonthApiCostJpy: 0,
-        monthlyBudgetCapJpy: null, createdAt: new Date('2026-01-01'),
-        billingType: 'corporate', billingCompanyName: null,
-        billingContactName: null, billingContactEmail: null,
-        billingAddress: null, billingPostalCode: null, billingPrefecture: null,
-        billingCity: null, billingStreetAddress: null, billingBuildingName: null,
-        billingPhoneNumber: null, paymentMethod: 'invoice',
-        storageAddonPlan: 'unknown_plan_value', // 想定外値
-        storageBytesUsed: BigInt(0),
-        deletedAt: null,
-      },
-    ] as never);
-    vi.mocked(prisma.user.groupBy).mockResolvedValueOnce([] as never);
-
-    const rows = await listAllTenants();
-
-    expect(rows[0]!.storageAddonPlan).toBe('standard');
-    expect(rows[0]!.storageAddonMonthlyJpy).toBe(0);
+    expect(rows[1]!.totalCurrentMonthJpy).toBe(1500);
+    expect(rows[2]!.totalCurrentMonthJpy).toBe(15000);
   });
 
   it('テナントがゼロ件の場合は空配列を返す (請求書合計に影響なし)', async () => {
@@ -1572,7 +1512,7 @@ describe('listAllTenants — 請求対象テナント一覧 (顧客のみ)', () 
         billingAddress: null, billingPostalCode: null, billingPrefecture: null,
         billingCity: null, billingStreetAddress: null, billingBuildingName: null,
         billingPhoneNumber: null, paymentMethod: 'invoice',
-        storageAddonPlan: 'standard', storageBytesUsed: BigInt(0),
+        storageBytesUsed: BigInt(0),
         deletedAt: null,
       },
       {
@@ -1584,7 +1524,7 @@ describe('listAllTenants — 請求対象テナント一覧 (顧客のみ)', () 
         billingAddress: null, billingPostalCode: null, billingPrefecture: null,
         billingCity: null, billingStreetAddress: null, billingBuildingName: null,
         billingPhoneNumber: null, paymentMethod: 'invoice',
-        storageAddonPlan: 'standard', storageBytesUsed: BigInt(0),
+        storageBytesUsed: BigInt(0),
         deletedAt: new Date('2026-05-20T03:00:00Z'),
       },
     ] as never);
@@ -1625,7 +1565,7 @@ describe('listAllTenants — 請求対象テナント一覧 (顧客のみ)', () 
         billingAddress: null, billingPostalCode: null, billingPrefecture: null,
         billingCity: null, billingStreetAddress: null, billingBuildingName: null,
         billingPhoneNumber: null, paymentMethod: 'invoice',
-        storageAddonPlan: 'standard', storageBytesUsed: BigInt(0),
+        storageBytesUsed: BigInt(0),
         deletedAt: null,
       },
     ] as never);
@@ -1662,53 +1602,23 @@ describe('listStorageUsageTop — Storage ランキング (顧客のみ)', () =>
     });
   });
 
-  it('Storage 上限と使用率を add-on プランから正確に計算', async () => {
+  // chore/storage-addon-backend-removal (2026-05-26):
+  //   旧 4 段階プラン (graceState / storageLimitBytes) 関連テストは撤去。
+  //   ADR-0020 50GB ハードキャップを上限とした使用率のみ検証する。
+  it('使用率を 50GB ハードキャップ上限で計算', async () => {
     vi.mocked(prisma.tenant.findMany).mockResolvedValueOnce([
-      // PR-3 (§5.X+27): LLM プラン非依存。pro_storage = 20MB + 1000MB = 1.02GB
-      // 1.5GB 使用 = 約 140% (上限超過)
       {
-        id: 'tenant-over', tenantSeq: 2, name: '上限超過',
-        plan: 'pro', storageAddonPlan: 'pro_storage',
-        storageBytesUsed: BigInt(1.5 * 1024 * 1024 * 1024),
-        storageGracePeriodStartedAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000), // 3 日前
+        id: 'tenant-A', tenantSeq: 1, name: '通常',
+        plan: 'pro',
+        storageBytesUsed: BigInt(1024 * 1024 * 1024), // 1GB
       },
     ] as never);
 
     const rows = await listStorageUsageTop(10);
 
-    // 20MB (standard base) + 1000MB (pro_storage extra) = 1020MB
-    expect(rows[0]!.storageLimitBytes).toBe(20 * 1024 * 1024 + 1000 * 1024 * 1024);
-    expect(rows[0]!.storageUsageRatio).toBeGreaterThan(1.0);
-    // Grace period 開始から 3 日 (< 7 日) → grace_active
-    expect(rows[0]!.graceState).toBe('grace_active');
-  });
-
-  it('Grace period から 7 日経過で write_blocked に遷移', async () => {
-    vi.mocked(prisma.tenant.findMany).mockResolvedValueOnce([
-      {
-        id: 'tenant-blocked', tenantSeq: 3, name: 'Blocked',
-        plan: 'expert', storageAddonPlan: 'plus',
-        storageBytesUsed: BigInt(400 * 1024 * 1024),
-        storageGracePeriodStartedAt: new Date(Date.now() - 8 * 24 * 60 * 60 * 1000),
-      },
-    ] as never);
-
-    const rows = await listStorageUsageTop(10);
-    expect(rows[0]!.graceState).toBe('write_blocked');
-  });
-
-  it('Grace period 未設定なら active', async () => {
-    vi.mocked(prisma.tenant.findMany).mockResolvedValueOnce([
-      {
-        id: 'tenant-ok', tenantSeq: 4, name: '正常',
-        plan: 'beginner', storageAddonPlan: 'standard',
-        storageBytesUsed: BigInt(10 * 1024 * 1024),
-        storageGracePeriodStartedAt: null,
-      },
-    ] as never);
-
-    const rows = await listStorageUsageTop(10);
-    expect(rows[0]!.graceState).toBe('active');
+    expect(rows[0]!.storageBytesUsed).toBe(1024 * 1024 * 1024);
+    expect(rows[0]!.storageUsageRatio).toBeGreaterThan(0);
+    expect(rows[0]!.storageUsageRatio).toBeLessThan(1);
   });
 });
 
@@ -1741,9 +1651,9 @@ describe('getTenantDetail — テナント単位の詳細 (請求の根拠デー
       billingAddress: null, billingPostalCode: null, billingPrefecture: null,
       billingCity: null, billingStreetAddress: null, billingBuildingName: null,
       billingPhoneNumber: null, paymentMethod: 'invoice',
-      storageAddonPlan: 'standard', storageBytesUsed: BigInt(10 * 1024 * 1024),
-      storageGracePeriodStartedAt: null, scheduledStorageAddonAt: null,
-      scheduledNextStorageAddon: null, beginnerMonthlyCallLimit: 50,
+      // chore/storage-addon-backend-removal (2026-05-26): 4 段階 Storage プラン関連カラム撤去済
+      storageBytesUsed: BigInt(10 * 1024 * 1024),
+      beginnerMonthlyCallLimit: 50,
       beginnerMaxSeats: 5, scheduledPlanChangeAt: null, scheduledNextPlan: null,
       beginnerEverUpgraded: false,
     } as never);
@@ -1765,9 +1675,7 @@ describe('getTenantDetail — テナント単位の詳細 (請求の根拠デー
     expect(result!.entityCounts).toEqual({
       projects: 2, knowledges: 10, risksIssues: 3, retrospectives: 1, memos: 4,
     });
-    // PR-3 (§5.X+27, 2026-05-15): LLM プラン非依存。standard add-on = 20MB 共通ベース。
-    expect(result!.storageLimitBytes).toBe(20 * 1024 * 1024);
-    // 当月課金 (内部記録値): LLM ¥420 + Storage ¥0 = ¥420
+    // chore/storage-addon-backend-removal (2026-05-26): 旧 4 段階プラン廃止、ApiCallLog 集計のみ
     expect(result!.totalCurrentMonthJpy).toBe(420);
   });
 
@@ -1781,9 +1689,8 @@ describe('getTenantDetail — テナント単位の詳細 (請求の根拠デー
       billingAddress: null, billingPostalCode: null, billingPrefecture: null,
       billingCity: null, billingStreetAddress: null, billingBuildingName: null,
       billingPhoneNumber: null, paymentMethod: 'invoice',
-      storageAddonPlan: 'standard', storageBytesUsed: BigInt(0),
-      storageGracePeriodStartedAt: null, scheduledStorageAddonAt: null,
-      scheduledNextStorageAddon: null, beginnerMonthlyCallLimit: 50,
+      storageBytesUsed: BigInt(0),
+      beginnerMonthlyCallLimit: 50,
       beginnerMaxSeats: 5, scheduledPlanChangeAt: null, scheduledNextPlan: null,
       beginnerEverUpgraded: false,
     } as never);
@@ -1828,9 +1735,8 @@ describe('getTenantDetail — テナント単位の詳細 (請求の根拠デー
       billingAddress: null, billingPostalCode: null, billingPrefecture: null,
       billingCity: null, billingStreetAddress: null, billingBuildingName: null,
       billingPhoneNumber: null, paymentMethod: 'invoice',
-      storageAddonPlan: 'standard', storageBytesUsed: BigInt(0),
-      storageGracePeriodStartedAt: null, scheduledStorageAddonAt: null,
-      scheduledNextStorageAddon: null, beginnerMonthlyCallLimit: 50,
+      storageBytesUsed: BigInt(0),
+      beginnerMonthlyCallLimit: 50,
       beginnerMaxSeats: 5, scheduledPlanChangeAt: null, scheduledNextPlan: null,
       beginnerEverUpgraded: false, // upgrade 履歴なし = 期限切れ判定対象
     } as never);
@@ -1854,27 +1760,18 @@ describe('getTenantDetail — テナント単位の詳細 (請求の根拠デー
 describe('getCrossTenantUsageSummary — 顧客全体の合算 (請求対象の合計)', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('合計合算 = LLM 合計 + Storage 合計 (端数なし精度) ', async () => {
+  it('合計合算 = LLM 合計 (ApiCallLog 集計、DB/file storage 超過の従量課金も含む)', async () => {
+    // chore/storage-addon-backend-removal (2026-05-26): Storage 月額固定費は撤去
     vi.mocked(prisma.tenant.count).mockResolvedValueOnce(4 as never);
-    // ★ PR-V8.1: ApiCallLog SUM (真値) ベース
     vi.mocked(prisma.apiCallLog.aggregate).mockResolvedValueOnce({
       _count: { _all: 4567 },
       _sum: { costJpy: 12345 },
     } as never);
-    vi.mocked(prisma.tenant.groupBy)
-      .mockResolvedValueOnce([
-        { plan: 'beginner', _count: { id: 1 } },
-        { plan: 'expert', _count: { id: 2 } },
-        { plan: 'pro', _count: { id: 1 } },
-      ] as never)
-      // storage breakdown: 1 standard + 1 plus + 1 pro_storage + 1 enterprise
-      // = 0 + 500 + 1500 + 5000 = ¥7000
-      .mockResolvedValueOnce([
-        { storageAddonPlan: 'standard', _count: { id: 1 } },
-        { storageAddonPlan: 'plus', _count: { id: 1 } },
-        { storageAddonPlan: 'pro_storage', _count: { id: 1 } },
-        { storageAddonPlan: 'enterprise', _count: { id: 1 } },
-      ] as never);
+    vi.mocked(prisma.tenant.groupBy).mockResolvedValueOnce([
+      { plan: 'beginner', _count: { id: 1 } },
+      { plan: 'expert', _count: { id: 2 } },
+      { plan: 'pro', _count: { id: 1 } },
+    ] as never);
     vi.mocked(prisma.user.count).mockResolvedValueOnce(30 as never);
 
     const r = await getCrossTenantUsageSummary();
@@ -1883,49 +1780,22 @@ describe('getCrossTenantUsageSummary — 顧客全体の合算 (請求対象の�
     expect(r.totalActiveUsers).toBe(30);
     expect(r.totalCurrentMonthApiCalls).toBe(4567);
     expect(r.totalCurrentMonthApiCostJpy).toBe(12345);
-    expect(r.totalCurrentMonthStorageJpy).toBe(7000);
-    expect(r.totalCurrentMonthCombinedJpy).toBe(12345 + 7000);
   });
 
-  it('不正な storageAddonPlan は standard として扱われる (= ¥0 加算)', async () => {
-    vi.mocked(prisma.tenant.count).mockResolvedValueOnce(1 as never);
-    vi.mocked(prisma.apiCallLog.aggregate).mockResolvedValueOnce({
-      _count: { _all: 0 },
-      _sum: { costJpy: 0 },
-    } as never);
-    vi.mocked(prisma.tenant.groupBy)
-      .mockResolvedValueOnce([] as never)
-      .mockResolvedValueOnce([
-        { storageAddonPlan: 'garbage_value', _count: { id: 1 } },
-      ] as never);
-    vi.mocked(prisma.user.count).mockResolvedValueOnce(0 as never);
-
-    const r = await getCrossTenantUsageSummary();
-
-    expect(r.totalCurrentMonthStorageJpy).toBe(0);
-  });
-
-  it('groupBy 4 種類すべて (parallelism + Default 除外) が同時に発火する', async () => {
+  it('groupBy (plan 別 + Default 除外) が発火する', async () => {
     vi.mocked(prisma.tenant.count).mockResolvedValueOnce(0 as never);
     vi.mocked(prisma.apiCallLog.aggregate).mockResolvedValueOnce({
       _count: { _all: 0 },
       _sum: { costJpy: null },
     } as never);
-    vi.mocked(prisma.tenant.groupBy)
-      .mockResolvedValueOnce([] as never)
-      .mockResolvedValueOnce([] as never);
+    vi.mocked(prisma.tenant.groupBy).mockResolvedValueOnce([] as never);
     vi.mocked(prisma.user.count).mockResolvedValueOnce(0 as never);
 
     await getCrossTenantUsageSummary();
 
-    // tenant.groupBy が 2 回呼ばれ、両方とも Default 除外で絞られていること
+    // tenant.groupBy が plan で呼ばれ、Default 除外で絞られていること
     const planGroupCall = vi.mocked(prisma.tenant.groupBy).mock.calls[0]![0]!;
     expect(planGroupCall.where).toMatchObject({
-      id: { notIn: EXCLUDED },
-      deletedAt: null,
-    });
-    const storageGroupCall = vi.mocked(prisma.tenant.groupBy).mock.calls[1]![0]!;
-    expect(storageGroupCall.where).toMatchObject({
       id: { notIn: EXCLUDED },
       deletedAt: null,
     });

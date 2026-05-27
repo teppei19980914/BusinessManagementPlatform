@@ -13,7 +13,6 @@ vi.mock('@/lib/db', () => ({
   prisma: {
     tenant: {
       findFirst: vi.fn(async () => ({
-        storageAddonPlan: 'standard',
         storageBytesUsed: BigInt(0),
       })),
     },

@@ -42,12 +42,9 @@ import { recordError } from '@/services/error-log.service';
 import { isTenantPlan, MANAGEMENT_TENANT_ID, DEFAULT_TENANT_ID } from '@/lib/tenant';
 // ADR-0019 (2026-05-24): 月次 snapshot の集計は課金対象 featureUnit のみ対象。
 import { BILLABLE_FEATURE_UNITS } from '@/config/billing-feature-units';
-import {
-  ADDON_MONTHLY_JPY as STORAGE_ADDON_MONTHLY_JPY,
-  isStorageAddonPlan,
-} from '@/config/storage-addon';
-// ADR-0020 (2026-05-25): applyScheduledStorageChanges は 4 段階プラン廃止に伴い廃止。
-//   下記 stub は呼出側との型整合維持のため。実体は no-op。
+// chore/storage-addon-backend-removal (2026-05-26):
+//   ADR-0020/0021 で従量課金化済のため旧 4 段階プラン (Standard/Plus/Pro/Enterprise) は撤去。
+//   storageAddonPlan / storageAddonJpy の snapshot 保存と applyScheduledStorageChanges 関連 stub を削除。
 import { purgeOldDeletedTenants } from '@/services/super-admin.service';
 // ADR-0020 (2026-05-25): DB 容量従量課金 (月中 peak ベース)
 import {
@@ -92,10 +89,6 @@ export interface TenantMonthlyResetResult {
   invalidPlanSkippedCount: number;
   /** P-5b (2026-05-08): スナップショット保存件数 (= 履歴テーブルに insert した件数)。 */
   snapshotSavedCount: number;
-  /** Storage add-on (Phase 2 / 2026-05-08): ダウングレード予約適用件数 */
-  storageAddonAppliedCount: number;
-  /** Storage add-on (Phase 2): 月跨ぎでデータ増加し適用 skip した件数 */
-  storageAddonSkippedCount: number;
   /** テナント物理削除 (2026-05-08): 90 日経過解約済テナントの purge 件数 */
   purgedTenantCount: number;
   /** テナント物理削除: 削除した業務データレコード総数 (容量解放量の指標) */
@@ -178,7 +171,6 @@ export async function saveMonthlyUsageSnapshots(now: Date = new Date()): Promise
       lastResetAt: true,
       currentMonthApiCallCount: true,
       currentMonthApiCostJpy: true,
-      storageAddonPlan: true,
       storageBytesUsed: true,
       // ADR-0021 (2026-05-26): ファイルストレージ peak を snapshot に永続化
       storageFileBytesPeakThisMonth: true,
@@ -259,10 +251,9 @@ export async function saveMonthlyUsageSnapshots(now: Date = new Date()): Promise
       });
       const fileStorageOverageJpy = fileStorageAgg._sum.costJpy ?? 0;
 
-      const rawAddonPlan = tenant.storageAddonPlan ?? 'standard';
-      const storageAddonPlan = isStorageAddonPlan(rawAddonPlan) ? rawAddonPlan : 'standard';
-      const storageAddonJpy = STORAGE_ADDON_MONTHLY_JPY[storageAddonPlan];
-      const totalJpy = reconciledCostJpy + storageAddonJpy;
+      // chore/storage-addon-backend-removal (2026-05-26): 旧 4 段階プラン月額は廃止のため
+      //   totalJpy = API 利用料 (BILLABLE_FEATURE_UNITS で db-capacity / file-storage 超過も含む)。
+      const totalJpy = reconciledCostJpy;
 
       await prisma.tenantMonthlyUsageHistory.upsert({
         where: {
@@ -276,8 +267,6 @@ export async function saveMonthlyUsageSnapshots(now: Date = new Date()): Promise
           plan: tenant.plan,
           activeUserCount: userCountByTenant.get(tenant.id) ?? 0,
           storageBytesUsed: tenant.storageBytesUsed,
-          storageAddonPlan,
-          storageAddonJpy,
           // ADR-0021 (2026-05-26): ファイルストレージ peak + 当月課金内訳
           fileStorageBytesPeak: tenant.storageFileBytesPeakThisMonth,
           fileStorageOverageJpy,
@@ -289,8 +278,6 @@ export async function saveMonthlyUsageSnapshots(now: Date = new Date()): Promise
           plan: tenant.plan,
           activeUserCount: userCountByTenant.get(tenant.id) ?? 0,
           storageBytesUsed: tenant.storageBytesUsed,
-          storageAddonPlan,
-          storageAddonJpy,
           fileStorageBytesPeak: tenant.storageFileBytesPeakThisMonth,
           fileStorageOverageJpy,
           totalJpy,
@@ -498,7 +485,7 @@ export async function processTenantDbCapacityOverage(
       lastResetAt: true,
       storageBytesUsed: true,
       storageBytesPeakThisMonth: true,
-      storageGracePeriodStartedAt: true, // 後続の冪等性チェックで参照
+      // chore/storage-addon-backend-removal (2026-05-26): storageGracePeriodStartedAt は DB から撤去済
     },
   });
 
@@ -933,10 +920,9 @@ export async function runTenantMonthlyReset(
   const snapshotSavedCount = await saveMonthlyUsageSnapshots(now);
   const resetCount = await resetTenantMonthlyCounters(now);
   const { applied, invalidSkipped } = await applyScheduledPlanChanges(now);
-  // ADR-0020 (2026-05-25): applyScheduledStorageChanges は廃止。
-  //   4 段階プラン (Standard/Plus/Pro/Enterprise) を廃止し従量課金に統一したため
-  //   ダウングレード予約適用フローは不要。互換性のため 0/0 を返す stub のみ残置。
-  const storageResult = { applied: 0, skippedDueToUsage: 0 };
+  // chore/storage-addon-backend-removal (2026-05-26):
+  //   ADR-0020/0021 で完全従量課金化されたため、旧 4 段階プラン (Standard/Plus/Pro/Enterprise) の
+  //   ダウングレード予約適用フローは撤去。storageAddonAppliedCount / storageAddonSkippedCount も result から削除。
   // 縮退モード確定仕様 (2026-05-14): counter リセット **後** に embedding=NULL の業務エンティティを
   //   一括補完する (= 当月の予算枠を使うので、当月分の課金として記録される)。
   //   テナント月間上限を超える分は次月の cron に持ち越され、過剰課金しない設計。
@@ -972,8 +958,6 @@ export async function runTenantMonthlyReset(
     planAppliedCount: applied,
     invalidPlanSkippedCount: invalidSkipped,
     snapshotSavedCount,
-    storageAddonAppliedCount: storageResult.applied,
-    storageAddonSkippedCount: storageResult.skippedDueToUsage,
     purgedTenantCount: purgeResult.succeeded,
     purgedRowCount: purgeResult.totalRowsDeleted,
     embeddingBackfillTenantCount,

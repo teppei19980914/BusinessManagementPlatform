@@ -77,7 +77,7 @@ async function main() {
       stripeSubscriptionStatus: null,
       stripeSubscriptionItemHaikuId: null,
       stripeSubscriptionItemSonnetId: null,
-      stripeSubscriptionItemStorageId: null,
+      // chore/storage-addon-backend-removal (2026-05-26): stripeSubscriptionItemStorageId は DB から撤去済
       // Stripe PaymentMethod / カード検証関連
       stripeDefaultPaymentMethodId: null,
       cardVerificationStatus: null,

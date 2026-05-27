@@ -145,7 +145,7 @@ describe('当月分 CSV (= 現在値、yearMonth パラメータなし)', () => 
         billingPrefecture: '東京都', billingCity: '千代田区',
         billingStreetAddress: '1-1', billingBuildingName: 'Aビル',
         billingPhoneNumber: '03-1234-5678', paymentMethod: 'invoice',
-        storageAddonPlan: 'plus', storageBytesUsed: 100 * 1024 * 1024,
+        storageBytesUsed: 100 * 1024 * 1024,
         storageAddonMonthlyJpy: 500, storageFileBytesPeakThisMonth: 0, totalCurrentMonthJpy: 2000,
         deletedAt: null,
       },
@@ -164,16 +164,13 @@ describe('当月分 CSV (= 現在値、yearMonth パラメータなし)', () => 
     expect(buf[2]).toBe(0xbf);
 
     const body = await res.text();
-    // CSV ヘッダ
+    // CSV ヘッダ (chore/storage-addon-backend-removal: Storage月額(円) 列は撤去)
     expect(body).toContain('テナント名');
-    expect(body).toContain('Storage月額(円)');
     expect(body).toContain('合計月額(円)');
 
-    // 値が正確に記録されている (請求書の根拠、2026-05-15 価格改定後の値)
+    // 値が正確に記録されている (請求書の根拠)
     expect(body).toContain('顧客A');
-    expect(body).toContain('1500'); // LLM (300 calls × ¥5)
-    expect(body).toContain('500'); // Storage
-    expect(body).toContain('2000'); // 合計 (LLM + Storage)
+    expect(body).toContain('1500'); // LLM (ApiCallLog SUM = 真値)
 
     // 請求先情報も含まれる
     expect(body).toContain('A社');
@@ -192,7 +189,7 @@ describe('当月分 CSV (= 現在値、yearMonth パラメータなし)', () => 
         billingAddress: null, billingPostalCode: null, billingPrefecture: null,
         billingCity: null, billingStreetAddress: null, billingBuildingName: null,
         billingPhoneNumber: null, paymentMethod: 'invoice',
-        storageAddonPlan: 'standard', storageBytesUsed: 0,
+        storageBytesUsed: 0,
         storageAddonMonthlyJpy: 0, storageFileBytesPeakThisMonth: 0, totalCurrentMonthJpy: 0,
         deletedAt: null,
       },
@@ -207,7 +204,7 @@ describe('当月分 CSV (= 現在値、yearMonth パラメータなし)', () => 
         billingAddress: null, billingPostalCode: null, billingPrefecture: null,
         billingCity: null, billingStreetAddress: null, billingBuildingName: null,
         billingPhoneNumber: null, paymentMethod: 'invoice',
-        storageAddonPlan: 'pro_storage', storageBytesUsed: 500 * 1024 * 1024,
+        storageBytesUsed: 500 * 1024 * 1024,
         storageAddonMonthlyJpy: 1500, storageFileBytesPeakThisMonth: 0, totalCurrentMonthJpy: 24000,
         deletedAt: null,
       },
@@ -220,8 +217,8 @@ describe('当月分 CSV (= 現在値、yearMonth パラメータなし)', () => 
     // 両テナントが CSV に含まれる
     expect(body).toContain('A,beginner');
     expect(body).toContain('B,pro');
+    // chore/storage-addon-backend-removal (2026-05-26): 合計は ApiCallLog SUM のみ (Storage 月額固定費は廃止)
     expect(body).toContain('22500'); // tenant-b LLM cost (1500 calls × ¥15)
-    expect(body).toContain('24000'); // tenant-b 合計
   });
 
   it('カンマ・改行・ダブルクォートを含む名前は RFC 4180 でエスケープ', async () => {
@@ -236,7 +233,7 @@ describe('当月分 CSV (= 現在値、yearMonth パラメータなし)', () => 
         billingAddress: null, billingPostalCode: null, billingPrefecture: null,
         billingCity: null, billingStreetAddress: null, billingBuildingName: null,
         billingPhoneNumber: null, paymentMethod: 'invoice',
-        storageAddonPlan: 'standard', storageBytesUsed: 0,
+        storageBytesUsed: 0,
         storageAddonMonthlyJpy: 0, storageFileBytesPeakThisMonth: 0, totalCurrentMonthJpy: 0,
         deletedAt: null,
       },
@@ -281,15 +278,15 @@ describe('過去月 CSV (= 履歴値、yearMonth=YYYY-MM 指定)', () => {
       {
         yearMonth: '2026-04', tenantId: 't-a', tenantSeq: 1, tenantName: 'A',
         plan: 'expert', apiCallCount: 200, apiCostJpy: 2000, activeUserCount: 3,
-        storageBytesUsed: 50 * 1024 * 1024, storageAddonPlan: 'standard',
-        storageAddonJpy: 0, totalJpy: 2000,
+        storageBytesUsed: 50 * 1024 * 1024,
+        totalJpy: 2000,
         tenantDeletedAt: null,
       },
       {
         yearMonth: '2026-03', tenantId: 't-a', tenantSeq: 1, tenantName: 'A',
         plan: 'expert', apiCallCount: 100, apiCostJpy: 1000, activeUserCount: 3,
-        storageBytesUsed: 30 * 1024 * 1024, storageAddonPlan: 'standard',
-        storageAddonJpy: 0, totalJpy: 1000,
+        storageBytesUsed: 30 * 1024 * 1024,
+        totalJpy: 1000,
         tenantDeletedAt: null,
       },
     ] as never);
@@ -318,8 +315,7 @@ describe('過去月 CSV (= 履歴値、yearMonth=YYYY-MM 指定)', () => {
     // 請求先列は含まれない
     expect(body).not.toContain('請求先メール');
     expect(body).not.toContain('会社名_法人名');
-    // ただし Storage の列はある
-    expect(body).toContain('Storage月額(円)');
+    // chore/storage-addon-backend-removal (2026-05-26): Storage月額(円) 列は撤去 (従量課金化)
     expect(body).toContain('合計月額(円)');
   });
 
@@ -400,7 +396,7 @@ describe('includeDeleted フラグ (月途中解約の請求検知)', () => {
         billingAddress: null, billingPostalCode: null, billingPrefecture: null,
         billingCity: null, billingStreetAddress: null, billingBuildingName: null,
         billingPhoneNumber: null, paymentMethod: 'invoice',
-        storageAddonPlan: 'standard', storageBytesUsed: 0,
+        storageBytesUsed: 0,
         storageAddonMonthlyJpy: 0, storageFileBytesPeakThisMonth: 0, totalCurrentMonthJpy: 400,
         deletedAt: new Date('2026-05-20T03:00:00.000Z'),
       },
@@ -433,7 +429,7 @@ describe('includeDeleted フラグ (月途中解約の請求検知)', () => {
         billingAddress: null, billingPostalCode: null, billingPrefecture: null,
         billingCity: null, billingStreetAddress: null, billingBuildingName: null,
         billingPhoneNumber: null, paymentMethod: 'invoice',
-        storageAddonPlan: 'standard', storageBytesUsed: 0,
+        storageBytesUsed: 0,
         storageAddonMonthlyJpy: 0, storageFileBytesPeakThisMonth: 0, totalCurrentMonthJpy: 500,
         deletedAt: null,
       },
@@ -454,8 +450,8 @@ describe('includeDeleted フラグ (月途中解約の請求検知)', () => {
       {
         yearMonth: '2026-05', tenantId: 't-c', tenantSeq: 7, tenantName: '解約済テナント',
         plan: 'expert', apiCallCount: 80, apiCostJpy: 800, activeUserCount: 2,
-        storageBytesUsed: 0, storageAddonPlan: 'standard',
-        storageAddonJpy: 0, totalJpy: 800,
+        storageBytesUsed: 0,
+        totalJpy: 800,
         tenantDeletedAt: new Date('2026-05-20T03:00:00.000Z'),
       },
     ] as never);
@@ -499,7 +495,7 @@ describe('★PR-V8 請求 regression★ CSV エクスポートは ApiCallLog SUM
         billingAddress: null, billingPostalCode: null, billingPrefecture: null,
         billingCity: null, billingStreetAddress: null, billingBuildingName: null,
         billingPhoneNumber: null, paymentMethod: 'invoice',
-        storageAddonPlan: 'standard', storageBytesUsed: 0,
+        storageBytesUsed: 0,
         storageAddonMonthlyJpy: 0, storageFileBytesPeakThisMonth: 0, totalCurrentMonthJpy: 5,
         deletedAt: null,
       },
@@ -555,7 +551,7 @@ describe('★PR-V8 請求 regression★ CSV エクスポートは ApiCallLog SUM
         billingAddress: null, billingPostalCode: null, billingPrefecture: null,
         billingCity: null, billingStreetAddress: null, billingBuildingName: null,
         billingPhoneNumber: null, paymentMethod: 'invoice',
-        storageAddonPlan: 'standard', storageBytesUsed: 0,
+        storageBytesUsed: 0,
         storageAddonMonthlyJpy: 0, storageFileBytesPeakThisMonth: 0, totalCurrentMonthJpy: 500,
         deletedAt: null,
       },
@@ -589,7 +585,7 @@ describe('★PR-V8 請求 regression★ CSV エクスポートは ApiCallLog SUM
         billingAddress: null, billingPostalCode: null, billingPrefecture: null,
         billingCity: null, billingStreetAddress: null, billingBuildingName: null,
         billingPhoneNumber: null, paymentMethod: 'invoice',
-        storageAddonPlan: 'standard', storageBytesUsed: 0,
+        storageBytesUsed: 0,
         storageAddonMonthlyJpy: 0, storageFileBytesPeakThisMonth: 0, totalCurrentMonthJpy: 250,
         deletedAt: null,
       },

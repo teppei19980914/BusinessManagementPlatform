@@ -228,12 +228,13 @@ test.describe('@feature:auth:admin-flow Steps 1-6', () => {
 
     await page.goto(setupUrl);
     // `たすきば` / `セットアップ完了` は shadcn/ui の CardTitle (実装は <div>) で
-    // 描画されているため heading role を持たない。getByText で exact 一致させる
+    // 描画されているため heading role を持たない。data-testid="auth-app-name-title" で参照する。
     // (PR #90 hotfix 5 で /login でも同じ問題を経験、DEVELOPER_GUIDE §9.7 参照)。
-    // LESSONS §4.25: hydration 過渡で CardTitle が一時的に重複観測される CI flake を
-    // 避けるため、networkidle まで待ってから .first() で strict mode violation を回避。
+    //
+    // KDD §5.X+159 (PR #451): AppHeader モバイル縮退 (sm:inline) で
+    // getByText.first() が hidden な header span を拾う事故を経験。testid 経由に切替。
     await page.waitForLoadState('networkidle');
-    await expect(page.getByText('たすきば', { exact: true }).first()).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByTestId('auth-app-name-title')).toBeVisible({ timeout: 10_000 });
     await page.getByLabel('パスワード', { exact: true }).fill(MEMBER_PW);
     await page.getByLabel('パスワード（確認）').fill(MEMBER_PW);
     await page.getByRole('button', { name: 'パスワードを設定' }).click();

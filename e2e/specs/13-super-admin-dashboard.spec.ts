@@ -14,7 +14,7 @@
  *   1. 認可: admin / general は /admin/super/* にアクセス不可 (redirect or 403)
  *   2. サマリタブ: 顧客テナント A/B が合算され、Default は別セクションに表示される
  *   3. テナント一覧タブ: 顧客テナント A/B が表示され、Default は別行 (請求対象外ラベル)
- *   4. 使用量タブ: 合計課金が LLM + Storage の合算で表示される
+ *   4. 使用量タブ: 合計課金が ApiCallLog SUM で表示される (旧 LLM + Storage 合算は storage-addon 撤去で簡素化)
  *   5. CSV エクスポート: 顧客テナント A/B が含まれ、Default は含まれない
  *
  * 前提条件:
@@ -116,12 +116,16 @@ test.describe('@feature:super_admin:dashboard システム管理者ダッシュ�
       superAdminPage.getByText('顧客課金集計には含まれません', { exact: false }).first(),
     ).toBeVisible();
 
-    // 「今月の合計課金 (LLM + Storage)」カードが存在し、内訳行を含む
+    // 「今月の合計課金」カードが存在 + sub-label に ApiCallLog 集計の文言を含む
+    // 2026-05-27 (PR #451 / chore/storage-addon-backend-removal バンドル):
+    //   旧 4 段階プラン Storage 撤去で UI ラベルから "(LLM + Storage)" と「内訳: LLM ¥」が削除済。
+    //   現行カードは label="今月の合計課金" + sub="ApiCallLog 集計 (DB / ファイルストレージ超過の従量課金を含む)"
+    //   (src/app/(dashboard)/admin/super/page.tsx:144) — KDD §5.X+161 関連。
     await expect(
-      superAdminPage.getByText('今月の合計課金 (LLM + Storage)', { exact: false }).first(),
+      superAdminPage.getByText('今月の合計課金', { exact: false }).first(),
     ).toBeVisible();
     await expect(
-      superAdminPage.getByText(/内訳: LLM ¥/).first(),
+      superAdminPage.getByText(/ApiCallLog 集計/).first(),
     ).toBeVisible();
   });
 
@@ -162,7 +166,7 @@ test.describe('@feature:super_admin:dashboard システム管理者ダッシュ�
   // 3. 使用量タブ: 合計課金 + プラン別分布
   // ============================================================
 
-  test('使用量タブ: 合計課金 (LLM + Storage) が併記、プラン別分布が顧客テナントのみ', async () => {
+  test('使用量タブ: 合計課金が表示され、プラン別分布が顧客テナントのみ', async () => {
     await superAdminPage.goto('/admin/super/usage');
     await superAdminPage.waitForLoadState('networkidle');
 
@@ -171,9 +175,9 @@ test.describe('@feature:super_admin:dashboard システム管理者ダッシュ�
       superAdminPage.getByRole('heading', { name: '使用量サマリ (全テナント横断)' }),
     ).toBeVisible();
 
-    // 「今月の合計課金 (LLM + Storage)」カード + 内訳
+    // 「今月の合計課金」カード (旧 "(LLM + Storage)" 文言は storage-addon 撤去で簡素化済、KDD §5.X+161)
     await expect(
-      superAdminPage.getByText('今月の合計課金 (LLM + Storage)', { exact: false }).first(),
+      superAdminPage.getByText('今月の合計課金', { exact: false }).first(),
     ).toBeVisible();
 
     // Default テナント (運営者自身) セクションが存在
@@ -192,7 +196,7 @@ test.describe('@feature:super_admin:dashboard システム管理者ダッシュ�
   // 4. CSV エクスポート: Default 除外 + 顧客課金正確性
   // ============================================================
 
-  test('CSV エクスポート (当月): 顧客テナント A/B のみ含まれ、Default は除外、Storage が合計に反映', async () => {
+  test('CSV エクスポート (当月): 顧客テナント A/B のみ含まれ、Default は除外、Storage 使用量が反映', async () => {
     const res = await superAdminRequest.get('/api/admin/super/usage/export');
     expect(res.status()).toBe(200);
 
@@ -202,8 +206,10 @@ test.describe('@feature:super_admin:dashboard システム管理者ダッシュ�
 
     const text = await res.text();
 
-    // ヘッダ行に Storage 関連列が含まれる
-    expect(text).toContain('Storage月額(円)');
+    // 2026-05-27 (PR #451 / chore/storage-addon-backend-removal バンドル):
+    //   旧 4 段階プラン (storage_addon_plan / Storage月額) は撤去済 (KDD §5.X+158, §5.X+161)。
+    //   現行 CSV は Storage 使用量(バイト) + ファイルストレージ peak/超過 (ADR-0021) を持つ。
+    expect(text).toContain('Storage使用量(バイト)');
     expect(text).toContain('合計月額(円)');
     expect(text).toContain('請求先メール');
 
@@ -211,31 +217,23 @@ test.describe('@feature:super_admin:dashboard システム管理者ダッシュ�
     expect(text).toContain(fixture!.customerTenantA.name);
     expect(text).toContain(fixture!.customerTenantB.name);
 
-    // 顧客テナント A: LLM ¥1500 + Storage(plus) ¥500 = ¥2000
+    // 顧客テナント A: LLM ¥1500 のみ (Storage 従量課金は fixture では 0 バイトで請求 0)
     // ADR-0019 (2026-05-24): fixture は featureUnit='project-upsert' (課金対象) で seed しているため、
     //   集計フィルタ `BILLABLE_FEATURE_UNITS` で含まれ、CSV に呼出数=1 / 費用=1500 が出力される。
-    //   旧 fixture (`risk-issue-embedding`) は ADR-0019 後の無料 featureUnit に該当し集計除外
-    //   される結果 ¥0 表示で E2E 失敗 → KDD §5.X+127 で記録、PR #441 修正後に解消。
     const lines = text.split('\r\n');
     const lineA = lines.find((l) => l.includes(fixture!.customerTenantA.name));
     expect(lineA, 'tenant-A 行が CSV に存在する').toBeDefined();
-    // 列順 (PR-V8.1 改訂): ..., plan(expert), API呼出回数(SUM=1), API課金額(SUM=1500), API呼出回数(counter=1),
-    //   API課金額(counter=1500), drift警告(空), drift呼出差分(+0), drift費用差分(+0),
-    //   ユーザ数(1), 予算(空), Storage プラン(plus), 使用量(0), Storage月額(500), 合計月額(2000), ...
     expect(lineA).toContain(',expert,');
-    expect(lineA).toContain(',1500,'); // LLM 費用
-    expect(lineA).toContain(',plus,'); // Storage プラン
-    expect(lineA).toContain(',500,'); // Storage 月額
-    expect(lineA).toContain(',2000,'); // 合計
+    expect(lineA).toContain(',1500,'); // LLM 費用 (= 合計月額)
+    expect(lineA).not.toContain(',plus,'); // 旧 storage_addon_plan は撤去済
+    expect(lineA).not.toContain(',pro_storage,');
 
-    // 顧客テナント B: LLM ¥22500 + Storage(pro_storage) ¥1500 = ¥24000
+    // 顧客テナント B: LLM ¥22500 のみ
     const lineB = lines.find((l) => l.includes(fixture!.customerTenantB.name));
     expect(lineB, 'tenant-B 行が CSV に存在する').toBeDefined();
     expect(lineB).toContain(',pro,');
-    expect(lineB).toContain(',22500,');
-    expect(lineB).toContain(',pro_storage,');
-    expect(lineB).toContain(',1500,');
-    expect(lineB).toContain(',24000,');
+    expect(lineB).toContain(',22500,'); // LLM 費用 (= 合計月額)
+    expect(lineB).not.toContain(',pro_storage,'); // 撤去済
 
     // 🚨 重要: Default テナント (= 'default' slug を持つテナント) は CSV に含まれない
     //   (= 請求 CSV に運営者自身のテナントが混入していたら売上計上ミスの原因になる)

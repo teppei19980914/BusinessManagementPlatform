@@ -162,7 +162,7 @@ function LoginForm() {
     <div className="flex flex-1 items-center justify-center bg-muted px-4 py-8">
       <Card className="w-full max-w-[min(90vw,28rem)]">
         <CardHeader className="text-center">
-          <CardTitle className="text-2xl">{t('appName')}</CardTitle>
+          <CardTitle className="text-2xl" data-testid="auth-app-name-title">{t('appName')}</CardTitle>
           <CardDescription>Knowledge Relay</CardDescription>
         </CardHeader>
         <CardContent>

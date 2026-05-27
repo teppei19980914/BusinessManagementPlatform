@@ -7,32 +7,37 @@
 
 - **ファイル名**: `og-image.png` (固定、変更する場合は `src/app/layout.tsx` も同時更新)
 - **サイズ**: 1200 × 630 px (Facebook / X / LinkedIn / Slack 等の推奨サイズ)
-- **形式**: PNG (透過なし推奨、SNS によっては JPG でも可)
-- **ファイルサイズ**: 5MB 以下 (一般的に 200-500KB 程度)
+- **形式**: PNG (透過なし)
+- **ファイルサイズ**: 5MB 以下 (現状は ~120KB)
 - **内容**:
-  - プロダクト名: 「たすきば Knowledge Relay」
-  - テーマ: 「知見を残す。判断をつなぐ。プロジェクトを強くする。」
-  - 視認性: モバイルサムネイル (横 200px) でも読める文字サイズを推奨
+  - 左に公式マスコット「たすきフクロウ」のロゴ
+  - 右にサービス名「たすきば」「Knowledge Relay」「プロジェクトの知見を、次の判断へ。」
 
-## 作成方法の選択肢
+## 生成方法
 
-1. **手作業デザイン**: Figma / Adobe Express 等で作成 → PNG 書き出し
-2. **テンプレ利用**: og-image.gallery / banner.cc 等の SNS 画像テンプレ
-3. **動的生成**: Next.js `app/opengraph-image.tsx` で `ImageResponse` を使う方式
-   (将来検討、現状は静的画像で十分)
+公式マスコットの派生画像はすべて `scripts/generate-mascot-derivatives.cjs` で
+`docs/design/assets/mascot-owl-source.png` (1254×1254 の元画像) から自動生成します。
+
+```bash
+node scripts/generate-mascot-derivatives.cjs
+```
+
+このスクリプトは下記すべてを再生成します:
+- `public/mascot-owl.png` (512×512、ヘッダ等で使用)
+- `src/app/icon.png` (256×256、Next.js が favicon を自動生成)
+- `src/app/apple-icon.png` (180×180、iOS apple-touch-icon)
+- `public/og-image.png` (1200×630、本ファイル)
+
+OG 画像のレイアウト・コピーを変更したい場合は、スクリプト内の SVG オーバーレイ
+ブロックを編集して再実行してください。
 
 ## 配置後の検証
 
 1. `pnpm build` でビルド成功確認
-2. Vercel Preview Deployment にデプロイ
-3. [OG Debugger](https://www.opengraph.xyz/) や Facebook Sharing Debugger で確認
+2. ステージング/Preview にデプロイ
+3. [OG Debugger](https://www.opengraph.xyz/) や X Card Validator でプレビュー確認
 4. 実際に X / Slack 等にシェアしてプレビューを目視
 
-## 配置タイミング
+## 関連ドキュメント
 
-PUBLIC_LAUNCH_CHECKLIST.md §2.2 に記載のとおり、6/1 リリース前までに対応。
-画像が未配置の場合、SNS シェア時のプレビューは空または既定アイコンになります(機能影響なし)。
-
----
-
-> このファイル自体 (`og-image.README.md`) は OG 画像配置後も残してメンテ情報として保持してください。
+- [マスコット選定根拠](../docs/design/MASCOT.md)

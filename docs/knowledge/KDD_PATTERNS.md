@@ -16149,3 +16149,306 @@ if (!user || user.tenantId !== expectedTenantId) {
 - 関連 memory: `feedback_repeated_verification_request` (= フルスキャン N 回目で重大バグ検出、本件は 4 回目で検出)
 
 ---
+
+## 5.X+158 ★severity-high★ 旧機能の DB column 撤去は schema + service + UI + JWT claim + 関連 script + ドキュメントの 6 レイヤ同時撤去が必須 (PR #450 storage_addon 全廃)
+
+**結論**: 「廃止」と決まった機能の column を Prisma schema から `DROP` する migration を書く際、コードでその column を参照している場所がすべて消えているか **6 レイヤ横断で確認しないと、migration 適用後に prisma クエリが失敗する**。
+
+### 経緯 (chore/storage-addon-backend-removal, 2026-05-26)
+
+ユーザ要件「ストレージプラン (Standard/Plus/Pro/Enterprise の 4 段階 add-on) の選択は不要、横断的に削除して欲しい」に対応するため、以下を撤去:
+
+- **DB column**: Tenant 4 列 + TenantMonthlyUsageHistory 2 列 + Tenant.stripe_subscription_item_storage_id
+- **Service 層**: tenant-storage.service / billing-aggregation / stripe-billing / monthly-history-regenerate / tenant-monthly-reset / super-admin.service
+- **UI**: 設定画面のプラン選択 UI / super admin 3 画面
+- **環境変数**: STRIPE_PRICE_STORAGE_PLUS / STRIPE_PRICE_STORAGE_PRO
+- **config**: src/config/storage-addon.ts ファイル削除
+
+最初の PR #449 (UI/API) と PR #450 (backend) の 2 段構えで実施したが、PR #450 マージ直前のフルスキャン検証で **以下の残参照を発見**:
+
+1. `src/lib/auth.config.ts` lines 197-225: middleware の Grace 7 日経過判定が JWT claim `tenantStorageGracePeriodStartedAt` を参照していた → **column 削除後は claim が常に null になるので dead code、削除**
+2. `src/lib/auth.config.ts` lines 248-250, 318-319: JWT claim 伝播コード → 削除
+3. `src/types/next-auth.d.ts` lines 60, 84: `tenantStorageGracePeriodStartedAt: string | null` 型宣言 → 削除
+4. **`src/services/tenant-monthly-reset.service.ts` line 488**: `select: { storageGracePeriodStartedAt: true }` で DB から **撤去予定の column を select** していた → **migration 適用後に Prisma error 発生のリスク**、本番事故になる前に発見
+5. `scripts/reset-default-tenant-to-beginner.ts` line 80: `stripeSubscriptionItemStorageId: null` で DB update → **同じく Prisma error リスク**
+
+### 教訓と防御
+
+- `Prisma schema.prisma` で column を削除する PR では、必ず以下の **6 レイヤ全てを grep** する:
+  1. `src/services/**` (= DB 読み書き)
+  2. `src/app/**` (= UI / route)
+  3. `src/lib/auth*` (= JWT claim / middleware)
+  4. `src/types/**` (= 型宣言)
+  5. `scripts/**` (= 運用 script)
+  6. `docs/**` (= ドキュメント、特に技術設計書 / ADR / 脅威モデル)
+
+- grep コマンド (column 名 + camelCase 双方):
+  ```bash
+  grep -rnE "<snake_case_column>|<camelCase_field>" --include="*.ts" --include="*.tsx" --include="*.md" .
+  ```
+
+- **DB select に残った参照は tsc では検出できない** (= Prisma 型は schema 反映済なので、`select: { dropped_field: true }` は型エラーにならず、ランタイムで失敗する)。**手動 grep が唯一の防御**。
+
+### 関連 memory
+
+- `feedback_3layer_sync_filter` (テナント関連フィルタの 3 レイヤ同期)
+- `feedback_repeated_verification_request` (= フルスキャン N 回目で重大バグ検出)
+- `feedback_realistic_1pr_scope` (= 大規模機能の PR 分割)
+
+---
+
+## 5.X+159 ★severity-2 (E2E flake)★ AppHeader をモバイル縮退 (sm:inline) すると `getByText.first()` が hidden 要素を拾い chromium-mobile で fail する (PR #451 マスコット導入)
+
+**結論**: AppHeader に「`hidden ... sm:inline`」でモバイルだけテキストを CSS-hide した瞬間、auth 画面の `getByText('たすきば', { exact: true }).first()` は **DOM 順で先頭に来る AppHeader の `display: none` な `<span>` を拾い**、`toBeVisible()` で fail する。Playwright の `getByText` は **CSS hidden 要素を除外しない** ため `.first()` が最初の (visible/hidden 問わず) マッチに着地する性質に起因。
+
+### 経緯 (PR #451 feat/mascot-owl-and-storage-cleanup, 2026-05-27)
+
+公式マスコット導入で AppHeader を「`<Image>` + `<span class="hidden whitespace-nowrap text-lg font-semibold sm:inline">{appName}</span>`」に変更 (ユーザ要件「モバイル時はアイコンのみ縮退」)。CI でデスクトップ chromium は全 PASS だが **chromium-mobile** で以下が連発失敗:
+
+- `e2e/specs/00-smoke.spec.ts:25` ログイン画面が表示される
+- `e2e/specs/01-admin-and-member-setup.spec.ts:236` Step 4 一般ユーザがパスワード設定
+
+両テストとも `await expect(page.getByText('たすきば', { exact: true }).first()).toBeVisible();` のパターン。
+旧 AppHeader はテキストを無条件 `<Link className="... font-semibold">{appName}</Link>` で出していたため、mobile でも常時可視 → `.first()` が AppHeader を拾っても結果可視 → テスト pass していた (実際には auth Card の CardTitle を検証する意図だったが、AppHeader を見るだけで通っていた)。
+
+新実装で AppHeader テキストが `display: none` になり、`.first()` が CardTitle ではなく AppHeader の hidden span に着地、`toBeVisible()` 失敗。
+
+### 教訓と防御
+
+1. **`.first()` 系の locator は「複数マッチがある前提」で書くべきではない**。意図する要素を明示的に `data-testid` で指定する。
+2. **同一テキストが複数箇所に出るレイアウト変更**は、`.first()` / `.last()` 系テストの暗黙の前提を破壊する。レビュー時に同テキスト箇所を grep して影響範囲を確認する。
+3. **モバイル/デスクトップで DOM 構造が変わる UI**は、両 viewport で playwright が動く CI ジョブを通すこと (本プロジェクトは chromium + chromium-mobile 並走で発見できた)。
+4. **「CSS hidden 要素」と「DOM 不在要素」は Playwright 視点で別物**。`display: none` は DOM に残り `getByText` で拾われる。完全に消したいなら条件付きレンダリング (client-side) が必要だが SSR との両立が困難。実用的には「テスト側を testid 化」が最小コスト。
+
+### 採用した修正
+
+- auth 画面の CardTitle 2 箇所 (`src/app/(auth)/login/page.tsx`, `src/app/(auth)/setup-password/page.tsx`) に `data-testid="auth-app-name-title"` を付与
+- E2E テストを `page.getByTestId('auth-app-name-title')` ベースに変更 (`.first()` 不要)
+- AppHeader 側の `hidden sm:inline` は維持 (UX 仕様優先)
+
+### 関連
+- 関連 KDD: [§5.X+25](#5x25) (LESSONS §4.25 hydration 過渡で CardTitle 重複観測する flake パターン、`.first()` 採用の経緯)
+- 関連 memory: `feedback_visual_baseline_gen` (UI 変更時の baseline 再生成)
+
+---
+
+## 5.X+160 ★severity-2 (Next.js Image)★ sharp の `.png({ quality: N })` (N<100) は palette PNG を出力し Next.js Image Optimizer が「Content-Type: null」扱いで弾く (PR #451 マスコット導入)
+
+**結論**: `sharp(...).png({ quality: 90 })` は内部的に **8-bit colormap (palette) PNG** を出力する (ファイルサイズ最適化目的)。これを Next.js の `<Image src="/...">` で参照すると、Image Optimizer の上流フェッチが「`The requested resource isn't a valid image for /xxx.png received null`」を吐き続ける (Content-Type 判定失敗、本番では UnoptimizedImage fallback)。テスト失敗には直結しないが Server ログを連続汚染し、本来の異常を埋もれさせる。
+
+### 経緯 (PR #451 feat/mascot-owl-and-storage-cleanup, 2026-05-27)
+
+`scripts/generate-mascot-derivatives.cjs` で sharp を使い `public/mascot-owl.png` ほか派生を生成。初期コードは sharp のデフォルトに従い:
+
+```js
+.png({ quality: 90, compressionLevel: 9 })
+```
+
+`file public/mascot-owl.png` → `PNG image data, 512 x 512, 8-bit colormap` (palette PNG)。
+Playwright E2E ログに以下が大量出力:
+
+```
+[WebServer] ⨯ The requested resource isn't a valid image for /mascot-owl.png received null
+```
+
+Next.js Image Optimizer は palette PNG の Content-Type を解決できず「received null」を報告。
+本番閲覧では画像自体は配信される (Next.js が unoptimized fallback) が、Optimizer 効果が無くなる + Server ログ汚染。
+
+### 教訓と防御
+
+1. **`sharp(...).png({ quality: N })` の `quality` オプションは palette 化トリガ**。`palette: false` を明示するか `quality` を渡さない (デフォルトは loss-less)。
+2. **`file` コマンドで `8-bit colormap` を確認**: 派生 PNG を生成したら `file <path>` で「8-bit/color RGB」または「RGBA」になっているか確認。
+3. **Next.js 標準で <Image> 経由配信する静的画像は palette PNG を避ける**。RGB / RGBA の方が Image Optimizer と相性が良い。
+
+### 採用した修正
+
+```js
+// palette: false を明示 (sharp は quality<100 だと自動で palette PNG にする)。
+// Next.js Image Optimizer が palette PNG を「Content-Type: null」扱いで弾く罠を回避。
+.png({ palette: false, compressionLevel: 9 })
+```
+
+ファイルサイズは増えるが (93KB → 376KB)、Next.js の自動最適化で WebP/AVIF に再変換されるため最終配信サイズは差が小さい。
+
+### 関連
+- 関連 KDD: [§5.X+159](#5x159) (同一 PR で発覚した chromium-mobile flake)
+- 関連 memory: なし (初出)
+
+---
+
+## 5.X+161 ★severity-high★ 旧機能の DB column 撤去は「7 layers」(= 6 layers + e2e/fixtures/) (PR #451 で発覚、§5.X+158 の続報)
+
+**結論**: [§5.X+158](#5x158) で「schema + service + UI + JWT claim + script + docs の 6 レイヤを grep」と記録したが、**E2E fixture の raw SQL INSERT 文** という 7 レイヤ目を見落としていた。本 PR でストレージプラン関連 column を撤去した migration を取り込んだバンドル PR (#451) で、`e2e/fixtures/super-admin.ts` が `INSERT INTO tenants (..., storage_addon_plan, ...)` を実行し、CI E2E が **`column "storage_addon_plan" of relation "tenants" does not exist`** で fail。
+
+### 経緯 (PR #451 feat/mascot-owl-and-storage-cleanup, 2026-05-27)
+
+PR #450 (storage-addon backend removal) を未マージのまま PR #451 にバンドル取り込み。tsc / lint / unit-test はすべて green、ローカル build も EXIT 0。CI で **Playwright E2E `13-super-admin-dashboard.spec.ts`** が以下で fail:
+
+```
+error: column "storage_addon_plan" of relation "tenants" does not exist
+   at fixtures/super-admin.ts:141
+```
+
+`e2e/fixtures/super-admin.ts` は **prisma を経由せず pg ライブラリで raw SQL INSERT** を実行する。tsc は型を見ない、prisma は迂回されるため、撤去された column 名を含む生 SQL がレビュー段階で検出できなかった。
+
+### 教訓と防御
+
+**列撤去時の grep 対象を「7 layers」に拡張する**:
+
+| # | レイヤ | grep 観点 |
+|---|---|---|
+| 1 | Prisma schema (`schema.prisma`) | column 定義の有無 |
+| 2 | Service 層 (`src/services/*`) | Prisma model の select / where / data |
+| 3 | UI (`src/app/**/page.tsx`, `src/components/**`) | 列名・関連表示要素 |
+| 4 | JWT claim / 型宣言 (`src/types/*.d.ts`, `src/lib/auth.config.ts`) | session 経由の参照 |
+| 5 | スクリプト (`scripts/*`) | ad-hoc 修復スクリプトの参照 |
+| 6 | ドキュメント (`docs/**/*.md`) | 仕様書・運用手順の列名 |
+| 7 | **E2E fixture / raw SQL (`e2e/fixtures/**`, `prisma/migrations/seed.sql` 等)** | **Prisma を経由しない直接 SQL の参照** ← 本 KDD で追加 |
+
+特に「Prisma を経由しない raw SQL」は静的解析が届かないため、撤去 PR の最後に **`grep -rn "<column_name>" e2e/`** を実行することを習慣化する。
+
+### 採用した修正
+
+`e2e/fixtures/super-admin.ts` の 2 箇所の `INSERT INTO tenants` から `storage_addon_plan` カラムと値を削除。
+あわせて `e2e/specs/13-super-admin-dashboard.spec.ts` の CSV エクスポート assertion から旧 storage プラン (`plus` / `pro_storage` / `Storage月額(円)`) の期待値を撤去し、現行 CSV ヘッダ (`Storage使用量(バイト)` + ADR-0021 ファイルストレージ列) に整合させた。
+
+### 関連
+- 関連 KDD: [§5.X+158](#5x158) (元の 6 layers 定義、本 KDD で 7 layers に拡張)
+- 関連 memory: `feedback_db_column_removal_6layers` → 7 layers に更新
+
+---
+
+## 5.X+162 ★severity-2 (E2E)★ 機能撤去 PR で UI ラベルを簡素化したら、その文言を `getByText` で固定マッチしている E2E spec も同時に更新する (PR #451 で発覚、§5.X+161 と同 PR で連続発覚)
+
+**結論**: storage-addon 撤去で `<SummaryCard label="今月の合計課金 (LLM + Storage)" ... />` を `<SummaryCard label="今月の合計課金" ... />` に簡素化した瞬間、E2E spec の `getByText('今月の合計課金 (LLM + Storage)')` が完全に死ぬ。`exact: false` 指定でも substring 一致なので「(LLM + Storage)」が含まれた完全一致 string を見つけられなくなる (実際の UI には「(LLM + Storage)」が存在しない)。
+
+### 経緯 (PR #451 feat/mascot-owl-and-storage-cleanup, 2026-05-27)
+
+[§5.X+161](#5x161) で e2e fixture の raw SQL 残参照を修正 → CI 再実行 → 今度は `spec/13` が UI 文言マッチで fail:
+
+```
+Locator: getByText('今月の合計課金 (LLM + Storage)').first()
+Error: element(s) not found
+```
+
+実装側は `chore/storage-addon-backend-removal` (PR #450 ベース) で UI ラベルを `"今月の合計課金"` (旧括弧書き「(LLM + Storage)」を削除) と sub-label `"ApiCallLog 集計 (DB / ファイルストレージ超過の従量課金を含む)"` に書き換え済。spec 側は旧ラベルを期待し続けていた。
+
+### 教訓と防御
+
+1. **「機能撤去 PR で UI ラベルの簡素化」と「E2E spec」は 1 セットで PR に含める**。プロダクト側 PR の reviewer は `git grep "<旧ラベル>" e2e/` をレビューチェックリストに含める。
+2. **`getByText('完全文字列')` の `exact: false` は安全弁にならない**。`exact: false` は substring 一致だが、「期待 string が UI に存在しない」状況では成立しない (substring が見つからない)。`getByText(/部分パターン/)` の正規表現 partial 化、または `data-testid` 経由参照がより堅牢。
+3. **§5.X+161 の 7 レイヤ grep 対象**: column 名だけでなく **「撤去機能の UI ラベル文言」も同じく grep** すること (8 つ目のレイヤとして追加検討)。
+
+### 採用した修正
+
+- `e2e/specs/13-super-admin-dashboard.spec.ts` の `getByText('今月の合計課金 (LLM + Storage)')` を `getByText('今月の合計課金')` に変更
+- 旧「内訳: LLM ¥」も削除し、現行 sub-label の `getByText(/ApiCallLog 集計/)` を期待
+- test 名 / docblock 内の「(LLM + Storage)」表記も整合
+
+### 関連
+- 関連 KDD: [§5.X+161](#5x161) (同 PR で raw SQL の column 残参照を修正済) / [§5.X+159](#5x159) (UI モバイル縮退で getByText.first() が hidden 要素を拾った別パターン、いずれも「UI 変更 → E2E spec が古い文言を期待」系)
+
+---
+
+## 5.X+163 ★severity-1 (本番 runtime 障害リスク)★ Prisma `XOR<UpdateInput, UncheckedUpdateInput>` は excess property check が効かず tsc で検出されない (PR #451 post-PR フルスキャン検証で発見)
+
+**結論**: Prisma の `prisma.tenant.update({ data: {...} })` の `data` パラメータ型は `XOR<TenantUpdateInput, TenantUncheckedUpdateInput>` で、TypeScript の **excess property check が抑制される**。撤去済 column (例: `stripeSubscriptionItemStorageId`) を `data` に渡しても **tsc は無警告**、build は EXIT 0、unit test は mock のため動く、しかし本番 Stripe webhook 発火時に **Prisma `Unknown argument` で実行時例外** → Webhook 失敗 → Stripe 状態同期不全 (severity-1 課金事故)。
+
+### 経緯 (PR #451 post-PR フルスキャン, 2026-05-27)
+
+[§5.X+161](#5x161) で「7 layers grep」を確立した直後の post-PR フルスキャン検証 ([feedback_repeated_verification_request](C:\Users\SF02512\.claude\projects\c--Users-SF02512-GitHub-Private-BusinessManagementPlatform\memory\feedback_repeated_verification_request.md) ルーチン適用) で、`src/services/stripe-webhook-handlers.service.ts:137` に以下を発見:
+
+```ts
+await prisma.tenant.update({
+  data: {
+    stripeSubscriptionItemHaikuId: haikuItemId,
+    stripeSubscriptionItemSonnetId: sonnetItemId,
+    stripeSubscriptionItemStorageId: storageItemId,  // ← schema から撤去済カラム
+  },
+});
+```
+
+- `schema.prisma`: `stripeSubscriptionItemStorageId` 列は migration `20260531_remove_storage_addon` で DROP 済、prisma model からも削除済
+- `prisma client 生成型 TenantUncheckedUpdateInput`: 該当フィールドは型定義に存在しない
+- **にも関わらず tsc は警告を出さない**
+- 同パターンの runtime bomb が `extractSubscriptionItemIds()` の戻り値 (storageItemId) + その読み取り env var `STRIPE_PRICE_STORAGE_PLUS/PRO` まで連鎖して残存していた
+
+### 原因: TypeScript の XOR 型と excess property check の関係
+
+Prisma の生成型はおおよそ次の形:
+
+```ts
+update: <T>(args: {
+  data: XOR<TenantUpdateInput, TenantUncheckedUpdateInput>;
+  ...
+})
+```
+
+`XOR<A, B>` の実装は `(A & Without<B, A>) | (B & Without<A, B>)` のようなユニオン型。**TypeScript はユニオン型に対する object literal の excess property check を行わない** (= 「片方の型にしかないプロパティ」と「両方にないプロパティ」を区別できない、保守的に許可)。
+
+このため `data: { 存在しないフィールド: "x" }` が tsc を通過する。
+ランタイムでは Prisma が `PrismaClientValidationError: Unknown argument` を投げる。
+
+### 教訓と防御
+
+**§5.X+158 / §5.X+161 で確立した「7 layers grep」を更に強化**:
+
+| # | レイヤ | 検出方法 |
+|---|---|---|
+| 1-7 | (§5.X+161 の 7 layers) | 既出 |
+| 8 | **Prisma data オブジェクト内** | `grep -rE "(create\|update\|upsert).*data:.*\{[^}]*<撤去カラム名>" src/` — XOR 型のため tsc は通すがランタイム fail |
+| 9 | **mock データ** | `grep -rnE "<撤去カラム名>" --include="*.test.ts" .` — テストは pass し続けるが production 整合性が崩れる |
+
+**新たな防御策**:
+1. **DB column 撤去 PR の post-PR チェックリスト**: 撤去カラム名で `grep -rn` を `src/services/` 配下で実行、`prisma.X.{create|update|upsert}` の `data:` ブロック内に出現していないか目視確認
+2. **runtime テストで実カラム名検証**: 重要 service には `prisma.$queryRaw` で実際の column 存在を検査する smoke test を 1 件以上書く (mock では検出不可)
+3. **コードレビュー時**: `data: {` の中に migration で DROP した column 名が無いか必ず grep 確認
+
+### 採用した修正
+
+- `src/services/stripe-webhook-handlers.service.ts`: `extractSubscriptionItemIds()` の戻り値型と実装から `storageItemId` を除去、`STRIPE_PRICE_STORAGE_PLUS / PRO` env var 読み取りも削除
+- 該当する `prisma.tenant.update` から `stripeSubscriptionItemStorageId: ...` 行を撤去
+- 関連 test (`stripe-webhook-handlers.service.test.ts`, `stripe.test.ts`, `tenant-self.service.test.ts`, 他 7 ファイル) から stale mock fields (`storageAddonPlan`, `storageAddonJpy`, `storageGracePeriodStartedAt`, `scheduledStorageAddonAt`, `scheduledNextStorageAddon`) を一斉除去
+- 227 unit test 全て PASS、build EXIT 0、CI green を確認
+
+### 関連
+- 関連 KDD: [§5.X+158](#5x158) (6 layers の初出) / [§5.X+161](#5x161) (7 layers 拡張) / 本 KDD で **Prisma XOR が tsc 静的検査をすり抜ける** ことを追加
+- 関連 memory: `feedback_db_column_removal_6layers` (→ 7layers + XOR 罠記述に更新)
+- 関連 memory: `feedback_repeated_verification_request` (= post-PR フルスキャン N 回目で重大バグ検出、本件は 4 回目で発見)
+
+---
+
+## 5.X+164 ★severity-2 (CI fail)★ post-PR の OSV-Scanner で新規 CVE が継続発覚する想定運用 — tmp@0.2.5 GHSA-ph9p-34f9-6g65 (PR #451 round 2 で検出)
+
+**結論**: OSV-Scanner / pnpm audit は **OSV.dev の advisory DB を毎回 live 問い合わせる**ため、PR ブランチ作成後・マージ前のタイミングで「新たに公開された CVE が突如 CI fail を起こす」ことが起きうる。本件は PR #451 が一度全 CI green になった後、追加 commit の CI 走行時に OSV.dev に **GHSA-ph9p-34f9-6g65 (`tmp@0.2.5` symlink attack, severity 7.7)** が新規追加されており、`exceljs@4.4.0` の transitive dep として混入していた `tmp@0.2.5` で fail。
+
+### 経緯 (PR #451 post-PR フルスキャン Round 2, 2026-05-27)
+
+[§5.X+163](#5x163) で severity-1 stripe-webhook runtime bomb を修正してマージ待ちにした直後、追加 commit の CI で OSV-Scanner が新規 fail。tmp パッケージは npm エコシステムで広く使われる一時ファイル作成ライブラリで、symlink を辿る競合状態の脆弱性が advisory 化された。
+
+### 教訓と防御
+
+[§5.X+115](#5x115) (PR #430 / pnpm.overrides で transitive CVE fix) / [§5.X+141](#5x141) (xlsx@sheetjs) / [§5.X+142](#5x142) で確立済の **pnpm.overrides パターン**をそのまま適用。
+
+1. **本 KDD で確立した運用**: OSV / pnpm audit が新規 fail を起こしたら、まず `pnpm why <pkg>` で直接依存先を特定 → `package.json` の `pnpm.overrides` に `">=<fix-version>"` を追記 → `pnpm install --no-frozen-lockfile` で lockfile 更新 → `package.json` + `pnpm-lock.yaml` を**同一 commit に含める** ([[feedback_pnpm_lockfile_sync]] 参照、CI `--frozen-lockfile` で 7 ジョブ同時 fail 実績あり)。
+
+2. **CI green = マージ OK ではない**: OSV / Trivy は外部 DB live 問い合わせのため、time-of-check と time-of-merge で結果が変わる。マージ直前にも CI 再実行を推奨。
+
+3. **頻度・累積記録**: 本 PR で発覚した OSV fail = §5.X+115/141/142 を含めて **本プロジェクト 4 件目**。「リリース前に OSV を必ず通す」運用は今後も継続。
+
+### 採用した修正
+
+```diff
+   "overrides": {
+     "qs": ">=6.15.2",
+-    "uuid": ">=11.1.1"
++    "uuid": ">=11.1.1",
++    "tmp": ">=0.2.6"
+   }
+```
+
+`pnpm install --no-frozen-lockfile` で `tmp@0.2.5 → 0.2.6` 昇格、`pnpm why tmp` で `exceljs@4.4.0 → tasukiba@1.0.0 (dependencies)` の唯一の依存経路を確認済。
+
+### 関連
+- 関連 KDD: [§5.X+115](#5x115) (本パターンの初出) / [§5.X+141](#5x141) (xlsx CVE) / [§5.X+142](#5x142) (Semgrep 誤検知)
+- 関連 memory: [[feedback_pnpm_lockfile_sync]] (lockfile 同 commit の鉄則)

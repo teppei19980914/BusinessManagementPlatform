@@ -45,9 +45,9 @@ beforeEach(() => {
   mockSendSuperAdminAlert.mockResolvedValue({ sentTo: ['admin@example.com'], failures: [] });
 });
 
-const TENANT_A = { id: 'tenant-a', timezone: 'Asia/Tokyo', storageAddonPlan: 'standard', deletedAt: null };
-const TENANT_B = { id: 'tenant-b', timezone: 'Asia/Tokyo', storageAddonPlan: 'plus', deletedAt: null };
-const TENANT_DELETED = { id: 'tenant-del', timezone: 'Asia/Tokyo', storageAddonPlan: 'standard', deletedAt: new Date() };
+const TENANT_A = { id: 'tenant-a', timezone: 'Asia/Tokyo', deletedAt: null };
+const TENANT_B = { id: 'tenant-b', timezone: 'Asia/Tokyo', deletedAt: null };
+const TENANT_DELETED = { id: 'tenant-del', timezone: 'Asia/Tokyo', deletedAt: new Date() };
 
 describe('aggregateInvoiceBillingForMonth', () => {
   it('API ¥1,000 + Storage ¥0 (standard) → subtotal=¥1000 / tax=¥100 / total=¥1100 で upsert', async () => {
@@ -76,7 +76,7 @@ describe('aggregateInvoiceBillingForMonth', () => {
     expect(upsertCall.create.paymentMethod).toBe('invoice');
   });
 
-  it('Storage plus +¥500 が合算される', async () => {
+  it('chore/storage-addon-backend-removal (2026-05-26): Storage 月額固定費は撤去、ApiCallLog 集計のみで合算', async () => {
     vi.mocked(prisma.tenant.findMany).mockResolvedValue([TENANT_B] as never);
     vi.mocked(prisma.apiCallLog.aggregate).mockResolvedValue({
       _sum: { costJpy: 0 },
@@ -86,9 +86,10 @@ describe('aggregateInvoiceBillingForMonth', () => {
 
     const result = await aggregateInvoiceBillingForMonth('2026-05');
 
-    expect(result.totalSubtotalJpy).toBe(500); // = Storage Plus 月額
-    expect(result.totalTaxJpy).toBe(50);
-    expect(result.totalGrandJpy).toBe(550);
+    // 旧 Storage Plus 月額 ¥500 は ADR-0020/0021 で従量課金化により撤去
+    expect(result.totalSubtotalJpy).toBe(0);
+    expect(result.totalTaxJpy).toBe(0);
+    // ¥0 + 解約済 (deletedAt: null だが ApiCallLog 0) → skipped かつ 0 upsert はテナント状態次第
   });
 
   it('既存 status=paid は触らない (skipped)', async () => {

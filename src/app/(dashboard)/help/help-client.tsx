@@ -15,6 +15,7 @@
  *   - admin 専用セクションは認証ロールで切替 (一般ユーザに課金詳細を見せない)
  */
 
+import Image from 'next/image';
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import {
@@ -45,6 +46,42 @@ export function HelpClient({ isTenantAdmin }: Props) {
           を先に読むのがおすすめです。ここでは個別の「困った」に答えます。
         </p>
       </header>
+
+      {/* サービスについて (マスコット紹介) */}
+      <FaqCategory title="サービスについて">
+        <FaqItem
+          q="ヘッダーや favicon に出ているフクロウは何ですか？"
+          a={
+            <div className="space-y-3">
+              <div className="flex flex-col items-center gap-2 sm:flex-row sm:items-start sm:gap-4">
+                <Image
+                  src="/mascot-owl.png"
+                  alt="たすきフクロウ"
+                  width={120}
+                  height={120}
+                  className="shrink-0 rounded-lg"
+                />
+                <div className="space-y-2 text-sm">
+                  <p>
+                    たすきばの公式マスコット <strong>「たすきフクロウ」</strong> です。
+                    フクロウは古来より <strong>「知恵」「記憶」「夜でも見守る」</strong>{' '}
+                    の象徴とされ、たすきばが大切にする 3 つの軸 ―
+                    プロジェクト管理 / ナレッジ管理 / セキュリティ ― と重なります。
+                  </p>
+                  <p>
+                    羽でドキュメントを抱え、胸元には鍵穴付きの盾、背景には円形のバリア。
+                    「知見を守り、次の担当者に渡す」というサービスの根幹をそのまま絵にしています。
+                  </p>
+                  <p className="text-muted-foreground">
+                    画面の左上・タブのアイコン・SNS シェア時のプレビューなど、
+                    たすきばに関わるあらゆる場所で皆さんの仕事のそばに居つづけます。
+                  </p>
+                </div>
+              </div>
+            </div>
+          }
+        />
+      </FaqCategory>
 
       {/* 業務利用に関する FAQ */}
       <FaqCategory title="業務利用について">

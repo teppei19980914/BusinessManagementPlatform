@@ -30,10 +30,10 @@ Phase 2 で追加された攻撃面は 3 つの新規境界に分解される。
 - 出口: Postgres INSERT (15 業務エンティティ全テーブル)
 - リスク: ZIP bomb / CSV injection / FK 改ざん / 大量レコード投入 DoS / 既存ユーザ偽装 / polymorphic entityId による cross-tenant 干渉
 
-**第 2 境界: Storage 課金経路**
-- 入口: `PATCH /api/tenants/me/storage-addon` (プラン変更), 日次 cron (`updateAllStorageBytesUsed`)
-- 出口: `Tenant.storageAddonPlan` / `tenant_monthly_usage_history.storageAddonJpy`
-- リスク: 容量計算の数値操作 (= 課金回避) / Grace period 開始日時の改ざん / プラン変更 API の不正実行
+**第 2 境界: Storage 課金経路** (chore/storage-addon-backend-removal 2026-05-26 で大幅縮小)
+- 入口: 日次 cron (`updateAllStorageBytesUsed`) のみ。`PATCH /api/tenants/me/storage-addon` は撤去済 (4 段階プラン廃止)。
+- 出口: `Tenant.storageBytesUsed` / `Tenant.storageBytesPeakThisMonth` (= ADR-0020 課金根拠) / `Tenant.storageFileBytesPeakThisMonth` (= ADR-0021 課金根拠)
+- リスク: 容量計算の数値操作 (= 課金回避)。プラン変更経路は撤去のためそのリスクは消失。
 
 **第 3 境界: Voyage embedding 大量生成経路 (Phase 1 apply 段階)**
 - 入口: `POST /api/tenants/me/external-import/apply` (確定後の Voyage 呼出)
@@ -121,14 +121,11 @@ Phase 2 で追加された攻撃面は 3 つの新規境界に分解される。
   - Phase 1: `/api/tenants/me/external-import/apply/route.ts` で同様に `entityType: 'tenant_external_import'` で記録
 - **追加対策**: 不要
 
-#### R-2. Storage プラン変更の監査ログ欠落
+#### R-2. ~~Storage プラン変更の監査ログ欠落~~ **解消済** (chore/storage-addon-backend-removal 2026-05-26)
 
-- **攻撃者**: 管理者が「Plus にアップグレードしていない」と主張 (課金否認)
-- **シナリオ**: 月末に Plus → Standard に戻し、当月 Plus 課金を否認
-- **影響度**: 中
-- **発生確率**: 低
-- **既存対策**: `Tenant.storageAddonPlan` の値変更は Prisma の updatedAt で痕跡が残るが、明示的な監査ログは未取得
-- **追加対策が必要**: ⚠ **下記「追加対策推奨」セクション R-2 参照**
+- **解消理由**: ADR-0020/0021 で従量課金化、4 段階プラン (Standard/Plus/Pro/Enterprise) は全廃。
+  プラン変更 API (`PATCH /api/tenants/me/storage-addon`) も撤去済のため、本脅威 (= プラン変更否認) は構造的に発生不能。
+- **新たな課金根拠**: ADR-0020/0021 の従量課金は `ApiCallLog` (不変監査ログ) ベースで真値が保存される (PR-V8.1 invariant)。
 
 ---
 
@@ -267,13 +264,9 @@ Phase 2 で追加された攻撃面は 3 つの新規境界に分解される。
 
 **実装規模**: 1 行修正 (`systemRole: 'general'` 固定)
 
-### R-2: Storage プラン変更の監査ログ追加
+### ~~R-2: Storage プラン変更の監査ログ追加~~ **撤去 (chore/storage-addon-backend-removal 2026-05-26)**
 
-**現状**: `updateStorageAddonPlan` で `Tenant.storageAddonPlan` を直接 update、監査ログ未取得。
-
-**推奨**: `recordAuditLog({ action: 'UPDATE', entityType: 'tenant_storage_plan', beforeValue, afterValue })` を追加。
-
-**実装規模**: tenant-storage.service.ts の `updateStorageAddonPlan` 末尾で 1 関数呼出追加。
+ADR-0020/0021 で 4 段階プランを撤去し従量課金化したため、本対策推奨は不要 (= 攻撃面そのものが消失)。
 
 ### D-1: ZIP 解凍後の絶対サイズ上限
 
@@ -283,13 +276,10 @@ Phase 2 で追加された攻撃面は 3 つの新規境界に分解される。
 
 **実装規模**: data-import.service.ts の解凍部分で 5 行程度。
 
-### E-3: middleware の Storage Grace 7 日判定に server-side fallback
+### ~~E-3: middleware の Storage Grace 7 日判定に server-side fallback~~ **撤去 (chore/storage-addon-backend-removal 2026-05-26)**
 
-**現状**: middleware は JWT claim だけで判定、claim 更新は次回ログイン時。
-
-**推奨**: write methods 時に **追加で軽量 SELECT** を発行し、Tenant.storageGracePeriodStartedAt の最新値を取得して判定。Edge runtime 制約は残るが Prisma Edge ドライバを使えば可能。
-
-**実装規模**: 中 (= Edge runtime + Prisma Accelerate 統合が必要)、優先度低 (= 攻撃成立窓が 30 日 + 7 日と長くないため)
+ADR-0020 で 4 段階プランを廃止し従量課金化したため、middleware の Grace 7 日経過判定そのものが撤去された。
+DB 容量超過 (50GB ハードキャップ) 時の write 制御は ADR-0020 §6 の `storage-guard.service` 経由 (= write API 直接介入) に移行済。
 
 ---
 
