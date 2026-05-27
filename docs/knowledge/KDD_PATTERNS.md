@@ -16415,3 +16415,40 @@ update: <T>(args: {
 - 関連 KDD: [§5.X+158](#5x158) (6 layers の初出) / [§5.X+161](#5x161) (7 layers 拡張) / 本 KDD で **Prisma XOR が tsc 静的検査をすり抜ける** ことを追加
 - 関連 memory: `feedback_db_column_removal_6layers` (→ 7layers + XOR 罠記述に更新)
 - 関連 memory: `feedback_repeated_verification_request` (= post-PR フルスキャン N 回目で重大バグ検出、本件は 4 回目で発見)
+
+---
+
+## 5.X+164 ★severity-2 (CI fail)★ post-PR の OSV-Scanner で新規 CVE が継続発覚する想定運用 — tmp@0.2.5 GHSA-ph9p-34f9-6g65 (PR #451 round 2 で検出)
+
+**結論**: OSV-Scanner / pnpm audit は **OSV.dev の advisory DB を毎回 live 問い合わせる**ため、PR ブランチ作成後・マージ前のタイミングで「新たに公開された CVE が突如 CI fail を起こす」ことが起きうる。本件は PR #451 が一度全 CI green になった後、追加 commit の CI 走行時に OSV.dev に **GHSA-ph9p-34f9-6g65 (`tmp@0.2.5` symlink attack, severity 7.7)** が新規追加されており、`exceljs@4.4.0` の transitive dep として混入していた `tmp@0.2.5` で fail。
+
+### 経緯 (PR #451 post-PR フルスキャン Round 2, 2026-05-27)
+
+[§5.X+163](#5x163) で severity-1 stripe-webhook runtime bomb を修正してマージ待ちにした直後、追加 commit の CI で OSV-Scanner が新規 fail。tmp パッケージは npm エコシステムで広く使われる一時ファイル作成ライブラリで、symlink を辿る競合状態の脆弱性が advisory 化された。
+
+### 教訓と防御
+
+[§5.X+115](#5x115) (PR #430 / pnpm.overrides で transitive CVE fix) / [§5.X+141](#5x141) (xlsx@sheetjs) / [§5.X+142](#5x142) で確立済の **pnpm.overrides パターン**をそのまま適用。
+
+1. **本 KDD で確立した運用**: OSV / pnpm audit が新規 fail を起こしたら、まず `pnpm why <pkg>` で直接依存先を特定 → `package.json` の `pnpm.overrides` に `">=<fix-version>"` を追記 → `pnpm install --no-frozen-lockfile` で lockfile 更新 → `package.json` + `pnpm-lock.yaml` を**同一 commit に含める** ([[feedback_pnpm_lockfile_sync]] 参照、CI `--frozen-lockfile` で 7 ジョブ同時 fail 実績あり)。
+
+2. **CI green = マージ OK ではない**: OSV / Trivy は外部 DB live 問い合わせのため、time-of-check と time-of-merge で結果が変わる。マージ直前にも CI 再実行を推奨。
+
+3. **頻度・累積記録**: 本 PR で発覚した OSV fail = §5.X+115/141/142 を含めて **本プロジェクト 4 件目**。「リリース前に OSV を必ず通す」運用は今後も継続。
+
+### 採用した修正
+
+```diff
+   "overrides": {
+     "qs": ">=6.15.2",
+-    "uuid": ">=11.1.1"
++    "uuid": ">=11.1.1",
++    "tmp": ">=0.2.6"
+   }
+```
+
+`pnpm install --no-frozen-lockfile` で `tmp@0.2.5 → 0.2.6` 昇格、`pnpm why tmp` で `exceljs@4.4.0 → tasukiba@1.0.0 (dependencies)` の唯一の依存経路を確認済。
+
+### 関連
+- 関連 KDD: [§5.X+115](#5x115) (本パターンの初出) / [§5.X+141](#5x141) (xlsx CVE) / [§5.X+142](#5x142) (Semgrep 誤検知)
+- 関連 memory: [[feedback_pnpm_lockfile_sync]] (lockfile 同 commit の鉄則)
