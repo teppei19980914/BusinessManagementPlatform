@@ -80,14 +80,14 @@
 ### 3.1 監視チャネル
 
 - [ ] **support@<domain>** メールアドレスの動作確認(受信できることを実テスト)
-- [ ] **Supabase / Vercel / Anthropic / Voyage / Brevo** の Status Page を bookmark
-- [ ] **Vercel Functions ログ** を毎日朝に確認する習慣化(初動 30 分ルーチンに組込み)
+- [ ] **Supabase / Netlify / Anthropic / Voyage / Brevo** の Status Page を bookmark
+- [ ] **Netlify Functions ログ** を毎日朝に確認する習慣化(初動 30 分ルーチンに組込み)
 
 ### 3.2 インシデント対応の最終確認
 
 - [ ] [INCIDENT_RESPONSE.md](./INCIDENT_RESPONSE.md) §0(初動 3 ステップ)を空読みでもイメージできる
 - [ ] §6.5 ログイン失敗対処の SQL を 1 回試行(ステージング環境で)
-- [ ] §7.1 Vercel Rollback をステージングで 1 回実施
+- [ ] §7.1 Netlify Rollback (Publish deploy) をステージングで 1 回実施
 - [ ] §8.2 ユーザ通知テンプレート 3 種をクリップボードに保存
 
 ### 3.3 バックアップの動作確認
@@ -97,9 +97,9 @@
 
 ### 3.4 環境変数の最終確認
 
-- [ ] [ENV_VARS.md](./ENV_VARS.md) の必須項目が本番 Vercel に全設定済
+- [ ] [ENV_VARS.md](./ENV_VARS.md) の必須項目が本番 Netlify に全設定済
 - [ ] **NEXTAUTH_SECRET / 各 API キー** を 1Password 等のパスワードマネージャに保管
-- [ ] **CRON_SECRET** を本番と Vercel Cron 双方で一致確認
+- [ ] **CRON_SECRET** を本番と外部 cron (cron-job.org) 双方で一致確認
 
 ---
 

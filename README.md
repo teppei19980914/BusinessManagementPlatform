@@ -107,11 +107,11 @@ graph TD
 
 | コンポーネント | サービス | 月額 |
 |---|---|---|
-| アプリケーション | Netlify Starter (Free) | $0 |
+| アプリケーション | **Netlify Personal** ($9/seat/month) | **$9** |
 | データベース | Supabase Free | $0 |
 | メール送信 | Brevo Free | $0（300 通/日） |
 
-> **2026-05-18 Vercel → Netlify 移行**: Vercel Hobby プランは規約上**商用利用不可**のため、6/1 正式リリース (Expert/Pro プラン課金) に備えて Netlify Starter (商用利用 OK) に移行しました。Supabase Free / Brevo Free も無料枠制約はあり、スケール時は有償プランへ段階移行します。詳細は [docs/design/INFRASTRUCTURE.md §10](docs/design/INFRASTRUCTURE.md) を参照。
+> **2026-05-18 Vercel → Netlify 移行 + その後 Personal 昇格**: Vercel Hobby プランは規約上**商用利用不可**のため、6/1 正式リリース (Expert/Pro プラン課金) に備えて Netlify Starter (商用利用 OK) に初期移行し、その後 credits 300/月では Production deploy 約 20 回で逼迫することから **Netlify Personal ($9/seat/month、credits 1,000/月)** へ昇格しました。Supabase Free / Brevo Free も無料枠制約はあり、スケール時は有償プランへ段階移行します。詳細は [docs/adr/0023-netlify-starter-migration.md](docs/adr/0023-netlify-starter-migration.md) と [docs/design/INFRASTRUCTURE.md §10](docs/design/INFRASTRUCTURE.md) を参照。
 
 デプロイ手順は [docs/operations/DEPLOYMENT.md](docs/operations/DEPLOYMENT.md)、スキーマ変更時の運用は [docs/operations/DB_MIGRATION_PROCEDURE.md](docs/operations/DB_MIGRATION_PROCEDURE.md) を参照してください。
 

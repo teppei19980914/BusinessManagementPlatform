@@ -45,12 +45,12 @@
 ### Negative / Trade-off
 - **Prisma のパフォーマンス限界**: 大規模クエリ・複雑な JOIN ではパフォーマンスが劣化することがある。N+1 やバッチ化漏れが起きやすく、コードレビューでチェックが必要 (memory: feedback_perf_antipatterns)
 - **マイグレーションの罠**: 命名順 (アルファベット順実行) と冪等化が必要 ([docs/operations/DB_MIGRATION_PROCEDURE.md](../operations/DB_MIGRATION_PROCEDURE.md))
-- **Client Component への value import で build 失敗**: Prisma が client bundle に混入すると Vercel build が壊れる罠 (memory: feedback_client_service_boundary)
+- **Client Component への value import で build 失敗**: Prisma が client bundle に混入すると Netlify build が壊れる罠 (memory: feedback_client_service_boundary)
 - **マイグレーション数の累積**: MVP 開発中だけで 48 個 (2026-05-11 時点)。リリース前に init 系を squash する余地あり
 
 ### Risk / 留意事項
 - **AWS RDS への移行時の互換性**: Supabase 固有機能 (RLS, Realtime, Edge Functions) は使わない方針。pgvector / `pg_trgm` は AWS RDS for PostgreSQL でも利用可能
-- **接続プールのチューニング**: Vercel のサーバレス環境では「接続枯渇」が起きやすい。Supabase Pooler 経由で接続管理 ([docs/operations/ENV_VARS.md](../operations/ENV_VARS.md) 参照)
+- **接続プールのチューニング**: Netlify のサーバレス環境では「接続枯渇」が起きやすい。Supabase Pooler 経由で接続管理 ([docs/operations/ENV_VARS.md](../operations/ENV_VARS.md) 参照)
 - **マイグレーション復旧手順**: `scripts/recover-prisma-migrations.ts` で復旧手順を準備済み
 
 ## Alternatives Considered
@@ -58,7 +58,7 @@
 ### Alt-1: MongoDB (NoSQL)
 - 概要: ドキュメント指向の NoSQL DB
 - メリット: スキーマレスで初期の柔軟性が高い、JSON 構造との親和性
-- 不採用理由: (1) 関係的データの結合クエリが弱い (本サービスはプロジェクト⇔タスク⇔ナレッジが複雑に結合) (2) ベクトル検索は Atlas Search で別料金 (3) Vercel との連携で枯れた選択肢にならない (4) 型安全性が ORM 経由でも弱い
+- 不採用理由: (1) 関係的データの結合クエリが弱い (本サービスはプロジェクト⇔タスク⇔ナレッジが複雑に結合) (2) ベクトル検索は Atlas Search で別料金 (3) Next.js + Netlify との連携で枯れた選択肢にならない (4) 型安全性が ORM 経由でも弱い
 
 ### Alt-2: PlanetScale (MySQL ベース)
 - 概要: サーバレス MySQL、ブランチング DB

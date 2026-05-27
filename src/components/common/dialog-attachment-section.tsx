@@ -15,7 +15,7 @@
  *
  * 2026-05-01 (PR #213 hotfix): `/api/attachments` GET の認可を visibility-aware に拡張。
  *   batch route は 2026-04-27 (fix/cross-list-non-member-columns) で公開対応済だったが、
- *   singular GET は対応漏れで非メンバーは引き続き 403 を踏んでいた (Vercel runtime log で発覚)。
+ *   singular GET は対応漏れで非メンバーは引き続き 403 を踏んでいた (Netlify Function log で発覚)。
  *   public な risk/retrospective/knowledge の添付は誰でも閲覧可とする経路を追加し対称化。
  *
  * 受け付けるスロット:

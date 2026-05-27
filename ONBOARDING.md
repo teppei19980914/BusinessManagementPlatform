@@ -260,11 +260,11 @@ PR を作成 / push すると以下の 6 つのワークフローが自動実行
 2. Security Scan score 90/100 以上
 3. レビュー承認(チームに 2 人以上いる場合)
 4. DB スキーマ変更を含む場合: マージ前に Supabase で migration を手動実行([docs/operations/DB_MIGRATION_PROCEDURE.md](./docs/operations/DB_MIGRATION_PROCEDURE.md))
-5. UI 変更を含む場合: Vercel Preview Deployment で目視確認
+5. UI 変更を含む場合: Netlify Deploy Preview で目視確認 (`https://deploy-preview-NNN--tasukiba.netlify.app`)
 
 ### 7.4 マージ後
 
-- Vercel が自動で production にデプロイ(数分)
+- Netlify が自動で production にデプロイ(数分)
 - マージしたブランチはローカル / リモートとも削除
 
 ---

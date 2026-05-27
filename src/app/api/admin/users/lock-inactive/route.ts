@@ -13,12 +13,12 @@
  *   (旧仕様のカスケード物理削除は行わない)。
  *
  * 呼び出し経路:
- *   1. Vercel Cron (vercel.json の `crons` に登録、日次)
+ *   1. 外部 cron (cron-job.org dashboard に登録、日次)
  *   2. 管理画面の「手動ロック実行」ボタン (admin 画面)
  *
  * 認可:
  *   - システム管理者 (対話型) または
- *   - Vercel Cron 認証ヘッダ (`Authorization: Bearer <CRON_SECRET>`)
+ *   - 外部 cron 認証ヘッダ (`Authorization: Bearer <CRON_SECRET>`)
  *
  * 監査:
  *   ロックされた各ユーザに対し lockInactiveUsers 内で audit_log を 1 件記録

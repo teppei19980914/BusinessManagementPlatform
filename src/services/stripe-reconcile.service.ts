@@ -20,7 +20,7 @@
  * 関連:
  *   - 仕様: docs/business/STRIPE_BILLING.md §6.3
  *   - 呼出 route: src/app/api/cron/stripe-reconcile/route.ts
- *   - schedule: vercel.json `0 6 1 * *` (= 毎月 1 日 06:00 UTC = JST 15:00)
+ *   - schedule: 外部 cron (cron-job.org) `0 6 1 * *` (= 毎月 1 日 06:00 UTC = JST 15:00)
  */
 
 import type Stripe from 'stripe';

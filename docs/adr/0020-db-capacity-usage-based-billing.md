@@ -217,7 +217,7 @@ storage-guard の `pg_column_size` 計測が DB connection error 等で失敗し
 - **不採用理由**: 月末削除→月初再投入の抜け道、Supabase GB-Hours との乖離大
 
 ### Alt-2: 日次 snapshot 平均 (GB-Hours 近似)
-- **不採用理由**: 公平性は最高だが、実装複雑度 +、Vercel Hobby 制約あり、抜け道防止が peak より弱い。launch 後 6 ヶ月の運用データを見て、不公平苦情が顕在化したら検討
+- **不採用理由**: 公平性は最高だが、実装複雑度 +、外部 cron (cron-job.org) の実行枠制約あり、抜け道防止が peak より弱い。launch 後 6 ヶ月の運用データを見て、不公平苦情が顕在化したら検討
 
 ### Alt-3: 4 段階プラン継続 + 超過分のみ従量
 - **不採用理由**: 「使った分だけ」コンセプトに不整合、UI 複雑化

@@ -35,7 +35,7 @@ const SIGNUP_RATE_LIMIT_PER_HOUR = 5;
 
 export async function POST(req: NextRequest) {
   // ---------- 1. Rate limit per IP ----------
-  // x-forwarded-for は最初の IP (= 直接の client) を取る。Vercel 等で複数段の場合に安全。
+  // x-forwarded-for は最初の IP (= 直接の client) を取る。Netlify / CDN 等で複数段の場合に安全。
   const forwarded = req.headers.get('x-forwarded-for') ?? '';
   const ip = forwarded.split(',')[0]?.trim() || 'unknown';
   const rateLimiter = getDefaultRateLimiter();

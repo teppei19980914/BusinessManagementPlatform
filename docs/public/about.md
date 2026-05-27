@@ -4,7 +4,7 @@
 
 アプリが過去の資産を状況に応じた最適なタイミングで提案。資料を探す時間を大幅に削減し、価値のある仕事に集中できる。
 
-[まずは試す（90 日間無料）](https://tasukiba.vercel.app/) [ Discord で話を聞く ](https://discord.com/invite/EqY82YvxuG)
+[まずは試す（90 日間無料）](https://tasukiba.netlify.app/) [ Discord で話を聞く ](https://discord.com/invite/EqY82YvxuG)
 
 <!-- 資料ダウンロード CTA: 資料整備後に追加予定 -->
 
@@ -498,7 +498,7 @@ Discord ではこんな交流を歓迎しています：
 
 合うかどうか、まずはご自身で確かめていただけたら嬉しいです。
 
-[ 90 日間無料でたすきばを使ってみる ](https://tasukiba.vercel.app/signup)
+[ 90 日間無料でたすきばを使ってみる ](https://tasukiba.netlify.app/signup)
 
 ---
 

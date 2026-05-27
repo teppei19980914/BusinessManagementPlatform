@@ -3,7 +3,7 @@
  *
  * 役割:
  *   `tenant.autoSuspendScheduledAt <= now` のテナントに対し、`suspendTenant('payment_delinquent')`
- *   を呼出して read-only モードへ強制移行する。Vercel Cron で日次実行。
+ *   を呼出して read-only モードへ強制移行する。外部 cron (cron-job.org) で日次実行。
  *
  *   autoSuspendScheduledAt は Webhook (PR-S4) が `customer.subscription.updated` の status='past_due'
  *   を受信した時に `now + 3 日` でセットされている。
@@ -20,7 +20,7 @@
  *   - サービス: src/services/stripe-auto-suspend.service.ts
  *   - 既存 suspend: src/services/super-admin.service.ts suspendTenant() (= PR #372)
  *   - 自動再開: src/services/stripe-webhook-handlers.service.ts (PR-S4 で invoice.paid / sub.active)
- *   - vercel.json `crons` セクション (日次: `0 4 * * *` = JST 13:00)
+ *   - cron-job.org dashboard (日次: `0 4 * * *` = JST 13:00、ADR-0023 で Vercel Cron から移行)
  */
 
 import { NextRequest, NextResponse } from 'next/server';

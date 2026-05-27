@@ -19,7 +19,7 @@
  *   `DISABLE_LOGIN_RATE_LIMIT='true'` でバイパス可能にし、CI の e2e.yml と
  *   e2e-visual-baseline.yml で明示的に有効化する。
  *
- *   本番 env (Vercel) では当然このフラグを設定しない → rate limit は常時有効。
+ *   本番 env (Netlify) では当然このフラグを設定しない → rate limit は常時有効。
  *   バイパス可能であることは docs/test/E2E_LESSONS.md に明記して負債化を防ぐ。
  *
  * 2026-05-13 (security/csp-nonce, L-5) — 取り下げ:

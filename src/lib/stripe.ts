@@ -30,7 +30,7 @@ import Stripe from 'stripe';
  * 設計:
  *   - 環境変数の文字列値で判定 ('true' のみ true、他はすべて false)
  *   - PR-S5 マージ後も `STRIPE_ENABLED=false` が default なので顧客には見えない
- *   - Stripe Dashboard 設定 + 動作確認後に Vercel で `STRIPE_ENABLED=true` を設定して公開
+ *   - Stripe Dashboard 設定 + 動作確認後に Netlify で `STRIPE_ENABLED=true` を設定して公開
  */
 export function isStripeEnabled(): boolean {
   return process.env['STRIPE_ENABLED'] === 'true';

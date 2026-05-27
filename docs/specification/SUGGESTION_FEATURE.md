@@ -216,7 +216,7 @@ Pro プランの差別化価値として、提案結果上位 N 件に **Anthrop
 **用語の意味**:
 - **DB 容量**: テーブル + インデックス + embedding ベクトルの合計サイズ
 - **API 帯域 (egress)**: Supabase から外部 (ブラウザ・サーバ) へ送信されたデータ量。**ダウンロード方向のみ**課金 (アップロードは無料)
-- **同時接続**: PostgreSQL に同時に張られる TCP コネクション数。Vercel serverless で大量並列実行する場合、Supavisor (Transaction pooler) を使うことで実質無制限化可能 (本サービスは利用済)
+- **同時接続**: PostgreSQL に同時に張られる TCP コネクション数。Netlify Functions (AWS Lambda 相当) で大量並列実行する場合、Supavisor (Transaction pooler) を使うことで実質無制限化可能 (本サービスは利用済)
 
 ---
 
@@ -231,7 +231,7 @@ Pro プランの差別化価値として、提案結果上位 N 件に **Anthrop
 | Anthropic Haiku (タグ抽出 ×100 回) | 0.5M token (入力 + 出力) | 約 **¥80** |
 | Voyage (embedding 生成 ×1,000 回) | 1.5M token | **¥0** (無料枠 200M の 0.75%) |
 | Supabase Free | DB ≒ 12MB / 帯域数 GB | **¥0** |
-| Vercel Hobby | Function 実行 数千回 | **¥0** (無料枠内) |
+| Netlify Personal | Function 実行 数千回 | **¥0** (credits 内、1,000 credits/月) |
 | **合計** | — | **月 ¥80 程度** |
 
 これに対する**本サービスのテナント側課金 (Expert プラン仮)**: ¥5/回 × 100 回 = ¥500 → **粗利 84%** (2026-05-15 価格改定後)。

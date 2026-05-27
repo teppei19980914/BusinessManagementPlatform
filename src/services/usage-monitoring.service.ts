@@ -26,7 +26,7 @@
  * 関連:
  *   - 計画: docs/roadmap/SUGGESTION_ENGINE_PLAN.md PR #7
  *   - 設計: docs/design/SUGGESTION_ENGINE.md §コスト超過リスクと監視ポイント
- *   - エントリポイント: src/app/api/cron/daily-usage-aggregation/route.ts (Vercel Cron)
+ *   - エントリポイント: src/app/api/cron/daily-usage-aggregation/route.ts (外部 cron (cron-job.org))
  *   - admin API: src/app/api/admin/usage-summary/route.ts
  */
 
@@ -330,7 +330,7 @@ export async function getAdminUsageSummary(date?: Date): Promise<AdminUsageSumma
 // ================================================================
 
 /**
- * 日次集計バッチの本体。Vercel Cron から呼ばれる。
+ * 日次集計バッチの本体。外部 cron (cron-job.org) から呼ばれる。
  *
  * 1. 昨日 (UTC) の使用量を集計
  * 2. 異常検知

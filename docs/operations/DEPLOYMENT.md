@@ -3,7 +3,7 @@
 本ドキュメントは、Netlify への本番デプロイ手順を集約する (Vercel から 2026-05-18 に移行)。
 障害対応は [INCIDENT_RESPONSE.md](./INCIDENT_RESPONSE.md)、ロールバックは [ROLLBACK.md](./ROLLBACK.md) を参照。
 
-> **移行の背景**: Vercel Hobby プランは規約上商用利用不可のため、6/1 正式リリース (Expert/Pro 課金プラン稼働) に備えて Netlify Starter (商用 OK) へ移行した。詳細は [`docs/design/INFRASTRUCTURE.md §10`](../design/INFRASTRUCTURE.md) を参照。
+> **移行の背景**: Vercel Hobby プランは規約上商用利用不可のため、6/1 正式リリース (Expert/Pro 課金プラン稼働) に備えて Netlify Starter (商用 OK) へ移行し、その後 credits 制約により Netlify Personal ($9/seat/month) へ昇格した。詳細は [ADR-0023](../adr/0023-netlify-starter-migration.md) と [`docs/design/INFRASTRUCTURE.md §10`](../design/INFRASTRUCTURE.md) を参照。
 
 ---
 
@@ -427,7 +427,7 @@ push 後 / build 進行中に「不要だった」と気付いた場合、Netlif
 
 ### 3.6 Credit 浪費防止 Tips (全体まとめ)
 
-Netlify Free plan は **300 credits/月** (= Production deploy 20 回相当)。リリース直後のフェーズでは消費が増えやすいので、以下を徹底する。
+Netlify Personal plan は **1,000 credits/月** (= Production deploy 約 65 回相当、ADR-0023 で Starter から昇格)。リリース直後のフェーズでは消費が増えやすいので、以下を徹底する。
 
 | Tip | 効果 | 適用方法 |
 |---|---|---|
@@ -669,9 +669,9 @@ DB スキーマ変更を伴うロールバックは [`ROLLBACK.md`](./ROLLBACK.m
 - 詳細パターンは [docs/knowledge/KDD_PATTERNS.md §5.X+66](../knowledge/KDD_PATTERNS.md) を参照。
 - 障害対応手順は [INCIDENT_RESPONSE.md §6.11](./INCIDENT_RESPONSE.md) を参照。
 
-### 8.2 統合 credits 制限 (300 credits/月) の運用
+### 8.2 統合 credits 制限 (1,000 credits/月 Netlify Personal) の運用
 
-2026 年から Netlify Free plan の制限単位は「ビルド分」から「統合 credits」に変更された。Production deploy / Web requests / Compute / Bandwidth / AI inference のすべてが credits を消費する単一枠 (Free = 300/月)。
+2026 年から Netlify Plan の制限単位は「ビルド分」から「統合 credits」に変更された。Production deploy / Web requests / Compute / Bandwidth / AI inference のすべてが credits を消費する単一枠 (Free Starter = 300/月、本サービスが採用している **Personal = 1,000/月**、Pro = 1,000/月 + Background Functions)。
 
 | 主な consumer (実測ベース、本サービス) | 単位コスト | 月間想定 (6/1 リリース直後フェーズ) |
 |---|---|---|

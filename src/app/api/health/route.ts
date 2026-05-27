@@ -2,7 +2,7 @@
  * ヘルスチェック / ウォームアップエンドポイント
  *
  * 目的:
- * - Vercel Serverless Function のコールドスタート抑制（外部 cron から定期 ping）
+ * - Netlify Function のコールドスタート抑制（外部 cron から定期 ping）
  * - DB コネクションの事前確立（pg Pool を温存）
  * - 本番環境での死活監視
  *

@@ -29,15 +29,20 @@
 | [0009](./0009-nextauth-credentials-mfa-totp.md) | NextAuth.js (Credentials) + MFA (TOTP) を認証基盤に採用 | Accepted | セキュリティ・認証 |
 | [0010](./0010-project-state-machine.md) | プロジェクト状態マシン (7 状態 + 一方向遷移) を業務ロジックの中核 | Accepted | 業務ロジック |
 | [0011](./0011-soft-delete-and-audit-log.md) | 論理削除 (soft delete) + 全変更操作の監査ログ完全記録 | Accepted | データ管理・セキュリティ |
-| [0012](./0012-vercel-supabase-mvp-hosting.md) | Vercel + Supabase 無料枠を MVP 期のインフラに採用 (AWS 移行を視野) | Accepted | インフラ |
+| [0012](./0012-vercel-supabase-mvp-hosting.md) | Vercel + Supabase 無料枠を MVP 期のインフラに採用 (AWS 移行を視野) | **Superseded by 0023** | インフラ |
 | [0013](./0013-beginner-downgrade-prohibition.md) | Beginner プランへのダウングレード禁止 (悪用防止ルール) | Accepted | ビジネス・課金 |
 | [0014](./0014-crud-permission-redesign.md) | CRUD 設計刷新 — UI=API 認可一致原則 + PM/TL 自律権限 + 自己ロール変更禁止 (2026-05-20 採択) | Accepted | セキュリティ・業務ロジック |
 | [0015](./0015-cascade-delete-idempotent-design.md) | deleteProjectCascade / deleteCustomerCascade の冪等設計 + 段階別 transaction (2026-05-20 採択) | Accepted | データ管理・運用 |
 | [0016](./0016-multi-tenant-user-membership.md) | User.email を tenant-scoped 一意化 + 組織 ID 明示入力 (2026-05-20 採択) | Accepted | アーキテクチャ・認証 |
 | [0017](./0017-wbs-import-uplift-and-task-duplicate.md) | WBS sync-import 親スコープ重複判定 + OCC + DB UNIQUE + 一括複製 + ログイン UX (2026-05-25 採択 / PR #420) | Accepted | 業務ロジック・UX・データ管理 |
 | [0018](./0018-tenant-identifier-user-visibility.md) | テナント識別子のユーザ可視化 + 設定画面の情報分離 (2026-05-21 採択) | Accepted | UX・セキュリティ |
+| [0019](./0019-billable-feature-units-and-free-tier-expansion.md) | 課金対象 featureUnit の明示化と無料利用範囲の拡大 (2026-05-24 採択) | Partially superseded by 0022 | ビジネス・課金 |
+| [0020](./0020-db-capacity-usage-based-billing.md) | DB 容量従量課金 — 月中 peak ベース階段関数型料金 (2026-05-25 採択) | Accepted | ビジネス・課金 |
+| [0021](./0021-file-storage-usage-based-billing.md) | ファイル添付ストレージ従量課金 — Supabase Storage 連携 (2026-05-26 採択) | Accepted | ビジネス・課金 |
+| [0022](./0022-embedding-usage-based-billing.md) | Embedding 機能の従量課金 — Expert/Pro ¥1/call (2026-06-01 採択) | Accepted | ビジネス・課金 |
+| [0023](./0023-netlify-starter-migration.md) | Vercel Hobby → Netlify (Starter → Personal) 移行 (商用 TOS 違反の解消、2026-05-18 採択 + Personal 昇格) | Accepted | インフラ |
 
-> 主要設計判断を時系列で ADR 化しています (現在 18 件)。
+> 主要設計判断を時系列で ADR 化しています (現在 23 件)。
 > 設計変更を検討する際は新規 ADR を追加し、変更が確定したら旧 ADR の Status を Deprecated / Superseded に更新します。
 
 ---

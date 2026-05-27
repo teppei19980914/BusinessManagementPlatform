@@ -166,7 +166,7 @@ Pro プランの差別化価値として、提案結果上位 N 件に **Anthrop
 | Anthropic Haiku (タグ抽出 ×100 回) | 0.5M token (入力 + 出力) | 約 **¥80** |
 | Voyage (embedding 生成 ×1,000 回) | 1.5M token | **¥0** (無料枠 200M の 0.75%) |
 | Supabase Free | DB ≒ 12MB / 帯域数 GB | **¥0** |
-| Vercel Hobby | Function 実行 数千回 | **¥0** (無料枠内) |
+| Netlify Personal | Function 実行 数千回 | **¥0** (credits 内、Personal 1,000 credits/月) |
 | **合計** | — | **月 ¥80 程度** |
 
 これに対する**本サービスのテナント側課金 (Expert プラン仮)**: ¥5/回 × 100 回 = ¥500 → **粗利 84%** (2026-05-15 価格改定後)。
@@ -536,17 +536,17 @@ admin はサービス内の `/admin/observability/llm` ダッシュボード (v1
 
 ### 34.13 インフラスケーラビリティと将来の移行計画
 
-現状のインフラ (Vercel Hobby + Supabase Free) は試験運用段階での運用には十分だが、**外部ユーザ拡大に伴いいくつかの制約に直面する可能性** がある。本セクションでは、これらの制約と移行候補を整理する。
+現状のインフラ (Netlify Personal + Supabase Free) は試験運用段階での運用には十分だが、**外部ユーザ拡大に伴いいくつかの制約に直面する可能性** がある。本セクションでは、これらの制約と移行候補を整理する。インフラ選定の経緯は [ADR-0023](../adr/0023-netlify-starter-migration.md) を参照。
 
-#### 34.13.1 Vercel の制約と回避策
+#### 34.13.1 Netlify の制約と回避策
 
-Vercel Hobby プランの主要な制約は、Function 実行時間の上限 (Hobby: 10 秒、Pro: 60 秒、Enterprise: 900 秒) と、月間 Function 実行回数の制約である。提案エンジンは LLM 呼び出しと embedding 検索を含むため、Phase 3 の re-ranking では Anthropic API のレスポンス時間 (1〜3 秒) が乗ることで合計 4〜8 秒となり、10 秒上限の余裕は徐々に薄れる。
+Netlify Personal プランの主要な制約は、Function 実行時間の上限 (Sync Function: 10 秒固定、Background Functions は Pro 以上限定で利用不可) と、月間 integration credits の枠 (1,000/月、超過で新規 deploy 停止) である。提案エンジンは LLM 呼び出しと embedding 検索を含むため、Phase 3 の re-ranking では Anthropic API のレスポンス時間 (1〜3 秒) が乗ることで合計 4〜8 秒となり、10 秒上限の余裕は徐々に薄れる。
 
-短期的な対策として、Vercel Pro プラン ($20/月) へのアップグレードで 60 秒上限を確保する。これは月数千円のコストだが、Function timeout エラーによるユーザ体験の悪化を確実に防ぐ。10 秒上限のままでは、ピーク時に処理が時間切れになる可能性が無視できない。
+短期的な対策として、Bulk LLM 処理は 10 秒以内に収まる単位に分割実行する (memory: `feedback_bulk_llm_call_unit` 参照)。Background Functions (15 分上限) が必要になった場合は Netlify Pro 以上 ($19/seat/month) への昇格を検討する。
 
 中期的な対策として、Edge Functions (Cloudflare Workers ベース、低レイテンシ) と Serverless Functions (Node.js、長時間処理向け) の使い分けを最適化する。LLM 呼び出しのような長時間処理は Serverless Functions に閉じ込め、軽量な GET リクエストは Edge に乗せることで、それぞれの強みを活かす。
 
-長期的な視点として、ユーザが **数千〜数万人規模に達した場合** は、Vercel から AWS / Azure / GCP への移行を検討する余地がある。具体的には、Next.js の output mode を `standalone` に変更して Docker 化し、AWS ECS Fargate / Azure Container Apps / Google Cloud Run のいずれかにデプロイする選択肢がある。これらの選択肢は Function 実行時間の制約がなく、必要に応じて instance の縦・横スケールが可能。コストは Vercel より低く抑えられる場合があるが、運用負荷は増す。
+長期的な視点として、ユーザが **数千〜数万人規模に達した場合** は、Netlify から AWS / Azure / GCP への移行を検討する余地がある。具体的には、Next.js の output mode を `standalone` に変更して Docker 化し、AWS ECS Fargate / Azure Container Apps / Google Cloud Run のいずれかにデプロイする選択肢がある。これらの選択肢は Function 実行時間の制約がなく、必要に応じて instance の縦・横スケールが可能。コストは Netlify より低く抑えられる場合があるが、運用負荷は増す。
 
 #### 34.13.2 Supabase の制約と移行候補
 

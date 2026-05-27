@@ -60,7 +60,7 @@ wait $COV_PID && echo "[e2e-coverage] OK" || echo "[e2e-coverage] FAILED"
 4. **ナレッジ追記 (KDD Step 4/6)**: 以下のいずれかに該当した場合、`docs/knowledge/KDD_PATTERNS.md` または `docs/test/E2E_LESSONS.md` への追記が必須:
    - (a) 罠 / 落とし穴に遭遇
    - (b) 新しい実装パターンを採用
-   - (c) CI / E2E / Vercel build エラーを修正
+   - (c) CI / E2E / Netlify build エラーを修正
    - (d) 横展開が必要な発見があった
    - (e) 「次回も同じ作業をしそう」と感じた手順がある
 

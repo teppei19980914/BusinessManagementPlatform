@@ -4,7 +4,7 @@
  * 役割:
  *   credit_card 払いテナント全件について Stripe Subscription 状態を取得し、DB 側
  *   `tenant.stripeSubscriptionStatus` と乖離があれば Stripe 値で上書き + auditLog 記録。
- *   月初 Vercel Cron で実行 (日次でも問題ないが、Stripe API 呼出コスト最適化のため月次)。
+ *   月初 外部 cron (cron-job.org) で実行 (日次でも問題ないが、Stripe API 呼出コスト最適化のため月次)。
  *
  * 認可:
  *   `Authorization: Bearer <CRON_SECRET>` のみ通過 (= cron-auth 共通ヘルパで定数時間検証)。
@@ -15,7 +15,7 @@
  *
  * 関連:
  *   - サービス: src/services/stripe-reconcile.service.ts
- *   - vercel.json `crons` セクション (月次: `0 6 1 * *` = 毎月 1 日 06:00 UTC = JST 15:00)
+ *   - cron-job.org dashboard (月次: `0 6 1 * *` = 毎月 1 日 06:00 UTC = JST 15:00、ADR-0023 で Vercel Cron から移行)
  *   - PUBLIC_PATHS: src/config/routes.ts (middleware bypass)
  */
 

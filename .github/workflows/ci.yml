@@ -97,7 +97,7 @@ jobs:
 
       - name: Build (next build)
         # ビルド時は実 DB 接続不要 (next build は static analysis 中心)。
-        # DATABASE_URL ダミー値で十分通る (Vercel と同じパターン)。
+        # DATABASE_URL ダミー値で十分通る (Netlify build と同じパターン)。
         env:
           DATABASE_URL: 'postgresql://dummy:dummy@localhost:5432/dummy'
           DIRECT_URL: 'postgresql://dummy:dummy@localhost:5432/dummy'

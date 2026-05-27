@@ -142,7 +142,7 @@ function LoginForm() {
     }
 
     setIsLoading(false);
-    // フルページリロードで Cookie を確実に送信（Vercel 環境対応）。
+    // フルページリロードで Cookie を確実に送信（Netlify 環境対応）。
     // PR #198: 二重に sanitize する (defense in depth)。callbackUrl は受け取り時点でも
     //   sanitize 済みだが、将来コードの近接箇所で外部由来の文字列が再代入されても
     //   オープンリダイレクトに退行しないよう、リダイレクト直前にも検証する。

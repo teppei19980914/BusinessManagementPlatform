@@ -46,7 +46,7 @@ datasource db {
 // 全プラン無料。ApiCallLog には costJpy=0 で記録、counter / Stripe queue は不変。
 // 詳細: docs/adr/0019-billable-feature-units-and-free-tier-expansion.md
 //
-// 月初リセット: Vercel Cron が `lastResetAt < 当月初` のテナントの
+// 月初リセット: 外部 cron (cron-job.org) が `lastResetAt < 当月初` のテナントの
 // `currentMonthApiCallCount` / `currentMonthApiCostJpy` を 0 にリセット。
 // 同 cron が `scheduledPlanChangeAt <= 当日` のテナントに対し
 // `scheduledNextPlan` を `plan` に適用 (ダウングレード遅延適用)。

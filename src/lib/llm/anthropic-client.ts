@@ -42,7 +42,7 @@ export function getAnthropicClient(): Anthropic {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey || apiKey.trim() === '') {
     throw new AnthropicConfigError(
-      'ANTHROPIC_API_KEY 環境変数が未設定です。Vercel ダッシュボードで設定してください。',
+      'ANTHROPIC_API_KEY 環境変数が未設定です。Netlify ダッシュボードで設定してください。',
     );
   }
   cachedClient = new Anthropic({ apiKey });

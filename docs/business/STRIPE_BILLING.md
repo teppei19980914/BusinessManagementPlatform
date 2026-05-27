@@ -539,7 +539,7 @@ cancel 直後 (= 秒単位) に「invoice → credit_card」へ再切替して�
 - **LLM 呼び出し自体は止めない** (顧客体験優先)
 - 失敗した Usage Record は `stripe_usage_record_queue` (新規簡易テーブル) に積む
 - 日次 cron (05:00 UTC) で再送 (idempotency_key で重複防止)
-- Vercel Hobby プランの cron 最小間隔制約「1 日 1 回」に合わせて日次運用。Stripe Usage Record の `timestamp` パラメタで実呼出時刻を送るため、翌日送信でも月末請求の正確性は維持される (= 35 日以内の過去 timestamp を Stripe が受領)。スケール後・ops 即時性要求が出たら Pro 化 + `*/5` 間隔に戻す
+- 旧 Vercel Hobby プランの cron 最小間隔制約「1 日 1 回」に合わせて日次運用を開始。Netlify 移行後 (ADR-0023) は外部 cron (cron-job.org) で 1 分間隔まで設定可能だが、Stripe Usage Record の `timestamp` パラメタで実呼出時刻を送るため翌日送信でも月末請求の正確性は維持される (= 35 日以内の過去 timestamp を Stripe が受領)。ops 即時性要求が出たら短間隔に切り替え可能
 
 ### 6.2 Webhook 受信失敗
 

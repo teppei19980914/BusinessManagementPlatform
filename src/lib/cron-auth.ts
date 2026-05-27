@@ -1,9 +1,9 @@
 /**
- * Vercel Cron 認証共通ヘルパ (security/auth-secret-hardening, B-6: 2026-05-13)
+ * 外部 cron (cron-job.org) 認証共通ヘルパ (security/auth-secret-hardening, B-6: 2026-05-13)
  *
  * 旧実装は 4 つの cron route で `isCronAuthorized` をそれぞれローカル定義し、
  * `header === \`Bearer ${cronSecret}\`` で文字列比較していた。これは:
- *   1. タイミング攻撃面 (理論上 1 byte ずつ推測可能、実環境では Vercel jitter で困難だが
+ *   1. タイミング攻撃面 (理論上 1 byte ずつ推測可能、実環境では Netlify Function jitter で困難だが
  *      ベストプラクティス違反)
  *   2. 4 箇所重複で DRY 違反、片方だけ強化されると一貫性が崩れる
  *

@@ -167,7 +167,7 @@ export function UsersClient({ initialUsers, tenantPlan, activeUserCount, beginne
     setForm({ name: '', email: '', systemRole: 'general' });
   }
 
-  // PR #89: 非アクティブユーザの手動ロック (vercel cron の日次実行に加え、手動でも実行可能)。
+  // PR #89: 非アクティブユーザの手動ロック (外部 cron の日次実行に加え、手動でも実行可能)。
   // feat/account-lock 改修: 旧 (論理削除) → 新 (isActive=false ロック) へ方針変更。
   // 過去ナレッジ等の作成者表示を維持しつつ、ログインだけ封じる折衷。復帰は admin が
   // 当該ユーザ行の編集ダイアログから isActive をトグル。
