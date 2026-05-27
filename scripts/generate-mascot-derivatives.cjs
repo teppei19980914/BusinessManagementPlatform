@@ -2,14 +2,23 @@
 /**
  * たすきフクロウ派生アイコン生成スクリプト (一度きり想定)
  *
- * 用途: docs/design/assets/mascot-owl-source.png (1254×1254 元画像) から
+ * 用途: docs/design/assets/ 配下の元画像 (1254×1254 / 各 1024×1024 等) から
  *   サービス全体で使う派生画像を生成する。
+ *
+ * 入力 (canonical sources):
+ *   - docs/design/assets/mascot-owl-source.png      汎用マスコット (ヘッダ / favicon / OG image)
+ *   - docs/design/assets/mascot-owl-chat-source.png チャット FAB / アシスタント・アバター用
+ *
+ *   SNS プロフィール画像用の docs/design/assets/mascot-owl-sns-source.png は
+ *   人間が会社公式 SNS アカウントに手動アップロードする想定でコード参照なし、
+ *   派生生成も行わない。
  *
  * 出力:
  *   - public/mascot-owl.png        512×512   ヘッダ / hero 等の汎用利用
  *   - src/app/icon.png             256×256   Next.js App Router の icon 規約 (favicon 自動生成)
  *   - src/app/apple-icon.png       180×180   iOS apple-touch-icon
  *   - public/og-image.png          1200×630  SNS シェア用 OG image (合成)
+ *   - public/mascot-owl-chat.png   256×256   チャット FAB / chat-panel アバター
  *
  * 再実行:
  *   $ node scripts/generate-mascot-derivatives.cjs
@@ -42,6 +51,7 @@ const sharp = loadSharp();
 
 const ROOT = path.resolve(__dirname, '..');
 const SRC = path.join(ROOT, 'docs/design/assets/mascot-owl-source.png');
+const SRC_CHAT = path.join(ROOT, 'docs/design/assets/mascot-owl-chat-source.png');
 
 async function writePng(buf, outPath) {
   fs.mkdirSync(path.dirname(outPath), { recursive: true });
@@ -134,6 +144,24 @@ async function main() {
     .png({ palette: false, compressionLevel: 9 })
     .toBuffer();
   await writePng(og, path.join(ROOT, 'public/og-image.png'));
+
+  // 5) チャット FAB / chat-panel アバター用 256×256
+  //    汎用マスコットとは別画像 (吹き出し + たすき帯 + 盾の構図) を採用。
+  //    元画像が透過 PNG なので fit:'contain' で alpha を維持する。
+  //    palette: false は §5.X+160 の Image Optimizer 互換性確保のため上記同様必須。
+  if (!fs.existsSync(SRC_CHAT)) {
+    console.error(`チャット元画像が見つかりません: ${SRC_CHAT}`);
+    process.exit(1);
+  }
+  const chatSrcBuf = fs.readFileSync(SRC_CHAT);
+  const chatSrcMeta = await sharp(chatSrcBuf).metadata();
+  console.log(`chat source: ${chatSrcMeta.width}x${chatSrcMeta.height} ${chatSrcMeta.format} (${(chatSrcBuf.length / 1024 / 1024).toFixed(2)} MB)`);
+
+  const chat256 = await sharp(chatSrcBuf)
+    .resize(256, 256, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
+    .png({ palette: false, compressionLevel: 9 })
+    .toBuffer();
+  await writePng(chat256, path.join(ROOT, 'public/mascot-owl-chat.png'));
 
   console.log('\n完了。git status で差分を確認してください。');
 }

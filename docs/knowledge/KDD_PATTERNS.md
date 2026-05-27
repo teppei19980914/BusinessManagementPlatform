@@ -13367,7 +13367,7 @@ PR #430 (`fix/readonly-markdown-render` — readOnly モードの Markdown 表�
 
 ## 5.X+116 **★severity-2 visual regression★ 全ページに常時表示するグローバル UI 要素 (FAB) を追加すると、dashboard 系の chromium-mobile visual baseline が一斉に fail する罠 (2026-05-23 / PR #432)**
 
-PR #432 (チャット意味検索) で `ChatSemanticSearchFab` を `(dashboard)/layout.tsx` に統合し全ページの右下 (`fixed right-4 bottom-4`、48×48px) に常時表示する設計を採用。CI Playwright Visual で `customers-screens.spec.ts` の chromium-mobile が **2968 pixel diff (ratio 0.02)** で fail した。
+PR #432 (チャット意味検索) で `ChatSemanticSearchFab` を `(dashboard)/layout.tsx` に統合し全ページの右下 (`fixed right-4 bottom-4`、当時 48×48px の 💬 絵文字、2026-05-27 以降は 56×56px のマスコット「たすきフクロウ」アイコン) に常時表示する設計を採用。CI Playwright Visual で `customers-screens.spec.ts` の chromium-mobile が **2968 pixel diff (ratio 0.02)** で fail した。
 
 ### 根本原因
 

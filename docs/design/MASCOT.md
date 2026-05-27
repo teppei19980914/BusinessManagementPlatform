@@ -9,8 +9,10 @@
 |---|---|
 | 名前 | たすきフクロウ |
 | 制定日 | 2026-05-26 |
-| 元画像 | `docs/design/assets/mascot-owl-source.png` (1254×1254 PNG) |
-| 派生画像 | `public/mascot-owl.png` (512), `src/app/icon.png` (256), `src/app/apple-icon.png` (180), `public/og-image.png` (1200×630) |
+| 汎用 元画像 | `docs/design/assets/mascot-owl-source.png` (1254×1254 PNG) |
+| チャット 元画像 | `docs/design/assets/mascot-owl-chat-source.png` (1254×1254 PNG、吹き出し + たすき帯 + 盾の構図) |
+| SNS プロフィール 元画像 | `docs/design/assets/mascot-owl-sns-source.png` (会社公式 SNS 設定用マスター、コード参照なし) |
+| 派生画像 | `public/mascot-owl.png` (512), `src/app/icon.png` (256), `src/app/apple-icon.png` (180), `public/og-image.png` (1200×630), `public/mascot-owl-chat.png` (256 / チャット FAB + アシスタント・アバター) |
 | 再生成スクリプト | `scripts/generate-mascot-derivatives.cjs` |
 
 ## 選定根拠
@@ -29,6 +31,8 @@
 
 ## デザイン要素
 
+### 汎用バージョン (`mascot-owl-source.png`)
+
 | 要素 | 意味 |
 |---|---|
 | 濃紺ベース | 信頼・落ち着き・夜の見守り |
@@ -36,13 +40,27 @@
 | 胸元の盾 + 鍵穴 | セキュリティ・権限管理・テナント分離 |
 | 背景の円形バリア (薄青) | 守護・安全な領域 |
 
+### チャット バージョン (`mascot-owl-chat-source.png`)
+
+チャット意味検索の FAB / アシスタント・アバター専用に、汎用バージョンとは別構図を採用。
+
+| 要素 | 意味 |
+|---|---|
+| 吹き出しの輪郭にフクロウを内包 | 「チャットの相手 = たすきフクロウ」を一瞬で伝える |
+| ミントのたすき帯 | サービス名「たすきば」と「世代間でたすきを渡す」象徴の継承 |
+| 小さな盾 (チェック付き) | チャット越境・テナント漏れに対する安全性を視覚化 |
+| 青系の配色統一 | 汎用バージョンと同じ色相で連続感を維持 (ヘッダロゴ ↔ FAB ↔ チャット内アバター) |
+
 ## 使い方ガイド
 
 ### 推奨される使い方
 
-- **ヘッダ左上のロゴ** (`<AppHeader>`) — デスクトップは「アイコン + たすきば」併記、モバイルはアイコンのみ
+- **ヘッダ左上のロゴ** (`<AppHeader>`) — デスクトップは「アイコン + たすきば」併記、モバイルはアイコンのみ。`public/mascot-owl.png` を使用
 - **favicon / apple-touch-icon** — Next.js の `src/app/icon.png` / `src/app/apple-icon.png` 規約で自動配信
 - **OG 画像 (SNS シェア)** — `public/og-image.png`、左にロゴ + 右にサービス名・タグライン
+- **チャット意味検索の FAB** — 全画面右下の常時表示ボタン、`public/mascot-owl-chat.png` (チャットバージョン) を使用。aria-label は「たすきフクロウに相談する」固定
+- **チャット意味検索のアシスタント・アバター** — チャットパネル内のヘッダ + 各返答吹き出しの左に同画像を表示し「フクロウが応答している」体験を作る ([CHAT_SEMANTIC_SEARCH.md](../specification/CHAT_SEMANTIC_SEARCH.md))
+- **SNS 公式アカウントのプロフィール画像** — X / LinkedIn / Facebook の会社公式アカウントに人間が手動アップロード。マスター画像は `docs/design/assets/mascot-owl-sns-source.png` (リポジトリ参照のみ、コード参照なし)
 - **ランディングページ (HomePage)** — Header のサービス名横に小さく配置
 - **オンボーディング画面 / 空状態イラスト** — 親しみやすさを補強するために配置可
 
@@ -63,15 +81,23 @@
 
 ## 派生画像の再生成
 
-元画像 `docs/design/assets/mascot-owl-source.png` を更新したら、以下を実行して
-派生画像をすべて再生成する:
+元画像 (`docs/design/assets/mascot-owl-source.png` または `mascot-owl-chat-source.png`)
+を更新したら、以下を実行して派生画像をすべて再生成する:
 
 ```bash
 node scripts/generate-mascot-derivatives.cjs
 ```
 
+スクリプトは 2 つの元画像から以下を生成する:
+
+- `mascot-owl-source.png` → `public/mascot-owl.png`, `src/app/icon.png`, `src/app/apple-icon.png`, `public/og-image.png`
+- `mascot-owl-chat-source.png` → `public/mascot-owl-chat.png`
+
 生成スクリプトは `sharp` (Next.js の依存パッケージ) を使用するため別途インストール不要。
-スクリプトは冪等で、既存ファイルを上書きする。
+スクリプトは冪等で、既存ファイルを上書きする。`palette: false` を明示しており Next.js
+Image Optimizer の palette PNG 弾き挙動 (KDD §5.X+160) は回避済み。
+
+なお `mascot-owl-sns-source.png` は派生を生成しない (会社公式 SNS の管理者が手動でアップロード)。
 
 ## ライセンス・著作権
 
