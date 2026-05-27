@@ -60,6 +60,10 @@ type TenantSelfInfo = {
   beginnerMonthlyCallLimit: number;
   currentMonthApiCallCount: number;
   currentMonthApiCostJpy: number;
+  /** ADR-0022 (2026-06-01): Embedding 系の当月呼出回数 (全プラン件数記録、Beginner も cost=0 で件数のみ) */
+  currentMonthEmbeddingCallCount: number;
+  /** ADR-0022 (2026-06-01): Embedding 系の当月課金額 (Beginner=0 / Expert=Pro=件数×¥1) */
+  currentMonthEmbeddingCostJpy: number;
   scheduledPlanChangeAt: Date | string | null;
   scheduledNextPlan: string | null;
   activeUserCount: number;
@@ -907,9 +911,54 @@ function UsageSection({
               style={{ width: `${budgetUsagePercent}%` }}
             />
           </div>
-          <p className="mt-1 text-xs text-muted-foreground">予算消化率: {budgetUsagePercent}%</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            予算消化率: {budgetUsagePercent}% (= プロジェクト作成・更新 / なぜ?機能のみ。Embedding は予算対象外)
+          </p>
         </div>
       )}
+
+      {/* ADR-0022 (2026-06-01): Embedding 利用量 内訳セクション */}
+      <div className="mt-4 border-t pt-3">
+        <h3 className="text-sm font-semibold">
+          Embedding 利用量
+          <span className="ml-2 text-xs font-normal text-muted-foreground">
+            (= 資産入力・チャット意味検索・添付ファイル本文索引化)
+          </span>
+        </h3>
+        <p className="mt-1 text-xs text-muted-foreground">
+          {isBeginner
+            ? 'Beginner プランは Embedding 機能も完全無料です (= 件数のみ記録)'
+            : `${info.plan === 'pro' ? 'Pro' : 'Expert'} プランは 1 業務操作あたり ¥1 の従量課金 (ADR-0022)。資産 100 件 CSV 取込でも ¥1 で済む集約設計。`}
+        </p>
+        <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div
+            className="cursor-help"
+            title="当月の Embedding 系呼出 (= 資産作成/更新・チャット検索・添付索引化等)。ApiCallLog SUM 真値ベース"
+          >
+            <p className="text-xs text-muted-foreground">Embedding 呼出</p>
+            <p className="text-xl font-bold">
+              {info.currentMonthEmbeddingCallCount.toLocaleString()}
+              <span className="ml-1 text-sm font-normal text-muted-foreground">件</span>
+            </p>
+          </div>
+          <div
+            className="cursor-help"
+            title={
+              isBeginner
+                ? 'Beginner プランは無料 (= 90 日完全無料訴求)。Expert/Pro 切替で件数×¥1 課金が始まります'
+                : '当月の Embedding 内部請求額。Beginner=¥0 維持 / Expert=Pro=件数×¥1 (ADR-0022)'
+            }
+          >
+            <p className="text-xs text-muted-foreground">Embedding 費用</p>
+            <p className="text-xl font-bold">
+              ¥{info.currentMonthEmbeddingCostJpy.toLocaleString()}
+              {isBeginner && (
+                <span className="ml-1 text-sm font-normal text-muted-foreground">(無料)</span>
+              )}
+            </p>
+          </div>
+        </div>
+      </div>
     </section>
   );
 }

@@ -81,6 +81,13 @@ export const STRIPE_METER_EVENT_NAMES = {
   //   費用計算は src/config/file-storage-pricing.ts calculateFileStorageOverageJpy()。
   //   月初 cron (tenant-monthly-reset) で前月 peak から quantity を算出し送信。
   storage_file_overage: 'tasukiba_storage_file_overage_jpy',
+  // ADR-0022 (2026-06-01): Embedding 機能の従量課金。
+  //   Beginner=¥0 (= 「90 日完全無料」訴求保全) / Expert=¥1 / Pro=¥1。
+  //   Stripe queue 投入は cost > 0 のときのみ (= Beginner はスキップ)。
+  //   1 業務操作 = 1 ApiCallLog = 1 Meter Event invariant (bulk 集約、feedback_bulk_llm_call_unit)。
+  //   費用計算は src/config/embedding-pricing.ts resolveEmbeddingCostJpy()。
+  //   embedding-backfill (cron 自動リカバリ) は cost=0 で Stripe queue 不投入 (= 不当請求回避)。
+  embedding: 'tasukiba_embedding_call',
 } as const;
 
 export type StripeMeterCallType = keyof typeof STRIPE_METER_EVENT_NAMES;
@@ -168,6 +175,17 @@ export function getStripeWebhookSecret(): string {
 export type StripePriceConfig = {
   haiku: string;
   sonnet: string;
+  /**
+   * ADR-0022 (2026-06-01): Embedding 機能の Price ID (¥1/call, Metered)。
+   *
+   * **optional フィールド**: リリース時点では未設定 (= リリース後の credit_card 払い未対応に整合)。
+   *   - 未設定 (undefined): createSubscriptionForTenant は Embedding Item を追加しない (= Haiku+Sonnet 2 本)。
+   *     stripe-usage-flush は embedding queue を見ず、空 queue 扱い。リリース時の動作。
+   *   - 設定済み: createSubscriptionForTenant が 3 本目の Item として追加し、embedding queue が送信される。
+   *     将来 Stripe Dashboard で Meter + Price 作成 + 本 env 設定でクレジットカード払い経路が
+   *     コード変更ゼロで自動的に動き出す (= Stripe-ready 設計)。
+   */
+  embedding?: string;
 };
 
 export function getStripePriceConfig(): StripePriceConfig {
@@ -181,7 +199,13 @@ export function getStripePriceConfig(): StripePriceConfig {
     );
   }
 
-  return { haiku, sonnet };
+  // ADR-0022 (2026-06-01): STRIPE_PRICE_EMBEDDING は optional (= 未設定でも throw しない)。
+  //   リリース時は未設定、将来 Stripe 有効化時に設定する Stripe-ready 設計。
+  //   空文字列も undefined 扱い (Netlify env で空保存される運用パターンへの defensive)。
+  const embeddingRaw = process.env['STRIPE_PRICE_EMBEDDING'];
+  const embedding = embeddingRaw != null && embeddingRaw.length > 0 ? embeddingRaw : undefined;
+
+  return { haiku, sonnet, embedding };
 }
 
 /**

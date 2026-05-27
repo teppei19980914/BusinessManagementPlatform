@@ -1,9 +1,14 @@
 # ADR-0019: 課金対象 featureUnit の明示化と無料利用範囲の拡大 (2026-05-24)
 
-- **Status**: Accepted (2026-05-24)
+- **Status**: Partially superseded by [ADR-0022](./0022-embedding-usage-based-billing.md) (2026-06-01)
 - **Date**: 2026-05-24
 - **Deciders**: teppei
 - **Supersedes**: [ADR-0002](./0002-tenant-billing-per-api-call.md) (プラン構成・単価・課金対象 call の定義を本 ADR で再定義)
+- **Partially superseded by**: [ADR-0022](./0022-embedding-usage-based-billing.md) (2026-06-01)
+  - **Embedding 系 featureUnit** (`knowledge-embedding` / `risk-issue-embedding` / `retrospective-embedding` / `memo-embedding` / `chat-semantic-search` / `external-import-embedding` / `attachment-embedding`) は ADR-0022 で **Expert/Pro のみ ¥1/call 課金** に変更。Beginner プランは **¥0 維持** ("90 日完全無料" 訴求保全)。
+  - **Fair Use Limit** (= 月 10,000 calls/tenant) は ADR-0022 で **Beginner プラン × EMBEDDING_BILLABLE のみ適用** に縮小。Expert/Pro は `monthlyBudgetCap` で自然防御されるため対象外。
+  - **embedding-backfill** (= 月初 cron 自動リカバリ) は **全プラン ¥0 維持** (= 「ユーザ非起動の処理での課金は不当」UX/信頼関係保護)。
+  - 本 ADR の §3 「課金対象 featureUnit」一覧と §LLM 暴走防止 (Fair Use Limit) セクションは、上記の通り ADR-0022 の決定を優先する。
 
 ---
 

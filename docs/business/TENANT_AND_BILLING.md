@@ -2,17 +2,27 @@
 
 本ドキュメントは、本サービスのマルチテナント運用フローと、3 プラン構成 (Beginner / Expert / Pro) + 従量課金 (per-API-call) のビジネスロジックを集約する。技術的な実装設計は [../design/SUGGESTION_ENGINE.md](../design/SUGGESTION_ENGINE.md)、ユーザから見える挙動は [../specification/](../specification/) を参照。
 
-## 🆕 最新の料金体系: ADR-0019 + ADR-0020 + ADR-0021 (2026-05-26)
+## 🆕 最新の料金体系: ADR-0019 + ADR-0020 + ADR-0021 + ADR-0022 (2026-06-01)
 
-**現行料金体系の確定版は [ADR-0019](../adr/0019-billable-feature-units-and-free-tier-expansion.md) + [ADR-0020](../adr/0020-db-capacity-usage-based-billing.md) + [ADR-0021](../adr/0021-file-storage-usage-based-billing.md)** です。
+**現行料金体系の確定版は [ADR-0022](../adr/0022-embedding-usage-based-billing.md) + [ADR-0019](../adr/0019-billable-feature-units-and-free-tier-expansion.md) (部分 supersede 済) + [ADR-0020](../adr/0020-db-capacity-usage-based-billing.md) + [ADR-0021](../adr/0021-file-storage-usage-based-billing.md)** です。
 
-### LLM/Embedding 課金 (ADR-0019 / 2026-05-24)
+### LLM 課金 (ADR-0019 / 2026-05-24)
 
 | 項目 | ADR-0002 (旧) | **ADR-0019 (現行)** |
 |---|---|---|
 | Expert 単価 | ¥5/call (全 API) | **¥10/call** (プロジェクト作成/更新のみ) |
 | Pro 単価 | ¥15/call (全 API) | **¥15/call** (プロジェクト作成/更新 + なぜ機能、据置) |
 | Beginner 上限 | 月 100 回 (全 API) | **月 50 回** (プロジェクト作成/更新のみカウント) |
+
+### Embedding 課金 (ADR-0022 / 2026-06-01) — Embedding 機能の従量課金化
+
+| プラン | Embedding 単価 | 対象 featureUnit | 備考 |
+|---|---|---|---|
+| **Beginner** | **¥0 (= 90 日完全無料訴求保全)** | knowledge/risk-issue/retrospective/memo/chat-semantic-search/external-import/attachment-embedding | Fair Use Limit (月 10,000 calls) 適用 |
+| **Expert / Pro** | **¥1 / 業務操作** | 同上 | `monthlyBudgetCap` で予算上限設定可、Stripe queue 投入は cost > 0 時 |
+| **全プラン** | **¥0 維持** | `*-embedding-backfill` (月初 cron 自動リカバリ、5 種) | ユーザ非起動の修復処理 = 不当請求リスク回避 |
+
+**重要設計**: 「1 業務操作 = 1 ApiCallLog = 1 課金」集約 (CSV 100 件取込でも ¥1)。Beginner 50 件上限 / `monthlyBudgetCap` は LLM_BILLABLE のみ判定 (= 既存上限ロジック不変)。Fair Use Limit は Beginner 専用に縮小。詳細: [ADR-0022](../adr/0022-embedding-usage-based-billing.md)。
 | 課金対象 | 全 LLM/Embedding 呼出 | **`BILLABLE_FEATURE_UNITS` のみ** (project-upsert / suggestion-explanation / auto-tag-extract) |
 | 無料化された機能 | — | **資産入力 (Knowledge/RiskIssue/Retrospective/Memo) + チャット検索 + CSV インポート + 月初 backfill cron** |
 

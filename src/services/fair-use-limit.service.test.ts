@@ -1,10 +1,11 @@
 /**
- * fair-use-limit.service.ts のユニットテスト (ADR-0019 / 2026-05-24)
+ * fair-use-limit.service.ts のユニットテスト (ADR-0019 / 2026-05-24 → ADR-0022 で Beginner 専用に縮小 / 2026-06-01)
  *
- * テスト方針:
- *   - billable / 無料両方の featureUnit のカウント挙動を固定
+ * テスト方針 (ADR-0022 後):
+ *   - 集計対象は EMBEDDING_BILLABLE_FEATURE_UNITS の SUM (= Beginner プラン × ユーザ起動 Embedding)
  *   - WARNING (8,000) / HARD (10,000) 閾値の境界値テスト
  *   - tenant TZ 月境界が getTenantMonthStart 経由で正しく渡されることを確認
+ *   - listFairUseUsage は plan='beginner' のテナントのみを対象とする
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -116,22 +117,24 @@ describe('checkFairUseLimit - 境界値', () => {
 });
 
 describe('checkFairUseLimit - 集計対象', () => {
-  it('課金対象 featureUnit (BILLABLE_FEATURE_UNITS) を集計から除外する', async () => {
+  it('EMBEDDING_BILLABLE_FEATURE_UNITS のみを集計対象とする (ADR-0022)', async () => {
     vi.mocked(prisma.apiCallLog.count).mockResolvedValue(0);
 
     await checkFairUseLimit(TENANT_ID, 'Asia/Tokyo');
 
     const callArg = vi.mocked(prisma.apiCallLog.count).mock.calls[0]?.[0];
-    // ADR-0019: project-upsert / suggestion-explanation / auto-tag-extract
-    // ADR-0020 (2026-05-25): + db-capacity-overage
-    // ADR-0021 (2026-05-26): + storage-file-overage
+    // ADR-0022 (2026-06-01): Beginner プランのユーザ起動 Embedding (= Voyage 無料枠を消費する操作) のみを対象。
+    //   LLM_BILLABLE は Beginner 50 件 / budget cap で別防御、Backfill は ユーザ非起動で対象外、
+    //   Storage Overage は本パスを通らない (= 月初 cron 直接 INSERT)。
     expect(callArg?.where?.featureUnit).toEqual({
-      notIn: [
-        'project-upsert',
-        'suggestion-explanation',
-        'auto-tag-extract',
-        'db-capacity-overage',
-        'storage-file-overage',
+      in: [
+        'knowledge-embedding',
+        'risk-issue-embedding',
+        'retrospective-embedding',
+        'memo-embedding',
+        'chat-semantic-search',
+        'external-import-embedding',
+        'attachment-embedding',
       ],
     });
   });
@@ -192,12 +195,14 @@ describe('listFairUseUsage', () => {
     expect(results.find((r) => r.tenantId === 't3')?.status).toBe('hard');
   });
 
-  it('deletedAt=null フィルタでテナントを取得 (削除済除外)', async () => {
+  it('deletedAt=null かつ plan=beginner フィルタでテナントを取得 (ADR-0022 で Beginner 限定に縮小)', async () => {
     vi.mocked(prisma.tenant.findMany).mockResolvedValue([] as never);
 
     await listFairUseUsage();
 
     const callArg = vi.mocked(prisma.tenant.findMany).mock.calls[0]?.[0];
-    expect(callArg?.where).toEqual({ deletedAt: null });
+    // ADR-0022 (2026-06-01): Expert/Pro は monthlyBudgetCap で自然防御されるため Fair Use Limit
+    //   の対象外。Beginner プランのみを監視。
+    expect(callArg?.where).toEqual({ deletedAt: null, plan: 'beginner' });
   });
 });

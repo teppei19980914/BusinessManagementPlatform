@@ -78,6 +78,37 @@ Dashboard → **商品カタログ** → **商品を追加**
 
 → 環境変数 `STRIPE_PRICE_SONNET` に保存。**ADR-0019 では Sonnet 単価変更なし**、既存 Price をそのまま使用可。
 
+### 2.2-bis Embedding Price 作成 (ADR-0022 / 2026-06-01) — **将来 Stripe 有効化時の追加作業**
+
+> 🆕 **ADR-0022 (2026-06-01) Stripe-ready 設計**: リリース時 (2026-06-01) は credit_card 払い未対応のため、本セクションの作業は **不要** です。`STRIPE_PRICE_EMBEDDING` 環境変数を未設定にしておくと `createSubscriptionForTenant` は Haiku + Sonnet の 2 本だけ Subscription Item を作成し、Embedding 課金は invoice/bank_transfer 経由で `billing-aggregation.service` から請求書に乗ります (= 主経路)。
+>
+> **将来 Stripe 有効化する際の手順** (= クレジットカード払い対応時):
+
+1. **新 Meter event 作成**:
+   - 商品カタログ → メーター → 「新規メーター」
+   - イベント名: `tasukiba_embedding_call` (= `STRIPE_METER_EVENT_NAMES.embedding` と完全一致必須)
+   - 集計タイプ: 合計 (sum)
+   - イベントペイロード キー: `stripe_customer_id` / `value`
+
+2. **新 Embedding Price 作成**:
+
+| 項目 | 値 |
+|---|---|
+| 商品名 | `たすきば Embedding 業務操作 (= 資産入力 / チャット検索 / CSV / 添付ファイル embedding)` |
+| 説明 | `Expert/Pro プランの Embedding 業務操作 1 回あたり ¥1 (ADR-0022 / 2026-06-01)。Beginner は 0 課金 (= queue 不投入のため Subscription Item は不要)` |
+| 料金モデル | 従量課金ベース (新規 Meter `tasukiba_embedding_call` に紐付け) |
+| 単価 | **`¥1` per unit** |
+| 請求期間 | 月次 |
+| 検索キー | `embedding_per_call` |
+
+3. **環境変数設定**:
+   - `STRIPE_PRICE_EMBEDDING` を staging + production の両方に設定 (= Test / Live で別 Price ID)
+   - 設定後、`createSubscriptionForTenant` は自動的に 3 本目の Subscription Item として追加 (コード変更ゼロ)
+
+4. **既存 credit_card テナント (もし存在すれば) への migrate**:
+   - Stripe Dashboard で既存 active Subscription の Items に Embedding Price を追加
+   - またはコード経由: `stripe.subscriptionItems.create({ subscription: sub_xxx, price: STRIPE_PRICE_EMBEDDING })`
+
 ### 2.3 ~~Storage Add-on (Plus)~~ — **ADR-0020 で廃止**
 
 > **⚠️ ADR-0020 (2026-05-25)**: 4 段階 Storage Add-on プラン (Plus/Pro/Enterprise) は廃止され、

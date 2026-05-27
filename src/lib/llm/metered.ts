@@ -1,36 +1,45 @@
 /**
  * `withMeteredLLM()` — LLM 呼び出しの計測 + 認可 + 縮退判定ミドルウェア
- * (PR #2-c / T-03 提案エンジン v2、ADR-0019 で billable/free 分岐を追加 / 2026-05-24)
+ * (PR #2-c / T-03 提案エンジン v2、ADR-0019 で billable/free 分岐を追加 / 2026-05-24
+ *  → ADR-0022 で 4 階層分類に拡張 / 2026-06-01)
  *
  * 役割:
  *   提案エンジンや自動タグ抽出など **すべての LLM/Embedding 呼び出し** を本ミドルウェア越しに
  *   行う。漏れを構造的に防ぐため、サービス層で直接 anthropic-sdk / voyage を叩くのではなく、
  *   必ず本関数で wrap する。
  *
- *   ADR-0019 改定 (2026-05-24):
- *     featureUnit が課金対象 (= BILLABLE_FEATURE_UNITS) かどうかで以下を分岐する:
- *       - **billable** (project-upsert / suggestion-explanation / auto-tag-extract):
- *         従来通り cost > 0 で記録、counter increment、Stripe queue enqueue、
- *         Beginner 月次上限カウント対象。
- *       - **free** (knowledge-embedding / chat-semantic-search / *-embedding-backfill 等):
- *         cost = 0 で ApiCallLog のみ記録、counter は不変、Stripe queue 投入なし、
- *         Beginner 月次上限はカウントしない (= 上限超過後でも継続実行可能)。
- *         予算上限 (monthlyBudgetCapJpy) も予測コスト 0 のため発火しない。
+ *   ADR-0022 (2026-06-01) 4 階層分類:
+ *     1. **LLM_BILLABLE** (project-upsert / suggestion-explanation / auto-tag-extract):
+ *        cost = resolveCostForPlan(plan) [Beginner=0 / Expert=¥10 / Pro=¥15]
+ *        counter = currentMonthApi*
+ *        Beginner 50 件月次上限 + monthlyBudgetCap 判定対象
+ *        Stripe queue = haiku/sonnet event
+ *     2. **EMBEDDING_BILLABLE** (knowledge-embedding / risk-issue-embedding / retrospective-embedding /
+ *        memo-embedding / chat-semantic-search / external-import-embedding / attachment-embedding):
+ *        cost = resolveEmbeddingCostJpy(plan) [Beginner=0 / Expert=¥1 / Pro=¥1]
+ *        counter = currentMonthEmbedding* (全プラン件数記録、Beginner は cost=0 でも count は記録)
+ *        Beginner 上限 / budget cap 判定対象外 (= 既存上限ロジック不変)
+ *        Stripe queue = embedding event (cost > 0 のときのみ = Beginner はスキップ)
+ *     3. **EMBEDDING_BACKFILL** (cron 自動リカバリ): cost=0 / counter 不変 / queue 不投入。
+ *        ユーザ非起動の処理での課金は「不当請求」 = UX/信頼関係に直接影響するため明示的 free。
+ *     4. **その他** (未知 featureUnit): cost=0 / counter 不変 / queue 不投入 (安全側)。
  *
  * 実行ステップ:
  *   1. 短期 rate limit (1 ユーザ / 1 分 / 10 回、1 ユーザ / 1 時間 / 60 回) — 全 featureUnit 対象
  *   2. Tenant 取得 + plan 解決
- *   3. Beginner プランの月間呼び出し回数上限チェック (**billable のみ**)
- *   4. monthlyBudgetCapJpy 設定時の予測コスト超過チェック (**billable のみ**)
+ *   3. Beginner プランの月間呼び出し回数上限チェック (**LLM_BILLABLE のみ**)
+ *   3.5. Fair Use Limit チェック (**Beginner プラン × EMBEDDING_BILLABLE のみ**、Voyage 無料枠保護)
+ *   4. monthlyBudgetCapJpy 設定時の予測コスト超過チェック (**LLM_BILLABLE のみ**)
  *   5. 実 LLM 呼び出し (caller の callback)
- *   6. 成功時に ApiCallLog 記録 (全 featureUnit) + Tenant counter increment + Stripe queue
- *      enqueue (**billable のみ**)
+ *   6. 成功時に ApiCallLog 記録 (全 featureUnit) + Tenant counter increment (4 階層分岐) +
+ *      Stripe queue enqueue (LLM_BILLABLE or EMBEDDING_BILLABLE で cost > 0 のとき)
  *
  * 縮退モード (LLM 呼び出しを行わず即返却):
  *   - rate_limited: 短期 rate limit 超過
  *   - tenant_inactive: Tenant 削除済 (deletedAt != null) または存在しない
- *   - beginner_limit_exceeded: Beginner 月間 50 回 (default、ADR-0019) 超過 (billable call のみカウント)
- *   - budget_exceeded: ユーザ自己設定の monthlyBudgetCapJpy 超過予測 (billable のみ判定)
+ *   - beginner_limit_exceeded: Beginner 月間 50 回 (default、ADR-0019) 超過 (LLM_BILLABLE call のみカウント)
+ *   - fair_use_limit_exceeded: Beginner 月間 10,000 calls (Embedding) 超過 (ADR-0022)
+ *   - budget_exceeded: ユーザ自己設定の monthlyBudgetCapJpy 超過予測 (LLM_BILLABLE のみ判定)
  *
  * 失敗モード (LLM 呼び出しが投げた場合):
  *   - llm_error: 内部例外。caller 側でフォールバック (既存スコアリング等) する想定。
@@ -40,31 +49,41 @@
  *   - userId は optional (undefined = cron / システム実行)。userId なし時は
  *     rate limit をスキップ (admin 責任で別途制御)。
  *   - 予測コストは options.predictedCostJpy で上書き可能 (embedding 等で
- *     per-call 価格と差がある特殊ケース用)。デフォルトは plan 単価 (billable 時のみ計上)。
+ *     per-call 価格と差がある特殊ケース用)。デフォルトは plan 単価 (LLM_BILLABLE 時のみ計上)。
  *   - increment と ApiCallLog 記録は単一 transaction で実行 (整合性担保)。
  *     transaction 失敗は内部エラーとして throw — caller がエラー処理。
- *   - 課金対象判定は `isBillableFeatureUnit(featureUnit)` で行う。これが ApiCallLog SUM /
- *     画面表示 / Stripe queue / 請求書 の 5 経路で参照される単一の真実源
- *     (feedback_billing_invariant.md)。
+ *   - 課金対象判定は 4 つの型ガード (isLlmBillable / isEmbeddingBillable / isEmbeddingBackfill /
+ *     isStorageOverage) で行う。これらが ApiCallLog SUM / 画面表示 / Stripe queue / 請求書 の
+ *     5 経路で参照される単一の真実源 (feedback_billing_invariant.md)。
  *
  * 関連:
  *   - 設計: docs/design/SUGGESTION_ENGINE.md
- *   - 課金分類: src/config/billing-feature-units.ts (BILLABLE_FEATURE_UNITS)
+ *   - 課金分類: src/config/billing-feature-units.ts (4 階層 + 判定関数)
+ *   - Embedding 単価: src/config/embedding-pricing.ts (resolveEmbeddingCostJpy)
+ *   - LLM 単価: src/config/llm.ts (resolveCostForPlan)
  *   - ADR: docs/adr/0019-billable-feature-units-and-free-tier-expansion.md
+ *          docs/adr/0022-embedding-usage-based-billing.md
  *   - 配下: src/lib/llm/rate-limiter.ts
- *   - 設定: src/config/llm.ts
+ *   - Stripe: src/lib/stripe.ts (STRIPE_METER_EVENT_NAMES.embedding)
  */
 
 import { randomUUID } from 'node:crypto';
 import { prisma } from '@/lib/db';
-import { isBillableFeatureUnit } from '@/config/billing-feature-units';
+import {
+  isEmbeddingBackfillFeatureUnit,
+  isEmbeddingBillableFeatureUnit,
+  isLlmBillableFeatureUnit,
+} from '@/config/billing-feature-units';
+import { resolveEmbeddingCostJpy } from '@/config/embedding-pricing';
 import {
   LLM_RATE_LIMIT,
   resolveCostForPlan,
   resolveModelForPlan,
 } from '@/config/llm';
 import { isTenantPlan, type TenantPlan } from '@/lib/tenant';
-// ADR-0019 (2026-05-24): 無料 featureUnit の暴走防止 (tenant 単位の月次 fair use limit)
+// ADR-0019 (2026-05-24) → ADR-0022 (2026-06-01) で Beginner プラン限定に縮小:
+//   Embedding 系を Expert/Pro で ¥1 課金化したため、それらは monthlyBudgetCap で自然防御。
+//   Beginner は cost=0 のままで防御手段がないため、本サービスを Beginner プランのみで利用継続。
 import { checkFairUseLimit } from '@/services/fair-use-limit.service';
 import {
   getDefaultRateLimiter,
@@ -207,25 +226,39 @@ export async function withMeteredLLM<T>(
 
   const modelName = resolveModelForPlan(plan);
 
-  // ADR-0019 (2026-05-24): featureUnit が課金対象 (= BILLABLE_FEATURE_UNITS) かを判定。
-  //   billable: 通常の課金フロー (cost > 0 / counter increment / Stripe queue enqueue)
-  //   free:     ApiCallLog のみ cost=0 で記録、counter / Stripe queue は不変、
-  //             Beginner 上限 + budget cap の判定からも除外。
-  //   詳細: docs/adr/0019-billable-feature-units-and-free-tier-expansion.md
-  const billable = isBillableFeatureUnit(options.featureUnit);
+  // ADR-0022 (2026-06-01) 4 階層分類で featureUnit を判定:
+  //   1. LLM_BILLABLE (project-upsert / suggestion-explanation / auto-tag-extract):
+  //      plan 別単価、currentMonthApi* counter、Beginner 50 / budget cap 判定対象、
+  //      Stripe queue は haiku/sonnet event。
+  //   2. EMBEDDING_BILLABLE (knowledge-embedding / risk-issue-embedding / retrospective-embedding /
+  //      memo-embedding / chat-semantic-search / external-import-embedding / attachment-embedding):
+  //      Beginner=¥0 / Expert=¥1 / Pro=¥1、currentMonthEmbedding* counter、Beginner 上限 / budget cap
+  //      判定対象外 (= 既存上限ロジック不変)、Stripe queue は cost > 0 のみ embedding event。
+  //   3. EMBEDDING_BACKFILL (cron 自動リカバリ): 全プラン ¥0 維持、counter 不変、Stripe queue 不投入。
+  //      ユーザ非起動の処理での課金は「不当請求」 = UX/信頼関係に直接影響するため明示的 free。
+  //   4. その他 (= 未知 / 想定外): cost=0、counter 不変、Stripe queue 不投入 (安全側)。
+  const isLlmBillable = isLlmBillableFeatureUnit(options.featureUnit);
+  const isEmbeddingBillable = isEmbeddingBillableFeatureUnit(options.featureUnit);
+  const isEmbeddingBackfill = isEmbeddingBackfillFeatureUnit(options.featureUnit);
 
-  // billable な call のみ plan 単価で課金。free call は cost=0 (= 顧客請求なし、監査ログのみ記録)。
-  const costJpy = billable
+  // cost 計算: featureUnit カテゴリで分岐。
+  //   LLM → resolveCostForPlan(plan): Beginner=0 / Expert=¥10 / Pro=¥15
+  //   Embedding → resolveEmbeddingCostJpy(plan): Beginner=0 / Expert=¥1 / Pro=¥1
+  //   Backfill / 未知 → 0 (明示的 free)
+  const costJpy = isLlmBillable
     ? resolveCostForPlan(plan, {
         pricePerCallHaiku: tenant.pricePerCallHaiku,
         pricePerCallSonnet: tenant.pricePerCallSonnet,
       })
-    : 0;
+    : isEmbeddingBillable
+      ? resolveEmbeddingCostJpy(plan)
+      : 0;
 
-  // ---------- Step 3: Beginner プラン月間上限チェック (billable のみ) ----------
-  // ADR-0019: 無料 featureUnit (chat / asset embedding / backfill 等) は Beginner 上限を消費せず、
-  //   上限到達後でも継続実行可能。"資産入力とチャットは Beginner でも完全無料で無制限" の訴求と整合。
-  if (billable && plan === 'beginner') {
+  // ---------- Step 3: Beginner プラン月間上限チェック (LLM_BILLABLE のみ) ----------
+  // ADR-0022: Embedding は Beginner 50 件上限を消費しない (= 既存上限ロジック不変)。
+  //   「資産入力とチャットは Beginner でも完全無料で無制限」訴求と整合。
+  //   Backfill / 未知も対象外。
+  if (isLlmBillable && plan === 'beginner') {
     if (tenant.currentMonthApiCallCount >= tenant.beginnerMonthlyCallLimit) {
       return {
         ok: false,
@@ -235,12 +268,12 @@ export async function withMeteredLLM<T>(
     }
   }
 
-  // ---------- Step 3.5: Fair use limit (無料 featureUnit のみ、ADR-0019) ----------
-  // ADR-0019: 無料 featureUnit (knowledge-embedding / chat-semantic-search / *-backfill 等) は
-  //   plan 単価 × budget cap で防御できないため、tenant 単位の月次 call 数で別途上限を設ける。
-  //   1 テナントが Voyage 200M 無料枠 (全社共有) を食い潰す DoS / 経済的攻撃を防ぐ最終防衛線。
-  //   詳細: src/services/fair-use-limit.service.ts + ADR-0019 §LLM 暴走防止
-  if (!billable) {
+  // ---------- Step 3.5: Fair use limit (Beginner プラン × EMBEDDING_BILLABLE のみ) ----------
+  // ADR-0022 (2026-06-01): Expert/Pro は Embedding が cost=¥1 のため monthlyBudgetCap で自然防御。
+  //   Beginner は cost=0 のままで防御手段がないため、Beginner プランの EMBEDDING_BILLABLE 呼出に
+  //   対してのみ Fair Use Limit (= 月 10,000 calls/tenant) を適用し Voyage 200M 無料枠を保護。
+  //   詳細: src/services/fair-use-limit.service.ts + ADR-0022 §2.3
+  if (plan === 'beginner' && isEmbeddingBillable) {
     const fairUse = await checkFairUseLimit(options.tenantId, tenant.timezone ?? null);
     if (!fairUse.allowed) {
       return {
@@ -251,10 +284,11 @@ export async function withMeteredLLM<T>(
     }
   }
 
-  // ---------- Step 4: monthlyBudgetCapJpy 予測超過チェック (billable のみ) ----------
-  // ADR-0019: 無料 featureUnit は cost=0 で予算消費しないため、予測超過判定もスキップ。
-  //   無料 call の暴走防止は Step 3.5 (fair use limit) で対応する。
-  if (billable) {
+  // ---------- Step 4: monthlyBudgetCapJpy 予測超過チェック (LLM_BILLABLE のみ) ----------
+  // ADR-0022: Embedding はチャット検索/資産入力に必須機能のため、予算上限とは独立。
+  //   Embedding が予算超過で止まると業務継続に直接影響するため、判定対象外とする。
+  //   無料 call (= Beginner Embedding / Backfill / 未知) は cost=0 で予算消費しないため判定不要。
+  if (isLlmBillable) {
     const predictedCost = options.predictedCostJpy ?? costJpy;
     if (tenant.monthlyBudgetCapJpy != null) {
       if (
@@ -286,31 +320,47 @@ export async function withMeteredLLM<T>(
   }
   const latencyMs = Date.now() - startMs;
 
-  // ---------- Step 6: ApiCallLog 記録 + (billable のみ) counter increment + Stripe queue ----------
-  // ADR-0019 (2026-05-24): ApiCallLog は全 featureUnit で記録するが、Tenant counter increment と
-  //   Stripe queue 投入は billable な call のみ行う。これにより:
-  //     - 無料 call の暴走監視は ApiCallLog SUM (featureUnit GROUP BY) で可能
-  //     - Beginner 上限 / Stripe 請求は billable のみで集計 (= 顧客請求 invariant 維持)
+  // ---------- Step 6: ApiCallLog 記録 + counter increment (4 階層分岐) + Stripe queue ----------
+  // ADR-0022 (2026-06-01): ApiCallLog は全 featureUnit で記録するが、Tenant counter increment と
+  //   Stripe queue 投入は 4 階層に応じて分岐する:
+  //     - isLlmBillable     → currentMonthApi* increment + Stripe queue (haiku/sonnet event)
+  //     - isEmbeddingBillable → currentMonthEmbedding* increment + Stripe queue (embedding event、cost > 0 のみ)
+  //     - isEmbeddingBackfill → counter 不変 + Stripe queue 不投入 (= ユーザ非起動の明示的 free)
+  //     - その他 (未知)      → counter 不変 + Stripe queue 不投入 (安全側)
+  //
   //   feedback_billing_invariant.md: 「ApiCallLog SUM = 画面表示 = Stripe 送信 = 請求書 = CSV」
-  //   不変条件は維持される (cost=0 が混ざるだけ)。
+  //   不変条件は維持される (= cost=0 が混ざるだけ、SUM/COUNT は featureUnit ベースで分離集計可能)。
   //
   // PR-S6 (2026-05-14): credit_card テナントは Stripe Usage Record queue にも 1 行追加。
   //   - apiCallLog.id を事前生成 → queue 行で参照 (= idempotency_key 用)
   //   - 同一 transaction で実行する事で「ApiCallLog 作成成功 / queue 未追加」の不整合を防ぐ
   //   - cron (= /api/cron/stripe-usage-flush) が日次で queue → Stripe Meter Event を実送信
-  //   - callType は plan ベース判定: pro=sonnet / それ以外=haiku (= 価格表と一致)
-  // PR-V8 (2026-05-19): Meter API 移行に伴い「stripeItemId 存在」判定を
-  //   「stripeCustomerId 存在」判定に変更。Meter API は Customer 単位送信のため。
+  // ADR-0022: callType は featureUnit カテゴリで判定:
+  //   - LLM_BILLABLE × Pro → 'sonnet'
+  //   - LLM_BILLABLE × 他  → 'haiku'
+  //   - EMBEDDING_BILLABLE → 'embedding' (= 新 Meter event 'tasukiba_embedding_call')
+  // Stripe-ready 設計: STRIPE_PRICE_EMBEDDING 環境変数未設定でも queue 投入は行う
+  //   (= リリース時は credit_card テナント不在で queue 自体が空、将来 Stripe 有効化で自動動作)。
   const apiCallLogId = randomUUID();
-  const stripeCallType = plan === 'pro' ? 'sonnet' : 'haiku';
-  // ADR-0019: free call は Stripe queue に投入しない (cost=0 / 顧客請求対象外のため)。
+  const stripeCallType: 'haiku' | 'sonnet' | 'embedding' = isLlmBillable
+    ? plan === 'pro'
+      ? 'sonnet'
+      : 'haiku'
+    : 'embedding'; // isEmbeddingBillable のとき。backfill / 未知は shouldEnqueueStripe=false で投入されない
+  // ADR-0022 (2026-06-01): Stripe queue 投入は cost > 0 のときのみ。
+  //   - Beginner Embedding (cost=0) は投入されない (= 顧客請求対象外)
+  //   - Backfill (cost=0) も投入されない (= 明示的 free)
+  //   - 未知 featureUnit (cost=0) も投入されない (= 安全側)
+  //   - isStripeEnabled() は feature flag (リリース時 false でも本ロジックは不変、
+  //     queue は積まれるが flush cron が空 queue を見るだけ。将来有効化で自動動作)。
   const shouldEnqueueStripe =
-    billable &&
+    (isLlmBillable || isEmbeddingBillable) &&
+    costJpy > 0 &&
     tenant.paymentMethod === 'credit_card' &&
     tenant.stripeCustomerId != null;
 
   // Prisma の $transaction はオーバーロード (配列 / 関数) のため、明示的に配列型として扱う。
-  // ApiCallLog は billable / free の両方で常に記録 (cost=0 が混ざるだけ)。
+  // ApiCallLog は 4 階層すべてで常に記録 (cost=0 が混ざるだけ)。
   const operations: unknown[] = [
     prisma.apiCallLog.create({
       data: {
@@ -328,9 +378,11 @@ export async function withMeteredLLM<T>(
       },
     }),
   ];
-  // ADR-0019: counter increment は billable のみ。free call は Tenant.currentMonthApiCallCount /
-  //   currentMonthApiCostJpy のいずれも進めない (= Beginner 上限・予算上限を消費しない)。
-  if (billable) {
+  // ADR-0022: counter increment は 4 階層分岐。
+  //   LLM_BILLABLE → currentMonthApi* (Beginner 50 / budget cap 判定用)
+  //   EMBEDDING_BILLABLE → currentMonthEmbedding* (全プラン件数記録、Beginner は cost=0 でも count は記録)
+  //   Backfill / 未知 → counter 不変
+  if (isLlmBillable) {
     operations.unshift(
       prisma.tenant.update({
         where: { id: options.tenantId },
@@ -340,7 +392,22 @@ export async function withMeteredLLM<T>(
         },
       }),
     );
+  } else if (isEmbeddingBillable) {
+    operations.unshift(
+      prisma.tenant.update({
+        where: { id: options.tenantId },
+        data: {
+          currentMonthEmbeddingCallCount: { increment: 1 },
+          currentMonthEmbeddingCostJpy: { increment: costJpy },
+        },
+      }),
+    );
   }
+  // isEmbeddingBackfill / 未知: counter 不変 (= 明示的 free、ApiCallLog 記録のみ)。
+  // isEmbeddingBackfill は判定済 (= 上記の cost=0 / Stripe queue 不投入の根拠) だが、
+  // counter 分岐は「LLM か Embedding か」の 2 択で、それ以外は何もしないため明示分岐不要。
+  // ESLint unused-vars 回避のためダミー参照。
+  void isEmbeddingBackfill;
   if (shouldEnqueueStripe) {
     operations.push(
       prisma.stripeUsageRecordQueue.create({

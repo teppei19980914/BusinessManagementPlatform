@@ -1,139 +1,288 @@
 /**
- * billing-feature-units.ts のユニットテスト (ADR-0019 / 2026-05-24)
+ * billing-feature-units.ts のユニットテスト (ADR-0019 / ADR-0022)
  *
- * 本テストは BILLABLE_FEATURE_UNITS の構成を **明示的に固定** する役割を持つ。
- * 将来「課金対象が変わったつもりはなかったのに変わっていた」事故を防ぐため、
- * 各 featureUnit の billable/free 判定を 1 件ずつ確認する。
+ * 本テストは 4 階層分類 (LLM_BILLABLE / EMBEDDING_BILLABLE / STORAGE_OVERAGE / EMBEDDING_BACKFILL) の
+ * 構成を **明示的に固定** する役割を持つ。将来「課金対象が変わったつもりはなかったのに変わっていた」
+ * 事故を防ぐため、各 featureUnit の判定を 1 件ずつ確認する。
+ *
+ * 重要 invariant:
+ *   - BILLABLE_FEATURE_UNITS = LLM + EMBEDDING + STORAGE_OVERAGE の union
+ *   - EMBEDDING_BACKFILL は BILLABLE_FEATURE_UNITS に含まれない (= 明示 free)
+ *   - 4 つの判定関数は同一 featureUnit に対して同時に true を返さない (= 排他関係)
  */
 import { describe, expect, it } from 'vitest';
 import {
   BILLABLE_FEATURE_UNITS,
+  EMBEDDING_BACKFILL_FEATURE_UNITS,
+  EMBEDDING_BILLABLE_FEATURE_UNITS,
+  LLM_BILLABLE_FEATURE_UNITS,
+  STORAGE_OVERAGE_FEATURE_UNITS,
   isBillableFeatureUnit,
+  isEmbeddingBackfillFeatureUnit,
+  isEmbeddingBillableFeatureUnit,
+  isLlmBillableFeatureUnit,
+  isStorageOverageFeatureUnit,
 } from './billing-feature-units';
 
-describe('BILLABLE_FEATURE_UNITS', () => {
-  it('課金対象 featureUnit が ADR-0019/0020/0021 の決定通り 5 件存在する', () => {
-    // ADR-0019: project-upsert, suggestion-explanation, auto-tag-extract
-    // ADR-0020 (2026-05-25 追加): db-capacity-overage
-    // ADR-0021 (2026-05-26 追加): storage-file-overage
-    expect(BILLABLE_FEATURE_UNITS).toEqual([
+describe('LLM_BILLABLE_FEATURE_UNITS', () => {
+  it('LLM 系課金対象 featureUnit が ADR-0019 の決定通り 3 件存在する', () => {
+    expect(LLM_BILLABLE_FEATURE_UNITS).toEqual([
       'project-upsert',
       'suggestion-explanation',
       'auto-tag-extract',
+    ]);
+  });
+});
+
+describe('EMBEDDING_BILLABLE_FEATURE_UNITS', () => {
+  it('Embedding 系課金対象 featureUnit が ADR-0022 の決定通り 7 件存在する', () => {
+    expect(EMBEDDING_BILLABLE_FEATURE_UNITS).toEqual([
+      'knowledge-embedding',
+      'risk-issue-embedding',
+      'retrospective-embedding',
+      'memo-embedding',
+      'chat-semantic-search',
+      'external-import-embedding',
+      'attachment-embedding',
+    ]);
+  });
+});
+
+describe('STORAGE_OVERAGE_FEATURE_UNITS', () => {
+  it('Storage 超過課金 featureUnit が ADR-0020/0021 の決定通り 2 件存在する', () => {
+    expect(STORAGE_OVERAGE_FEATURE_UNITS).toEqual([
       'db-capacity-overage',
       'storage-file-overage',
     ]);
   });
+});
 
-  it('配列は readonly (const assertion) で意図しない書き換えを防ぐ', () => {
-    const expected: readonly string[] = BILLABLE_FEATURE_UNITS;
-    expect(expected.length).toBe(5);
+describe('EMBEDDING_BACKFILL_FEATURE_UNITS', () => {
+  it('Embedding backfill (明示 free) featureUnit が ADR-0022 の決定通り 5 件存在する', () => {
+    expect(EMBEDDING_BACKFILL_FEATURE_UNITS).toEqual([
+      'project-embedding-backfill',
+      'knowledge-embedding-backfill',
+      'risk-issue-embedding-backfill',
+      'retrospective-embedding-backfill',
+      'memo-embedding-backfill',
+    ]);
   });
 });
 
-describe('isBillableFeatureUnit', () => {
+describe('BILLABLE_FEATURE_UNITS (= LLM + EMBEDDING + STORAGE_OVERAGE の union)', () => {
+  it('合計 12 件 (= 3 + 7 + 2) の課金対象 featureUnit が存在する', () => {
+    expect(BILLABLE_FEATURE_UNITS.length).toBe(12);
+    expect(BILLABLE_FEATURE_UNITS).toEqual([
+      ...LLM_BILLABLE_FEATURE_UNITS,
+      ...EMBEDDING_BILLABLE_FEATURE_UNITS,
+      ...STORAGE_OVERAGE_FEATURE_UNITS,
+    ]);
+  });
+
+  it('★invariant★ EMBEDDING_BACKFILL は BILLABLE に含まれない (= 明示 free 保護)', () => {
+    for (const fu of EMBEDDING_BACKFILL_FEATURE_UNITS) {
+      expect(BILLABLE_FEATURE_UNITS).not.toContain(fu);
+    }
+  });
+});
+
+describe('isLlmBillableFeatureUnit', () => {
+  it('LLM 系課金対象は全て true', () => {
+    expect(isLlmBillableFeatureUnit('project-upsert')).toBe(true);
+    expect(isLlmBillableFeatureUnit('suggestion-explanation')).toBe(true);
+    expect(isLlmBillableFeatureUnit('auto-tag-extract')).toBe(true);
+  });
+
+  it('Embedding 系は false (= Embedding は別カテゴリ)', () => {
+    for (const fu of EMBEDDING_BILLABLE_FEATURE_UNITS) {
+      expect(isLlmBillableFeatureUnit(fu)).toBe(false);
+    }
+  });
+
+  it('Storage 系は false', () => {
+    expect(isLlmBillableFeatureUnit('db-capacity-overage')).toBe(false);
+    expect(isLlmBillableFeatureUnit('storage-file-overage')).toBe(false);
+  });
+
+  it('Backfill 系は false', () => {
+    for (const fu of EMBEDDING_BACKFILL_FEATURE_UNITS) {
+      expect(isLlmBillableFeatureUnit(fu)).toBe(false);
+    }
+  });
+
+  it('未知の値は false', () => {
+    expect(isLlmBillableFeatureUnit('unknown')).toBe(false);
+    expect(isLlmBillableFeatureUnit('')).toBe(false);
+  });
+});
+
+describe('isEmbeddingBillableFeatureUnit (= ADR-0022 で新設)', () => {
+  it('Embedding 系課金対象 7 種は全て true', () => {
+    expect(isEmbeddingBillableFeatureUnit('knowledge-embedding')).toBe(true);
+    expect(isEmbeddingBillableFeatureUnit('risk-issue-embedding')).toBe(true);
+    expect(isEmbeddingBillableFeatureUnit('retrospective-embedding')).toBe(true);
+    expect(isEmbeddingBillableFeatureUnit('memo-embedding')).toBe(true);
+    expect(isEmbeddingBillableFeatureUnit('chat-semantic-search')).toBe(true);
+    expect(isEmbeddingBillableFeatureUnit('external-import-embedding')).toBe(true);
+    expect(isEmbeddingBillableFeatureUnit('attachment-embedding')).toBe(true);
+  });
+
+  it('LLM 系は false', () => {
+    expect(isEmbeddingBillableFeatureUnit('project-upsert')).toBe(false);
+    expect(isEmbeddingBillableFeatureUnit('suggestion-explanation')).toBe(false);
+    expect(isEmbeddingBillableFeatureUnit('auto-tag-extract')).toBe(false);
+  });
+
+  it('★重要★ Backfill 系は false (= ユーザ非起動の自動リカバリ、不当請求リスク回避)', () => {
+    expect(isEmbeddingBillableFeatureUnit('knowledge-embedding-backfill')).toBe(false);
+    expect(isEmbeddingBillableFeatureUnit('risk-issue-embedding-backfill')).toBe(false);
+    expect(isEmbeddingBillableFeatureUnit('retrospective-embedding-backfill')).toBe(false);
+    expect(isEmbeddingBillableFeatureUnit('memo-embedding-backfill')).toBe(false);
+    expect(isEmbeddingBillableFeatureUnit('project-embedding-backfill')).toBe(false);
+  });
+
+  it('Storage 系は false', () => {
+    expect(isEmbeddingBillableFeatureUnit('db-capacity-overage')).toBe(false);
+    expect(isEmbeddingBillableFeatureUnit('storage-file-overage')).toBe(false);
+  });
+
+  it('未知の値は false', () => {
+    expect(isEmbeddingBillableFeatureUnit('unknown')).toBe(false);
+    expect(isEmbeddingBillableFeatureUnit('')).toBe(false);
+    expect(isEmbeddingBillableFeatureUnit('test')).toBe(false);
+  });
+});
+
+describe('isStorageOverageFeatureUnit', () => {
+  it('Storage 系は true', () => {
+    expect(isStorageOverageFeatureUnit('db-capacity-overage')).toBe(true);
+    expect(isStorageOverageFeatureUnit('storage-file-overage')).toBe(true);
+  });
+
+  it('それ以外は false', () => {
+    expect(isStorageOverageFeatureUnit('project-upsert')).toBe(false);
+    expect(isStorageOverageFeatureUnit('knowledge-embedding')).toBe(false);
+    expect(isStorageOverageFeatureUnit('project-embedding-backfill')).toBe(false);
+  });
+});
+
+describe('isEmbeddingBackfillFeatureUnit (= ADR-0022 で新設、明示 free 判定)', () => {
+  it('Backfill 5 種は全て true', () => {
+    expect(isEmbeddingBackfillFeatureUnit('project-embedding-backfill')).toBe(true);
+    expect(isEmbeddingBackfillFeatureUnit('knowledge-embedding-backfill')).toBe(true);
+    expect(isEmbeddingBackfillFeatureUnit('risk-issue-embedding-backfill')).toBe(true);
+    expect(isEmbeddingBackfillFeatureUnit('retrospective-embedding-backfill')).toBe(true);
+    expect(isEmbeddingBackfillFeatureUnit('memo-embedding-backfill')).toBe(true);
+  });
+
+  it('Embedding 系課金対象は false (= ユーザ起動 vs cron 自動の区別)', () => {
+    for (const fu of EMBEDDING_BILLABLE_FEATURE_UNITS) {
+      expect(isEmbeddingBackfillFeatureUnit(fu)).toBe(false);
+    }
+  });
+
+  it('LLM / Storage / 未知は false', () => {
+    expect(isEmbeddingBackfillFeatureUnit('project-upsert')).toBe(false);
+    expect(isEmbeddingBackfillFeatureUnit('db-capacity-overage')).toBe(false);
+    expect(isEmbeddingBackfillFeatureUnit('unknown')).toBe(false);
+  });
+});
+
+describe('isBillableFeatureUnit (= 後方互換、union 判定)', () => {
   describe('課金対象 (billable)', () => {
-    it('project-upsert は課金対象', () => {
+    it('LLM 系 3 種は true', () => {
       expect(isBillableFeatureUnit('project-upsert')).toBe(true);
-    });
-
-    it('suggestion-explanation は課金対象 (なぜ機能 / Pro 限定)', () => {
       expect(isBillableFeatureUnit('suggestion-explanation')).toBe(true);
-    });
-
-    it('auto-tag-extract は課金対象 (スタンドアロン auto-tag 用の予約)', () => {
       expect(isBillableFeatureUnit('auto-tag-extract')).toBe(true);
     });
 
-    it('db-capacity-overage は課金対象 (ADR-0020 / DB 容量月次集約)', () => {
-      expect(isBillableFeatureUnit('db-capacity-overage')).toBe(true);
+    it('Embedding 系 7 種は true (ADR-0022)', () => {
+      for (const fu of EMBEDDING_BILLABLE_FEATURE_UNITS) {
+        expect(isBillableFeatureUnit(fu)).toBe(true);
+      }
     });
 
-    it('storage-file-overage は課金対象 (ADR-0021 / ファイルストレージ月次集約)', () => {
+    it('Storage 系 2 種は true', () => {
+      expect(isBillableFeatureUnit('db-capacity-overage')).toBe(true);
       expect(isBillableFeatureUnit('storage-file-overage')).toBe(true);
     });
   });
 
-  describe('無料 (free) — 資産作成/更新系', () => {
-    it('knowledge-embedding は無料 (Knowledge 作成/更新の embedding)', () => {
-      expect(isBillableFeatureUnit('knowledge-embedding')).toBe(false);
+  describe('無料 (free)', () => {
+    it('★重要★ Backfill 系 5 種は false (= 明示 free 維持、不当請求リスク回避)', () => {
+      for (const fu of EMBEDDING_BACKFILL_FEATURE_UNITS) {
+        expect(isBillableFeatureUnit(fu)).toBe(false);
+      }
     });
 
-    it('risk-issue-embedding は無料 (RiskIssue 作成/更新の embedding)', () => {
-      expect(isBillableFeatureUnit('risk-issue-embedding')).toBe(false);
-    });
-
-    it('retrospective-embedding は無料 (Retrospective 作成/更新の embedding)', () => {
-      expect(isBillableFeatureUnit('retrospective-embedding')).toBe(false);
-    });
-
-    it('memo-embedding は無料 (Memo 作成/更新の embedding)', () => {
-      expect(isBillableFeatureUnit('memo-embedding')).toBe(false);
-    });
-  });
-
-  describe('無料 (free) — チャット / cron / インポート', () => {
-    it('chat-semantic-search は無料 (チャット検索のクエリ embedding)', () => {
-      expect(isBillableFeatureUnit('chat-semantic-search')).toBe(false);
-    });
-
-    it('project-embedding-backfill は無料 (月初 cron 補完)', () => {
-      expect(isBillableFeatureUnit('project-embedding-backfill')).toBe(false);
-    });
-
-    it('knowledge-embedding-backfill は無料', () => {
-      expect(isBillableFeatureUnit('knowledge-embedding-backfill')).toBe(false);
-    });
-
-    it('risk-issue-embedding-backfill は無料', () => {
-      expect(isBillableFeatureUnit('risk-issue-embedding-backfill')).toBe(false);
-    });
-
-    it('retrospective-embedding-backfill は無料', () => {
-      expect(isBillableFeatureUnit('retrospective-embedding-backfill')).toBe(false);
-    });
-
-    it('memo-embedding-backfill は無料', () => {
-      expect(isBillableFeatureUnit('memo-embedding-backfill')).toBe(false);
-    });
-
-    it('external-import-embedding は無料 (CSV 外部インポート)', () => {
-      expect(isBillableFeatureUnit('external-import-embedding')).toBe(false);
-    });
-
-    it('attachment-embedding は無料 (ADR-0021 / 添付ファイル本文の意味検索用、運営負担)', () => {
-      // 重要: Voyage embedding API 呼出が発生するが、提案エンジン/チャット精度のため運営負担で無料。
-      // ApiCallLog には記録するが costJpy=0、counter / Stripe queue いずれも更新しない。
-      expect(isBillableFeatureUnit('attachment-embedding')).toBe(false);
-    });
-  });
-
-  describe('未知の値', () => {
-    it('未定義の featureUnit は安全側で無料扱い (false)', () => {
-      // 想定外の文字列が来た場合、誤って課金しない方が安全 (= 顧客信頼の方を優先)。
-      // 想定外値の検出は ApiCallLog の featureUnit 集計監視で別途行う前提。
+    it('未知の値は安全側で free', () => {
       expect(isBillableFeatureUnit('unknown-feature')).toBe(false);
       expect(isBillableFeatureUnit('')).toBe(false);
       expect(isBillableFeatureUnit('test')).toBe(false);
       expect(isBillableFeatureUnit('test-batch')).toBe(false);
     });
   });
+});
 
-  describe('型ガード (TypeScript 推論)', () => {
-    it('isBillableFeatureUnit が true なら BillableFeatureUnit 型として narrow される', () => {
-      const fu: string = 'project-upsert';
-      if (isBillableFeatureUnit(fu)) {
-        // この分岐内では BillableFeatureUnit 型 (= 5 つの union 型)
-        const _check:
-          | 'project-upsert'
-          | 'suggestion-explanation'
-          | 'auto-tag-extract'
-          | 'db-capacity-overage'
-          | 'storage-file-overage' = fu;
-        expect(_check).toBe('project-upsert');
-      } else {
-        throw new Error('expected billable');
-      }
-    });
+describe('★invariant★ 4 つの判定関数の排他関係', () => {
+  // 同一 featureUnit に対して、4 つの判定関数のうち高々 1 つだけが true を返すべき。
+  // この invariant が崩れると「LLM 単価と Embedding 単価が二重課金される」等の重大事故が発生。
+  const ALL_KNOWN_FEATURE_UNITS = [
+    ...LLM_BILLABLE_FEATURE_UNITS,
+    ...EMBEDDING_BILLABLE_FEATURE_UNITS,
+    ...STORAGE_OVERAGE_FEATURE_UNITS,
+    ...EMBEDDING_BACKFILL_FEATURE_UNITS,
+  ];
+
+  it('全 known featureUnit に対し、4 判定関数の true 数は厳密に 1', () => {
+    for (const fu of ALL_KNOWN_FEATURE_UNITS) {
+      const flags = [
+        isLlmBillableFeatureUnit(fu),
+        isEmbeddingBillableFeatureUnit(fu),
+        isStorageOverageFeatureUnit(fu),
+        isEmbeddingBackfillFeatureUnit(fu),
+      ];
+      const trueCount = flags.filter((f) => f).length;
+      expect(trueCount, `featureUnit '${fu}' should match exactly 1 category`).toBe(1);
+    }
+  });
+
+  it('未知 featureUnit に対し、4 判定関数すべて false', () => {
+    const unknowns = ['', 'unknown', 'test', 'test-batch', 'project-embedding'];
+    for (const fu of unknowns) {
+      expect(isLlmBillableFeatureUnit(fu)).toBe(false);
+      expect(isEmbeddingBillableFeatureUnit(fu)).toBe(false);
+      expect(isStorageOverageFeatureUnit(fu)).toBe(false);
+      expect(isEmbeddingBackfillFeatureUnit(fu)).toBe(false);
+    }
+  });
+});
+
+describe('型ガード (TypeScript narrowing)', () => {
+  it('isLlmBillableFeatureUnit が true なら LlmBillableFeatureUnit 型に narrow', () => {
+    const fu: string = 'project-upsert';
+    if (isLlmBillableFeatureUnit(fu)) {
+      const _check: 'project-upsert' | 'suggestion-explanation' | 'auto-tag-extract' = fu;
+      expect(_check).toBe('project-upsert');
+    } else {
+      throw new Error('expected LLM billable');
+    }
+  });
+
+  it('isEmbeddingBillableFeatureUnit が true なら EmbeddingBillableFeatureUnit 型に narrow', () => {
+    const fu: string = 'knowledge-embedding';
+    if (isEmbeddingBillableFeatureUnit(fu)) {
+      const _check:
+        | 'knowledge-embedding'
+        | 'risk-issue-embedding'
+        | 'retrospective-embedding'
+        | 'memo-embedding'
+        | 'chat-semantic-search'
+        | 'external-import-embedding'
+        | 'attachment-embedding' = fu;
+      expect(_check).toBe('knowledge-embedding');
+    } else {
+      throw new Error('expected Embedding billable');
+    }
   });
 });

@@ -19,8 +19,13 @@
 
 import { prisma } from '@/lib/db';
 import { MANAGEMENT_TENANT_ID, DEFAULT_TENANT_ID } from '@/lib/tenant';
-// ADR-0019 (2026-05-24): 課金根拠の集計は billable featureUnit のみ。
-import { BILLABLE_FEATURE_UNITS } from '@/config/billing-feature-units';
+// ADR-0019 (2026-05-24) / ADR-0022 (2026-06-01): 課金根拠の集計は billable featureUnit のみ。
+//   BILLABLE_FEATURE_UNITS は LLM + Embedding + Storage Overage の合算 (ADR-0022 で Embedding 追加)。
+//   解約時 snapshot / cross-tenant 集計の両方で使用。Embedding 内訳は EMBEDDING_BILLABLE_FEATURE_UNITS。
+import {
+  BILLABLE_FEATURE_UNITS,
+  EMBEDDING_BILLABLE_FEATURE_UNITS,
+} from '@/config/billing-feature-units';
 // PR-V7 #1 (2026-05-19): credit_card 払いテナント解約時に Stripe Subscription を停止し
 //   Storage add-on 等の固定費が永続引落されるのを防ぐため。
 import { isStripeEnabled } from '@/lib/stripe';
@@ -54,7 +59,11 @@ import {
 import { getTenantCurrentYearMonth, getTenantMonthStart } from '@/lib/tenant-time';
 import { DB_CAPACITY_L3_HARD_CAP_BYTES } from '@/config/db-capacity-pricing';
 // PR-V8.2 (2026-05-19) ★請求 invariant★: getDefaultTenantOwnSummary / deleteTenant で SUM 真値
-import { reconcileTenantApiUsage } from './api-usage-recalc.service';
+// ADR-0022 (2026-06-01): Embedding 側 reconcile も追加
+import {
+  reconcileTenantApiUsage,
+  reconcileTenantEmbeddingUsage,
+} from './api-usage-recalc.service';
 // ADR-0020 (2026-05-25) R5 横断対応: 退会時 DB 容量超過の即時請求
 import { billTenantWithdrawal } from './tenant-withdrawal-billing.service';
 
@@ -77,8 +86,14 @@ export type TenantSummaryRow = {
   slug: string;
   name: string;
   plan: string;
+  /** LLM 系の当月コール数 (= currentMonthApiCallCount counter)。ADR-0022 後は LLM のみ。 */
   currentMonthApiCallCount: number;
+  /** LLM 系の当月課金額 */
   currentMonthApiCostJpy: number;
+  /** ADR-0022 (2026-06-01): Embedding 系の当月コール数 (Beginner も件数記録、Expert/Pro は cost > 0) */
+  currentMonthEmbeddingCallCount: number;
+  /** ADR-0022: Embedding 系の当月課金額 (Beginner=0 / Expert=Pro=件数×¥1) */
+  currentMonthEmbeddingCostJpy: number;
   monthlyBudgetCapJpy: number | null;
   activeUserCount: number;
   createdAt: Date;
@@ -140,6 +155,9 @@ export async function listAllTenants(
       plan: true,
       currentMonthApiCallCount: true,
       currentMonthApiCostJpy: true,
+      // ADR-0022 (2026-06-01): Embedding counter
+      currentMonthEmbeddingCallCount: true,
+      currentMonthEmbeddingCostJpy: true,
       monthlyBudgetCapJpy: true,
       createdAt: true,
       // 2026-05-14: 解約済テナント識別 (月途中解約の請求漏れ検知用)
@@ -186,6 +204,9 @@ export async function listAllTenants(
     plan: t.plan,
     currentMonthApiCallCount: t.currentMonthApiCallCount,
     currentMonthApiCostJpy: t.currentMonthApiCostJpy,
+    // ADR-0022 (2026-06-01): Embedding counter
+    currentMonthEmbeddingCallCount: t.currentMonthEmbeddingCallCount,
+    currentMonthEmbeddingCostJpy: t.currentMonthEmbeddingCostJpy,
     monthlyBudgetCapJpy: t.monthlyBudgetCapJpy,
     activeUserCount: userCountByTenant.get(t.id) ?? 0,
     createdAt: t.createdAt,
@@ -212,7 +233,9 @@ export async function listAllTenants(
     storageBytesUsed: Number(t.storageBytesUsed),
     // ADR-0021 (2026-05-26): ファイルストレージ peak (= CSV 内訳列 + 想定請求額算出に使用)
     storageFileBytesPeakThisMonth: Number(t.storageFileBytesPeakThisMonth),
-    totalCurrentMonthJpy: t.currentMonthApiCostJpy,
+    // ADR-0022 (2026-06-01): 当月合計請求額 = LLM 系 + Embedding 系 (counter ベース、概算)。
+    //   正確な請求額は ApiCallLog SUM から billing-aggregation 経由で算出される。
+    totalCurrentMonthJpy: t.currentMonthApiCostJpy + t.currentMonthEmbeddingCostJpy,
   }));
 }
 
@@ -307,6 +330,9 @@ export async function getTenantDetail(tenantId: string): Promise<TenantDetail | 
     plan: t.plan,
     currentMonthApiCallCount: t.currentMonthApiCallCount,
     currentMonthApiCostJpy: t.currentMonthApiCostJpy,
+    // ADR-0022 (2026-06-01): Embedding counter
+    currentMonthEmbeddingCallCount: t.currentMonthEmbeddingCallCount,
+    currentMonthEmbeddingCostJpy: t.currentMonthEmbeddingCostJpy,
     monthlyBudgetCapJpy: t.monthlyBudgetCapJpy,
     activeUserCount,
     createdAt: t.createdAt,
@@ -365,6 +391,8 @@ function computeStorageDetailFields(t: {
   plan: string;
   storageBytesUsed: bigint;
   currentMonthApiCostJpy: number;
+  // ADR-0022 (2026-06-01): Embedding counter を合算に使用
+  currentMonthEmbeddingCostJpy: number;
 }): {
   storageBytesUsed: number;
   storageUsageRatio: number;
@@ -378,7 +406,10 @@ function computeStorageDetailFields(t: {
   return {
     storageBytesUsed: usedBytes,
     storageUsageRatio: usageRatio,
-    totalCurrentMonthJpy: t.currentMonthApiCostJpy,
+    // ADR-0022 (2026-06-01): 合計請求額 = LLM 系 + Embedding 系 (counter ベース、概算)。
+    //   正確な請求額は ApiCallLog SUM ベースの reconcileTenantApiUsage / reconcileTenantEmbeddingUsage
+    //   から取得する (= 表示パスで使われる)。
+    totalCurrentMonthJpy: t.currentMonthApiCostJpy + t.currentMonthEmbeddingCostJpy,
   };
 }
 
@@ -448,9 +479,14 @@ export async function listStorageUsageTop(limit: number = 10): Promise<StorageUs
 export type CrossTenantUsageSummary = {
   tenantCount: number;
   totalActiveUsers: number;
+  /** 全 billable (LLM + Embedding + Storage Overage) ApiCallLog の月内 _count._all */
   totalCurrentMonthApiCalls: number;
-  /** 当月の課金対象 ApiCallLog 集計 (DB / file storage 超過の従量課金も含む)。請求書根拠合計 */
+  /** 当月の課金対象 ApiCallLog 集計 (LLM + Embedding + Storage 超過の従量課金、ADR-0022 で Embedding 追加)。請求書根拠合計 */
   totalCurrentMonthApiCostJpy: number;
+  /** ADR-0022 (2026-06-01): Embedding 系の内訳件数 (totalCurrentMonthApiCalls の subset) */
+  totalCurrentMonthEmbeddingCalls: number;
+  /** ADR-0022 (2026-06-01): Embedding 系の内訳課金額 (totalCurrentMonthApiCostJpy の subset) */
+  totalCurrentMonthEmbeddingCostJpy: number;
   // chore/storage-addon-backend-removal (2026-05-26):
   //   旧 4 段階プラン月額 (totalCurrentMonthStorageJpy / totalCurrentMonthCombinedJpy) は撤去。
   //   ストレージ従量課金は totalCurrentMonthApiCostJpy に統合される。
@@ -477,17 +513,28 @@ export async function getCrossTenantUsageSummary(): Promise<CrossTenantUsageSumm
     Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), 1),
   );
 
-  const [tenantCount, apiAgg, planGroups, activeUsersAgg] = await Promise.all([
+  const [tenantCount, apiAgg, embeddingAgg, planGroups, activeUsersAgg] = await Promise.all([
     prisma.tenant.count({ where: tenantWhere }),
     // ★ ApiCallLog SUM (真値) で集計
-    // ADR-0019 (2026-05-24): super_admin ダッシュボードの「当月 API 利用」KPI は
-    //   課金対象 call のみで集計する。無料 call は別 KPI (= fair use limit / Voyage 監視) で
-    //   別途モニタする。
+    // ADR-0019 (2026-05-24) / ADR-0022 (2026-06-01): super_admin ダッシュボードの「当月 API 利用」
+    //   KPI は課金対象 call のみで集計する。BILLABLE_FEATURE_UNITS は LLM + Embedding + Storage
+    //   Overage の合算を含む (= 請求書根拠合計、ADR-0022 後)。
     prisma.apiCallLog.aggregate({
       where: {
         tenantId: { notIn: SUPER_ADMIN_EXCLUDED_TENANT_IDS },
         createdAt: { gte: utcMonthStart },
         featureUnit: { in: [...BILLABLE_FEATURE_UNITS] },
+      },
+      _count: { _all: true },
+      _sum: { costJpy: true },
+    }),
+    // ADR-0022 (2026-06-01): Embedding 系の内訳集計 (= subset of apiAgg)。
+    //   UI で「LLM / Embedding / Storage」の分離表示用。
+    prisma.apiCallLog.aggregate({
+      where: {
+        tenantId: { notIn: SUPER_ADMIN_EXCLUDED_TENANT_IDS },
+        createdAt: { gte: utcMonthStart },
+        featureUnit: { in: [...EMBEDDING_BILLABLE_FEATURE_UNITS] },
       },
       _count: { _all: true },
       _sum: { costJpy: true },
@@ -507,12 +554,16 @@ export async function getCrossTenantUsageSummary(): Promise<CrossTenantUsageSumm
   ]);
 
   const totalCurrentMonthApiCostJpy = apiAgg._sum.costJpy ?? 0;
+  const totalCurrentMonthEmbeddingCostJpy = embeddingAgg._sum.costJpy ?? 0;
 
   return {
     tenantCount,
     totalActiveUsers: activeUsersAgg,
     totalCurrentMonthApiCalls: apiAgg._count._all,
     totalCurrentMonthApiCostJpy,
+    // ADR-0022 (2026-06-01): Embedding 内訳
+    totalCurrentMonthEmbeddingCalls: embeddingAgg._count._all,
+    totalCurrentMonthEmbeddingCostJpy,
     planDistribution: planGroups.map((p) => ({ plan: p.plan, count: p._count.id })),
   };
 }
@@ -542,6 +593,10 @@ export type DefaultTenantOwnSummary = {
   currentMonthApiCallCount: number;
   /** 内部記録値。Default テナントは請求対象外のため表示は「(請求対象外)」扱い */
   currentMonthApiCostJpy: number;
+  /** ADR-0022 (2026-06-01): Embedding 系の当月呼出回数 (Default テナント自身の利用量把握用) */
+  currentMonthEmbeddingCallCount: number;
+  /** ADR-0022 (2026-06-01): Embedding 系の当月課金額 (請求対象外、参考表示) */
+  currentMonthEmbeddingCostJpy: number;
   storageBytesUsed: number;
   /** ADR-0020 50GB ハードキャップ上限の使用率 */
   storageUsageRatio: number;
@@ -559,18 +614,23 @@ export async function getDefaultTenantOwnSummary(): Promise<DefaultTenantOwnSumm
       createdAt: true,
       currentMonthApiCallCount: true,
       currentMonthApiCostJpy: true,
+      // ADR-0022 (2026-06-01): Embedding counter
+      currentMonthEmbeddingCallCount: true,
+      currentMonthEmbeddingCostJpy: true,
       storageBytesUsed: true,
     },
   });
   if (!t) return null;
 
-  const [activeUserCount, reconcile] = await Promise.all([
+  // ADR-0022 (2026-06-01): Embedding 側の reconcile も並行取得。
+  const [activeUserCount, reconcile, embeddingReconcile] = await Promise.all([
     prisma.user.count({
       where: { tenantId: DEFAULT_TENANT_ID, isActive: true, deletedAt: null },
     }),
     // ★ PR-V8.2 (2026-05-19) 請求 invariant: Default テナント表示も ApiCallLog SUM (真値) ベース。
     //   Default は請求対象外だが、運営者自身の使用量を正確に把握する目的があるため真値で揃える。
     reconcileTenantApiUsage(DEFAULT_TENANT_ID).catch(() => null),
+    reconcileTenantEmbeddingUsage(DEFAULT_TENANT_ID).catch(() => null),
   ]);
 
   // chore/storage-addon-backend-removal (2026-05-26): 旧 4 段階プラン上限を撤去、
@@ -591,6 +651,11 @@ export async function getDefaultTenantOwnSummary(): Promise<DefaultTenantOwnSumm
     // ★ PR-V8.2: ApiCallLog SUM (真値) を優先。
     currentMonthApiCallCount: reconcile?.reconciledCallCount ?? t.currentMonthApiCallCount,
     currentMonthApiCostJpy: reconcile?.reconciledCostJpy ?? t.currentMonthApiCostJpy,
+    // ADR-0022 (2026-06-01): Embedding 側も同様に真値優先
+    currentMonthEmbeddingCallCount:
+      embeddingReconcile?.reconciledCallCount ?? t.currentMonthEmbeddingCallCount,
+    currentMonthEmbeddingCostJpy:
+      embeddingReconcile?.reconciledCostJpy ?? t.currentMonthEmbeddingCostJpy,
     storageBytesUsed: usedBytes,
     storageUsageRatio: usageRatio,
   };
@@ -800,7 +865,11 @@ export type MonthlyUsageHistoryRow = {
   fileStorageBytesPeak: number | null;
   /** ADR-0021 (2026-05-26): 当月の storage-file-overage 課金額 (円)、未稼働月は null */
   fileStorageOverageJpy: number | null;
-  /** 当月の合計課金 (ApiCallLog 集計 = DB / file storage 超過の従量課金も含む)。請求書根拠 */
+  /** ADR-0022 (2026-06-01): Embedding 系の月内呼出回数 (内訳)、ADR-0022 適用前の過去月は null */
+  embeddingCallCount: number | null;
+  /** ADR-0022 (2026-06-01): Embedding 系の月内課金額 (内訳)、ADR-0022 適用前の過去月は null */
+  embeddingCostJpy: number | null;
+  /** 当月の合計課金 (ApiCallLog 集計 = LLM + Embedding + DB / file storage 超過も含む)。請求書根拠 */
   totalJpy: number;
   /**
    * 2026-05-14: 親テナントの解約日 (null = アクティブ、Date = 解約済)。
@@ -856,6 +925,9 @@ export async function listMonthlyUsageHistory(
     // ADR-0021 (2026-05-26): ファイルストレージ peak + 当月課金 (snapshot 時点)
     fileStorageBytesPeak: r.fileStorageBytesPeak != null ? Number(r.fileStorageBytesPeak) : null,
     fileStorageOverageJpy: r.fileStorageOverageJpy ?? null,
+    // ADR-0022 (2026-06-01): Embedding 系内訳 (ADR-0022 適用前の過去月は null)
+    embeddingCallCount: r.embeddingCallCount ?? null,
+    embeddingCostJpy: r.embeddingCostJpy ?? null,
     totalJpy: r.totalJpy,
     // 2026-05-14: 親テナントの解約日 (請求対象期間判別用)
     tenantDeletedAt: r.tenant.deletedAt,
@@ -1114,9 +1186,10 @@ export async function deleteTenant(
   //   過剰/過少請求になる致命傷があった (= saveMonthlyUsageSnapshots と同型問題、PR-V8.2 で fix)。
   //   集計範囲: 当月のテナント TZ 月初 〜 now (= 解約時刻)。
   const currentMonthStart = getTenantMonthStart(now, tenant.timezone);
-  // ADR-0019 (2026-05-24): 解約時 snapshot も billable のみで集計 (= 顧客請求 invariant 維持)。
-  //   無料 call はそもそも cost=0 なので SUM 不変だが、_count._all (= apiCallCount 表示) を
-  //   正しく出すために明示的に絞る。
+  // ADR-0019 (2026-05-24) / ADR-0022 (2026-06-01): 解約時 snapshot も billable のみで集計
+  //   (= 顧客請求 invariant 維持)。ADR-0022 で BILLABLE_FEATURE_UNITS が Embedding を含むため、
+  //   Embedding 課金分も自動的に reconciledCostJpy / totalJpy に反映される。
+  //   Beginner プランは Embedding cost=0 なので SUM 不変だが、_count._all は影響する。
   const apiAgg = await prisma.apiCallLog.aggregate({
     where: {
       tenantId,
@@ -1129,6 +1202,21 @@ export async function deleteTenant(
   const reconciledCallCount = apiAgg._count._all;
   const reconciledCostJpy = apiAgg._sum.costJpy ?? 0;
   const totalJpy = reconciledCostJpy;
+
+  // ADR-0022 (2026-06-01): Embedding 内訳列を snapshot に保存 (= UI / CSV で「LLM / Embedding /
+  //   Storage」分離表示用)。reconciledCostJpy には既に含まれているため、本値は subset 表示専用。
+  //   Beginner は cost=0 だが件数 (_count._all) は記録 (= UI 表示用)。
+  const embeddingAgg = await prisma.apiCallLog.aggregate({
+    where: {
+      tenantId,
+      createdAt: { gte: currentMonthStart, lte: now },
+      featureUnit: { in: [...EMBEDDING_BILLABLE_FEATURE_UNITS] },
+    },
+    _count: { _all: true },
+    _sum: { costJpy: true },
+  });
+  const embeddingCallCount = embeddingAgg._count._all;
+  const embeddingCostJpy = embeddingAgg._sum.costJpy ?? 0;
 
   // 単一 transaction で一気に論理削除 (途中失敗で部分削除の不整合を避ける)
   // Tenant.update / auditLog.create / tenantMonthlyUsageHistory.upsert の戻り値は破棄。
@@ -1201,6 +1289,9 @@ export async function deleteTenant(
         plan: tenant.plan,
         activeUserCount,
         storageBytesUsed: tenant.storageBytesUsed,
+        // ADR-0022 (2026-06-01): Embedding 内訳列
+        embeddingCallCount,
+        embeddingCostJpy,
         totalJpy,
       },
       update: {
@@ -1209,6 +1300,9 @@ export async function deleteTenant(
         plan: tenant.plan,
         activeUserCount,
         storageBytesUsed: tenant.storageBytesUsed,
+        // ADR-0022 (2026-06-01): Embedding 内訳列
+        embeddingCallCount,
+        embeddingCostJpy,
         totalJpy,
       },
     }),

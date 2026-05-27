@@ -33,10 +33,15 @@ import { prisma } from '@/lib/db';
 // 2026-05-14: 閾値定数は Client Component (usage-drift-badge.tsx) からも参照されるため
 //   純粋な config に分離し、Client bundle に Prisma (pg) を混入させない設計境界。
 import { DRIFT_WARNING_THRESHOLD } from '@/config/api-usage-drift';
-// ADR-0019 (2026-05-24): drift 検知の集計対象を「課金対象 featureUnit」に限定する。
-//   withMeteredLLM が Tenant.currentMonthApiCallCount/CostJpy を billable のみで increment
-//   するように変更されたため、本サービスもこれと同じ条件で SUM を取らないと drift 誤検知。
-import { BILLABLE_FEATURE_UNITS } from '@/config/billing-feature-units';
+// ADR-0019 (2026-05-24) → ADR-0022 (2026-06-01): drift 検知の集計対象を Tenant counter と一致させる。
+//   - reconcileTenantApiUsage は LLM_BILLABLE + STORAGE_OVERAGE のみ集計 (= currentMonthApi* に対応)
+//   - reconcileTenantEmbeddingUsage (新規) は EMBEDDING_BILLABLE のみ集計 (= currentMonthEmbedding* に対応)
+//   両関数とも cost / count の 2 軸 max で drift を判定し、Beginner (cost=0) でも count 軸で検知可能。
+import {
+  EMBEDDING_BILLABLE_FEATURE_UNITS,
+  LLM_BILLABLE_FEATURE_UNITS,
+  STORAGE_OVERAGE_FEATURE_UNITS,
+} from '@/config/billing-feature-units';
 // PR-V8 (2026-05-19): テナント TZ 月初をベースにする (月初リセット cron と境界統一)
 import { getTenantMonthStart } from '@/lib/tenant-time';
 import { DEFAULT_TIMEZONE } from '@/config/i18n';
@@ -132,15 +137,17 @@ export async function reconcileTenantApiUsage(
   // PR-V8: テナント TZ 月初を起点 (月初リセット cron と境界統一)
   const timezone = tenant.timezone ?? DEFAULT_TIMEZONE;
   const monthStart = getTenantMonthStart(now, timezone);
-  // ADR-0019 (2026-05-24): Tenant.currentMonthApiCallCount/CostJpy は billable な ApiCallLog のみで
-  //   increment される。drift 検知の真値もこれと同じ条件で計算しないと「無料 call (cost=0) が
-  //   ApiCallLog に大量に積まれている」状態を drift として誤検知してしまうため、featureUnit を
-  //   `BILLABLE_FEATURE_UNITS` に絞る。
+  // ADR-0022 (2026-06-01): currentMonthApi* (= LLM 系 counter) と一致させるため、集計対象を
+  //   LLM_BILLABLE + STORAGE_OVERAGE に限定 (= Embedding は別 counter のため除外)。
+  //   Embedding 側の drift 検知は `reconcileTenantEmbeddingUsage` で別途実施。
+  //   この分離により、Tenant counter と ApiCallLog SUM の比較が正しく機能する。
   const aggregate = await prisma.apiCallLog.aggregate({
     where: {
       tenantId,
       createdAt: { gte: monthStart },
-      featureUnit: { in: [...BILLABLE_FEATURE_UNITS] },
+      featureUnit: {
+        in: [...LLM_BILLABLE_FEATURE_UNITS, ...STORAGE_OVERAGE_FEATURE_UNITS],
+      },
     },
     _count: { _all: true },
     _sum: { costJpy: true },
@@ -176,6 +183,79 @@ export async function reconcileTenantApiUsage(
 }
 
 /**
+ * ADR-0022 (2026-06-01): Embedding 系の drift 検知。
+ *
+ * 役割:
+ *   Tenant.currentMonthEmbeddingCallCount / currentMonthEmbeddingCostJpy (= リアルタイム counter)
+ *   と ApiCallLog (= EMBEDDING_BILLABLE_FEATURE_UNITS の SUM、真値) を比較し、drift を検知する。
+ *   `reconcileTenantApiUsage` (LLM 系) と同じ 2 軸 max 判定 (count / cost) を採用。
+ *
+ * 設計判断:
+ *   - **Beginner プランは cost=0 のため count 軸のみで drift 判定** (= cost ratio は常に 0/0=0)。
+ *     LLM 系も同じ問題を抱えていたが PR-V8 で call-count / cost の max 採用で対処済。
+ *   - **集計対象を EMBEDDING_BILLABLE_FEATURE_UNITS のみに限定**: backfill / 未知は counter を
+ *     進めないため drift 比較対象外。
+ *   - **戻り値型 `ApiUsageReconcileResult` を流用**: フィールド名 (cachedCallCount 等) は実態が
+ *     Embedding counter であることに注意。UI/CSV 側で表示時にラベル付け。
+ *
+ * 関連:
+ *   - ADR: docs/adr/0022-embedding-usage-based-billing.md
+ *   - Counter: Tenant.currentMonthEmbeddingCallCount / currentMonthEmbeddingCostJpy
+ *   - feedback_drift_detection_design.md (= 両軸 max 判定の根拠)
+ */
+export async function reconcileTenantEmbeddingUsage(
+  tenantId: string,
+  now: Date = new Date(),
+): Promise<ApiUsageReconcileResult | null> {
+  const tenant = await prisma.tenant.findFirst({
+    where: { id: tenantId, deletedAt: null },
+    select: {
+      id: true,
+      timezone: true,
+      currentMonthEmbeddingCallCount: true,
+      currentMonthEmbeddingCostJpy: true,
+    },
+  });
+  if (!tenant) return null;
+
+  const timezone = tenant.timezone ?? DEFAULT_TIMEZONE;
+  const monthStart = getTenantMonthStart(now, timezone);
+  const aggregate = await prisma.apiCallLog.aggregate({
+    where: {
+      tenantId,
+      createdAt: { gte: monthStart },
+      featureUnit: { in: [...EMBEDDING_BILLABLE_FEATURE_UNITS] },
+    },
+    _count: { _all: true },
+    _sum: { costJpy: true },
+  });
+
+  const reconciledCallCount = aggregate._count._all;
+  const reconciledCostJpy = aggregate._sum.costJpy ?? 0;
+  const driftCallCount = tenant.currentMonthEmbeddingCallCount - reconciledCallCount;
+  const driftCostJpy = tenant.currentMonthEmbeddingCostJpy - reconciledCostJpy;
+  const driftCallRatio = Math.abs(driftCallCount) / Math.max(reconciledCallCount, 1);
+  const driftCostRatio = Math.abs(driftCostJpy) / Math.max(reconciledCostJpy, 1);
+  const driftRatio = Math.max(driftCallRatio, driftCostRatio);
+
+  return {
+    tenantId: tenant.id,
+    cachedCallCount: tenant.currentMonthEmbeddingCallCount,
+    cachedCostJpy: tenant.currentMonthEmbeddingCostJpy,
+    reconciledCallCount,
+    reconciledCostJpy,
+    driftCallCount,
+    driftCostJpy,
+    driftCallRatio,
+    driftCostRatio,
+    driftRatio,
+    monthStart,
+    monthStartUtc: monthStart, // @deprecated
+    hasDrift: driftRatio >= DRIFT_WARNING_THRESHOLD,
+  };
+}
+
+/**
  * 全テナント (削除済除外) の API 利用量整合性チェック。
  *
  * `Promise.allSettled` で並列実行、個別失敗は除外して成功分のみ返す。
@@ -191,6 +271,30 @@ export async function reconcileAllTenantsApiUsage(
 
   const settled = await Promise.allSettled(
     tenants.map((t) => reconcileTenantApiUsage(t.id, now)),
+  );
+
+  const results: ApiUsageReconcileResult[] = [];
+  for (const s of settled) {
+    if (s.status === 'fulfilled' && s.value) {
+      results.push(s.value);
+    }
+  }
+  return results;
+}
+
+/**
+ * ADR-0022 (2026-06-01): 全テナント Embedding 利用量整合性チェック (super_admin ダッシュボード用)。
+ */
+export async function reconcileAllTenantsEmbeddingUsage(
+  now: Date = new Date(),
+): Promise<ApiUsageReconcileResult[]> {
+  const tenants = await prisma.tenant.findMany({
+    where: { deletedAt: null },
+    select: { id: true },
+  });
+
+  const settled = await Promise.allSettled(
+    tenants.map((t) => reconcileTenantEmbeddingUsage(t.id, now)),
   );
 
   const results: ApiUsageReconcileResult[] = [];
