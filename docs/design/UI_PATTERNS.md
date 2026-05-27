@@ -1463,22 +1463,37 @@ LINE / Teams 等の対話 UI と同じ「**自分の発言は右、相手の発�
 「フクロウが提案を返した」という体験を作る。縮退モード時 (degradeReason) の注意文も
 アシスタント吹き出しの冒頭に内包し、「フクロウからの説明」として読めるよう設計。
 
-### 36.4 アクセシビリティ
+### 36.4 アクセシビリティ・性能・モバイル対応
 
 - FAB の `aria-label` は `${CHAT_PERSONA.name}に相談する` 形式
 - アバター画像はヘッダで `alt={CHAT_PERSONA.avatarAlt}`、装飾用 (AssistantBubble) は `alt=""`
   (`aria-hidden` は alt="" と冗長になるため指定しない)
 - `motion-reduce:transition-none` / `motion-reduce:hover:scale-100` で
   vestibular disorder 等のユーザに配慮
-- FAB と ヘッダアバターは `priority` 指定で LCP 候補として最適化
+- **`priority` は FAB のみ** に付与 (ChatPanel は条件付き render = LCP 候補ではない、
+  KDD §5.X+166 / 罠 A)。FAB priority で HTTP cache に乗るため、panel 展開時の
+  ヘッダ avatar / AssistantBubble avatar は priority なしで遅延描画ゼロ
+- **iOS home indicator 配慮**: FAB の `bottom` は `calc(env(safe-area-inset-bottom,0px)+1rem)`
+  で home bar との重なりを回避 (KDD §5.X+166 / 罠 B)
+- **Dark mode**: `shadow-lg dark:shadow-black/50` で透明 PNG + dark bg 環境でも
+  影が視認できるよう調整
 
-### 36.5 違反検知
+### 36.5 i18n 方針
+
+`CHAT_PERSONA.name`「たすきフクロウ」は **日本語ハードコード** (固有名詞)。MVP は
+日本国内向けのため翻訳キー化していない。将来 EN 版を出す場合の方針は
+[src/config/chat-persona.ts](../../src/config/chat-persona.ts) 冒頭の docblock
+を参照。挨拶文 / "過去資産を意味検索" などの周辺文言は `useTranslations('chat')` 化
+が必要。
+
+### 36.6 違反検知
 
 - `src/components/chat-semantic-search/chat-fab.test.ts` — 旧絵文字 💬 不残留、
-  motion-reduce 完備、object-cover、priority、bg-background/ring 不在
-- `src/components/chat-semantic-search/chat-panel.test.ts` — ヘッダ avatar の
-  priority、AssistantBubble の aria-hidden 不在、object-cover 横展開、
-  結果カードのアシスタント吹き出し内ネスト
+  motion-reduce 完備、object-cover、priority、bg-background/ring 不在、
+  iOS safe-area-inset-bottom 加算、dark:shadow-* 完備
+- `src/components/chat-semantic-search/chat-panel.test.ts` — ヘッダ avatar に
+  **priority 不在** (KDD §5.X+166 / 罠 A 回避)、AssistantBubble の aria-hidden 不在、
+  object-cover 横展開、結果カードのアシスタント吹き出し内ネスト
 
 ---
 

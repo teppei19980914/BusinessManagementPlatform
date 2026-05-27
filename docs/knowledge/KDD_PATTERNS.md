@@ -16517,3 +16517,87 @@ PR #452 (チャット FAB マスコット化) で `docs/design/assets/mascot-owl
 - 関連設計: [docs/design/MASCOT.md](../design/MASCOT.md) (マスコット派生規範)
 - 関連 PR: #452 (マスコット導入 + 全面占有設計)
 - a11y 副次修正: `motion-reduce:*` と Image `priority` 統一指定も同 PR で実施
+
+---
+
+## 5.X+166 ★severity-medium★ FAB 設計の 2 つの罠: panel-internal Image に priority を付けると preload 浪費、iOS home indicator と FAB が重なる (PR #452 3rd-round フルスキャンで発見)
+
+PR #452 の 3 回目フルスキャン ([feedback_repeated_verification_request](C:\Users\SF02512\.claude\projects\c--Users-SF02512-GitHub-Private-BusinessManagementPlatform\memory\feedback_repeated_verification_request.md) ルーチン適用) で 2 つの本番デプロイ後発火型の罠を発見。
+
+### 罠 A: 「panel 内の Image に priority を付ける」preload 浪費
+
+PR #452 2 回目で deep scan が「ヘッダ avatar に priority を追加すべき (above-the-fold)」と提案 → ChatPanel の `<header>` に `<Image priority>` を追加した。
+
+しかし ChatPanel 自体は `{open && <ChatPanel>}` で **user が FAB をクリックして初めて mount** される条件付き Component。つまりヘッダ avatar は:
+
+- 初期ページロード時には DOM に存在しない
+- next/image の preload `<link rel="preload">` だけは SSR HTML に挿入される (= browser は画像を fetch する)
+- そのまま user が FAB を一度もクリックせず別ページに遷移すると、preload は完全に無駄
+
+`/mascot-owl-chat.png` (75KB) を user 全員に preload させると、Beginner プランで月 5000 ユーザ × 75KB ≒ 375MB の無駄帯域。
+
+#### 修正
+
+```diff
+ <Image
+   src={CHAT_PERSONA.avatarSrc}
+   alt={CHAT_PERSONA.avatarAlt}
+   width={36}
+   height={36}
+-  priority
+   className="h-9 w-9 rounded-full object-cover"
+ />
+```
+
+FAB 側で同じ画像を priority 表示しているため、user が panel を開いた時点で HTTP cache に乗っており遅延描画は実質ゼロ。
+
+#### 横展開チェック
+
+- [ ] **Image に priority を付ける前に「**この要素は初期ロード時に DOM に存在するか?**」を確認** する
+- [ ] 条件付き render (`{state && <Comp>}`) の中の Image は priority **不要**
+- [ ] Dialog / Modal / Drawer / Side Panel など overlay 系内部の画像は LCP 候補ではない
+- [ ] preload の挙動は Lighthouse の "Preloads key requests" 警告で検出可能、PR レビュー時に開発者ツールで確認推奨
+
+### 罠 B: FAB の bottom-4 が iOS home indicator と重なる
+
+PR #452 2 回目で FAB を h-14 → h-16 (56→64) に拡大した。Tailwind の `bottom-4` (16px) は通常ブラウザでは OK だが、iOS Safari / Chrome の WebView / PWA で `viewport-fit=cover` 指定時:
+
+- portrait: home indicator が下端 34px のセーフエリアを占有
+- landscape: 同 21px
+- FAB の下端は `bottom-4 (16px)` から `+64px = 80px`
+- 16px + 64px = 80px だがホームバー領域と重なる可能性 (= タップ事故)
+
+#### 修正
+
+```diff
+- 'fixed right-4 bottom-4 z-40 h-16 w-16 ...',
++ 'fixed right-4 z-40 h-16 w-16 ...',
++ 'bottom-[calc(env(safe-area-inset-bottom,0px)+1rem)]',
+```
+
+`env(safe-area-inset-bottom)` は viewport-fit=cover の WebView では `34px` 等の値、それ以外では `0` を返す。`,0px` の fallback で古い browser でも安全。
+
+#### 横展開チェック
+
+- [ ] **画面下端の固定要素 (`fixed bottom-*`) を追加する PR では `env(safe-area-inset-bottom)` を必ず加算** する
+- [ ] 該当: FAB / sticky CTA bar / mobile nav bottom tab 等
+- [ ] viewport `<meta>` で `viewport-fit=cover` が設定されているか確認 (default: contain)
+- [ ] iOS Simulator / 実機での目視確認が CI でできない領域なので **PR レビュー時に reviewer が iOS スクリーンショットを要求** するワークフローを検討
+
+### Round 3 検証で false positive と判定した指摘 (記録)
+
+同じ deep scan で以下 2 件は false positive と判定:
+
+| 指摘 | false positive 理由 |
+|---|---|
+| Hydration mismatch | `useState(false)` は SSR/CSR で同値、mismatch しない |
+| outputFileTracingIncludes 漏れ | next/image 経由は自動追跡。`public/mascot-owl.png` / `og-image.png` も同条件で動作中 |
+
+[feedback_repeated_verification_request](C:\Users\SF02512\.claude\projects\c--Users-SF02512-GitHub-Private-BusinessManagementPlatform\memory\feedback_repeated_verification_request.md) のルールに従い、deep scan の指摘は **盲信せず 1 件ずつ既存コードと突き合わせて検証** する。
+
+### 関連
+
+- 関連 KDD: [§5.X+165](#5x165) (チャット FAB 全面占有設計、a11y 修正)
+- 関連設計: [docs/design/UI_PATTERNS.md §36](../design/UI_PATTERNS.md) (チャット UI パターン)
+- 関連 PR: #452 (3 回目フルスキャンで発見)
+- 関連 memory: [feedback_repeated_verification_request] (繰り返しスキャンの観点深掘り)

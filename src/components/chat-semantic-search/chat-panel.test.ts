@@ -67,13 +67,15 @@ describe('ChatPanel のマスコット統合 invariant', () => {
     expect(source).toMatch(/import\s*\{\s*ChatSearchResultCard\s*\}\s*from\s*'\.\/result-card'/);
   });
 
-  it('ヘッダ avatar に priority を付与し LCP 候補として最適化されている', () => {
-    // ヘッダ avatar 周辺のブロックを抽出し priority が含まれているか検査。
-    const headerBlock = source.match(/data-testid="chat-panel-persona-avatar"[\s\S]{0,200}/);
-    expect(headerBlock).not.toBeNull();
-    // Image の priority prop は data-testid と同じ Image 要素内に含まれる想定。
+  it('ヘッダ avatar に priority は付与しない (KDD §5.X+166 / panel は user 操作後 mount)', () => {
+    // ChatPanel 自体が {open && <ChatPanel>} で条件付き render される設計上、
+    // ヘッダ avatar は初期ページロード時には存在しない = LCP 候補ではない。
+    // priority を付けると未使用 preload で bandwidth が浪費される。
+    // FAB 側で同じ画像を priority 表示しているため HTTP cache に乗っており、
+    // panel 展開時の遅延描画は実質ゼロ。
     const imageBlock = source.match(/<Image[\s\S]{0,400}?chat-panel-persona-avatar/);
-    expect(imageBlock?.[0]).toMatch(/priority/);
+    expect(imageBlock).not.toBeNull();
+    expect(imageBlock![0]).not.toMatch(/priority/);
   });
 
   it('AssistantBubble の装飾 avatar は alt="" のみ (aria-hidden 冗長指定なし)', () => {

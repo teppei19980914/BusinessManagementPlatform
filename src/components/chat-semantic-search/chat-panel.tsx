@@ -158,16 +158,18 @@ export function ChatPanel({ onClose }: { onClose: () => void }) {
         */}
         <div className="flex items-center gap-2">
           {/*
-            ヘッダ avatar: パネル開放時の "above the fold" 要素のため priority を付与
-            (LCP 候補としてプリロードさせる)。画像自体がバッジで全面を占めるため
-            object-cover で確実にトリミングする (KDD §5.X+165)。
+            ヘッダ avatar: ChatPanel 自体が `{open && <ChatPanel>}` で user 操作後に
+            初めて mount されるため、初期ページロード時の LCP 候補ではない。
+            priority を付けると未使用 preload で WAS bandwidth を浪費する (KDD §5.X+166)。
+            FAB 側で同じ /mascot-owl-chat.png を priority 表示しており、その時点で
+            HTTP cache に乗っているため遅延描画は事実上ない。
+            object-cover でバッジ全面占有のクリッピングのみ担保する。
           */}
           <Image
             src={CHAT_PERSONA.avatarSrc}
             alt={CHAT_PERSONA.avatarAlt}
             width={36}
             height={36}
-            priority
             className="h-9 w-9 rounded-full object-cover"
             data-testid="chat-panel-persona-avatar"
           />

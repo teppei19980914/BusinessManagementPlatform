@@ -42,8 +42,10 @@ describe('ChatSemanticSearchFab のマスコット統合 invariant', () => {
     expect(source).toMatch(/src=\{CHAT_PERSONA\.avatarSrc\}/);
   });
 
-  it('全画面右下の常時表示位置 (fixed right-4 bottom-4 z-40) を維持している', () => {
-    expect(source).toMatch(/fixed right-4 bottom-4 z-40/);
+  it('全画面右下の常時表示位置 (fixed right-4 z-40 + safe-area aware bottom) を維持している', () => {
+    // bottom は env(safe-area-inset-bottom) を含む別クラスに分離されている (KDD §5.X+166)。
+    expect(source).toMatch(/fixed right-4 z-40/);
+    expect(source).toMatch(/bottom-\[calc\(env\(safe-area-inset-bottom/);
   });
 
   it('旧実装の絵文字 💬 が source に残っていない (回帰防止)', () => {
@@ -77,5 +79,15 @@ describe('ChatSemanticSearchFab のマスコット統合 invariant', () => {
 
   it('priority を付与し LCP 候補としてプリロードさせる', () => {
     expect(source).toMatch(/priority/);
+  });
+
+  it('iOS safe-area-inset-bottom を加味した bottom 位置を持つ (KDD §5.X+166)', () => {
+    // home indicator (portrait 34px / landscape 21px) と重ならないよう
+    // env(safe-area-inset-bottom) を加算する。通常ブラウザでは 0 のため互換性 OK。
+    expect(source).toMatch(/env\(safe-area-inset-bottom/);
+  });
+
+  it('dark mode 向けの shadow tweak (dark:shadow-*) を持つ (透明 PNG + dark bg 対策)', () => {
+    expect(source).toMatch(/dark:shadow-/);
   });
 });
