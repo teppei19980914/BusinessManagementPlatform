@@ -26,7 +26,7 @@ post-mortem を後で書くために、対応中に行った操作・確認し�
 
 ```
 HH:MM 通知受信: 内容
-HH:MM 確認: Vercel ログで X を確認、エラー数 Y 件
+HH:MM 確認: Netlify Function ログで X を確認、エラー数 Y 件
 HH:MM 対処: SQL `UPDATE ... SET ...` を実行 (影響行数 Z)
 HH:MM 結果: 通常動作確認 / 引き続き調査
 ```
@@ -48,35 +48,35 @@ HH:MM 結果: 通常動作確認 / 引き続き調査
 
 ## 6. 障害対応
 
-### 6.1 Vercel ビルド失敗
+### 6.1 Netlify ビルド失敗
 
 #### 症状
-- Vercel Dashboard → Deployments のステータスが **Failed**
+- Netlify Dashboard → Deployments のステータスが **Failed**
 - "Build Command" のログにエラー
 
 #### 調査手順
 
-1. Vercel Dashboard → 該当 Deployment → **Build Logs** を開く
+1. Netlify Dashboard → 該当 Deployment → **Build Logs** を開く
 2. 最後のエラー行を特定
 
 #### よくある原因と対処
 
 | 症状 | 原因 | 対処 |
 |---|---|---|
-| `Cannot find module '@/generated/prisma'` | `pnpm prisma generate` が未実行 (buildCommand のどこかで失敗) | `vercel.json` の `buildCommand` が `pnpm prisma generate && pnpm build` のままか確認 |
-| `DATABASE_URL is not defined` | Vercel 環境変数未設定 | Project Settings → Environment Variables で `DATABASE_URL` / `DIRECT_URL` 等を設定。Production / Preview / Development それぞれにスコープ指定 |
+| `Cannot find module '@/generated/prisma'` | `pnpm prisma generate` が未実行 (buildCommand のどこかで失敗) | `netlify.toml` の `[build] command` が `pnpm prisma generate && pnpm build` のままか確認 |
+| `DATABASE_URL is not defined` | Netlify 環境変数未設定 | Project Settings → Environment Variables で `DATABASE_URL` / `DIRECT_URL` 等を設定。Production / Preview / Development それぞれにスコープ指定 |
 | `Type error: ...` (TypeScript) | 型エラー | ローカルで `pnpm build` を事前実行して同じエラーを再現し、コード側で修正 |
 | ESLint エラー | lint ルール違反 | ローカルで `pnpm lint` を実行して修正 |
 
 ### 6.2 DB 接続失敗 (アプリ起動時)
 
 #### 症状
-- Vercel 関数ログに `PrismaClientInitializationError` や `Connection terminated unexpectedly`
+- Netlify Function ログに `PrismaClientInitializationError` や `Connection terminated unexpectedly`
 - `/settings` 等の DB 依存ページで 500 エラー
 
 #### 対処
 
-1. Vercel Dashboard → Deployment → **Runtime Logs** でエラーメッセージを特定
+1. Netlify Dashboard → Deployment → **Runtime Logs** でエラーメッセージを特定
 2. 接続 URL の確認:
    - `DATABASE_URL` が **Pooler URL** (`pooler.supabase.com:6543` + `?pgbouncer=true`) になっているか
    - `DIRECT_URL` が **直結 URL** (`db.[ref].supabase.co:5432`) になっているか
@@ -108,7 +108,7 @@ HH:MM 結果: 通常動作確認 / 引き続き調査
 
 ### 6.5 ログイン失敗の調査手順 (PR fix/login-failure / 2026-05-03)
 
-ユーザから「ログインできない」報告があった場合の系統的な調査手順。**Vercel のリクエストログだけでは原因が分からない**ため、`auth_event_logs` テーブルと Vercel の Functions ログ (`console.error`) を併用する。
+ユーザから「ログインできない」報告があった場合の系統的な調査手順。**Netlify Function のリクエストログだけでは原因が分からない**ため、`auth_event_logs` テーブルと Netlify Function ログ (`console.error`) を併用する。
 
 #### Step 1: 本番 Supabase で `auth_event_logs` を確認
 
@@ -138,12 +138,12 @@ LIMIT 10;
 | `temporary_lock` | `users.locked_until > now()` (一時ロック中) | 30 分待機 or admin 解除 |
 | `invalid_password` | bcrypt 比較失敗 (パスワード違い) | ユーザにパスワードリセットを案内 |
 
-#### Step 2: Vercel Functions ログで `[auth]` プレフィックスを確認
+#### Step 2: Netlify Function ログで `[auth]` プレフィックスを確認
 
-`auth_event_logs` の書き込みに失敗している場合 (DB 接続不能等) は Vercel ログのみが頼り。
+`auth_event_logs` の書き込みに失敗している場合 (DB 接続不能等) は Netlify Function ログのみが頼り。
 
 ```
-Vercel Dashboard → 対象プロジェクト → Logs → 検索バーに `[auth] login_failure` を入力
+Netlify Dashboard → 対象プロジェクト → Logs → 検索バーに `[auth] login_failure` を入力
 ```
 
 ログに `reason` フィールドが含まれている (PR fix/login-failure 以降)。Email は `tep***@gmail.com` 形式でマスク表示される。
@@ -228,7 +228,7 @@ LIMIT 20;
 | 状況 | 対処 |
 |---|---|
 | 特定 tenant の正常利用が想定を超えた | プラン上限到達後は **縮退モード** で自動停止 (ADR-0002)。tenant の `monthlyBudgetCapJpy` 設定を確認 |
-| 特定 user が連打 (悪用疑い) | Vercel Functions ログで `[suggest]` プレフィックスから IP / User-Agent 確認 → 必要なら admin 経由で user `is_active=false` |
+| 特定 user が連打 (悪用疑い) | Netlify Function ログで `[suggest]` プレフィックスから IP / User-Agent 確認 → 必要なら admin 経由で user `is_active=false` |
 | Anthropic / Voyage 全体のレート超過 | プロバイダ dashboard で workspace 全体の月間ハード上限を一時的に引き下げ。サービス全体で提案エンジンを `503` 返却するフィーチャーフラグを検討 |
 | 想定外の bulk 呼出 (memory: feedback_bulk_llm_call_unit 違反) | 該当箇所の `withMeteredLLM` ラップ単位を確認、1 業務操作 = 1 ApiCallLog に集約されているか検証 |
 
@@ -251,7 +251,7 @@ LIMIT 20;
 
 1. **即時(30 分以内)**:
    - 漏洩経路となった API ルート / Service 関数を特定
-   - 該当機能の **緊急停止** を判断: feature flag で OFF、もしくは Vercel Rollback で前バージョンに戻す
+   - 該当機能の **緊急停止** を判断: feature flag で OFF、もしくは Netlify Rollback (Publish deploy) で前バージョンに戻す
    - 漏洩範囲の SQL 調査 (`audit_logs` から該当時刻周辺の cross-tenant access 件数を抽出)
 2. **当日中**:
    - 影響を受けたユーザ・テナントの特定リストを作成
@@ -265,7 +265,7 @@ LIMIT 20;
 #### 重要な対応原則
 
 - **データを消すな、隠せ**: 漏洩データを削除するのではなく、まず該当機能を停止して新規漏洩を止める
-- **証拠は保全**: `audit_logs` / Vercel Functions ログ / DB snapshot を即座にエクスポート (post-mortem と法的対応の根拠)
+- **証拠は保全**: `audit_logs` / Netlify Function ログ / DB snapshot を即座にエクスポート (post-mortem と法的対応の根拠)
 - **隠蔽するな**: 1 人運用でも、影響ユーザへの通知は必ず行う
 
 #### 予防 (PR レビュー時)
@@ -286,14 +286,14 @@ LIMIT 20;
 
 #### 症状
 
-- Vercel Cron Dashboard でジョブが `Failed`
+- cron-job.org Dashboard でジョブが `Failed`
 - `tenant_monthly_usage_history` に当月行が無いテナントが残る
 - 提案エンジンで「Beginner プラン上限到達」が解除されない
 
 #### 対処
 
 ```bash
-# Vercel Cron の手動再実行 (Dashboard から、または curl で endpoint を叩く)
+# 外部 cron (cron-job.org) の手動再実行 (cron-job.org Dashboard から、または curl で endpoint を叩く)
 curl -X POST https://<production-domain>/api/cron/monthly-batch \
   -H "Authorization: Bearer $CRON_SECRET"
 ```
@@ -318,14 +318,14 @@ pnpm tsx scripts/backfill-monthly-embeddings.ts --tenant=<id>
 
 - すべての DB 依存ページが 500
 - Supabase Status Page (https://status.supabase.com/) で障害告知
-- Vercel Functions ログに `Connection terminated unexpectedly` が大量
+- Netlify Function ログに `Connection terminated unexpectedly` が大量
 
 #### 対処
 
 | フェーズ | 対応 |
 |---|---|
 | 初動 | Supabase Status Page で公式情報を確認。**焦って手元で何か触らない** (DB 接続バーストが復旧を遅らせる) |
-| 復旧待機 | Vercel Dashboard で `Maintenance mode` 表示の static page にフォールバックする feature flag を有効化 (要事前準備、未実装なら手動で `_offline.html` を出すルートを追加) |
+| 復旧待機 | Netlify Dashboard で `Maintenance mode` 表示の static page にフォールバックする feature flag を有効化 (要事前準備、未実装なら手動で `_offline.html` を出すルートを追加) |
 | 部分復旧 | Supabase が部分復旧したら read-only モードで動作確認。書き込みは Status Page が「Resolved」になるまで待つ |
 | 全面復旧 | `pnpm prisma migrate status` で migration 整合性確認、`SELECT count(*) FROM users` 等で接続性確認 |
 
@@ -344,8 +344,8 @@ pnpm tsx scripts/backfill-monthly-embeddings.ts --tenant=<id>
 
 #### 即時対応 (1 時間以内)
 
-1. **証拠保全**: `audit_logs` / `auth_event_logs` / Vercel Functions ログを即座にエクスポート、別 storage に保管
-2. **侵入経路の遮断**: 疑わしい API キーがあれば即時 rotate (Vercel 環境変数で再生成)
+1. **証拠保全**: `audit_logs` / `auth_event_logs` / Netlify Function ログを即座にエクスポート、別 storage に保管
+2. **侵入経路の遮断**: 疑わしい API キーがあれば即時 rotate (Netlify 環境変数で再生成)
 3. **影響範囲の特定**:
    - SQL で漏洩疑いデータの read/write access 履歴を抽出
    - 流出規模 (件数 / 機微度) の暫定見積もり
@@ -400,7 +400,7 @@ JWT 再署名が壊れていてもユーザが脱出できる経路:
 #### 恒久対応
 
 - NextAuth v5 GA 待ち → `useSession().update()` の Set-Cookie 反映を upstream で fix されたら再評価
-- 別ホスティング (Vercel Pro 等) への移行検討は `docs/design/INFRASTRUCTURE.md §10.3` のスケール時方針として整理済
+- 別ホスティング (Netlify Pro / AWS Amplify 等) への昇格検討は `docs/design/INFRASTRUCTURE.md §10.3` のスケール時方針として整理済
 
 ### 6.12 誤ユーザログイン事象を観測 (S-1、Netlify Set-Cookie 脱落起因)
 
@@ -469,20 +469,20 @@ S-1 のため、解決後は以下を必ず実施:
 
 ## 7. ロールバック手順
 
-### 7.1 Vercel の前バージョンへのロールバック (コードのみ)
+### 7.1 Netlify の前バージョンへのロールバック (コードのみ)
 
-Vercel の **Rollback** 機能を使う。DB マイグレーションは巻き戻らない点に注意。
+Netlify の **Publish deploy** 機能を使う。DB マイグレーションは巻き戻らない点に注意。
 
 #### 手順
 
-1. Vercel Dashboard → 対象プロジェクト → **Deployments** タブ
-2. 戻したいバージョン (緑の **Ready** バッジが付いた過去の Production) を選択
-3. 右上の **⋯** (メニュー) → **Promote to Production** (Vercel UI のバージョンにより **Instant Rollback** / **Rollback** と表記される場合あり、要確認)
+1. Netlify Dashboard → 対象 Site → **Deploys** タブ
+2. 戻したいバージョン (緑の **Published** バッジが付いた過去のデプロイ) を選択
+3. 右上の **Publish deploy** をクリック (Netlify UI のバージョンにより **Restore** と表記される場合あり、要確認)
 4. 即座に本番 URL が指定バージョンに切り替わる (新規ビルド不要、数秒〜数十秒)
 
-**補足** (Vercel の公式仕様):
-- 過去のデプロイは一定期間保持される
-- Rollback はコードのみ。**DB スキーマは戻らない**
+**補足** (Netlify の公式仕様):
+- 過去のデプロイは Personal プランで一定期間保持される
+- Publish deploy はコードのみ。**DB スキーマは戻らない**
 
 ### 7.2 DB マイグレーションのロールバック
 
@@ -510,7 +510,7 @@ Prisma の migrate には down マイグレーションの機能がない (`pris
    DELETE FROM "_prisma_migrations" WHERE migration_name = '<migration-name>';
    ```
 
-5. Vercel のコードも §7.1 で対応バージョンへ戻す
+5. Netlify のコードも §7.1 で対応バージョンへ戻す
 
 > ⚠ **破壊的操作** なので事前に Supabase Dashboard → Database → **Backups** で現状バックアップを取得してから実施。Supabase Free プランでも Point-in-Time Recovery (7 日) が使える (要確認)。
 
@@ -530,7 +530,7 @@ Supabase Dashboard → Database → **Backups** タブで過去のスナップ�
 | Supabase 障害 | Supabase Support (Pro プラン以上) | Dashboard → Support |
 | Anthropic API 障害 | Anthropic Support | https://support.anthropic.com/ |
 | Voyage AI 障害 | Voyage AI Support | support@voyageai.com |
-| Vercel 障害 | Vercel Status | https://www.vercel-status.com/ |
+| Netlify 障害 | Netlify Status | https://www.netlifystatus.com/ |
 | Brevo (メール) 障害 | Brevo Support | dashboard 内 |
 | Stripe 障害 | Stripe Status | https://status.stripe.com/ |
 | 法的対応 (個人情報漏洩) | 個人情報保護委員会 | https://www.ppc.go.jp/personalinfo/legal/leakAction/ |

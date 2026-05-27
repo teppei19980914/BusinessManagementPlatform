@@ -275,7 +275,7 @@ Dashboard → **Developers** → **API keys**
 
 ### 5.1 Secret key
 - `Standard keys` → `Secret key` (= `sk_test_xxxx` or `sk_live_xxxx`)
-- ⚠️ **絶対に GitHub にコミットしない**。Vercel 環境変数 `STRIPE_SECRET_KEY` に直接登録
+- ⚠️ **絶対に GitHub にコミットしない**。Netlify 環境変数 `STRIPE_SECRET_KEY` に直接登録
 - 本番キーは **Restricted keys** で権限最小化することを推奨 (= 必要な権限のみ付与)
 
 ### 5.2 Publishable key (フロントエンド用)
@@ -455,7 +455,7 @@ Dashboard → **設定** → **Billing** → **サブスクリプションとメ
 2. `StripeWebhookEvent` テーブルに 1 行のみ (UNIQUE 違反で 2 回目はスキップ) を確認
 
 ### 10.5 cron 動作確認
-- `/api/cron/stripe-usage-flush` (= 5 分間隔、Vercel Hobby 制約で日次に変更済)
+- `/api/cron/stripe-usage-flush` (= 日次、旧 Vercel Hobby 時代の cron 最小間隔制約の名残で日次運用継続中。Netlify + 外部 cron 構成では 1 分間隔まで設定可能)
 - `/api/cron/stripe-auto-suspend` (= 日次 05:00 UTC)
 - `/api/cron/stripe-reconcile` (= 月初 06:00 UTC、PR-V7 #5、Subscription + Amount 照合 PR-V7a B-2)
 - `/api/cron/billing-monthly-aggregation` (= 月初 2 日 00:00 UTC、PR-V7a B-1: invoice 月次集計)

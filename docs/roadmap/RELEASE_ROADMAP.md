@@ -114,7 +114,7 @@
 |---|---|---|
 | **local** | Docker Compose あり | `docker-compose up` + `pnpm dev` で 1 コマンド相当に |
 | **on-prem** | 未対応 | セルフホスト可能 (Nginx リバプロ + PM2 + PostgreSQL セルフ) |
-| **cloud (Vercel+Supabase)** | 稼働中 | 既存を手順書として整理 |
+| **cloud (Netlify+Supabase)** | 稼働中 | 既存を手順書として整理 |
 
 #### 作業項目
 - [ ] `.env.local.example` / `.env.onprem.example` / `.env.cloud.example` を用途別に分離
@@ -124,7 +124,7 @@
 
 ### 2.2 デプロイ手順書の整備 (OPERATION.md 拡充)
 
-- [ ] **cloud (Vercel + Supabase)**: 既存手順の再整理
+- [ ] **cloud (Netlify + Supabase)**: 既存手順の再整理
 - [ ] **on-prem**: セルフサーバへのデプロイ手順 (Docker ベース)
 - [ ] **local**: 開発者参画時の初期セットアップ手順
 - [ ] 各環境の **環境変数一覧** を表形式で (必須/任意、デフォルト値、変更の影響範囲)
@@ -166,7 +166,7 @@
 - [x] **3 プラン構成 + 従量課金 (per-API-call) の基盤**: Tenant schema に全カラム配置済 (PR #216 系)。詳細: [ADR-0002](../adr/0002-tenant-billing-per-api-call.md) (2026-05-15 半額改定) → **[ADR-0019](../adr/0019-billable-feature-units-and-free-tier-expansion.md) (2026-05-24 課金対象縮小: Expert ¥10 / Pro ¥15 / Beginner プロジェクト作成/更新 月 50 回、資産入力・チャット検索を全プラン無料化)**
 - [x] **ApiCallLog テーブル**: schema 実装済 (PR #218 系)
 - [x] **`withMeteredLLM()` ミドルウェア**: `src/lib/llm/metered.ts` で実装、テスト網羅済 (PR #218)
-- [x] **月初リセットバッチ**: Vercel Cron 実装済 (PR #219)。手順は [BILLING_MONTHLY_OPERATIONS.md](../operations/BILLING_MONTHLY_OPERATIONS.md)、障害時対応は [INCIDENT_RESPONSE.md §6.8](../operations/INCIDENT_RESPONSE.md)
+- [x] **月初リセットバッチ**: 外部 cron (cron-job.org) で実装済 (PR #219、ADR-0023 で Vercel Cron から移行)。手順は [BILLING_MONTHLY_OPERATIONS.md](../operations/BILLING_MONTHLY_OPERATIONS.md)、障害時対応は [INCIDENT_RESPONSE.md §6.8](../operations/INCIDENT_RESPONSE.md)
 - [x] **Phase 1 (自動タグ抽出)**: PR #220-#223 で Anthropic Claude 自動タグ抽出を実装完了
 - [x] **Phase 2 (Embedding 意味検索)**: PR #224-#226 で Voyage AI + pgvector による 3 軸スコアリング完了
 - [ ] **初期データ**: テナント別シーディング機構は実装済、ナレッジ初期 30〜100 件の投入は運用時に判断
@@ -185,7 +185,7 @@
 
 - [ ] **テナント管理 UI**: admin 専用画面でのテナント作成・招待・削除
 - [ ] **テナント招待メール**: 新規外部ユーザの受け入れフロー
-- [ ] **テナント slug の URL ルーティング**: `tasukiba.vercel.app/{tenantSlug}/...` への移行
+- [ ] **テナント slug の URL ルーティング**: `tasukiba.netlify.app/{tenantSlug}/...` への移行
 - [ ] **Phase 3**: LLM Re-ranking と説明文生成 (Haiku、6月中旬目標)
 - [ ] **Sonnet ティーザー機能**: 無料ユーザの月 3 回までの Pro 体験
 - [ ] **30 日無料試用機能**: Pro プランの体験期間
@@ -195,15 +195,15 @@
 
 ### 2.6.1 インフラスケーラビリティの将来評価
 
-現状のインフラ (Vercel Hobby + Supabase Free) は試験運用には十分だが、外部ユーザ拡大に伴い制約に直面する可能性がある。詳細は [DESIGN.md §34.13](../developer/DESIGN.md) を参照。
+現状のインフラ (Netlify Personal + Supabase Free) は試験運用には十分だが、外部ユーザ拡大に伴い制約に直面する可能性がある。詳細は [DESIGN.md §34.13](../developer/DESIGN.md) を参照。
 
 **移行判断のトリガー条件** を以下に明記し、定期的な評価対象とする。
 
-第一に、月次の Vercel Function timeout エラー率が 1% を超えた場合。これはサービス品質悪化のシグナルとなる。第二に、Supabase データベースサイズが Free / Pro プランの 80% に達した場合。第三に、月間 Anthropic / Voyage の API 利用料が \$100 を超えた場合 (= 事業として成立する規模に到達)。第四に、ユーザから「動作が遅い」というフィードバックが構造的に集まった場合。
+第一に、月次の Netlify Function timeout エラー率が 1% を超えた場合。これはサービス品質悪化のシグナルとなる。第二に、Supabase データベースサイズが Free / Pro プランの 80% に達した場合。第三に、月間 Anthropic / Voyage の API 利用料が \$100 を超えた場合 (= 事業として成立する規模に到達)。第四に、ユーザから「動作が遅い」というフィードバックが構造的に集まった場合。
 
 **移行候補** は AWS ECS Fargate / Azure Container Apps / Google Cloud Run のいずれか。Next.js を `output: 'standalone'` で Docker 化し、PostgreSQL は AWS RDS / Azure Database for PostgreSQL に移行する。Prisma による DB 抽象化と Next.js の標準対応により、移行工数は 1〜2 週間程度と見込まれる。
 
-これらは将来の判断材料として記録するが、v1 リリース時点ではすべて Vercel + Supabase で運用する。本格的な事業拡大段階で再評価する。
+これらは将来の判断材料として記録するが、v1 リリース時点ではすべて Netlify + Supabase で運用する。本格的な事業拡大段階で再評価する。
 
 ### 2.7 Phase 2 完了の定義 (= プレリリース可能な状態)
 
@@ -229,7 +229,7 @@
 
 > **方針**: 既存の `audit_logs` / `auth_event_logs` を DB に記録する自前実装路線と整合させ、
 > ログ・監視データも **本サービス内で一元管理 + 自作ダッシュボードで可視化** を目指す。
-> 必要最小限だけ外部サービスを併用 (Vercel Analytics 等の無料枠)。
+> 必要最小限だけ外部サービスを併用 (Netlify Analytics 等の無料枠)。
 
 #### 3.1.0 現状 (2026-04-23 時点)
 
@@ -238,7 +238,7 @@
 | 業務ログ | ✅ `audit_logs` / `auth_event_logs` / `role_change_logs` を DB 記録 |
 | アクセスログ (HTTP) | ❌ 未実装 |
 | 構造化ロガー (pino 等) | ❌ 未導入 (`console.*` のみ) |
-| Vercel Analytics / Speed Insights | ❌ 未有効化 |
+| Netlify Analytics | ❌ 未有効化 |
 | エラー詳細 (stack + context) | ❌ 未構造化 |
 | ダッシュボード | ❌ 未実装 |
 
@@ -246,13 +246,13 @@
 
 **目的**: 現在 "真っ暗" な状態から、最低限の観測性を手に入れる。
 
-- [ ] **Vercel Speed Insights 有効化** (`@vercel/speed-insights` 追加)
+- [ ] **Web Vitals 計測有効化** (推奨: web-vitals npm or Netlify Analytics)
   - 計測対象: TTFB / LCP / CLS / INP (Web Vitals)
-  - 無料枠: 月 10,000 計測 (招待制なら十分)
+  - 無料枠: Netlify Analytics は $9/月の Add-on (Personal/Pro plan 共通)、または `web-vitals` npm で自前収集 (無料)
 - [ ] **構造化ロガー導入** (推奨: **pino** — 軽量 / Edge 互換 / JSON 出力)
   - `console.*` を `logger.info/warn/error` に段階的に置換
   - 出力フォーマット: `{ time, level, msg, request_id, user_id, path, ... }`
-  - Vercel ログ画面で JSON 検索可能に
+  - Netlify Function ログ画面で JSON 検索可能に
 - [ ] **middleware でアクセスログ記録** (`access_logs` テーブル新設)
   - 記録内容: `method / path / status / duration_ms / user_id / ip_hash / ua / request_id`
   - 既存 `audit_logs` と同じ設計方針で一貫性確保
@@ -314,12 +314,12 @@
 1. 既存 `audit_logs` / `auth_event_logs` が既に DB 記録設計 → 一貫性
 2. 招待制サービスでユーザ数が限定 → 自前でも負荷耐性あり
 3. 管理画面内に監視を組み込む方針 (ユーザ希望) → 外部 URL 行き来が不要になり運用楽
-4. Vercel Hobby + Supabase Free でゼロコスト運用を継続
+4. Netlify Personal ($9/月) + Supabase Free で最小コスト運用を継続
 
-**ただし例外として Phase 3a の `Vercel Speed Insights` のみ外部依存を許容**:
-- 理由: Web Vitals (LCP/CLS/INP) は **実ブラウザ計測が必要** で自前実装不可
-- 費用: 無料枠で十分
-- ロックイン: Vercel 上で稼働中なので追加ロックインなし
+**ただし例外として Phase 3a の `Web Vitals 計測` のみ外部依存または自前実装を許容**:
+- 理由: Web Vitals (LCP/CLS/INP) は **実ブラウザ計測が必要** で完全自前実装は困難
+- 費用: `web-vitals` npm パッケージで自前収集 → DB 蓄積なら無料、Netlify Analytics 採用なら $9/月
+- ロックイン: 標準 Web Vitals API のため移行コスト低
 
 #### 3.1.5 Phase 3a 開始時の判断事項
 

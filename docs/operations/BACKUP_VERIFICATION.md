@@ -20,10 +20,10 @@
 
 **現状**: MVP 期は Free プラン。バックアップ機構の実用性は **未検証**。
 
-### 1.2 Vercel (アプリコード)
+### 1.2 Netlify (アプリコード)
 
 - **コードは GitHub で管理されている** ためバックアップ不要 (origin/main が source of truth)
-- Vercel Deployments 履歴: 過去デプロイの即時 Rollback が可能 ([INCIDENT_RESPONSE.md §7.1](./INCIDENT_RESPONSE.md))
+- Netlify Deploys 履歴: 過去デプロイの即時 Publish deploy (Rollback) が可能 ([INCIDENT_RESPONSE.md §7.1](./INCIDENT_RESPONSE.md))
 
 ### 1.3 Supabase Storage (添付ファイル)
 
@@ -33,7 +33,7 @@
 
 ### 1.4 環境変数 / シークレット
 
-- Vercel 環境変数: Vercel Dashboard で管理、エクスポート機能なし
+- Netlify 環境変数: Netlify Dashboard で管理、エクスポート機能なし
 - **手動でローカル `.env.production-backup.encrypted` として 1Password 等のパスワードマネージャに保管推奨**
 - 含まれる秘密情報: `NEXTAUTH_SECRET` / `DATABASE_URL` / `ANTHROPIC_API_KEY` / `VOYAGE_API_KEY` / `BREVO_API_KEY` / `CRON_SECRET` 等 ([ENV_VARS.md](./ENV_VARS.md))
 
@@ -142,12 +142,12 @@ DOTENV_CONFIG_PATH=.env.verification pnpm dev
 # - 提案エンジン実行 (任意の検索)
 ```
 
-### 3.2 Vercel Rollback テスト
+### 3.2 Netlify Rollback (Publish deploy) テスト
 
 [INCIDENT_RESPONSE.md §7.1](./INCIDENT_RESPONSE.md) に従い、**ステージング環境** で実施:
 
-1. ステージング Vercel project の最新 Deployment を確認
-2. 1 つ前の Deployment を選択 → **Promote to Production**
+1. ステージング Netlify Site の最新 Deploy を確認
+2. 1 つ前の Published deploy を選択 → **Publish deploy**
 3. ロールバック後、サイトが正常表示されるか確認
 4. すぐに最新版に戻す (元の Deployment を再度 Promote)
 
@@ -159,7 +159,7 @@ DOTENV_CONFIG_PATH=.env.verification pnpm dev
 ### 3.3 環境変数の復元可能性検証
 
 1. パスワードマネージャ (1Password 等) から保管済の本番環境変数一覧を取り出す
-2. 検証用 Vercel project に手動で全環境変数を投入
+2. 検証用 Netlify Site に手動で全環境変数を投入
 3. デプロイして起動 → 主要機能 (認証 / LLM / Email / Stripe Webhook) が動作するか確認
 
 検証項目:
@@ -182,7 +182,7 @@ DOTENV_CONFIG_PATH=.env.verification pnpm dev
 # バックアップ検証 YYYY-MM-DD
 
 - 担当: teppei
-- 検証範囲: Supabase / Vercel / Env / Storage
+- 検証範囲: Supabase / Netlify / Env / Storage
 - 所要時間: HH:MM 〜 HH:MM (合計 〇分)
 
 ## 結果サマリ
@@ -192,7 +192,7 @@ DOTENV_CONFIG_PATH=.env.verification pnpm dev
 | Supabase バックアップ復元 | OK / NG | |
 | テーブル件数整合性 | OK / NG | 件数差: ... |
 | アプリ起動 | OK / NG | |
-| Vercel Rollback | OK / NG | 所要時間: 〇秒 |
+| Netlify Rollback (Publish deploy) | OK / NG | 所要時間: 〇秒 |
 | 環境変数復元 | OK / NG | 保管漏れ: 〇件 |
 | Storage 検証 | OK / NG | |
 

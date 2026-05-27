@@ -210,7 +210,7 @@ Phase 2 で追加された攻撃面は 3 つの新規境界に分解される。
 #### D-5. Storage 容量集計 cron の実行時間長期化
 
 - **攻撃者**: 大量データを溜めて cron の実行時間を引き延ばす
-- **シナリオ**: 全テナントの `pg_column_size` 集計が cron 実行制限 (Vercel 60 秒) を超過 → cron 失敗で容量更新が止まる
+- **シナリオ**: 全テナントの `pg_column_size` 集計が cron 実行制限 (Netlify Personal Function Sync 10 秒、Pro なら 26 秒、Background Functions 15 分) を超過 → cron 失敗で容量更新が止まる
 - **影響度**: 低 (= 容量更新が止まるだけで、システムは動く)
 - **発生確率**: 低
 - **既存対策**: テナント単位で try/catch、1 件失敗が他に伝播しない

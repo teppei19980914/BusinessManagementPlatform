@@ -105,7 +105,7 @@ v1.0 では、プロジェクトの企画 → 完了 → 振り返りまでを�
 | 認証 | NextAuth.js v5 (Auth.js) + TOTP MFA |
 | メール | Brevo (旧 Sendinblue) |
 | 決済 | Stripe (v1.x) / 銀行振込 (v1) |
-| ホスティング | Vercel (アプリ) + Supabase (DB) |
+| ホスティング | Netlify (アプリ、ADR-0023 で Vercel から移行) + Supabase (DB) |
 | テスト | Vitest (単体) + Playwright (E2E) |
 
 主要設計判断の根拠: [docs/adr/](../adr/) (ADR-0001 〜 0013)
@@ -116,7 +116,7 @@ v1.0 では、プロジェクトの企画 → 完了 → 振り返りまでを�
 
 | 項目 | 内容 | 対応予定 |
 |---|---|---|
-| Vercel Hobby Cron | 最短間隔が日次のみ | Pro プラン移行時に短間隔対応 |
+| 旧 Vercel Hobby Cron (現 cron-job.org) | 1 分間隔まで設定可だが日次運用継続中 | ops 即時性要求が出たら短間隔に切替 |
 | Supabase Free DB 容量 | 500MB 上限 | DB 容量モニタで監視、80% 到達で Pro 移行検討 |
 | Beginner プラン無料枠 | 月 100 回到達後は縮退モード (作成・更新は継続、提案エンジン停止) | 翌月 1 日にリセット + NULL embedding 補完 |
 | Beginner プラン ダウングレード | 上位プラン → Beginner は不可 ([ADR-0013](../adr/0013-beginner-downgrade-prohibition.md)) | super_admin への問い合わせで個別対応 |
@@ -150,7 +150,7 @@ v1.0 では、プロジェクトの企画 → 完了 → 振り返りまでを�
 
 長期 (6-12 ヶ月):
 - チャットボット
-- AWS / Azure 移行 ([ADR-0012](../adr/0012-vercel-supabase-mvp-hosting.md))
+- AWS / Azure 移行 ([ADR-0012](../adr/0012-vercel-supabase-mvp-hosting.md) → ADR-0023 で Netlify へ移行済、将来 AWS 移行は [MIGRATION_TO_AWS.md](./MIGRATION_TO_AWS.md))
 - WebAuthn / Passkey 検討
 
 ---

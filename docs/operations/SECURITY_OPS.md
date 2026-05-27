@@ -28,7 +28,7 @@ LIMIT 20;
 ```
 
 **運用ルール**:
-- 24 時間で同カテゴリ 50 件超はアラート発火 (将来 Vercel Speed Insights / Sentry 等と連携)
+- 24 時間で同カテゴリ 50 件超はアラート発火 (将来 Netlify Analytics / Sentry 等と連携)
 - 機密情報 (メール本文・パスワード等) が message / stack に混入していないかスポットチェック
 - 1 ヶ月経過ログは削除 or S3 archive (`cron/cleanup-accounts` と同様の退避バッチ、未実装 — 将来対応)
 

@@ -21,7 +21,7 @@
  *
  * 関連:
  *   - サービス: src/services/stripe-usage-flush.service.ts
- *   - vercel.json `crons` セクション (日次: `0 5 * * *` = 05:00 UTC)
+ *   - cron-job.org dashboard (日次: `0 5 * * *` = 05:00 UTC、ADR-0023 で Vercel Cron から移行)
  *   - PUBLIC_PATHS: src/config/routes.ts
  */
 
