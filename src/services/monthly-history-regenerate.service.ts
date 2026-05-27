@@ -31,7 +31,10 @@ import { prisma } from '@/lib/db';
 import { getTenantMonthStart, getTenantNextMonthStart } from '@/lib/tenant-time';
 import { DEFAULT_TIMEZONE } from '@/config/i18n';
 // ADR-0019 (2026-05-24): 月次履歴再生成も課金対象 featureUnit のみで集計。
-import { BILLABLE_FEATURE_UNITS } from '@/config/billing-feature-units';
+import {
+  BILLABLE_FEATURE_UNITS,
+  EMBEDDING_BILLABLE_FEATURE_UNITS,
+} from '@/config/billing-feature-units';
 
 // chore/storage-addon-backend-removal (2026-05-26):
 //   ADR-0020 (DB 容量従量課金) + ADR-0021 (添付ファイル従量課金) で完全従量課金化済のため、
@@ -100,13 +103,27 @@ export async function regenerateMonthlyHistoryFromApiCallLog(
   const rangeStart = getTenantMonthStart(midOfMonthUtc, timezone);
   const rangeEnd = getTenantNextMonthStart(midOfMonthUtc, timezone);
 
-  const [aggregate, activeUserCount, previousSnapshot] = await Promise.all([
+  // ADR-0022 (2026-06-01): Embedding 内訳も saveMonthlyUsageSnapshots と同条件で再集計し
+  //   tenant_monthly_usage_history.embeddingCallCount / embeddingCostJpy に保存する。
+  //   feedback_3layer_sync_filter: 月初 cron / super_admin 手動再生成 / 解約時 snapshot の
+  //   3 経路で内訳列を同期更新する必要がある。
+  const [aggregate, embeddingAggregate, activeUserCount, previousSnapshot] = await Promise.all([
     prisma.apiCallLog.aggregate({
       where: {
         tenantId,
         createdAt: { gte: rangeStart, lt: rangeEnd },
-        // ADR-0019 (2026-05-24): billable のみで集計 (= snapshot 保存と同条件)
+        // ADR-0019 (2026-05-24): billable のみで集計 (= snapshot 保存と同条件、ADR-0022 で Embedding 含む)
         featureUnit: { in: [...BILLABLE_FEATURE_UNITS] },
+      },
+      _count: { _all: true },
+      _sum: { costJpy: true },
+    }),
+    // ADR-0022 (2026-06-01): Embedding 内訳の独立 SUM (= tenant-monthly-reset.service と同パターン)
+    prisma.apiCallLog.aggregate({
+      where: {
+        tenantId,
+        createdAt: { gte: rangeStart, lt: rangeEnd },
+        featureUnit: { in: [...EMBEDDING_BILLABLE_FEATURE_UNITS] },
       },
       _count: { _all: true },
       _sum: { costJpy: true },
@@ -116,15 +133,26 @@ export async function regenerateMonthlyHistoryFromApiCallLog(
     }),
     prisma.tenantMonthlyUsageHistory.findUnique({
       where: { tenantId_yearMonth: { tenantId, yearMonth } },
-      select: { apiCallCount: true, apiCostJpy: true },
+      // ADR-0022 (2026-06-01): audit_log の before に embedding 内訳も含めるため select 拡張
+      select: {
+        apiCallCount: true,
+        apiCostJpy: true,
+        embeddingCallCount: true,
+        embeddingCostJpy: true,
+      },
     }),
   ]);
 
   const reconciledCallCount = aggregate._count._all;
   const reconciledCostJpy = aggregate._sum.costJpy ?? 0;
+  // ADR-0022 (2026-06-01): Embedding 内訳 (apiCallCount の subset、Beginner は cost=0 でも件数記録)
+  const embeddingCallCount = embeddingAggregate._count._all;
+  const embeddingCostJpy = embeddingAggregate._sum.costJpy ?? 0;
 
   // chore/storage-addon-backend-removal (2026-05-26): 旧 storage_addon 4 段階プランは廃止のため
   //   月額固定費の加算は無し。totalJpy = API 利用料 (storage 従量課金は別 cron で計算)。
+  //   ADR-0022 (2026-06-01): BILLABLE_FEATURE_UNITS が Embedding も含むため、Embedding 課金分も
+  //   自動的に reconciledCostJpy / totalJpy に乗る (= 二重カウントなし)。
   const totalJpy = reconciledCostJpy;
 
   // upsert + audit を 1 transaction で
@@ -139,6 +167,9 @@ export async function regenerateMonthlyHistoryFromApiCallLog(
         plan: tenant.plan,
         activeUserCount,
         storageBytesUsed: tenant.storageBytesUsed,
+        // ADR-0022 (2026-06-01): Embedding 内訳列
+        embeddingCallCount,
+        embeddingCostJpy,
         totalJpy,
       },
       update: {
@@ -147,6 +178,9 @@ export async function regenerateMonthlyHistoryFromApiCallLog(
         plan: tenant.plan,
         activeUserCount,
         storageBytesUsed: tenant.storageBytesUsed,
+        // ADR-0022 (2026-06-01): Embedding 内訳列
+        embeddingCallCount,
+        embeddingCostJpy,
         totalJpy,
       },
     }),
@@ -161,6 +195,9 @@ export async function regenerateMonthlyHistoryFromApiCallLog(
           ? {
               apiCallCount: previousSnapshot.apiCallCount,
               apiCostJpy: previousSnapshot.apiCostJpy,
+              // ADR-0022: Embedding 内訳の before 値 (ADR-0022 適用前の過去月は null)
+              embeddingCallCount: previousSnapshot.embeddingCallCount,
+              embeddingCostJpy: previousSnapshot.embeddingCostJpy,
             }
           : undefined,
         afterValue: {
@@ -168,6 +205,9 @@ export async function regenerateMonthlyHistoryFromApiCallLog(
           yearMonth,
           reconciledCallCount,
           reconciledCostJpy,
+          // ADR-0022: Embedding 内訳の after 値
+          embeddingCallCount,
+          embeddingCostJpy,
           rangeStart: rangeStart.toISOString(),
           rangeEnd: rangeEnd.toISOString(),
         },

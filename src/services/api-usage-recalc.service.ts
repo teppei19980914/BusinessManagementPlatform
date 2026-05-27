@@ -388,3 +388,85 @@ export async function repairTenantApiUsage(
     hasDrift: false,
   };
 }
+
+/**
+ * ADR-0022 (2026-06-01): テナントの Embedding counter を ApiCallLog SUM で上書きする
+ * (super_admin の明示操作専用、`repairTenantApiUsage` の Embedding 版)。
+ *
+ * 役割:
+ *   `reconcileTenantEmbeddingUsage` で drift が検知された場合に、Tenant.currentMonthEmbedding*
+ *   を ApiCallLog SUM (= 真値) で上書きする。LLM 側の `repairTenantApiUsage` と一貫した設計で、
+ *   両方の drift を独立に修正可能。
+ *
+ * 重要設計:
+ *   - **LLM repair と Embedding repair は独立**: 一方の repair を呼んでも他方の counter は変わらない。
+ *     これにより「LLM 側 drift だけ修正したい」「Embedding 側 drift だけ修正したい」のいずれにも対応。
+ *   - **両方同時に repair したい場合**: 呼出側で順次両関数を呼ぶ (= UI / API route 側で 2 ボタン提供)。
+ *   - audit_log には `operation: 'repair-embedding-usage'` で区別 (LLM 側は 'repair-api-usage')。
+ *
+ * @param tenantId 対象テナント
+ * @param actorUserId 操作者 (audit_log 用)。省略時は audit_log を作らず update のみ。
+ * @param now 検証時刻
+ */
+export async function repairTenantEmbeddingUsage(
+  tenantId: string,
+  actorUserId?: string,
+  now: Date = new Date(),
+): Promise<ApiUsageReconcileResult | null> {
+  const before = await reconcileTenantEmbeddingUsage(tenantId, now);
+  if (!before) return null;
+
+  if (actorUserId) {
+    await prisma.$transaction([
+      prisma.tenant.update({
+        where: { id: tenantId },
+        data: {
+          currentMonthEmbeddingCallCount: before.reconciledCallCount,
+          currentMonthEmbeddingCostJpy: before.reconciledCostJpy,
+        },
+      }),
+      prisma.auditLog.create({
+        data: {
+          tenantId,
+          userId: actorUserId,
+          action: 'UPDATE',
+          entityType: 'tenant',
+          entityId: tenantId,
+          beforeValue: {
+            currentMonthEmbeddingCallCount: before.cachedCallCount,
+            currentMonthEmbeddingCostJpy: before.cachedCostJpy,
+          },
+          afterValue: {
+            operation: 'repair-embedding-usage',
+            currentMonthEmbeddingCallCount: before.reconciledCallCount,
+            currentMonthEmbeddingCostJpy: before.reconciledCostJpy,
+            driftCallCount: before.driftCallCount,
+            driftCostJpy: before.driftCostJpy,
+            driftRatio: before.driftRatio,
+            monthStart: before.monthStart.toISOString(),
+          },
+        },
+      }),
+    ]);
+  } else {
+    await prisma.tenant.update({
+      where: { id: tenantId },
+      data: {
+        currentMonthEmbeddingCallCount: before.reconciledCallCount,
+        currentMonthEmbeddingCostJpy: before.reconciledCostJpy,
+      },
+    });
+  }
+
+  return {
+    ...before,
+    cachedCallCount: before.reconciledCallCount,
+    cachedCostJpy: before.reconciledCostJpy,
+    driftCallCount: 0,
+    driftCostJpy: 0,
+    driftCallRatio: 0,
+    driftCostRatio: 0,
+    driftRatio: 0,
+    hasDrift: false,
+  };
+}
