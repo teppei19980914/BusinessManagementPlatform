@@ -193,7 +193,7 @@ function SetupPasswordForm() {
       <Screen>
         <Card className="w-full max-w-[min(90vw,28rem)]">
           <CardHeader className="text-center">
-            <CardTitle className="text-2xl">{t('appName')}</CardTitle>
+            <CardTitle className="text-2xl" data-testid="auth-app-name-title">{t('appName')}</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{tokenError}</div>
@@ -301,7 +301,7 @@ function SetupPasswordForm() {
     <Screen>
       <Card className="w-full max-w-[min(90vw,28rem)]">
         <CardHeader className="text-center">
-          <CardTitle className="text-2xl">{t('appName')}</CardTitle>
+          <CardTitle className="text-2xl" data-testid="auth-app-name-title">{t('appName')}</CardTitle>
           <CardDescription>{t('setupSubtitle')}</CardDescription>
         </CardHeader>
         <CardContent>

@@ -16194,3 +16194,82 @@ if (!user || user.tenantId !== expectedTenantId) {
 - `feedback_3layer_sync_filter` (テナント関連フィルタの 3 レイヤ同期)
 - `feedback_repeated_verification_request` (= フルスキャン N 回目で重大バグ検出)
 - `feedback_realistic_1pr_scope` (= 大規模機能の PR 分割)
+
+---
+
+## 5.X+159 ★severity-2 (E2E flake)★ AppHeader をモバイル縮退 (sm:inline) すると `getByText.first()` が hidden 要素を拾い chromium-mobile で fail する (PR #451 マスコット導入)
+
+**結論**: AppHeader に「`hidden ... sm:inline`」でモバイルだけテキストを CSS-hide した瞬間、auth 画面の `getByText('たすきば', { exact: true }).first()` は **DOM 順で先頭に来る AppHeader の `display: none` な `<span>` を拾い**、`toBeVisible()` で fail する。Playwright の `getByText` は **CSS hidden 要素を除外しない** ため `.first()` が最初の (visible/hidden 問わず) マッチに着地する性質に起因。
+
+### 経緯 (PR #451 feat/mascot-owl-and-storage-cleanup, 2026-05-27)
+
+公式マスコット導入で AppHeader を「`<Image>` + `<span class="hidden whitespace-nowrap text-lg font-semibold sm:inline">{appName}</span>`」に変更 (ユーザ要件「モバイル時はアイコンのみ縮退」)。CI でデスクトップ chromium は全 PASS だが **chromium-mobile** で以下が連発失敗:
+
+- `e2e/specs/00-smoke.spec.ts:25` ログイン画面が表示される
+- `e2e/specs/01-admin-and-member-setup.spec.ts:236` Step 4 一般ユーザがパスワード設定
+
+両テストとも `await expect(page.getByText('たすきば', { exact: true }).first()).toBeVisible();` のパターン。
+旧 AppHeader はテキストを無条件 `<Link className="... font-semibold">{appName}</Link>` で出していたため、mobile でも常時可視 → `.first()` が AppHeader を拾っても結果可視 → テスト pass していた (実際には auth Card の CardTitle を検証する意図だったが、AppHeader を見るだけで通っていた)。
+
+新実装で AppHeader テキストが `display: none` になり、`.first()` が CardTitle ではなく AppHeader の hidden span に着地、`toBeVisible()` 失敗。
+
+### 教訓と防御
+
+1. **`.first()` 系の locator は「複数マッチがある前提」で書くべきではない**。意図する要素を明示的に `data-testid` で指定する。
+2. **同一テキストが複数箇所に出るレイアウト変更**は、`.first()` / `.last()` 系テストの暗黙の前提を破壊する。レビュー時に同テキスト箇所を grep して影響範囲を確認する。
+3. **モバイル/デスクトップで DOM 構造が変わる UI**は、両 viewport で playwright が動く CI ジョブを通すこと (本プロジェクトは chromium + chromium-mobile 並走で発見できた)。
+4. **「CSS hidden 要素」と「DOM 不在要素」は Playwright 視点で別物**。`display: none` は DOM に残り `getByText` で拾われる。完全に消したいなら条件付きレンダリング (client-side) が必要だが SSR との両立が困難。実用的には「テスト側を testid 化」が最小コスト。
+
+### 採用した修正
+
+- auth 画面の CardTitle 2 箇所 (`src/app/(auth)/login/page.tsx`, `src/app/(auth)/setup-password/page.tsx`) に `data-testid="auth-app-name-title"` を付与
+- E2E テストを `page.getByTestId('auth-app-name-title')` ベースに変更 (`.first()` 不要)
+- AppHeader 側の `hidden sm:inline` は維持 (UX 仕様優先)
+
+### 関連
+- 関連 KDD: [§5.X+25](#5x25) (LESSONS §4.25 hydration 過渡で CardTitle 重複観測する flake パターン、`.first()` 採用の経緯)
+- 関連 memory: `feedback_visual_baseline_gen` (UI 変更時の baseline 再生成)
+
+---
+
+## 5.X+160 ★severity-2 (Next.js Image)★ sharp の `.png({ quality: N })` (N<100) は palette PNG を出力し Next.js Image Optimizer が「Content-Type: null」扱いで弾く (PR #451 マスコット導入)
+
+**結論**: `sharp(...).png({ quality: 90 })` は内部的に **8-bit colormap (palette) PNG** を出力する (ファイルサイズ最適化目的)。これを Next.js の `<Image src="/...">` で参照すると、Image Optimizer の上流フェッチが「`The requested resource isn't a valid image for /xxx.png received null`」を吐き続ける (Content-Type 判定失敗、本番では UnoptimizedImage fallback)。テスト失敗には直結しないが Server ログを連続汚染し、本来の異常を埋もれさせる。
+
+### 経緯 (PR #451 feat/mascot-owl-and-storage-cleanup, 2026-05-27)
+
+`scripts/generate-mascot-derivatives.cjs` で sharp を使い `public/mascot-owl.png` ほか派生を生成。初期コードは sharp のデフォルトに従い:
+
+```js
+.png({ quality: 90, compressionLevel: 9 })
+```
+
+`file public/mascot-owl.png` → `PNG image data, 512 x 512, 8-bit colormap` (palette PNG)。
+Playwright E2E ログに以下が大量出力:
+
+```
+[WebServer] ⨯ The requested resource isn't a valid image for /mascot-owl.png received null
+```
+
+Next.js Image Optimizer は palette PNG の Content-Type を解決できず「received null」を報告。
+本番閲覧では画像自体は配信される (Next.js が unoptimized fallback) が、Optimizer 効果が無くなる + Server ログ汚染。
+
+### 教訓と防御
+
+1. **`sharp(...).png({ quality: N })` の `quality` オプションは palette 化トリガ**。`palette: false` を明示するか `quality` を渡さない (デフォルトは loss-less)。
+2. **`file` コマンドで `8-bit colormap` を確認**: 派生 PNG を生成したら `file <path>` で「8-bit/color RGB」または「RGBA」になっているか確認。
+3. **Next.js 標準で <Image> 経由配信する静的画像は palette PNG を避ける**。RGB / RGBA の方が Image Optimizer と相性が良い。
+
+### 採用した修正
+
+```js
+// palette: false を明示 (sharp は quality<100 だと自動で palette PNG にする)。
+// Next.js Image Optimizer が palette PNG を「Content-Type: null」扱いで弾く罠を回避。
+.png({ palette: false, compressionLevel: 9 })
+```
+
+ファイルサイズは増えるが (93KB → 376KB)、Next.js の自動最適化で WebP/AVIF に再変換されるため最終配信サイズは差が小さい。
+
+### 関連
+- 関連 KDD: [§5.X+159](#5x159) (同一 PR で発覚した chromium-mobile flake)
+- 関連 memory: なし (初出)

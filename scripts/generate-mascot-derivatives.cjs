@@ -66,21 +66,30 @@ async function main() {
   // 1) 汎用 512×512 (ヘッダ / hero / その他)
   const main512 = await sharp(srcBuf)
     .resize(512, 512, { fit: 'cover' })
-    .png({ quality: 90, compressionLevel: 9 })
+    // palette: false を明示 (sharp は quality<100 だと自動で palette PNG にする)。
+    // Next.js Image Optimizer が palette PNG を「Content-Type: null」扱いで弾く罠を回避
+    // (PR #451 / KDD §5.X+160)。
+    .png({ palette: false, compressionLevel: 9 })
     .toBuffer();
   await writePng(main512, path.join(ROOT, 'public/mascot-owl.png'));
 
   // 2) Next.js App Router icon 規約 — src/app/icon.png は自動で <link rel="icon"> 化される
   const icon256 = await sharp(srcBuf)
     .resize(256, 256, { fit: 'cover' })
-    .png({ quality: 90, compressionLevel: 9 })
+    // palette: false を明示 (sharp は quality<100 だと自動で palette PNG にする)。
+    // Next.js Image Optimizer が palette PNG を「Content-Type: null」扱いで弾く罠を回避
+    // (PR #451 / KDD §5.X+160)。
+    .png({ palette: false, compressionLevel: 9 })
     .toBuffer();
   await writePng(icon256, path.join(ROOT, 'src/app/icon.png'));
 
   // 3) Apple touch icon — iOS は 180×180 を期待
   const apple180 = await sharp(srcBuf)
     .resize(180, 180, { fit: 'cover' })
-    .png({ quality: 90, compressionLevel: 9 })
+    // palette: false を明示 (sharp は quality<100 だと自動で palette PNG にする)。
+    // Next.js Image Optimizer が palette PNG を「Content-Type: null」扱いで弾く罠を回避
+    // (PR #451 / KDD §5.X+160)。
+    .png({ palette: false, compressionLevel: 9 })
     .toBuffer();
   await writePng(apple180, path.join(ROOT, 'src/app/apple-icon.png'));
 
@@ -119,7 +128,10 @@ async function main() {
       { input: logoBuf, top: 35, left: 35 },
       { input: ogSvg, top: 0, left: 0 },
     ])
-    .png({ quality: 90, compressionLevel: 9 })
+    // palette: false を明示 (sharp は quality<100 だと自動で palette PNG にする)。
+    // Next.js Image Optimizer が palette PNG を「Content-Type: null」扱いで弾く罠を回避
+    // (PR #451 / KDD §5.X+160)。
+    .png({ palette: false, compressionLevel: 9 })
     .toBuffer();
   await writePng(og, path.join(ROOT, 'public/og-image.png'));
 
