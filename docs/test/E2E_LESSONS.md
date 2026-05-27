@@ -3432,7 +3432,7 @@ export default auth((req) => {
 
 #### 罠の正体
 
-PR #432 (チャット意味検索) で `ChatSemanticSearchFab` を `(dashboard)/layout.tsx` に統合し、全ページの右下 (`fixed right-4 bottom-4`、48×48px の 💬 ボタン + shadow) に常時表示する設計を採用。すると CI の Playwright Visual で:
+PR #432 (チャット意味検索) で `ChatSemanticSearchFab` を `(dashboard)/layout.tsx` に統合し、全ページの右下 (`fixed right-4 bottom-4`、当時 48×48px の 💬 絵文字ボタン + shadow、2026-05-27 以降は 56×56px のマスコット「たすきフクロウ」アイコン) に常時表示する設計を採用。すると CI の Playwright Visual で:
 
 ```
 ✘ [chromium-mobile] › e2e/visual/customers-screens.spec.ts:76:7 顧客詳細画面 (light テーマ)

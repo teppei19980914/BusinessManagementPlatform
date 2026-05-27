@@ -37,3 +37,5 @@ export * from './db-capacity';
 export * from './email-limit';
 // 2026-05-09 (#16): Discord 等のコミュニティ招待リンク
 export * from './community';
+// 2026-05-27: チャット意味検索のアシスタント・ペルソナ (たすきフクロウ)
+export * from './chat-persona';

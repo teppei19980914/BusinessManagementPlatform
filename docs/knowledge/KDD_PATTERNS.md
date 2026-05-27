@@ -13367,7 +13367,7 @@ PR #430 (`fix/readonly-markdown-render` — readOnly モードの Markdown 表�
 
 ## 5.X+116 **★severity-2 visual regression★ 全ページに常時表示するグローバル UI 要素 (FAB) を追加すると、dashboard 系の chromium-mobile visual baseline が一斉に fail する罠 (2026-05-23 / PR #432)**
 
-PR #432 (チャット意味検索) で `ChatSemanticSearchFab` を `(dashboard)/layout.tsx` に統合し全ページの右下 (`fixed right-4 bottom-4`、48×48px) に常時表示する設計を採用。CI Playwright Visual で `customers-screens.spec.ts` の chromium-mobile が **2968 pixel diff (ratio 0.02)** で fail した。
+PR #432 (チャット意味検索) で `ChatSemanticSearchFab` を `(dashboard)/layout.tsx` に統合し全ページの右下 (`fixed right-4 bottom-4`、当時 48×48px の 💬 絵文字、2026-05-27 以降は 56×56px のマスコット「たすきフクロウ」アイコン) に常時表示する設計を採用。CI Playwright Visual で `customers-screens.spec.ts` の chromium-mobile が **2968 pixel diff (ratio 0.02)** で fail した。
 
 ### 根本原因
 
@@ -16452,3 +16452,152 @@ update: <T>(args: {
 ### 関連
 - 関連 KDD: [§5.X+115](#5x115) (本パターンの初出) / [§5.X+141](#5x141) (xlsx CVE) / [§5.X+142](#5x142) (Semgrep 誤検知)
 - 関連 memory: [[feedback_pnpm_lockfile_sync]] (lockfile 同 commit の鉄則)
+
+---
+
+## 5.X+165 ★severity-2 (UI 視覚事故)★ 複合キャンバス source PNG は派生生成で `fit:'contain'` だと FAB に「黒丸の中に小さなアイコン」状態を引き起こす罠 (PR #452 マスコット icon 全面占有)
+
+### 罠の正体
+
+PR #452 (チャット FAB マスコット化) で `docs/design/assets/mascot-owl-chat-source.png`
+(1254×1254、暗 studio 背景 + 右下に白い円形バッジ + フクロウ) を元に
+`scripts/generate-mascot-derivatives.cjs` で `fit:'contain'` を使い 256×256 派生を
+生成した。すると `public/mascot-owl-chat.png` は **バッジが中央付近に小さく残る**
+(canvas の 1/4 程度) PNG になり、FAB に乗せたとき:
+
+- 画面 dark mode の `bg-background` が button 全面に出る
+- バッジは button の中央に小さく見える
+- 結果として **「黒丸の中に小さなアイコン」** という見た目になり、
+  「FAB ボタンの周囲に余白が出ている」とユーザに誤認される
+
+### 根本原因
+
+元画像が **単一の被写体** ではなく、studio 背景 + 被写体バッジの **複合キャンバス**
+だった。`fit:'contain'` は画像 **全体** を出力サイズに収めるため、背景の大部分も
+そのまま縮小コピーされる。背景が暗色なので、`bg-background` (dark mode) と区別が
+つかず、ユーザには「画像内のバッジ」と「FAB の背景」が混在して見える。
+
+### 修正
+
+`sharp.trim({ threshold: 30 })` で **暗背景を除去** → バッジ単体 (約 512×507) を
+抽出 → `fit:'cover'` で 256×256 に拡縮する。これでバッジが全面を占め、FAB の
+`bg-background` / `ring` は不要 (画像自体が円形境界を構成)。
+
+```diff
+ const chat256 = await sharp(chatSrcBuf)
+-  .resize(256, 256, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
++  .trim({ threshold: 30 })
++  .resize(256, 256, { fit: 'cover' })
+   .png({ palette: false, compressionLevel: 9 })
+```
+
+`threshold: 30` は経験値: 10 未満だと shadow gradient で除去しきれず、50+ だと
+バッジ縁の白が同色判定される可能性がある。実測 (probe-trim.cjs) では 30 / 50 / 80
+で同じ 512×507 が得られたため 30 を採用。
+
+### 横展開チェック
+
+- [ ] **新規アイコン source を導入する PR では、source の構図を必ず確認**:
+      被写体単独 (透過 PNG / 単色背景) なら `fit:'contain'` で OK、
+      複合キャンバス (背景 + 被写体) なら `.trim()` 必須
+- [ ] **派生画像 (`public/mascot-owl-chat.png` 等) を視認** してから commit する。
+      sharp の出力サイズ・KB だけでは画面表示問題を発見できない
+- [ ] **FAB に乗せるアイコンは bg / ring を持たせる前に画像の境界がどう見えるか確認**:
+      画像自体が円形/角丸を持つなら button 側の bg / ring は不要
+- [ ] **`object-cover` を Image に付ける**: width/height のアスペクト比と実画像が
+      ずれたときに余白が出ない (defense-in-depth)
+- [ ] **複数サイズで同一画像を使い回す場合の確認**: FAB (64×64) / ヘッダ (36×36) /
+      AssistantBubble (32×32) で同じ画像を使い、全箇所で `object-cover` を付ける
+      (PR #452 の「横展開」ポリシー)
+
+### 関連
+
+- 関連 KDD: [§5.X+160](#5x160) (sharp の palette PNG 問題)
+- 関連設計: [docs/design/UI_PATTERNS.md §36](../design/UI_PATTERNS.md) (チャット UI パターン)
+- 関連設計: [docs/design/MASCOT.md](../design/MASCOT.md) (マスコット派生規範)
+- 関連 PR: #452 (マスコット導入 + 全面占有設計)
+- a11y 副次修正: `motion-reduce:*` と Image `priority` 統一指定も同 PR で実施
+
+---
+
+## 5.X+166 ★severity-medium★ FAB 設計の 2 つの罠: panel-internal Image に priority を付けると preload 浪費、iOS home indicator と FAB が重なる (PR #452 3rd-round フルスキャンで発見)
+
+PR #452 の 3 回目フルスキャン ([feedback_repeated_verification_request](C:\Users\SF02512\.claude\projects\c--Users-SF02512-GitHub-Private-BusinessManagementPlatform\memory\feedback_repeated_verification_request.md) ルーチン適用) で 2 つの本番デプロイ後発火型の罠を発見。
+
+### 罠 A: 「panel 内の Image に priority を付ける」preload 浪費
+
+PR #452 2 回目で deep scan が「ヘッダ avatar に priority を追加すべき (above-the-fold)」と提案 → ChatPanel の `<header>` に `<Image priority>` を追加した。
+
+しかし ChatPanel 自体は `{open && <ChatPanel>}` で **user が FAB をクリックして初めて mount** される条件付き Component。つまりヘッダ avatar は:
+
+- 初期ページロード時には DOM に存在しない
+- next/image の preload `<link rel="preload">` だけは SSR HTML に挿入される (= browser は画像を fetch する)
+- そのまま user が FAB を一度もクリックせず別ページに遷移すると、preload は完全に無駄
+
+`/mascot-owl-chat.png` (75KB) を user 全員に preload させると、Beginner プランで月 5000 ユーザ × 75KB ≒ 375MB の無駄帯域。
+
+#### 修正
+
+```diff
+ <Image
+   src={CHAT_PERSONA.avatarSrc}
+   alt={CHAT_PERSONA.avatarAlt}
+   width={36}
+   height={36}
+-  priority
+   className="h-9 w-9 rounded-full object-cover"
+ />
+```
+
+FAB 側で同じ画像を priority 表示しているため、user が panel を開いた時点で HTTP cache に乗っており遅延描画は実質ゼロ。
+
+#### 横展開チェック
+
+- [ ] **Image に priority を付ける前に「**この要素は初期ロード時に DOM に存在するか?**」を確認** する
+- [ ] 条件付き render (`{state && <Comp>}`) の中の Image は priority **不要**
+- [ ] Dialog / Modal / Drawer / Side Panel など overlay 系内部の画像は LCP 候補ではない
+- [ ] preload の挙動は Lighthouse の "Preloads key requests" 警告で検出可能、PR レビュー時に開発者ツールで確認推奨
+
+### 罠 B: FAB の bottom-4 が iOS home indicator と重なる
+
+PR #452 2 回目で FAB を h-14 → h-16 (56→64) に拡大した。Tailwind の `bottom-4` (16px) は通常ブラウザでは OK だが、iOS Safari / Chrome の WebView / PWA で `viewport-fit=cover` 指定時:
+
+- portrait: home indicator が下端 34px のセーフエリアを占有
+- landscape: 同 21px
+- FAB の下端は `bottom-4 (16px)` から `+64px = 80px`
+- 16px + 64px = 80px だがホームバー領域と重なる可能性 (= タップ事故)
+
+#### 修正
+
+```diff
+- 'fixed right-4 bottom-4 z-40 h-16 w-16 ...',
++ 'fixed right-4 z-40 h-16 w-16 ...',
++ 'bottom-[calc(env(safe-area-inset-bottom,0px)+1rem)]',
+```
+
+`env(safe-area-inset-bottom)` は viewport-fit=cover の WebView では `34px` 等の値、それ以外では `0` を返す。`,0px` の fallback で古い browser でも安全。
+
+#### 横展開チェック
+
+- [ ] **画面下端の固定要素 (`fixed bottom-*`) を追加する PR では `env(safe-area-inset-bottom)` を必ず加算** する
+- [ ] 該当: FAB / sticky CTA bar / mobile nav bottom tab 等
+- [ ] viewport `<meta>` で `viewport-fit=cover` が設定されているか確認 (default: contain)
+- [ ] iOS Simulator / 実機での目視確認が CI でできない領域なので **PR レビュー時に reviewer が iOS スクリーンショットを要求** するワークフローを検討
+
+### Round 3 検証で false positive と判定した指摘 (記録)
+
+同じ deep scan で以下 2 件は false positive と判定:
+
+| 指摘 | false positive 理由 |
+|---|---|
+| Hydration mismatch | `useState(false)` は SSR/CSR で同値、mismatch しない |
+| outputFileTracingIncludes 漏れ | next/image 経由は自動追跡。`public/mascot-owl.png` / `og-image.png` も同条件で動作中 |
+
+[feedback_repeated_verification_request](C:\Users\SF02512\.claude\projects\c--Users-SF02512-GitHub-Private-BusinessManagementPlatform\memory\feedback_repeated_verification_request.md) のルールに従い、deep scan の指摘は **盲信せず 1 件ずつ既存コードと突き合わせて検証** する。
+
+### 関連
+
+- 関連 KDD: [§5.X+165](#5x165) (チャット FAB 全面占有設計、a11y 修正)
+- 関連設計: [docs/design/UI_PATTERNS.md §36](../design/UI_PATTERNS.md) (チャット UI パターン)
+- 関連 PR: #452 (3 回目フルスキャンで発見)
+- 関連 memory: [feedback_repeated_verification_request] (繰り返しスキャンの観点深掘り)

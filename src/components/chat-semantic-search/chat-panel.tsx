@@ -17,12 +17,14 @@
  */
 
 import { useCallback, useEffect, useRef, useState, useTransition } from 'react';
+import Image from 'next/image';
 import { useSession } from 'next-auth/react';
 import { cn } from '@/lib/utils';
 import {
   CHAT_SEARCH_INPUT_MAX_CHARS,
   CHAT_SEARCH_INPUT_WARN_THRESHOLD,
 } from '@/config/suggestion';
+import { CHAT_PERSONA } from '@/config';
 import type {
   ChatSearchHit,
   ChatSearchResult,
@@ -149,7 +151,37 @@ export function ChatPanel({ onClose }: { onClose: () => void }) {
       className="fixed inset-y-0 right-0 z-40 flex h-full w-full max-w-md flex-col border-l border-border bg-background shadow-xl"
     >
       <header className="flex items-center justify-between border-b border-border px-4 py-3">
-        <h2 className="text-sm font-semibold">💬 過去資産を意味検索</h2>
+        {/*
+          2026-05-27 デザイン更新: 「ユーザは誰と会話しているか」を明示するため、
+          ヘッダにアシスタント・ペルソナ (たすきフクロウ) のアバターと表示名を提示。
+          LINE / Teams 等の対話 UI と同じ「相手の名前が常に見える」パターン。
+        */}
+        <div className="flex items-center gap-2">
+          {/*
+            ヘッダ avatar: ChatPanel 自体が `{open && <ChatPanel>}` で user 操作後に
+            初めて mount されるため、初期ページロード時の LCP 候補ではない。
+            priority を付けると未使用 preload で WAS bandwidth を浪費する (KDD §5.X+166)。
+            FAB 側で同じ /mascot-owl-chat.png を priority 表示しており、その時点で
+            HTTP cache に乗っているため遅延描画は事実上ない。
+            object-cover でバッジ全面占有のクリッピングのみ担保する。
+          */}
+          <Image
+            src={CHAT_PERSONA.avatarSrc}
+            alt={CHAT_PERSONA.avatarAlt}
+            width={36}
+            height={36}
+            className="h-9 w-9 rounded-full object-cover"
+            data-testid="chat-panel-persona-avatar"
+          />
+          <div className="flex flex-col">
+            <span className="text-sm font-semibold leading-tight" data-testid="chat-panel-persona-name">
+              {CHAT_PERSONA.name}
+            </span>
+            <span className="text-[10px] text-muted-foreground leading-tight">
+              過去資産を意味検索
+            </span>
+          </div>
+        </div>
         <button
           type="button"
           onClick={onClose}
@@ -169,22 +201,26 @@ export function ChatPanel({ onClose }: { onClose: () => void }) {
         に送信されます。機微情報の入力はお控えください。
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 text-sm">
-        {result?.degraded && result.degradeReason && (
-          <div className="mb-3 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs">
-            💡 AI 機能は一時的に制限されています ({DEGRADED_REASON_LABEL[result.degradeReason]})。
-            テキスト類似度のみで検索します。
-          </div>
+      <div className="flex-1 overflow-y-auto p-4 text-sm" data-testid="chat-panel-messages">
+        {/*
+          2026-05-27 デザイン更新: LINE / Teams 風の対話 UI に再構成。
+            - 初回 (未送信): アシスタント (たすきフクロウ) からの挨拶を左寄せ吹き出しで提示
+            - 送信後: ユーザ発言を右寄せバブル、アシスタント返答を左寄せ吹き出し
+            - 縮退モード時はアシスタント吹き出しの冒頭で告知 (システム横断バナーから移設)
+        */}
+        {!submittedQuery && !error && (
+          <AssistantBubble>
+            <p className="leading-relaxed">
+              こんにちは、{CHAT_PERSONA.name}です。
+            </p>
+            <p className="mt-1 leading-relaxed">
+              自然文で過去のプロジェクト・ナレッジ・リスク・課題・振り返り・メモを横断検索します。
+              気になることを下の入力欄で聞いてみてください。
+            </p>
+          </AssistantBubble>
         )}
 
-        {submittedQuery && (
-          <div className="mb-3">
-            <div className="mb-1 text-xs font-medium text-muted-foreground">あなた:</div>
-            <div className="rounded-md bg-muted px-3 py-2 text-sm whitespace-pre-wrap">
-              {submittedQuery}
-            </div>
-          </div>
-        )}
+        {submittedQuery && <UserBubble text={submittedQuery} />}
 
         {error && (
           <div
@@ -207,20 +243,22 @@ export function ChatPanel({ onClose }: { onClose: () => void }) {
         )}
 
         {result && !error && (
-          <ChatResults
-            result={result}
-            viewerUserId={viewerUserId}
-            sessionLoading={sessionLoading}
-            weakExpanded={weakExpanded}
-            onToggleWeak={() => setWeakExpanded((v) => !v)}
-            onCardClick={handleCardClick}
-          />
-        )}
-
-        {!submittedQuery && !error && (
-          <div className="text-xs text-muted-foreground">
-            自然文で過去のプロジェクト・ナレッジ・リスク・課題・振り返り・メモを意味検索できます。
-          </div>
+          <AssistantBubble>
+            {result.degraded && result.degradeReason && (
+              <div className="mb-2 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs">
+                💡 AI 機能は一時的に制限されています ({DEGRADED_REASON_LABEL[result.degradeReason]})。
+                テキスト類似度のみで検索します。
+              </div>
+            )}
+            <ChatResults
+              result={result}
+              viewerUserId={viewerUserId}
+              sessionLoading={sessionLoading}
+              weakExpanded={weakExpanded}
+              onToggleWeak={() => setWeakExpanded((v) => !v)}
+              onCardClick={handleCardClick}
+            />
+          </AssistantBubble>
         )}
       </div>
 
@@ -264,6 +302,48 @@ export function ChatPanel({ onClose }: { onClose: () => void }) {
         </div>
       </footer>
     </aside>
+  );
+}
+
+/**
+ * 右寄せ ユーザ発言バブル。LINE / Teams 等と同じ「自分の発言は右側」レイアウト。
+ */
+function UserBubble({ text }: { text: string }) {
+  return (
+    <div className="mb-3 flex justify-end" data-testid="chat-user-bubble">
+      <div className="max-w-[85%] rounded-2xl rounded-tr-sm bg-primary px-3 py-2 text-sm text-primary-foreground whitespace-pre-wrap break-words">
+        {text}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * 左寄せ アシスタント発言吹き出し。アバター (たすきフクロウ) + 吹き出しの 2 カラム。
+ * 結果カード群を 1 つの吹き出し内にネストすることで「フクロウが提案を返した」体験を作る。
+ */
+function AssistantBubble({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="mb-3 flex items-start gap-2" data-testid="chat-assistant-bubble">
+      {/*
+        装飾用アバター (発話者ラベルがすぐ右にあるので screen reader からは除外):
+          alt="" のみで AT は無視するため aria-hidden は不要 (冗長指定の回避)。
+          object-cover でバッジ自体が全面を占めるよう確実にトリミング (KDD §5.X+165)。
+      */}
+      <Image
+        src={CHAT_PERSONA.avatarSrc}
+        alt=""
+        width={32}
+        height={32}
+        className="mt-1 h-8 w-8 shrink-0 rounded-full object-cover"
+      />
+      <div className="min-w-0 flex-1 rounded-2xl rounded-tl-sm bg-muted px-3 py-2 text-sm">
+        <div className="mb-1 text-[10px] font-medium text-muted-foreground">
+          {CHAT_PERSONA.name}
+        </div>
+        {children}
+      </div>
+    </div>
   );
 }
 
