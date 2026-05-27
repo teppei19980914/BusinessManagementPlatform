@@ -80,7 +80,7 @@ E2E は「仕様通りに動く」ことを保証するが、**仕様自体が�
 - 実データ規模 (1000 プロジェクト / 10000 タスク等) での応答速度
 - 同時接続 (複数ユーザが同時操作) 時の挙動
 - Lighthouse スコア (Performance / Accessibility / Best Practices / SEO)
-- Vercel / Supabase の実コスト監視
+- Netlify / Supabase の実コスト監視
 - 長期運用でのメモリリーク / DB 肥大化
 
 PR #89 で cold start 分析をしているが、定期的に再計測が必要。
@@ -112,7 +112,7 @@ PR #89 で cold start 分析をしているが、定期的に再計測が必要�
 - **実メール送信** (本番 Brevo への疎通 + 到達性 + 迷惑メール判定)
 - 各メールクライアント (Gmail / Outlook / Apple Mail) でのレンダリング
 - DKIM / SPF / DMARC 認証の通過
-- Vercel Cron の実スケジュール動作
+- 外部 cron (cron-job.org) の実スケジュール動作
 - Supabase 実接続 (Pooler / Direct の切替動作)
 
 ### 2.7 運用手順の実動作
@@ -124,7 +124,7 @@ PR #89 で cold start 分析をしているが、定期的に再計測が必要�
 - **本番 migration の実適用** (ステージング環境で本番類似データに対して)
 - **ロールバック手順** (migration rollback が実際に動くか、データ損失なく戻せるか)
 - バックアップとリストア (Supabase の point-in-time recovery)
-- インフラ障害時の復旧手順 (Vercel 障害時 / Supabase 障害時の影響範囲)
+- インフラ障害時の復旧手順 (Netlify 障害時 / Supabase 障害時の影響範囲)
 - デプロイ手順書通りにデプロイできるか (OPERATION.md に沿って)
 
 ### 2.8 UX / 使いやすさの質的評価
@@ -194,7 +194,7 @@ PR #89 で cold start 分析をしているが、定期的に再計測が必要�
 **月次**:
 - [ ] `pnpm audit` 結果の確認、critical/high 脆弱性の対応計画
 - [ ] 監査ログの異常エントリ確認
-- [ ] Vercel / Supabase コストの推移確認
+- [ ] Netlify / Supabase コストの推移確認
 - [ ] 累積データ量の把握 (DB サイズ / 行数)
 
 **四半期**:

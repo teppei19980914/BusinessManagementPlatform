@@ -3,7 +3,7 @@
  *
  * 役割:
  *   super_admin ダッシュボードに Netlify のビルド消費量を可視化するためのメトリクス取得 service。
- *   Starter integration credits 300/月 の超過予防・残量把握を運用者がリアルタイムに確認できるようにする。
+ *   Netlify Personal integration credits 1,000/月 の超過予防・残量把握を運用者がリアルタイムに確認できるようにする。
  *
  * 設計:
  *   - **リアルタイム取得**: ダッシュボード表示時に Netlify API を 1 回叩く (= キャッシュなし、credit 大量消費しない前提)
@@ -22,7 +22,7 @@ export type NetlifyMetrics = {
   buildsThisMonth: number;
   /** 推定 integration credits 消費量 (= ビルド数 × 15) */
   estimatedCreditsUsed: number;
-  /** 残り credits (Starter 300/月 - estimatedCreditsUsed) */
+  /** 残り credits (Personal 1,000/月 - estimatedCreditsUsed、ADR-0023 で Starter から昇格) */
   estimatedCreditsRemaining: number;
   /** 最新ビルドの ISO 時刻 */
   latestBuildAt: string | null;
@@ -75,14 +75,14 @@ export async function getNetlifyMetrics(): Promise<NetlifyMetrics> {
     const monthStartUtc = new Date(monthStartJst.getTime() - 9 * 60 * 60 * 1000);
     const thisMonthBuilds = builds.filter((b) => new Date(b.created_at) >= monthStartUtc);
 
-    const STARTER_PLAN_CREDITS_PER_MONTH = 300; // PR #425 (2026-05-22) Netlify Starter Plan の integration credits 上限
+    const PERSONAL_PLAN_CREDITS_PER_MONTH = 1000; // Netlify Personal Plan ($9/seat/month) の integration credits 上限。ADR-0023 で Starter→Personal 昇格 (Starter は 300/月、Personal は 1000/月)
     const CREDITS_PER_BUILD = 15; // 1 build ≈ 15 credits (Netlify 概算値、Public 公式値ではないため変動余地あり)
     const estimatedCreditsUsed = thisMonthBuilds.length * CREDITS_PER_BUILD;
 
     return {
       buildsThisMonth: thisMonthBuilds.length,
       estimatedCreditsUsed,
-      estimatedCreditsRemaining: Math.max(0, STARTER_PLAN_CREDITS_PER_MONTH - estimatedCreditsUsed),
+      estimatedCreditsRemaining: Math.max(0, PERSONAL_PLAN_CREDITS_PER_MONTH - estimatedCreditsUsed),
       latestBuildAt: builds[0]?.created_at ?? null,
       latestBuildState: builds[0]?.state ?? 'unknown',
       latestBuildContext: builds[0]?.context ?? null,

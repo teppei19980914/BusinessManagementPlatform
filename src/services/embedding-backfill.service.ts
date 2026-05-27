@@ -7,7 +7,7 @@
  *   一括で embedding 生成 + DB 永続化する。
  *
  * 起動契機:
- *   Vercel Cron `/api/cron/tenant-monthly-reset` の最終ステップとして呼ばれる
+ *   外部 cron (cron-job.org) `/api/cron/tenant-monthly-reset` の最終ステップとして呼ばれる
  *   (`runTenantMonthlyReset` 内で resetTenantMonthlyCounters 直後に実行)。
  *   タイミング:
  *     1. snapshot 保存 (前月分の確定値を履歴に書く)

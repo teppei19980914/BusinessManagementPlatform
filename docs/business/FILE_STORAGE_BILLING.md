@@ -297,7 +297,7 @@ function sanitizeFileName(name: string): string {
 
 ### 6.6 サーバ全体停止防止
 
-Pre-signed URL アーキテクチャにより、**アップロード本体は Vercel/Netlify Function を一切通らない**。100 テナント同時 50MB アップロードでもサーバ負荷は数 MB 程度。
+Pre-signed URL アーキテクチャにより、**アップロード本体は Netlify Function を一切通らない**。100 テナント同時 50MB アップロードでもサーバ負荷は数 MB 程度。
 
 ---
 

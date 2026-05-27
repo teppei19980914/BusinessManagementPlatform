@@ -1,8 +1,12 @@
 # ADR-0012: Vercel + Supabase 無料枠を MVP 期のインフラに採用 (AWS 移行を視野)
 
-- **Status**: Accepted (MVP 期限定、規模拡大時に再評価)
+- **Status**: **Superseded by [ADR-0023](./0023-netlify-starter-migration.md)** (2026-05-18 に Vercel Hobby の商用 TOS 違反を解消するため Netlify Starter へ移行、その後 credits 制約により Netlify Personal へ昇格)
 - **Date**: 2026-04 (インフラ選定時)
 - **Deciders**: teppei
+
+> ⚠️ **本 ADR の Vercel 採用部分は ADR-0023 で Superseded されています。** 2026-05-18 に Netlify Starter (商用利用 OK) へ移行し、その後 credits 制約のため Netlify Personal ($9/seat/month) へ昇格済。
+> 本文の Vercel 関連記述は当時の判断記録として保持しますが、現行構成については [ADR-0023](./0023-netlify-starter-migration.md) を参照してください。
+> Supabase / Brevo / LLM / Embedding / Storage の選定は本 ADR のまま有効です。
 
 ---
 

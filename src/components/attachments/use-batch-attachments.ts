@@ -20,7 +20,7 @@ import type { AttachmentDTO } from '@/services/attachment.service';
 
 // UUID v1-v8 (RFC 4122) — 一覧 entity の id は全て gen_random_uuid() 由来 (= UUID v4)。
 //   2026-05-01 fix/attachments-batch-400: クライアント側でも事前 filter を挟み、
-//   無駄な 400 ラウンドトリップ + Vercel log ノイズを防ぐ。
+//   無駄な 400 ラウンドトリップ + Netlify Function log ノイズを防ぐ。
 const UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$/;
 
 export function useBatchAttachments(

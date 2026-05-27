@@ -122,7 +122,7 @@ export async function voyageEmbed(input: VoyageEmbedInput): Promise<VoyageEmbedR
   const apiKey = process.env.VOYAGE_API_KEY;
   if (!apiKey || apiKey.trim() === '') {
     throw new VoyageConfigError(
-      'VOYAGE_API_KEY 環境変数が未設定です。Vercel ダッシュボードで設定してください。',
+      'VOYAGE_API_KEY 環境変数が未設定です。Netlify ダッシュボードで設定してください。',
     );
   }
 

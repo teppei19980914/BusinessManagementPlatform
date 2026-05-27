@@ -1,6 +1,6 @@
 # インフラ構成 (Program Design / Infrastructure)
 
-本ドキュメントは、Vercel + Supabase の現行インフラ構成を集約する (DESIGN.md §10、§18)。AWS / Azure 移行計画は [../operations/MIGRATION_TO_AWS.md](../operations/MIGRATION_TO_AWS.md)、デプロイ手順は [../operations/DEPLOYMENT.md](../operations/DEPLOYMENT.md) を参照。
+本ドキュメントは、Netlify + Supabase の現行インフラ構成を集約する (DESIGN.md §10、§18)。AWS / Azure 移行計画は [../operations/MIGRATION_TO_AWS.md](../operations/MIGRATION_TO_AWS.md)、デプロイ手順は [../operations/DEPLOYMENT.md](../operations/DEPLOYMENT.md)、Vercel→Netlify 移行の経緯は [ADR-0023](../adr/0023-netlify-starter-migration.md) を参照。
 
 ---
 
@@ -10,11 +10,11 @@
 
 ### 10.0 デプロイ方針 (PR #123 で整理)
 
-本システムは **自社運用 (Vercel + Supabase) 一本** で運用する (2026-04-24 時点)。
+本システムは **自社運用 (Netlify + Supabase) 一本** で運用する (2026-05-18 Vercel から移行、ADR-0023 参照)。
 
 | 項目 | 状態 |
 |---|---|
-| デプロイ形態 | Vercel + Supabase のみ (§10.2 参照) |
+| デプロイ形態 | Netlify + Supabase のみ (§10.2 参照) |
 | 外部配布 (.zip / Docker / オンプレ / AWS / Azure 等) | **現時点で非対応**、体制・構成未整備のため記載を削除。将来的な必要性を鑑みて再検討する |
 | 開発環境 | ローカル PostgreSQL (Docker) or Supabase 接続、詳細は §10.1 |
 
@@ -50,10 +50,10 @@ git 履歴から過去記述を参照できる。
 └──────────────────────────────────────────────────────────┘
 ```
 
-### 10.2 運用環境構成（無料枠）
+### 10.2 運用環境構成（Netlify Personal + Supabase Free）
 
 6/1 正式リリース以降、本サービスは商用利用 (Expert/Pro 課金プラン稼働) フェーズに入る。
-**Vercel Hobby は規約上商用利用不可** のため、2026-05-18 に **Netlify Starter** へ移行した。
+**Vercel Hobby は規約上商用利用不可** のため、2026-05-18 に **Netlify Starter** へ移行し、credits 制約により **Netlify Personal ($9/seat/month)** へ昇格した。詳細は [ADR-0023](../adr/0023-netlify-starter-migration.md) を参照。
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
@@ -61,16 +61,16 @@ git 履歴から過去記述を参照できる。
 └──────────────┬───────────────────────────────────────────────┘
                | HTTPS
 ┌──────────────┴───────────────────────────────────────────────┐
-│  Netlify Starter (無料・商用利用 OK)                          │
+│  Netlify Personal ($9/seat/month・商用利用 OK)                │
 │  - Next.js (App Router, Standalone)                          │
 │  - @netlify/plugin-nextjs (Functions = AWS Lambda)            │
 │  - Global CDN                                                 │
 │  - 自動 SSL                                                   │
-│  - 帯域: 100GB/月                                             │
-│  - 統合 credits: 300/月 (★ 2026 年以降の単一枠制)             │
+│  - 帯域: credits 枠で消費 (20 credits/GB)                     │
+│  - 統合 credits: 1,000/月 (★ 2026 年以降の単一枠制)           │
 │    └─ Production deploy ~15 credits/回、PR Preview も同 ~15  │
 │    └─ Web req / Compute / Bandwidth は微小消費                │
-│  - Function 実行: 10 秒 (Sync) / 15 分 (Background)           │
+│  - Function 実行: 10 秒 (Sync 固定、Background Functions は Pro 以上限定) │
 └──────────────┬───────────────────────────────────────────────┘
                | Connection Pooler (IPv4, port 6543)
 ┌──────────────┴───────────────────────────────────────────────┐
@@ -92,21 +92,21 @@ git 履歴から過去記述を参照できる。
 
 | コンポーネント | サービス | 月額 |
 |---|---|---|
-| アプリケーション | Netlify Starter (Free) | $0 |
+| アプリケーション | **Netlify Personal** ($9/seat/month) | **$9** |
 | データベース | Supabase Free (500MB) | $0 |
 | メール送信 | Brevo Free (300通/日) | $0 |
 | Cron 実行 | cron-job.org (Free) | $0 |
-| CI/CD | GitHub Actions (2,000分/月) | $0 |
-| ドメイン | Netlify サブドメイン | $0 |
-| **合計** | | **$0/月** |
+| CI/CD | GitHub Actions (Public リポは無制限・無料) | $0 |
+| ドメイン | Netlify サブドメイン (`tasukiba.netlify.app`) | $0 |
+| **合計** | | **約 $9/月 + LLM / Voyage 従量** |
 
 #### 無料枠の制約と対策
 
 | 制約 | 影響 | 対策 |
 |---|---|---|
-| Netlify Starter: **統合 credits 300/月** (1 deploy = ~15) | PR / 本番 deploy を量産すると逼迫、超過で**新規 deploy 停止** (`no overage charges ever` = 課金されない代わりにサービス停止) | `scripts/netlify-ignore.sh` で docs-only 変更を skip、ローカル `pnpm dev` 中心の開発。残 100 切ったら Pro 移行判断 (DEPLOYMENT.md §8.2 参照) |
-| Netlify Starter: Function 10 秒 | Bulk LLM 処理がタイムアウト | Background Functions (15 分) へ分離、または分割実行 ([feedback_bulk_llm_call_unit](../knowledge/) 参照) |
-| Netlify Starter: 日本リージョン未対応 | 日本ユーザに +50-150ms latency | 許容 (将来 Pro / Edge Functions で改善) |
+| Netlify Personal: **統合 credits 1,000/月** (1 deploy = ~15、約 65 deploy/月相当) | PR / 本番 deploy を量産すると逼迫、超過で**新規 deploy 停止** (`no overage charges ever` = 課金されない代わりにサービス停止) | `scripts/netlify-ignore.sh` で docs-only 変更を skip、ローカル `pnpm dev` 中心の開発。残 200 切ったら Pro/Business 移行判断 (DEPLOYMENT.md §8.2 参照) |
+| Netlify Personal: Function 10 秒 (Sync 固定、Background Functions は Pro 以上限定) | Bulk LLM 処理がタイムアウト | 分割実行で 10 秒以内に収める ([feedback_bulk_llm_call_unit](../knowledge/) 参照)、または Pro 以上に昇格して Background Functions (15 分) を利用 |
+| Netlify Personal: 日本リージョン未対応 | 日本ユーザに +50-150ms latency | 許容 (将来 Edge Functions / 独自 CDN で改善) |
 | Supabase Free: 500MB | 約3年で逼迫（ログ制御後） | ログ保持期間の厳格化で 5 年以上対応可 |
 | Supabase Free: 1週間無操作で停止 | 長期休暇時にDBが停止 | cron-job.org の health-check で日次アクセス維持 |
 | Supabase Free: Pooler 経由のみ | Prisma の一部機能に制約 | Transaction mode + `?pgbouncer=true` を使用 (`DATABASE_URL`) |
@@ -124,12 +124,12 @@ git 履歴から過去記述を参照できる。
 
 ### 10.3 将来の有料構成（スケール時）
 
-ユーザ数増加・本格運用移行時は以下の構成に段階的に移行する。
+ユーザ数増加・本格運用移行時は以下の構成に段階的に移行する (現行は Netlify Personal $9/月)。
 
-| トリガー | 移行先 | 追加コスト |
+| トリガー | 移行先 | 追加コスト (現行 Personal 比) |
 |---|---|---|
-| 統合 credits 300/月 逼迫 (= deploy 20回超) or 帯域 100GB 超 | Netlify Pro (1,000 credits/月 + 1TB 帯域) | +$19/月 |
-| 日本リージョンでの低 latency が必要 | Vercel Pro (Tokyo リージョン) | +$20/月 |
+| 統合 credits 1,000/月 逼迫 (= deploy 65回超) or Background Functions (15分処理) が必要 | Netlify Pro (1,000 credits/月 + Function 26 秒 + Background Functions + role-based access) | +$10/月 (Personal $9 → Pro $19) |
+| 日本リージョンでの低 latency が必要 | AWS (ap-northeast-1) / GCP (asia-northeast1) への移行 | 要別途見積もり |
 | DB 500MB 超過 or 直接接続が必要 | Supabase Pro | +$25/月 |
 | メール 300通/日超過 | Brevo Starter | +$9/月 |
 | 独自ドメインが必要 | ドメイン取得 | +~$1/月 |
@@ -143,7 +143,7 @@ git 履歴から過去記述を参照できる。
 |---|---|---|
 | DATABASE_URL | PostgreSQL 接続文字列 (Supabase pooler) | postgresql://...:6543/postgres?pgbouncer=true |
 | DIRECT_URL | 直接接続文字列 (migration 用) | postgresql://...:5432/postgres |
-| NEXTAUTH_URL | アプリケーション URL | http://localhost:3000 or Vercel URL |
+| NEXTAUTH_URL | アプリケーション URL | http://localhost:3000 or Netlify URL (deploy context ごとに `scripts/netlify-build.sh` で同期) |
 | NEXTAUTH_SECRET | NextAuth 暗号化キー | ランダム文字列（32文字以上） |
 | NODE_ENV | 実行環境 | development / production |
 | MAIL_PROVIDER | メール送信プロバイダ | console（デフォルト）/ brevo（本番推奨）/ resend（代替）/ inbox（E2E 専用） |

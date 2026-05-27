@@ -1,7 +1,7 @@
 /**
  * POST /api/cron/tenant-monthly-reset - Tenant 月次リセット バッチ (PR #2-d / T-03)
  *
- * Vercel Cron で毎月 1 日 00:00 UTC (= JST 09:00) に実行。
+ * 外部 cron (cron-job.org) で毎月 1 日 00:00 UTC (= JST 09:00) に実行。
  *
  * 処理内容 (詳細は src/services/tenant-monthly-reset.service.ts 参照):
  *   1. 月初を跨いだテナントの API 呼び出しカウンタ + 課金額を 0 にリセット
@@ -10,14 +10,14 @@
  *        新規にこの予約をセットするコードパスは廃止。本処理は legacy DB レコード対策。
  *
  * 認可:
- *   Vercel Cron 経由のみ (Authorization: Bearer <CRON_SECRET>)。不正呼び出しは 401。
+ *   外部 cron (cron-job.org) 経由のみ (Authorization: Bearer <CRON_SECRET>)。不正呼び出しは 401。
  *
  * 冪等性:
- *   再実行しても結果は同じ (本サービス層が冪等保証)。Vercel Cron の at-least-once 配信
+ *   再実行しても結果は同じ (本サービス層が冪等保証)。外部 cron (cron-job.org) の at-least-once 配信
  *   仕様で複数回起動されても安全。
  *
  * 関連:
- *   - vercel.json `crons` セクション (実行スケジュール)
+ *   - cron-job.org dashboard (実行スケジュール、ADR-0023 で Vercel Cron から移行)
  *   - 設計: docs/design/SUGGESTION_ENGINE.md §課金モデル
  *   - 計画: docs/roadmap/SUGGESTION_ENGINE_PLAN.md PR #2 章
  */
@@ -66,7 +66,7 @@ export async function POST(req: NextRequest) {
   });
 }
 
-// Vercel Cron は HTTP GET / POST どちらも対応するが、本サービスは POST に統一。
+// 外部 cron (cron-job.org) は HTTP GET / POST どちらも対応するが、本サービスは POST に統一。
 // 念のため GET でアクセスがあれば 405 で明示的に弾く。
 export async function GET() {
   return NextResponse.json(

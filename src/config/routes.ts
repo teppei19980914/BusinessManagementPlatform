@@ -31,7 +31,7 @@ export const PUBLIC_PATHS = [
   '/announcements',
   '/api/auth',
   '/api/health', // 外部 cron から定期 ping されるため認証不要
-  // PR #89 (feat/account-lock で endpoint rename): Vercel Cron から
+  // PR #89 (feat/account-lock で endpoint rename): 外部 cron (cron-job.org) から
   // Authorization: Bearer <CRON_SECRET> で実行される。middleware のセッション検査は
   // 通過させ、route.ts 側で CRON_SECRET 検証 + admin 認証を行う。
   '/api/admin/users/lock-inactive',
@@ -40,8 +40,8 @@ export const PUBLIC_PATHS = [
   // route.ts 側で `stripe.webhooks.constructEvent()` で署名検証を行う。
   // 詳細: docs/design/STRIPE_TECHNICAL_DESIGN.md §B-2 / docs/business/STRIPE_BILLING.md §7.1
   '/api/webhooks/stripe',
-  // PR-S6 (2026-05-14): Stripe Usage Record queue flush cron (5 分間隔)。
-  // Vercel Cron から `Authorization: Bearer <CRON_SECRET>` で実行される。
+  // PR-S6 (2026-05-14): Stripe Usage Record queue flush cron (日次)。
+  // 外部 cron (cron-job.org) から `Authorization: Bearer <CRON_SECRET>` で実行される。
   // route.ts 側で CRON_SECRET 検証 (定数時間比較) を行う。
   '/api/cron/stripe-usage-flush',
   // PR-S6 (2026-05-14): Stripe 引落失敗による自動 suspend cron (日次)。
@@ -51,7 +51,7 @@ export const PUBLIC_PATHS = [
   //   Vercel → Netlify 移行 (PR #394) + cron-job.org 外部 cron 化に伴い、これらは外部から
   //   `Authorization: Bearer <CRON_SECRET>` で呼ばれる。middleware の Cookie セッション検査は
   //   通過させ、route.ts 側で `isCronAuthorized()` (定数時間比較) を行う。
-  //   Vercel Cron 時代は内部呼出だったため `/api/auth` 系で吸収できていたが、外部 HTTP では
+  //   旧 Vercel Cron 時代は内部呼出だったため `/api/auth` 系で吸収できていたが、外部 HTTP では
   //   通常の保護パス扱いで /login へ 302 redirect されていた (cron-job.org test run で発覚)。
   //   詳細: docs/knowledge/KDD_PATTERNS.md §5.X+70
   '/api/cron/daily-notifications',

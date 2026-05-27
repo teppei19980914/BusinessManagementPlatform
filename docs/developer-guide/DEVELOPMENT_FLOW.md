@@ -268,7 +268,7 @@ main へのマージで Netlify が **Production deploy** を自動起動:
 
 ### 7.4 build credits の節約
 
-- Netlify Free plan = **300 credits / 月**、1 Production deploy ≈ 15 credits
+- Netlify Personal plan = **1,000 credits / 月** (ADR-0023 で Starter から昇格)、1 Production deploy ≈ 15 credits
 - docs-only PR は `scripts/netlify-ignore.sh` で自動 skip され credits 消費なし
 - 仕様確定 docs PR と実装 PR を分けると credits 節約になる ([DEPLOYMENT.md §1.2](../operations/DEPLOYMENT.md))
 

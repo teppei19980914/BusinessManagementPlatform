@@ -158,7 +158,7 @@ WIP                     # コミット対象が曖昧
 2. **セキュリティスキャン pass**: `.github/workflows/security.yml` (gitleaks / pnpm audit / CodeQL)
 3. **コードレビュー** (チームに 2 人以上いる場合は別メンバーの承認 1 件以上)
 4. **DB スキーマ変更を含む場合**: マージ前に Supabase で migration を手動実行 ([docs/operations/DB_MIGRATION_PROCEDURE.md](./docs/operations/DB_MIGRATION_PROCEDURE.md))
-5. **視覚回帰**: UI 変更を含む場合は Vercel Preview Deployment で目視確認
+5. **視覚回帰**: UI 変更を含む場合は Netlify Deploy Preview で目視確認 (`https://deploy-preview-NNN--tasukiba.netlify.app`)
 
 ### 4.4 マージ方式
 

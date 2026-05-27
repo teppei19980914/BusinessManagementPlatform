@@ -416,10 +416,10 @@
 | 設計意図 | 過去ナレッジ等の **作成者表示** はアカウントが残っていないと「(削除済)」になるため、長期不在ユーザでもアカウント情報を保持する。一方、攻撃面 (漏洩パスワード / 放置セッション) を縮小するため **ログインだけは封じる** |
 | 保全対象 | Task.assigneeId / RiskIssue.reporterId / Knowledge.createdBy 等の scalar 参照は残す (履歴保全) |
 | 自己削除 | 禁止 (CANNOT_DELETE_SELF) |
-| cron 認証 | Vercel Cron + `Authorization: Bearer <CRON_SECRET>` (環境変数) |
+| cron 認証 | 外部 cron (cron-job.org) + `Authorization: Bearer <CRON_SECRET>` (環境変数) |
 
 **関連**:
-- `vercel.json` の `crons` で `/api/admin/users/lock-inactive` を日次 03:00 UTC 実行 (旧名 `cleanup-inactive`、feat/account-lock で改名)
+- cron-job.org のダッシュボードで `/api/admin/users/lock-inactive` を日次 03:00 UTC 実行 (旧名 `cleanup-inactive`、feat/account-lock で改名)
 - `src/config/security.ts` の `INACTIVE_USER_LOCK_DAYS` (既定 30、旧名 `INACTIVE_USER_DELETION_DAYS`) で閾値変更可
 - 監査ログ: `audit_log` に action='UPDATE' / entityType='user' / after.reason='30 日無アクティブ自動ロック' で記録
 

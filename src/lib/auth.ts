@@ -8,7 +8,7 @@ import { LOGIN_FAILURE_MAX, TEMPORARY_LOCK_DURATION_MS, PERMANENT_LOCK_THRESHOLD
 
 /**
  * PR fix/login-failure (2026-05-03): ログイン失敗ログ出力用の email マスク。
- *   完全一致でユーザを特定できるレベルの情報は Vercel ログに残さない方針。
+ *   完全一致でユーザを特定できるレベルの情報は Netlify Function ログに残さない方針。
  *   先頭 3 文字 + ドメイン (@ 以降) のみ残す: 'teppei09141998@gmail.com' → 'tep***@gmail.com'
  */
 function maskEmailForLog(email: string): string {
@@ -20,7 +20,7 @@ function maskEmailForLog(email: string): string {
 }
 
 /**
- * PR fix/login-failure (2026-05-03): 認証失敗の Vercel runtime 診断ログ出力ヘルパ。
+ * PR fix/login-failure (2026-05-03): 認証失敗の Netlify Function runtime 診断ログ出力ヘルパ。
  *
  * 設計判断:
  *   - 通常の監査ログは `recordAuthEvent` で auth_event_logs テーブルに残す。
@@ -58,7 +58,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         // ADR-0016 (2026-05-20): tenantSlug も missing_credentials 判定に追加
         if (!credentials?.email || !credentials?.password || !credentials?.tenantSlug) {
           // PR fix/login-failure (2026-05-03): logAuthFailureReason() ヘルパ経由で
-          //   Vercel ログに記録 (DB 接続失敗時の最終手段)。認証情報は出さない。
+          //   Netlify Function ログに記録 (DB 接続失敗時の最終手段)。認証情報は出さない。
           logAuthFailureReason({ reason: 'missing_credentials' });
           // fix/auth-diagnostics (2026-05-15): missing_credentials も auth_event_logs に記録する
           //   ことで、「ログインボタン押下で何も記録されない」状態の切り分けに使う。
@@ -280,7 +280,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           //   - 想定外の TypeError 等
           //   いずれの場合も login_failure イベントを書き、reason='internal_error' で記録。
           //   これで「ログイン試行は来ているが何かで死んでいる」状態を auth_event_logs から
-          //   直接判別可能になる。スタックトレースは Vercel runtime log にも残るが、
+          //   直接判別可能になる。スタックトレースは Netlify Function runtime log にも残るが、
           //   detail に summary を入れて DB 一発で原因が判るようにする。
           const maskedEmail = typeof credentials?.email === 'string'
             ? maskEmailForLog(credentials.email)

@@ -85,7 +85,7 @@
 - メリット: シンプル
 - 不採用理由: 越境バグが起きやすい。Service 関数の利用側 (API ルート、別 Service、cron 等) で `tenantId` フィルタを忘れた場合、即座に severity-1 事故になる
 
-### Alt-4: API Gateway (Vercel Edge Middleware) で完全制御
+### Alt-4: API Gateway (Edge Middleware / Netlify Edge Functions) で完全制御
 - 概要: API ルートに辿り着く前に Edge で完全認可
 - メリット: アプリケーションコードから認可を分離
 - 不採用理由: Alt-1 と同様の Edge 制約。さらに認可ロジックが「コード」ではなく「設定」に近づき、テスト・デバッグが困難

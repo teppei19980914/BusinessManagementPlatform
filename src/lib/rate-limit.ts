@@ -10,8 +10,8 @@
  *   - 同一 IP から **5 分間に 10 リクエスト** まで
  *   - 超過時は HTTP 429 Too Many Requests
  *
- * 設計判断 (Vercel serverless 環境での挙動):
- *   - Vercel は **複数 function instance** を起動するため、in-memory state は instance
+ * 設計判断 (Netlify Functions / serverless 環境での挙動):
+ *   - Netlify Functions (= AWS Lambda) は **複数 function instance** を起動するため、in-memory state は instance
  *     ごとに分離される (= 真の分散レート制限ではない)。Upstash Redis 等を使えば完全な
  *     分散制限が可能だが、追加コストとセットアップが必要。
  *   - **in-memory でも単一 instance に集中する典型的攻撃 (1 IP burst) には有効**。
@@ -62,8 +62,8 @@ function gcExpired(now: number): void {
 }
 
 /**
- * リクエスト元 IP を抽出する。Vercel/Cloudflare の `x-forwarded-for` を優先、
- * fallback で NextRequest.ip (Vercel は提供) → 'unknown'。
+ * リクエスト元 IP を抽出する。Netlify/Cloudflare の `x-forwarded-for` を優先、
+ * fallback で NextRequest.ip (Netlify Functions では提供) → 'unknown'。
  */
 function getClientIp(req: NextRequest): string {
   const xff = req.headers.get('x-forwarded-for');
@@ -71,7 +71,7 @@ function getClientIp(req: NextRequest): string {
     // 'client, proxy1, proxy2' のうち先頭が真の client IP
     return xff.split(',')[0].trim();
   }
-  // NextRequest.ip は実験的 API: Vercel runtime では存在、Node.js dev では undefined
+  // NextRequest.ip は実験的 API: Netlify Functions runtime では存在、Node.js dev では undefined
   const ip = (req as unknown as { ip?: string }).ip;
   return ip || 'unknown';
 }
@@ -158,7 +158,7 @@ interface SubjectRateLimitOptions {
  *
  * 注意:
  *   in-memory 実装 (= rate-limit.ts と同じ instance-local バケット)。
- *   Vercel/Netlify serverless では instance ごとに状態が分離されるが、
+ *   Netlify Functions / serverless では instance ごとに状態が分離されるが、
  *   1 instance に集中する典型攻撃には有効 (= 多層防御の 1 層)。
  */
 export function applySubjectRateLimit(opts: SubjectRateLimitOptions): NextResponse | null {

@@ -30,8 +30,10 @@ import { recordAuditLog } from '@/services/audit.service';
 import { MANAGEMENT_TENANT_ID } from '@/lib/tenant';
 
 /**
- * 全テナント集計は Vercel Hobby 60s に収まらない可能性があるため最大値を確保。
+ * 全テナント集計は Function timeout に収まらない可能性があるため最大値を確保。
+ * 現行の Netlify Personal Sync Function 上限は 10 秒固定 (Pro 以上で 26 秒まで configurable)。
  * 個別失敗は Promise.allSettled で吸収するため、タイムアウト時の影響範囲を限定。
+ * 長期的には Pro 昇格 + Background Functions (15 分) への分離を検討。
  */
 export const maxDuration = 60;
 export const dynamic = 'force-dynamic';

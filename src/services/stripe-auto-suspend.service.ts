@@ -4,7 +4,7 @@
  * 役割:
  *   `tenant.autoSuspendScheduledAt <= now` のテナントに対し、既存の `suspendTenant()` を
  *   `reason='payment_delinquent'` で呼出し、read-only モードへ強制移行する。
- *   日次 Vercel Cron (`/api/cron/stripe-auto-suspend`) から呼ばれる。
+ *   日次 外部 cron (cron-job.org、`/api/cron/stripe-auto-suspend`) から呼ばれる。
  *
  * 設計方針 (STRIPE_BILLING.md §4.3 / §9.2 / PR #372 の既存 suspendTenant 再利用):
  *   - **autoSuspendScheduledAt セット**: Webhook (= PR-S4) が `customer.subscription.updated`

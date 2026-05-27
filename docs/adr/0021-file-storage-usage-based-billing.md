@@ -97,7 +97,7 @@ Supabase Storage Bucket: 'attachments'
                                                 + storage-guard post-check
 ```
 
-- **理由**: Vercel/Netlify Function timeout 回避、サーバ負荷最小、業界標準
+- **理由**: Netlify Function timeout 回避、サーバ負荷最小、業界標準
 - **代替案 (サーバ経由)** は 50MB ファイルで function timeout リスク
 - **計測**: アップロード完了後の `/api/attachments/finalize` で post-check 実施、または daily cron で `storage.objects` 集計
 
@@ -493,7 +493,7 @@ USING (
 - **却下理由**: 数千テナントで Supabase バケット数上限抵触、認可ロジック複雑化、計測コスト増
 
 ### Alt-2: サーバ経由アップロード
-- **却下理由**: Vercel/Netlify Function timeout (50MB ファイル × 中速回線 = 10 秒以上)、コスト増、業界標準でない
+- **却下理由**: Netlify Function timeout (50MB ファイル × 中速回線 = 10 秒以上、Personal は 10 秒固定 / Pro でも 26 秒上限)、コスト増、業界標準でない
 
 ### Alt-3: ¥50/GB (DB 容量と同価格)
 - **却下理由**: Storage 原価 ¥3.20 に対し +1463% マージンは過大、ユーザ説明力低下

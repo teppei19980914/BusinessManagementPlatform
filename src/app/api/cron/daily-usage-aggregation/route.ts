@@ -1,7 +1,7 @@
 /**
  * POST /api/cron/daily-usage-aggregation - 日次使用量集計 + 異常検知 (PR #7 / T-03)
  *
- * Vercel Cron で毎日 02:00 UTC (= JST 11:00) に実行。
+ * 外部 cron (cron-job.org) で毎日 02:00 UTC (= JST 11:00) に実行。
  *
  * 処理内容 (詳細は src/services/usage-monitoring.service.ts 参照):
  *   1. 昨日 (UTC) の ApiCallLog をテナント別に集計
@@ -13,14 +13,14 @@
  *   を増やさない方針に統一。
  *
  * 認可:
- *   Vercel Cron 経由のみ (Authorization: Bearer <CRON_SECRET>)。不正呼び出しは 401。
+ *   外部 cron (cron-job.org) 経由のみ (Authorization: Bearer <CRON_SECRET>)。不正呼び出しは 401。
  *
  * 冪等性:
  *   集計は読み取りのみで副作用なし。再実行しても結果は変わらず安全 (メール送信を廃止したため、
  *   重複送信の懸念もなくなった)。
  *
  * 関連:
- *   - vercel.json `crons` セクション (実行スケジュール)
+ *   - cron-job.org dashboard (実行スケジュール、ADR-0023 で Vercel Cron から移行)
  *   - 設計: docs/design/SUGGESTION_ENGINE.md §コスト超過リスクと監視ポイント
  *   - 計画: docs/roadmap/SUGGESTION_ENGINE_PLAN.md PR #7
  */
@@ -68,7 +68,7 @@ export async function POST(req: NextRequest) {
   });
 }
 
-// Vercel Cron は HTTP GET / POST どちらも対応するが、本サービスは POST に統一。
+// 外部 cron (cron-job.org) は HTTP GET / POST どちらも対応するが、本サービスは POST に統一。
 export async function GET() {
   return NextResponse.json(
     { error: { code: 'METHOD_NOT_ALLOWED' } },

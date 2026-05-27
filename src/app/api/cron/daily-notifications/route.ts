@@ -1,7 +1,7 @@
 /**
  * POST /api/cron/daily-notifications - 日次通知バッチ (PR feat/notifications-mvp)
  *
- * Vercel Cron で 1 日 1 回実行 (JST 7:00 = UTC 前日 22:00)。
+ * 外部 cron (cron-job.org) で 1 日 1 回実行 (JST 7:00 = UTC 前日 22:00)。
  *
  * 処理内容:
  *   1. ACT (type='activity') の予定開始日/予定終了日リマインダ通知を生成
@@ -10,11 +10,11 @@
  *   2. 既読 + readAt > 30 日 の通知を物理削除 (容量管理)
  *
  * 認可:
- *   Vercel Cron 経由のみ (Authorization: Bearer <CRON_SECRET>)。
+ *   外部 cron (cron-job.org) 経由のみ (Authorization: Bearer <CRON_SECRET>)。
  *   不正呼び出しは 401。
  *
  * 関連:
- *   - vercel.json `crons` セクション (実行スケジュール)
+ *   - cron-job.org dashboard (実行スケジュール、ADR-0023 で Vercel Cron から移行)
  *   - DEVELOPER_GUIDE §5.54 (本機能の KDD)
  *   - DESIGN.md §通知 (認可/削除/重複抑止の設計判断)
  */
@@ -107,7 +107,7 @@ export async function POST(req: NextRequest) {
   });
 }
 
-// Vercel Cron は HTTP GET / POST どちらも対応するが、本サービスは POST に統一。
+// 外部 cron (cron-job.org) は HTTP GET / POST どちらも対応するが、本サービスは POST に統一。
 // 念のため GET でアクセスがあれば 405 で明示的に弾く。
 export async function GET() {
   return NextResponse.json(

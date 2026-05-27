@@ -10,7 +10,7 @@
 | [DATA_MODEL.md](./DATA_MODEL.md) | Prisma データモデル・テーブル定義書・初期データ・インデックス戦略 | DESIGN.md §4-§5, §13, §15 |
 | [API_DESIGN.md](./API_DESIGN.md) | API 設計・全文検索設計・パフォーマンス要件 | DESIGN.md §7, §16, §17 |
 | [SECURITY.md](./SECURITY.md) | 権限制御設計・セキュリティ多層防御 | DESIGN.md §8-§9 + SPECIFICATION.md §25 |
-| [INFRASTRUCTURE.md](./INFRASTRUCTURE.md) | Vercel + Supabase 構成・通知メール送信設計 | DESIGN.md §10, §18 |
+| [INFRASTRUCTURE.md](./INFRASTRUCTURE.md) | Netlify + Supabase 構成・通知メール送信設計 (ADR-0023 で Vercel から移行済) | DESIGN.md §10, §18 |
 | [UI_PATTERNS.md](./UI_PATTERNS.md) | UI 共通コンポーネント・ダイアログパターン・テーマ・添付・WBS インポート等の UI 設計 | DESIGN.md §11, §21-§33 |
 | [SUGGESTION_ENGINE.md](./SUGGESTION_ENGINE.md) | 核心機能 (提案エンジン v1 + v2) の技術設計全体 | DESIGN.md §23, §34 |
 | [STRIPE_TECHNICAL_DESIGN.md](./STRIPE_TECHNICAL_DESIGN.md) | Stripe Metered Billing 連携の詳細技術設計 (= 「how」レベル、各 PR の実装時に参照する判断保留不要の粒度) | 新規 (2026-05-14) |

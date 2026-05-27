@@ -10,7 +10,7 @@
 
 ## 前提
 
-- Vercel Preview Deployment URL を取得済 (PR ごとに自動発行)
+- Netlify Deploy Preview URL を取得済 (PR ごとに自動発行: `https://deploy-preview-NNN--tasukiba.netlify.app`)
 - ログイン済 (テスト用アカウントで OK)
 - ブラウザ: Chrome / Edge / Safari いずれか (主要ブラウザの最新版)
 

@@ -27,7 +27,7 @@ import { recordError } from '@/services/error-log.service';
  * 緩和ルール (2026-05-01 fix/attachments-batch-400):
  *   旧版では entityIds に **1 つでも非 UUID** が混じると `400 VALIDATION_ERROR` で
  *   バッチ全体を破棄していた。一覧画面では添付列が表示できないだけでなく、
- *   ユーザに具体的な原因が見えない 400 エラーが Vercel log に出続ける状態になっていた。
+ *   ユーザに具体的な原因が見えない 400 エラーが Netlify Function log に出続ける状態になっていた。
  *   バッチ取得は「ベストエフォート」セマンティクスが妥当なため、無効 ID は静かに
  *   フィルタして有効 ID のみ処理 + 200 返却する設計に変更。validation 失敗時は
  *   **`recordError(system_error_logs)` で実フィールドを記録** (no-console ルール準拠)

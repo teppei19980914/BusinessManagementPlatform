@@ -68,7 +68,7 @@ docs/
 | 1 | **主要設計判断の根拠** (なぜこの設計にしたか) | [adr/](./adr/README.md) (ADR-0001〜0015、順次追加) |
 | 2 | 核心機能 — 提案エンジンの仕組み | [design/SUGGESTION_ENGINE.md](./design/SUGGESTION_ENGINE.md) |
 | 3 | UI 共通パターン (テーブル / ダイアログ / 一覧フィルタ等) | [design/UI_PATTERNS.md](./design/UI_PATTERNS.md) |
-| 4 | インフラ構成 (Vercel / Supabase / Brevo / Voyage 等) | [design/INFRASTRUCTURE.md](./design/INFRASTRUCTURE.md) |
+| 4 | インフラ構成 (Netlify / Supabase / Brevo / Voyage 等) | [design/INFRASTRUCTURE.md](./design/INFRASTRUCTURE.md) |
 | 5 | 脅威モデル (セキュリティ設計の背景) | [security/README.md](./security/) / [security/SUGGESTION_ENGINE_THREAT_MODEL.md](./security/SUGGESTION_ENGINE_THREAT_MODEL.md) |
 | 6 | 障害対応の初動手順 | [operations/INCIDENT_RESPONSE.md](./operations/INCIDENT_RESPONSE.md) |
 | 7 | DB マイグレーション手順 | [operations/DB_MIGRATION_PROCEDURE.md](./operations/DB_MIGRATION_PROCEDURE.md) |
@@ -119,7 +119,7 @@ docs/
 | [DATA_MODEL.md](./design/DATA_MODEL.md) | Prisma データモデル・テーブル定義・初期データ・インデックス戦略 |
 | [API_DESIGN.md](./design/API_DESIGN.md) | API 設計・全文検索設計・パフォーマンス要件 |
 | [SECURITY.md](./design/SECURITY.md) | 権限制御設計・セキュリティ多層防御 |
-| [INFRASTRUCTURE.md](./design/INFRASTRUCTURE.md) | Vercel + Supabase 構成・通知メール送信設計 |
+| [INFRASTRUCTURE.md](./design/INFRASTRUCTURE.md) | Netlify + Supabase 構成・通知メール送信設計 (ADR-0023) |
 | [UI_PATTERNS.md](./design/UI_PATTERNS.md) | UI 共通コンポーネント・ダイアログパターン・テーマ・添付・WBS インポート等 |
 | [SUGGESTION_ENGINE.md](./design/SUGGESTION_ENGINE.md) | 核心機能 (提案エンジン v1 + v2) の技術設計全体 |
 | [STRIPE_TECHNICAL_DESIGN.md](./design/STRIPE_TECHNICAL_DESIGN.md) | Stripe Metered Billing 連携の詳細技術設計 |
@@ -133,9 +133,9 @@ docs/
 | [README.md](./operations/README.md) | operations/ ディレクトリ索引 |
 | [SETUP_LOCAL.md](./operations/SETUP_LOCAL.md) | ローカル開発環境の起動手順 + トラブルシューティング |
 | [ENV_VARS.md](./operations/ENV_VARS.md) | 全環境変数の一覧と説明 |
-| [DEPLOYMENT.md](./operations/DEPLOYMENT.md) | Vercel 本番デプロイ手順 |
+| [DEPLOYMENT.md](./operations/DEPLOYMENT.md) | Netlify 本番デプロイ手順 |
 | [DB_MIGRATION_PROCEDURE.md](./operations/DB_MIGRATION_PROCEDURE.md) | Prisma migration の作成・適用・戦略 |
-| [CRON.md](./operations/CRON.md) | Vercel Cron + cron-job.org ウォームアップ + 死活監視 |
+| [CRON.md](./operations/CRON.md) | 外部 cron (cron-job.org) スケジュール + 死活監視 |
 | [INCIDENT_RESPONSE.md](./operations/INCIDENT_RESPONSE.md) | 障害対応 SOP (10 シナリオ) + 重大度分類 + post-mortem テンプレ |
 | [SECURITY_OPS.md](./operations/SECURITY_OPS.md) | 運用上のセキュリティ手順 |
 | [BACKUP_VERIFICATION.md](./operations/BACKUP_VERIFICATION.md) | バックアップ検証手順 (四半期 + 臨時) |
@@ -151,7 +151,7 @@ docs/
 | [GO_LIVE_RUNBOOK.md](./operations/GO_LIVE_RUNBOOK.md) | 2026-06-01 外部公開当日の時系列手順 + ロールバック条件 |
 | [PUBLIC_LAUNCH_CHECKLIST.md](./operations/PUBLIC_LAUNCH_CHECKLIST.md) | 公開前チェックリスト (法的書類 / 公開ページ / 運用準備、6/1 前完了必須) |
 | [RELEASE_PROCEDURE.md](./operations/RELEASE_PROCEDURE.md) | リリース時の真値ファイル更新手順 (CHANGELOG / お知らせ / version / リリース日) + チェックリスト |
-| [MIGRATION_TO_AWS.md](./operations/MIGRATION_TO_AWS.md) | Vercel + Supabase から AWS / Azure / GCP への将来的移行計画 |
+| [MIGRATION_TO_AWS.md](./operations/MIGRATION_TO_AWS.md) | Netlify + Supabase から AWS / Azure / GCP への将来的移行計画 |
 
 ### [test/](./test/) — テスト設計書
 
@@ -211,7 +211,7 @@ docs/
 | [0009-nextauth-credentials-mfa-totp.md](./adr/0009-nextauth-credentials-mfa-totp.md) | NextAuth.js (Credentials) + MFA (TOTP) を認証基盤に採用 |
 | [0010-project-state-machine.md](./adr/0010-project-state-machine.md) | プロジェクト状態マシン (7 状態 + 一方向遷移) |
 | [0011-soft-delete-and-audit-log.md](./adr/0011-soft-delete-and-audit-log.md) | 論理削除 + 全変更操作の監査ログ完全記録 |
-| [0012-vercel-supabase-mvp-hosting.md](./adr/0012-vercel-supabase-mvp-hosting.md) | Vercel + Supabase 無料枠を MVP 期に採用 (AWS 移行を視野) |
+| [0012-vercel-supabase-mvp-hosting.md](./adr/0012-vercel-supabase-mvp-hosting.md) | Vercel + Supabase 無料枠を MVP 期に採用 (**ADR-0023 で Superseded、Netlify Personal へ移行済**) |
 | [0013-beginner-downgrade-prohibition.md](./adr/0013-beginner-downgrade-prohibition.md) | Beginner プランへのダウングレード禁止 (悪用防止) |
 | [0014-crud-permission-redesign.md](./adr/0014-crud-permission-redesign.md) | CRUD 設計刷新 — UI=API 認可一致原則 + PM/TL 自律権限 + 自己ロール変更禁止 (2026-05-20) |
 | [0015-cascade-delete-idempotent-design.md](./adr/0015-cascade-delete-idempotent-design.md) | deleteProjectCascade / deleteCustomerCascade の冪等設計 + 段階別 transaction (2026-05-20) |

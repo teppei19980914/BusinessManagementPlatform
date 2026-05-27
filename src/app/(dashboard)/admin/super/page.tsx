@@ -1029,12 +1029,12 @@ function BeginnerUsageCard({ beginner }: { beginner: BeginnerUsageSummary }) {
 }
 
 /**
- * PR #425 (2026-05-22): Netlify ビルドクレジット消費モニタ。
+ * PR #425 (2026-05-22): Netlify ビルドクレジット消費モニタ (ADR-0023 で Personal 昇格に追従)。
  *
- * Netlify Starter Plan の integration credits 300/月 を超過しないようリアルタイム可視化する。
+ * Netlify Personal Plan の integration credits 1,000/月 を超過しないようリアルタイム可視化する。
  * - 今月のビルド回数 (= JST 月初〜現在)
  * - 推定 credits 消費量 (= ビルド数 × 15、Netlify 公式値ではなく概算)
- * - 残 credits (= 300 - 推定消費量)
+ * - 残 credits (= 1,000 - 推定消費量)
  * - 最新ビルドの状態 + コンテキスト
  *
  * API 失敗時 (= NETLIFY_API_TOKEN 未設定 / 通信エラー) は警告メッセージのみ表示し画面遷移を妨げない。
@@ -1043,7 +1043,7 @@ function BeginnerUsageCard({ beginner }: { beginner: BeginnerUsageSummary }) {
  */
 function NetlifyMetricsCard({ metrics }: { metrics: NetlifyMetricsType }) {
   const usagePercent = metrics.estimatedCreditsUsed > 0
-    ? Math.min(100, Math.round((metrics.estimatedCreditsUsed / 300) * 100))
+    ? Math.min(100, Math.round((metrics.estimatedCreditsUsed / 1000) * 100))
     : 0;
   const isWarning = usagePercent >= 70 && usagePercent < 90;
   const isCritical = usagePercent >= 90;
@@ -1056,7 +1056,7 @@ function NetlifyMetricsCard({ metrics }: { metrics: NetlifyMetricsType }) {
   return (
     <section
       className={`space-y-3 rounded border p-4 ${headerColor}`}
-      title="Netlify Starter Plan の integration credits (300/月) 消費を可視化。70% 超過で警告、90% 超過で critical 表示"
+      title="Netlify Personal Plan の integration credits (1,000/月) 消費を可視化。70% 超過で警告、90% 超過で critical 表示"
     >
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h2 className="text-lg font-semibold">Netlify ビルド credits</h2>

@@ -503,7 +503,7 @@ export async function deleteUser(
  *   - 復帰: 必要時はシステム管理者が `/admin/users` で isActive をトグルして解除
  *
  * 呼び出し側:
- *   - `/api/admin/users/lock-inactive` POST (vercel.json の cron で日次起動)
+ *   - `/api/admin/users/lock-inactive` POST (外部 cron (cron-job.org) で日次起動)
  *   - 管理画面からの手動実行 (admin ボタン)
  *
  * 監査ログ:
@@ -517,7 +517,7 @@ export async function lockInactiveUsers(
    * 2026-05-12 severity-1 修正: テナントスコープ引数を追加。
    *
    *   - 指定あり (= manual パス、tenant admin から起動): 自テナント内のユーザのみロック
-   *   - 指定なし (= cron パス): 全テナント横断 (Vercel Cron での日次実行)
+   *   - 指定なし (= cron パス): 全テナント横断 (外部 cron での日次実行)
    *
    * 旧仕様は引数なしで常に全テナント横断していたため、tenant A の admin が manual
    * エンドポイントを叩くと **tenant B のユーザを一斉ロックできる** severity-1 越境バグ

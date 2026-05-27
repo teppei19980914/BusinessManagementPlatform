@@ -35,7 +35,8 @@ SECURITY.md                @teppei19980914
 
 # CI/CD / インフラ
 /.github/workflows/        @teppei19980914
-/vercel.json               @teppei19980914
+/netlify.toml              @teppei19980914
+/scripts/netlify-*.sh      @teppei19980914
 /docker-compose.yml        @teppei19980914
 
 # ドキュメント

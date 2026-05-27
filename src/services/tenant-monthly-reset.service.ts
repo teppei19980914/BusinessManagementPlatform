@@ -5,11 +5,11 @@
  *   1. **月初リセット**: 月初を跨いだテナントの API 呼び出しカウンタ + 課金額を 0 にリセット
  *   2. **プラン変更予約適用**: scheduledPlanChangeAt 到達テナントに scheduledNextPlan を反映
  *
- * Vercel Cron で毎月 1 日 00:00 UTC に実行される (vercel.json + /api/cron/tenant-monthly-reset)。
+ * 外部 cron (cron-job.org) で毎月 1 日 00:00 UTC に実行される (`/api/cron/tenant-monthly-reset`)。
  *
  * 設計判断:
  *
- *   - **冪等性 (idempotency)**: cron が re-trigger されても結果は同じ。Vercel Cron は
+ *   - **冪等性 (idempotency)**: cron が re-trigger されても結果は同じ。外部 cron (cron-job.org) は
  *     最低 1 回保証なので、複数回起動でも安全に動かなければならない。
  *     - 月初リセット: WHERE lastResetAt < currentMonthStart で絞るため、すでに当月分が
  *       適用済みのテナントは再 update しない (= 第 2 回目以降は 0 件)。
@@ -32,7 +32,7 @@
  *
  * 関連:
  *   - cron endpoint: src/app/api/cron/tenant-monthly-reset/route.ts
- *   - スケジュール定義: vercel.json
+ *   - スケジュール定義: cron-job.org dashboard (ADR-0023 で Vercel Cron から移行)
  *   - 設計: docs/design/SUGGESTION_ENGINE.md §課金モデル
  *   - 計画: docs/roadmap/SUGGESTION_ENGINE_PLAN.md PR #2 章
  */
@@ -939,7 +939,7 @@ export async function billOneTenantFileStorageOverage(args: {
 }
 
 /**
- * 月次バッチのエントリポイント。Vercel Cron が叩く API ルートから呼ばれる。
+ * 月次バッチのエントリポイント。外部 cron (cron-job.org) が叩く API ルートから呼ばれる。
  *
  * 順序 (ADR-0020 / 2026-05-25 改訂):
  *   1. **processTenantDbCapacityOverage**: DB 容量超過分を ApiCallLog INSERT (前月分として)

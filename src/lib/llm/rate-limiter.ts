@@ -10,7 +10,7 @@
  *   - 既存 src/lib/rate-limit.ts は IP ベースの認証エンドポイント用なのに対し、
  *     本モジュールは **userId ベース** で LLM 呼び出し専用。共通化せず分離する
  *     (キー設計と数値設定が異なるため)。
- *   - Vercel serverless 環境では in-memory 実装は instance-local で完全な
+ *   - Netlify Functions / serverless 環境では in-memory 実装は instance-local で完全な
  *     分散制限にならない。ただし bot 級の連打を抑える効果はあり、Upstash 移行
  *     完了までの暫定として機能する。
  *   - Upstash 切替時の移行コストを下げるため、interface を最小限に絞り、
@@ -56,7 +56,7 @@ interface InMemoryBucket {
 }
 
 /**
- * Vercel serverless function instance ごとに独立した状態を持つ in-memory 実装。
+ * Netlify Functions / serverless instance ごとに独立した状態を持つ in-memory 実装。
  *
  * 注意: 真の分散 rate limit ではない (instance 数だけ multiplier あり)。
  * 本格運用 (大量ユーザ) では Upstash Redis 実装に切り替えること。

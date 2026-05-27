@@ -3,9 +3,9 @@
  *
  * 役割:
  *   `stripe_usage_record_queue` の未送信行を Stripe Subscription Item の Usage Record として
- *   実送信する。Vercel Cron で日次 (05:00 UTC = JST 14:00) で実行。
+ *   実送信する。外部 cron (cron-job.org) で日次 (05:00 UTC = JST 14:00) で実行。
  *
- *   Vercel Hobby プラン制約により最小間隔が「1 日 1 回」のため日次運用に統一 (2026-05-14)。
+ *   旧 Vercel Hobby 時代の cron 最小間隔「1 日 1 回」制約に合わせて日次運用を確立。Netlify Personal + 外部 cron 構成 (ADR-0023) では 1 分間隔まで設定可能だが日次を継続中 (2026-05-14)。
  *   Stripe Usage Record は timestamp パラメタで実際の呼出時刻を送るため、翌日送信でも
  *   月末請求の正確性は保たれる (= 35 日以内の過去 timestamp を Stripe が受領)。
  *

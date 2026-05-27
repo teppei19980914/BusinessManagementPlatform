@@ -2,8 +2,8 @@
  * /api/attachments の認可テスト (PR #213 / 2026-05-01)。
  *
  * 主要シナリオ: 「全○○」(cross-list) の readOnly dialog から非メンバーが添付一覧を
- *   取得する経路の救済 (visibility='public' なら誰でも閲覧可)。Vercel runtime log で
- *   観測された 403 多発を再現できないよう regression を防止する。
+ *   取得する経路の救済 (visibility='public' なら誰でも閲覧可)。旧 Vercel runtime log で
+ *   観測された 403 多発を再現できないよう regression を防止する (Netlify Function log でも同様)。
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
