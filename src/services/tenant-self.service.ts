@@ -35,7 +35,11 @@
 import { prisma } from '@/lib/db';
 import type { TenantPlan } from '@/lib/tenant';
 // PR-V8.2 (2026-05-19) ★請求 invariant★: getTenantSelfInfo を ApiCallLog SUM 真値で返却
-import { reconcileTenantApiUsage } from './api-usage-recalc.service';
+// ADR-0022 (2026-06-01): Embedding 側の reconcile も併用
+import {
+  reconcileTenantApiUsage,
+  reconcileTenantEmbeddingUsage,
+} from './api-usage-recalc.service';
 import {
   getBeginnerExpiryState,
   getBeginnerDaysRemaining,
@@ -77,6 +81,18 @@ export type TenantSelfInfo = {
   beginnerMonthlyCallLimit: number;
   currentMonthApiCallCount: number;
   currentMonthApiCostJpy: number;
+  /**
+   * ADR-0022 (2026-06-01): Embedding 系 (knowledge-embedding / risk-issue-embedding / retrospective-embedding /
+   *   memo-embedding / chat-semantic-search / external-import-embedding / attachment-embedding) の
+   *   当月呼出回数。全プランで件数記録 (Beginner は ¥0 維持、UI で「件数 N 件 / ¥0」表示用)。
+   *   ApiCallLog SUM ベース真値 (= reconcileTenantEmbeddingUsage 経由)。
+   */
+  currentMonthEmbeddingCallCount: number;
+  /**
+   * ADR-0022 (2026-06-01): Embedding 系の当月課金額。Beginner=0 / Expert=件数×¥1 / Pro=件数×¥1。
+   *   feedback_billing_invariant: ApiCallLog SUM = 本値 = CSV = 請求書 の整合性必須。
+   */
+  currentMonthEmbeddingCostJpy: number;
   scheduledPlanChangeAt: Date | null;
   scheduledNextPlan: string | null;
   activeUserCount: number;
@@ -143,7 +159,11 @@ export async function getTenantSelfInfo(tenantId: string): Promise<TenantSelfInf
   //   reconcile を被せる必要があった。/api/tenants/me GET レスポンスや /admin/users page 等で
   //   counter 値が露出する設計欠陥になっていたため、関数内で reconcile して真値で返す。
   //   reconcile が null (= 不在 / 集計失敗) のときのみ counter にフォールバック。
-  const reconcile = await reconcileTenantApiUsage(tenantId).catch(() => null);
+  // ADR-0022 (2026-06-01): Embedding 側の reconcile も並行取得 (= UI 表示用、真値ベース)。
+  const [reconcile, embeddingReconcile] = await Promise.all([
+    reconcileTenantApiUsage(tenantId).catch(() => null),
+    reconcileTenantEmbeddingUsage(tenantId).catch(() => null),
+  ]);
 
   // P-B (2026-05-08): Beginner プラン期限の判定 (純関数なので副作用なし)
   const expiryInput = {
@@ -171,6 +191,11 @@ export async function getTenantSelfInfo(tenantId: string): Promise<TenantSelfInf
     // ★ PR-V8.2: ApiCallLog SUM (真値) を優先。counter フォールバックは reconcile null のみ。
     currentMonthApiCallCount: reconcile?.reconciledCallCount ?? t.currentMonthApiCallCount,
     currentMonthApiCostJpy: reconcile?.reconciledCostJpy ?? t.currentMonthApiCostJpy,
+    // ADR-0022 (2026-06-01): Embedding 系も真値ベース
+    currentMonthEmbeddingCallCount:
+      embeddingReconcile?.reconciledCallCount ?? t.currentMonthEmbeddingCallCount,
+    currentMonthEmbeddingCostJpy:
+      embeddingReconcile?.reconciledCostJpy ?? t.currentMonthEmbeddingCostJpy,
     scheduledPlanChangeAt: t.scheduledPlanChangeAt,
     scheduledNextPlan: t.scheduledNextPlan,
     activeUserCount,

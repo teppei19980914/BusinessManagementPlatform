@@ -41,7 +41,10 @@ import { prisma } from '@/lib/db';
 import { recordError } from '@/services/error-log.service';
 import { isTenantPlan, MANAGEMENT_TENANT_ID, DEFAULT_TENANT_ID } from '@/lib/tenant';
 // ADR-0019 (2026-05-24): 月次 snapshot の集計は課金対象 featureUnit のみ対象。
-import { BILLABLE_FEATURE_UNITS } from '@/config/billing-feature-units';
+import {
+  BILLABLE_FEATURE_UNITS,
+  EMBEDDING_BILLABLE_FEATURE_UNITS,
+} from '@/config/billing-feature-units';
 // chore/storage-addon-backend-removal (2026-05-26):
 //   ADR-0020/0021 で従量課金化済のため旧 4 段階プラン (Standard/Plus/Pro/Enterprise) は撤去。
 //   storageAddonPlan / storageAddonJpy の snapshot 保存と applyScheduledStorageChanges 関連 stub を削除。
@@ -215,10 +218,10 @@ export async function saveMonthlyUsageSnapshots(now: Date = new Date()): Promise
       // (15 日なら UTC とテナント TZ がどちらでも同じ月になるため安全)
       const prevMonthMid = new Date(currentMonthStart.getTime() - 16 * 24 * 60 * 60 * 1000);
       const prevMonthStart = getTenantMonthStart(prevMonthMid, tenant.timezone);
-      // ADR-0019 (2026-05-24): 月次 snapshot は billable な ApiCallLog のみで集計。
-      //   無料 call (cost=0) は SUM 不変だが、_count._all は影響するため、明示的に
-      //   billable のみカウントする。これにより TenantMonthlyUsageHistory.apiCallCount が
-      //   「課金対象 call の月内総数」を正しく表す (= ダッシュボード / CSV / 請求書一致)。
+      // ADR-0019 (2026-05-24) → ADR-0022 (2026-06-01): 月次 snapshot は BILLABLE_FEATURE_UNITS の
+      //   SUM (= LLM + Embedding + Storage Overage の合算) を保存する。
+      //   無料 call (= EMBEDDING_BACKFILL / 未知 / Beginner Embedding cost=0) は costJpy=0 なので
+      //   SUM 不変だが、_count._all は影響するため明示的に billable のみカウント。
       const apiAgg = await prisma.apiCallLog.aggregate({
         where: {
           tenantId: tenant.id,
@@ -228,13 +231,10 @@ export async function saveMonthlyUsageSnapshots(now: Date = new Date()): Promise
         _count: { _all: true },
         _sum: { costJpy: true },
       });
-      // ADR-0020 (2026-05-25): BILLABLE_FEATURE_UNITS は 'db-capacity-overage' も含むため、
-      //   reconciledCostJpy には API 利用 + DB 容量超過の **合計** が入る。
-      //   TenantMonthlyUsageHistory.apiCostJpy フィールド名は歴史的経緯のままだが、
-      //   実際は「課金対象 ApiCallLog の総コスト」(= 総請求額の根拠) を表す。
-      //   3 回目検証 A-1: 将来 schema 拡張で dbCapacityOverageJpy カラムを分離する場合は
-      //   migration + saveMonthlyUsageSnapshots + deleteTenant snapshot + super_admin CSV を
-      //   3 レイヤ同期修正すること (feedback_3layer_sync_filter.md)。
+      // ADR-0019/0020/0022: reconciledCostJpy には LLM (project-upsert/suggestion-explanation/
+      //   auto-tag-extract) + Embedding (knowledge/risk-issue/retrospective/memo/chat/import/
+      //   attachment-embedding) + Storage Overage (db-capacity/file-storage) のすべてが入る。
+      //   = 総請求額の根拠 (請求書 = 本値 = Stripe Meter 送信合計、feedback_billing_invariant)。
       const reconciledCallCount = apiAgg._count._all;
       const reconciledCostJpy = apiAgg._sum.costJpy ?? 0;
 
@@ -251,8 +251,26 @@ export async function saveMonthlyUsageSnapshots(now: Date = new Date()): Promise
       });
       const fileStorageOverageJpy = fileStorageAgg._sum.costJpy ?? 0;
 
+      // ADR-0022 (2026-06-01): Embedding 系の内訳を独立 SUM して history 列に保存。
+      //   feedback_3layer_sync_filter: history で LLM / Embedding / Storage を分離表示するため。
+      //   reconciledCostJpy には既に含まれているので、本値は internal 列の breakdown 専用。
+      //   Beginner プランは cost=0 だが件数 (_count._all) は記録 (= UI 表示用)。
+      const embeddingAgg = await prisma.apiCallLog.aggregate({
+        where: {
+          tenantId: tenant.id,
+          createdAt: { gte: prevMonthStart, lt: currentMonthStart },
+          featureUnit: { in: [...EMBEDDING_BILLABLE_FEATURE_UNITS] },
+        },
+        _count: { _all: true },
+        _sum: { costJpy: true },
+      });
+      const embeddingCallCount = embeddingAgg._count._all;
+      const embeddingCostJpy = embeddingAgg._sum.costJpy ?? 0;
+
       // chore/storage-addon-backend-removal (2026-05-26): 旧 4 段階プラン月額は廃止のため
       //   totalJpy = API 利用料 (BILLABLE_FEATURE_UNITS で db-capacity / file-storage 超過も含む)。
+      //   ADR-0022 で BILLABLE_FEATURE_UNITS が Embedding も含むため、Embedding 課金も自動的に
+      //   totalJpy に乗る (= 二重カウントなし、SUM 真値)。
       const totalJpy = reconciledCostJpy;
 
       await prisma.tenantMonthlyUsageHistory.upsert({
@@ -270,6 +288,9 @@ export async function saveMonthlyUsageSnapshots(now: Date = new Date()): Promise
           // ADR-0021 (2026-05-26): ファイルストレージ peak + 当月課金内訳
           fileStorageBytesPeak: tenant.storageFileBytesPeakThisMonth,
           fileStorageOverageJpy,
+          // ADR-0022 (2026-06-01): Embedding 内訳
+          embeddingCallCount,
+          embeddingCostJpy,
           totalJpy,
         },
         update: {
@@ -280,6 +301,9 @@ export async function saveMonthlyUsageSnapshots(now: Date = new Date()): Promise
           storageBytesUsed: tenant.storageBytesUsed,
           fileStorageBytesPeak: tenant.storageFileBytesPeakThisMonth,
           fileStorageOverageJpy,
+          // ADR-0022 (2026-06-01): Embedding 内訳
+          embeddingCallCount,
+          embeddingCostJpy,
           totalJpy,
         },
       });
@@ -302,12 +326,17 @@ export async function saveMonthlyUsageSnapshots(now: Date = new Date()): Promise
  * 月初を跨いだテナントの API 呼び出しカウンタ + 課金額を 0 にリセットする (PR-4 でテナント TZ 月初基準に変更)。
  *
  * - 対象: deletedAt IS NULL AND (lastResetAt IS NULL OR lastResetAt < テナント TZ 当月初)
- * - 結果: currentMonthApiCallCount=0, currentMonthApiCostJpy=0, lastResetAt=テナント TZ 月初
+ * - 結果:
+ *     - currentMonthApiCallCount=0, currentMonthApiCostJpy=0 (= LLM 系 counter)
+ *     - currentMonthEmbeddingCallCount=0, currentMonthEmbeddingCostJpy=0 (= ADR-0022 で追加)
+ *     - lastResetAt=テナント TZ 月初
  * - 冪等: 一度適用済みのテナントは再対象外
  *
  * **PR-V8 (2026-05-19) 改訂**: リセット前の counter 値を audit_log に記録するように変更。
- *   これにより診断ダッシュボードで「いつ・どこから・どの値からリセットされたか」が追跡可能になる。
- *   audit_log は cron 経由なので userId は MANAGEMENT_USER_ID 相当 (= system user) を使う。
+ * **ADR-0022 (2026-06-01)**: Embedding counter (currentMonthEmbedding*) も同時にリセット。
+ *   3 レイヤ同期 (feedback_3layer_sync_filter): Tenant counter / 月初 snapshot / 履歴 CSV を
+ *   すべて更新する。Embedding counter は LLM とは独立に管理しているため、リセット漏れの
+ *   影響範囲は「翌月の累積件数が永遠に膨らみ続ける」となり致命的。
  *
  * 注意: cron は UTC ベースの起動時刻で動くが、判定はテナントごとの TZ ローカル月初。
  * cron を最低 hourly で動かせば各テナントの TZ 月初を逃さない。
@@ -323,6 +352,9 @@ export async function resetTenantMonthlyCounters(now: Date = new Date()): Promis
       // PR-V8: audit_log の before 値として記録
       currentMonthApiCallCount: true,
       currentMonthApiCostJpy: true,
+      // ADR-0022 (2026-06-01): Embedding counter も before 値として audit_log 記録
+      currentMonthEmbeddingCallCount: true,
+      currentMonthEmbeddingCostJpy: true,
     },
   });
 
@@ -346,6 +378,9 @@ export async function resetTenantMonthlyCounters(now: Date = new Date()): Promis
             data: {
               currentMonthApiCallCount: 0,
               currentMonthApiCostJpy: 0,
+              // ADR-0022 (2026-06-01): Embedding counter も同時リセット
+              currentMonthEmbeddingCallCount: 0,
+              currentMonthEmbeddingCostJpy: 0,
               lastResetAt: monthStart,
             },
           }),
@@ -359,12 +394,18 @@ export async function resetTenantMonthlyCounters(now: Date = new Date()): Promis
               beforeValue: {
                 currentMonthApiCallCount: t.currentMonthApiCallCount,
                 currentMonthApiCostJpy: t.currentMonthApiCostJpy,
+                // ADR-0022: Embedding counter before
+                currentMonthEmbeddingCallCount: t.currentMonthEmbeddingCallCount,
+                currentMonthEmbeddingCostJpy: t.currentMonthEmbeddingCostJpy,
                 lastResetAt: t.lastResetAt?.toISOString() ?? null,
               },
               afterValue: {
                 operation: 'monthly-reset',
                 currentMonthApiCallCount: 0,
                 currentMonthApiCostJpy: 0,
+                // ADR-0022: Embedding counter after
+                currentMonthEmbeddingCallCount: 0,
+                currentMonthEmbeddingCostJpy: 0,
                 lastResetAt: monthStart.toISOString(),
                 timezone: t.timezone,
               },
@@ -378,6 +419,9 @@ export async function resetTenantMonthlyCounters(now: Date = new Date()): Promis
           data: {
             currentMonthApiCallCount: 0,
             currentMonthApiCostJpy: 0,
+            // ADR-0022 (2026-06-01): Embedding counter も同時リセット
+            currentMonthEmbeddingCallCount: 0,
+            currentMonthEmbeddingCostJpy: 0,
             lastResetAt: monthStart,
           },
         });

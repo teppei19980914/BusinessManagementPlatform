@@ -159,6 +159,9 @@ describe('listMonthlyUsageHistory (P-5b / 2026-05-08)', () => {
         // ADR-0021 (2026-05-26): 履歴 DTO に追加された file storage 列
         fileStorageBytesPeak: null,
         fileStorageOverageJpy: null,
+        // ADR-0022 (2026-06-01): Embedding 内訳 (適用前の過去月は null)
+        embeddingCallCount: null,
+        embeddingCostJpy: null,
         totalJpy: 2500,
         tenantDeletedAt: null,
       },
@@ -174,6 +177,9 @@ describe('listMonthlyUsageHistory (P-5b / 2026-05-08)', () => {
         storageBytesUsed: 800 * 1024 * 1024,
         fileStorageBytesPeak: null,
         fileStorageOverageJpy: null,
+        // ADR-0022 (2026-06-01): Embedding 内訳 (適用前の過去月は null)
+        embeddingCallCount: null,
+        embeddingCostJpy: null,
         totalJpy: 45500,
         tenantDeletedAt: null,
       },
@@ -406,6 +412,8 @@ describe('deleteTenant (P-A / 2026-05-08)', () => {
       timezone: 'Asia/Tokyo',
       currentMonthApiCallCount: 250,
       currentMonthApiCostJpy: 2500,
+
+      currentMonthEmbeddingCallCount: 0, currentMonthEmbeddingCostJpy: 0,
       storageBytesUsed: BigInt(0),
     } as never);
 
@@ -542,6 +550,8 @@ describe('deleteTenant (P-A / 2026-05-08)', () => {
       timezone: 'Asia/Tokyo',
       currentMonthApiCallCount: 0,
       currentMonthApiCostJpy: 0,
+
+      currentMonthEmbeddingCallCount: 0, currentMonthEmbeddingCostJpy: 0,
       storageBytesUsed: BigInt(0),
     } as never);
 
@@ -1163,6 +1173,8 @@ describe('getDefaultTenantOwnSummary (2026-05-11)', () => {
       createdAt: new Date('2026-01-01T00:00:00Z'),
       currentMonthApiCallCount: 42,
       currentMonthApiCostJpy: 420,
+
+      currentMonthEmbeddingCallCount: 0, currentMonthEmbeddingCostJpy: 0,
       storageBytesUsed: BigInt(10 * 1024 * 1024), // 10MB
     } as never);
     vi.mocked(prisma.user.count).mockResolvedValueOnce(5 as never);
@@ -1207,6 +1219,8 @@ describe('getDefaultTenantOwnSummary (2026-05-11)', () => {
       createdAt: new Date('2026-01-01T00:00:00Z'),
       currentMonthApiCallCount: 0,
       currentMonthApiCostJpy: 0,
+
+      currentMonthEmbeddingCallCount: 0, currentMonthEmbeddingCostJpy: 0,
       storageBytesUsed: BigInt(0),
     } as never);
     vi.mocked(prisma.user.count).mockResolvedValueOnce(0 as never);
@@ -1437,6 +1451,7 @@ describe('listAllTenants — 請求対象テナント一覧 (顧客のみ)', () 
       {
         id: 'tenant-a', tenantSeq: 2, slug: 'a', name: 'A', plan: 'beginner',
         currentMonthApiCallCount: 80, currentMonthApiCostJpy: 800,
+        currentMonthEmbeddingCallCount: 0, currentMonthEmbeddingCostJpy: 0,
         monthlyBudgetCapJpy: null, createdAt: new Date('2026-01-01'),
         billingType: 'corporate', billingCompanyName: 'A社',
         billingContactName: '山田', billingContactEmail: 'a@a.com',
@@ -1450,6 +1465,7 @@ describe('listAllTenants — 請求対象テナント一覧 (顧客のみ)', () 
       {
         id: 'tenant-b', tenantSeq: 3, slug: 'b', name: 'B', plan: 'expert',
         currentMonthApiCallCount: 300, currentMonthApiCostJpy: 1500,
+        currentMonthEmbeddingCallCount: 0, currentMonthEmbeddingCostJpy: 0,
         monthlyBudgetCapJpy: 10000, createdAt: new Date('2026-02-01'),
         billingType: 'individual', billingCompanyName: null,
         billingContactName: '田中', billingContactEmail: 'b@b.com',
@@ -1463,6 +1479,7 @@ describe('listAllTenants — 請求対象テナント一覧 (顧客のみ)', () 
       {
         id: 'tenant-c', tenantSeq: 4, slug: 'c', name: 'C', plan: 'pro',
         currentMonthApiCallCount: 1000, currentMonthApiCostJpy: 15000,
+        currentMonthEmbeddingCallCount: 0, currentMonthEmbeddingCostJpy: 0,
         monthlyBudgetCapJpy: 100000, createdAt: new Date('2026-03-01'),
         billingType: 'corporate', billingCompanyName: 'C社',
         billingContactName: '佐藤', billingContactEmail: 'c@c.com',
@@ -1506,6 +1523,7 @@ describe('listAllTenants — 請求対象テナント一覧 (顧客のみ)', () 
       {
         id: 'tenant-active', tenantSeq: 2, slug: 'active', name: 'Active', plan: 'expert',
         currentMonthApiCallCount: 100, currentMonthApiCostJpy: 1000,
+        currentMonthEmbeddingCallCount: 0, currentMonthEmbeddingCostJpy: 0,
         monthlyBudgetCapJpy: null, createdAt: new Date('2026-01-01'),
         billingType: 'corporate', billingCompanyName: 'X',
         billingContactName: 'A', billingContactEmail: 'a@x.com',
@@ -1518,6 +1536,7 @@ describe('listAllTenants — 請求対象テナント一覧 (顧客のみ)', () 
       {
         id: 'tenant-cancelled', tenantSeq: 3, slug: 'cancelled', name: 'Cancelled', plan: 'expert',
         currentMonthApiCallCount: 50, currentMonthApiCostJpy: 500,
+        currentMonthEmbeddingCallCount: 0, currentMonthEmbeddingCostJpy: 0,
         monthlyBudgetCapJpy: null, createdAt: new Date('2026-01-01'),
         billingType: 'corporate', billingCompanyName: 'Y',
         billingContactName: 'B', billingContactEmail: 'b@y.com',
@@ -1559,6 +1578,7 @@ describe('listAllTenants — 請求対象テナント一覧 (顧客のみ)', () 
       {
         id: 'tenant-only', tenantSeq: 1, slug: 'only', name: 'Only', plan: 'beginner',
         currentMonthApiCallCount: 0, currentMonthApiCostJpy: 0,
+        currentMonthEmbeddingCallCount: 0, currentMonthEmbeddingCostJpy: 0,
         monthlyBudgetCapJpy: null, createdAt: new Date('2026-01-01'),
         billingType: 'corporate', billingCompanyName: null,
         billingContactName: null, billingContactEmail: null,
@@ -1645,6 +1665,7 @@ describe('getTenantDetail — テナント単位の詳細 (請求の根拠デー
     vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce({
       id: DEFAULT, tenantSeq: null, slug: 'default', name: 'Default',
       plan: 'expert', currentMonthApiCallCount: 42, currentMonthApiCostJpy: 420,
+        currentMonthEmbeddingCallCount: 0, currentMonthEmbeddingCostJpy: 0,
       monthlyBudgetCapJpy: null, createdAt: new Date('2026-01-01'),
       billingType: 'individual', billingCompanyName: null,
       billingContactName: null, billingContactEmail: null,
@@ -1683,6 +1704,7 @@ describe('getTenantDetail — テナント単位の詳細 (請求の根拠デー
     vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce({
       id: 'tenant-x', tenantSeq: 2, slug: 'x', name: 'X', plan: 'expert',
       currentMonthApiCallCount: 0, currentMonthApiCostJpy: 0,
+        currentMonthEmbeddingCallCount: 0, currentMonthEmbeddingCostJpy: 0,
       monthlyBudgetCapJpy: null, createdAt: new Date('2026-01-01'),
       billingType: 'corporate', billingCompanyName: null,
       billingContactName: null, billingContactEmail: null,
@@ -1729,6 +1751,7 @@ describe('getTenantDetail — テナント単位の詳細 (請求の根拠デー
     vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce({
       id: 'tenant-expired', tenantSeq: 5, slug: 'e', name: 'Expired',
       plan: 'beginner', currentMonthApiCallCount: 0, currentMonthApiCostJpy: 0,
+        currentMonthEmbeddingCallCount: 0, currentMonthEmbeddingCostJpy: 0,
       monthlyBudgetCapJpy: null, createdAt: ninetyOneDaysAgo,
       billingType: 'individual', billingCompanyName: null,
       billingContactName: null, billingContactEmail: null,

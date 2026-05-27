@@ -137,6 +137,7 @@ describe('当月分 CSV (= 現在値、yearMonth パラメータなし)', () => 
         id: 't-a', tenantSeq: 2, slug: 'a', name: '顧客A', plan: 'expert',
         // 2026-05-15 価格改定後: Expert ¥5/call × 300 calls = ¥1500
         currentMonthApiCallCount: 300, currentMonthApiCostJpy: 1500,
+        currentMonthEmbeddingCallCount: 0, currentMonthEmbeddingCostJpy: 0,
         monthlyBudgetCapJpy: 10000, activeUserCount: 5,
         createdAt: new Date('2026-01-01'),
         billingType: 'corporate', billingCompanyName: 'A社',
@@ -182,6 +183,7 @@ describe('当月分 CSV (= 現在値、yearMonth パラメータなし)', () => 
       {
         id: 't-a', tenantSeq: 1, slug: 'a', name: 'A', plan: 'beginner',
         currentMonthApiCallCount: 80, currentMonthApiCostJpy: 0,
+        currentMonthEmbeddingCallCount: 0, currentMonthEmbeddingCostJpy: 0,
         monthlyBudgetCapJpy: null, activeUserCount: 2,
         createdAt: new Date('2026-01-01'),
         billingType: 'corporate', billingCompanyName: null,
@@ -197,6 +199,7 @@ describe('当月分 CSV (= 現在値、yearMonth パラメータなし)', () => 
         id: 't-b', tenantSeq: 2, slug: 'b', name: 'B', plan: 'pro',
         // 2026-05-15 価格改定後: Pro ¥15/call × 1500 calls = ¥22500
         currentMonthApiCallCount: 1500, currentMonthApiCostJpy: 22500,
+        currentMonthEmbeddingCallCount: 0, currentMonthEmbeddingCostJpy: 0,
         monthlyBudgetCapJpy: 100000, activeUserCount: 12,
         createdAt: new Date('2026-02-01'),
         billingType: 'corporate', billingCompanyName: null,
@@ -226,6 +229,7 @@ describe('当月分 CSV (= 現在値、yearMonth パラメータなし)', () => 
       {
         id: 't-x', tenantSeq: 1, slug: 'x', name: 'Foo, "Bar"\nBaz', plan: 'expert',
         currentMonthApiCallCount: 0, currentMonthApiCostJpy: 0,
+        currentMonthEmbeddingCallCount: 0, currentMonthEmbeddingCostJpy: 0,
         monthlyBudgetCapJpy: null, activeUserCount: 0,
         createdAt: new Date('2026-01-01'),
         billingType: 'corporate', billingCompanyName: null,
@@ -298,8 +302,11 @@ describe('過去月 CSV (= 履歴値、yearMonth=YYYY-MM 指定)', () => {
     const body = await res.text();
 
     // 2026-04 のみが CSV に出る (= 2026-03 行は除外)
-    expect(body).toContain('A,expert,200,2000,3');
-    expect(body).not.toContain(',100,1000,');
+    // ADR-0022 (2026-06-01): 履歴 CSV に Embedding 内訳 2 列が追加された (ADR-0022 適用前の過去月は空欄)。
+    //   新フォーマット: 連番,テナント名,プラン,API呼出,API課金,Embedding呼出,Embedding課金,アクティブUser,...
+    expect(body).toContain('A,expert,200,2000,,,3');
+    // 他月混入チェック (= 2026-03 のテナント A: 連番1,A,expert,100,1000,...)
+    expect(body).not.toContain('1,A,expert,100,1000,,,');
     expect(res.headers.get('Content-Disposition')).toContain('tenant-usage-2026-04.csv');
   });
 
@@ -389,6 +396,7 @@ describe('includeDeleted フラグ (月途中解約の請求検知)', () => {
         id: 't-cancelled', tenantSeq: 5, slug: 'c', name: '5月途中解約', plan: 'expert',
         // 2026-05-15 価格改定後: 80 calls × ¥5 = ¥400
         currentMonthApiCallCount: 80, currentMonthApiCostJpy: 400,
+        currentMonthEmbeddingCallCount: 0, currentMonthEmbeddingCostJpy: 0,
         monthlyBudgetCapJpy: null, activeUserCount: 0,
         createdAt: new Date('2026-01-01'),
         billingType: 'corporate', billingCompanyName: 'X社',
@@ -422,6 +430,7 @@ describe('includeDeleted フラグ (月途中解約の請求検知)', () => {
         id: 't-active', tenantSeq: 2, slug: 'a', name: 'Active', plan: 'expert',
         // 2026-05-15 価格改定後: 100 calls × ¥5 = ¥500
         currentMonthApiCallCount: 100, currentMonthApiCostJpy: 500,
+        currentMonthEmbeddingCallCount: 0, currentMonthEmbeddingCostJpy: 0,
         monthlyBudgetCapJpy: null, activeUserCount: 3,
         createdAt: new Date('2026-01-01'),
         billingType: 'corporate', billingCompanyName: null,
@@ -488,6 +497,7 @@ describe('★PR-V8 請求 regression★ CSV エクスポートは ApiCallLog SUM
         id: 't-x', tenantSeq: 9, slug: 'x', name: 'DriftedX', plan: 'expert',
         // counter は壊れた値 (drift)
         currentMonthApiCallCount: 1, currentMonthApiCostJpy: 5,
+        currentMonthEmbeddingCallCount: 0, currentMonthEmbeddingCostJpy: 0,
         monthlyBudgetCapJpy: null, activeUserCount: 1,
         createdAt: new Date('2026-01-01'),
         billingType: 'corporate', billingCompanyName: null,
@@ -544,6 +554,7 @@ describe('★PR-V8 請求 regression★ CSV エクスポートは ApiCallLog SUM
       {
         id: 't-y', tenantSeq: 10, slug: 'y', name: 'CleanY', plan: 'expert',
         currentMonthApiCallCount: 100, currentMonthApiCostJpy: 500,
+        currentMonthEmbeddingCallCount: 0, currentMonthEmbeddingCostJpy: 0,
         monthlyBudgetCapJpy: null, activeUserCount: 2,
         createdAt: new Date('2026-01-01'),
         billingType: 'corporate', billingCompanyName: null,
@@ -578,6 +589,7 @@ describe('★PR-V8 請求 regression★ CSV エクスポートは ApiCallLog SUM
       {
         id: 't-z', tenantSeq: 11, slug: 'z', name: 'NoReconcileZ', plan: 'expert',
         currentMonthApiCallCount: 50, currentMonthApiCostJpy: 250,
+        currentMonthEmbeddingCallCount: 0, currentMonthEmbeddingCostJpy: 0,
         monthlyBudgetCapJpy: null, activeUserCount: 1,
         createdAt: new Date('2026-01-01'),
         billingType: 'corporate', billingCompanyName: null,

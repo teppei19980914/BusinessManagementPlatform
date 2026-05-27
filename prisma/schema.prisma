@@ -67,9 +67,24 @@ model Tenant {
   tenantSeq                            Int?      @unique @map("tenant_seq")
   /// 'beginner' | 'expert' | 'pro'
   plan                                 String    @default("beginner") @db.VarChar(20)
+  /// LLM 系 (project-upsert / suggestion-explanation / auto-tag-extract) の当月呼出回数。
+  /// ADR-0019 後: 課金対象 LLM_BILLABLE_FEATURE_UNITS のみで increment、Beginner 50 件上限の判定対象。
+  /// ADR-0022 (2026-06-01): Embedding 系は別カラム (currentMonthEmbedding*) で管理し本カラムには加算しない。
   currentMonthApiCallCount             Int       @default(0) @map("current_month_api_call_count")
+  /// LLM 系の当月課金額 (円整数)。同上の featureUnit のみで increment。monthlyBudgetCap の予測超過判定対象。
   currentMonthApiCostJpy               Int       @default(0) @map("current_month_api_cost_jpy")
+  /// ADR-0022 (2026-06-01): Embedding 系 (knowledge/risk-issue/retrospective/memo/chat-semantic-search/
+  ///   external-import/attachment-embedding) の当月呼出回数。全プランで increment (= 件数記録用、
+  ///   Beginner も件数は記録され UI で「件数 N 件 / ¥0」表示)。
+  ///   embedding-backfill は cron 自動リカバリのためユーザ負担外 → 本カラムには加算しない (= ApiCallLog のみ記録)。
+  ///   Beginner 50 件上限 / monthlyBudgetCap の判定対象外 (= 既存 LLM 上限ロジックは不変)。
+  currentMonthEmbeddingCallCount       Int       @default(0) @map("current_month_embedding_call_count")
+  /// ADR-0022 (2026-06-01): Embedding 系の当月課金額 (円整数)。Beginner=0 / Expert=件数×¥1 / Pro=件数×¥1。
+  ///   billing-aggregation.service が invoice/bank_transfer テナントの請求書を作るときの源泉。
+  ///   feedback_billing_invariant: ApiCallLog SUM (真値) = 本カラム = 画面表示 = CSV = 請求書 の整合性必須。
+  currentMonthEmbeddingCostJpy         Int       @default(0) @map("current_month_embedding_cost_jpy")
   /// ユーザ自己設定の月次予算上限 (円)。NULL = 無制限。withMeteredLLM が予測コスト超過チェックで参照。
+  ///   ADR-0022: 判定対象は LLM_BILLABLE のみ (= Embedding はチャット検索/資産入力に必須のため予算上限とは独立)。
   monthlyBudgetCapJpy                  Int?      @map("monthly_budget_cap_jpy")
   /// Beginner プランの月間 API 呼び出し回数上限 (default **50**、ADR-0019 改定: 100 → 50)。
   /// 上限カウント対象は **課金対象 featureUnit のみ** (= `BILLABLE_FEATURE_UNITS`)。
@@ -286,6 +301,12 @@ model Tenant {
   stripeSubscriptionItemHaikuId   String?   @map("stripe_subscription_item_haiku_id") @db.VarChar(50)
   /// Sonnet (Pro plan) per-call Subscription Item ID
   stripeSubscriptionItemSonnetId  String?   @map("stripe_subscription_item_sonnet_id") @db.VarChar(50)
+  /// ADR-0022 (2026-06-01) Embedding per-call (Expert/Pro 共通、Beginner は subscribe しない) の
+  ///   Subscription Item ID。Meter event 'tasukiba_embedding_call' に紐付く Price (¥1/unit) を
+  ///   `STRIPE_PRICE_EMBEDDING` 環境変数で指定し、createSubscriptionForTenant が当該 env 設定時のみ
+  ///   Subscription Item を追加 (= 未設定なら従来通り Haiku+Sonnet 2 本だけで動作 = リリース時の挙動)。
+  ///   Stripe-ready 設計: env を後付け設定するだけでクレジットカード払い経路が自動的に動き出す。
+  stripeSubscriptionItemEmbeddingId String? @map("stripe_subscription_item_embedding_id") @db.VarChar(50)
   // chore/storage-addon-backend-removal (2026-05-26): stripe_subscription_item_storage_id 撤去
   /// Default Payment Method ID (= デフォルトの請求用カード)。Stripe Checkout 登録後に保存
   stripeDefaultPaymentMethodId    String?   @map("stripe_default_payment_method_id") @db.VarChar(50)
@@ -1524,10 +1545,28 @@ model TenantMonthlyUsageHistory {
   tenantId         String   @map("tenant_id") @db.Uuid
   /// "YYYY-MM" 形式 (例: "2026-04" = 2026 年 4 月分)
   yearMonth        String   @map("year_month") @db.VarChar(7)
-  /// 当月総コール数 (= リセット直前の Tenant.currentMonthApiCallCount)
+  /// 当月総コール数 (BILLABLE_FEATURE_UNITS の SUM、ADR-0019/0020/0021/0022 合算)。
+  ///   旧来から「課金対象 ApiCallLog 月内総数」のセマンティクスを保持 (= 後方互換)。
+  ///   ADR-0022 (2026-06-01): BILLABLE_FEATURE_UNITS が Embedding 系も含むようになったため、
+  ///   本カラムは LLM_BILLABLE + EMBEDDING_BILLABLE + STORAGE_OVERAGE のすべての合算となる。
+  ///   内訳は embeddingCallCount (Embedding 部分の subset) で表示可能。
+  ///   注意: Tenant.currentMonthApiCallCount (= LLM のみリアルタイム counter) とは別セマンティクス。
+  ///   PR-V8 以降は ApiCallLog 真値から再集計するため counter とは独立。
   apiCallCount     Int      @map("api_call_count")
-  /// 当月総課金額 (= リセット直前の Tenant.currentMonthApiCostJpy、円整数)
+  /// 当月総課金額 (BILLABLE_FEATURE_UNITS の costJpy SUM、円整数、ADR-0019/0020/0021/0022 合算)。
+  ///   Embedding 系も含む (= apiCallCount と同じセマンティクス)。請求書根拠の総額。
   apiCostJpy       Int      @map("api_cost_jpy")
+  /// ADR-0022 (2026-06-01) 内訳列: 当月の Embedding 系 (EMBEDDING_BILLABLE_FEATURE_UNITS) 呼出回数。
+  ///   全プランで件数を記録 (Beginner も件数記録、UI で「Embedding 200 件 / ¥0」表示用)。
+  ///   embedding-backfill (cron 自動リカバリ) は対象外。
+  ///   apiCallCount のうちの Embedding 部分を示す subset 値 (= apiCallCount >= embeddingCallCount)。
+  ///   NULL = ADR-0022 適用前の過去月 (= 既存履歴の後方互換性確保)。
+  embeddingCallCount Int?   @map("embedding_call_count")
+  /// ADR-0022 (2026-06-01) 内訳列: 当月の Embedding 系課金額 (円整数)。
+  ///   Beginner=0 / Expert=件数×¥1 / Pro=件数×¥1。apiCostJpy のうちの Embedding 部分を示す subset。
+  ///   feedback_billing_invariant: ApiCallLog SUM (真値) = 本カラム = CSV = 請求書 の整合性必須。
+  ///   NULL = ADR-0022 適用前の過去月。
+  embeddingCostJpy Int?     @map("embedding_cost_jpy")
   /// 当月末時点のプラン (請求書根拠用)
   plan             String   @db.VarChar(20)
   /// 当月末時点のアクティブユーザ数 (請求書根拠用)
@@ -1769,7 +1808,11 @@ model BillingHistory {
 model StripeUsageRecordQueue {
   id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   tenantId     String    @map("tenant_id") @db.Uuid
-  /// 'haiku' / 'sonnet' = Subscription Item の識別 (= tenant の subscriptionItemId を解決)
+  /// 'haiku' / 'sonnet' / 'embedding' = Subscription Item / Meter event の識別。
+  ///   ADR-0022 (2026-06-01): 'embedding' を追加 (= Embedding 機能 ¥1/call、Meter event
+  ///   'tasukiba_embedding_call')。stripe-usage-flush.service が STRIPE_METER_EVENT_NAMES
+  ///   から event_name を解決する。STRIPE_PRICE_EMBEDDING 未設定でも queue に積まれるが、
+  ///   flush 時に price が解決できなければ skip + retry (Stripe-ready 設計)。
   callType     String    @map("call_type") @db.VarChar(20)
   /// 元の ApiCallLog.id (= idempotency_key として使用)
   apiCallLogId String    @map("api_call_log_id") @db.Uuid

@@ -46,7 +46,7 @@ export default async function SuperAdminUsagePage() {
         Default テナントの情報は下部の専用セクションを参照してください。
       </p>
 
-      <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
         <UsageCard
           label="顧客テナント数"
           value={summary.tenantCount.toString()}
@@ -58,17 +58,33 @@ export default async function SuperAdminUsagePage() {
           unit="人"
         />
         <UsageCard
-          label="今月の API 呼出"
+          label="今月の API 呼出 (全 billable)"
           value={summary.totalCurrentMonthApiCalls.toLocaleString()}
           unit="回"
+          subValue="LLM + Embedding + Storage 超過 の合算"
         />
         {/* chore/storage-addon-backend-removal (2026-05-26): 旧 4 段階プラン Storage 月額は撤去。
-            ApiCallLog 集計 (DB / file storage 超過の従量課金も含む) に統合 */}
+            ApiCallLog 集計 (DB / file storage 超過の従量課金も含む) に統合
+            ADR-0022 (2026-06-01): Embedding 課金も統合されたため totalCurrentMonthApiCostJpy が
+            LLM + Embedding + Storage の総和を表す */}
         <UsageCard
           label="今月の合計課金"
           value={`¥${summary.totalCurrentMonthApiCostJpy.toLocaleString()}`}
           unit=""
-          subValue="ApiCallLog 集計 (DB / ファイルストレージ超過の従量課金を含む)"
+          subValue="LLM + Embedding + DB/ファイルストレージ超過 の合算"
+        />
+        {/* ADR-0022 (2026-06-01): Embedding 内訳 KPI カード (= 全体課金のうち Embedding 部分) */}
+        <UsageCard
+          label="今月の Embedding 呼出 (内訳)"
+          value={summary.totalCurrentMonthEmbeddingCalls.toLocaleString()}
+          unit="回"
+          subValue="Beginner=無料 / Expert=Pro=¥1/回"
+        />
+        <UsageCard
+          label="今月の Embedding 課金 (内訳)"
+          value={`¥${summary.totalCurrentMonthEmbeddingCostJpy.toLocaleString()}`}
+          unit=""
+          subValue="全体合計のうち Embedding 部分"
         />
       </section>
 
@@ -191,8 +207,11 @@ export default async function SuperAdminUsagePage() {
                   <th className="p-2 text-left">月</th>
                   <th className="p-2 text-left">テナント</th>
                   <th className="p-2 text-left">プラン</th>
-                  <th className="p-2 text-right">API 呼出</th>
+                  <th className="p-2 text-right" title="LLM + Embedding + Storage 超過の合算">API 呼出</th>
                   <th className="p-2 text-right">API 費用</th>
+                  {/* ADR-0022 (2026-06-01): Embedding 内訳 (ADR-0022 適用前の過去月は - 表示) */}
+                  <th className="p-2 text-right" title="Embedding 系の月内呼出回数 (ADR-0022 内訳)">Embedding 呼出</th>
+                  <th className="p-2 text-right" title="Embedding 系の月内課金 (Beginner=0、Expert/Pro=件数×¥1)">Embedding 費用</th>
                   <th className="p-2 text-right">アクティブユーザ</th>
                 </tr>
               </thead>
@@ -210,6 +229,13 @@ export default async function SuperAdminUsagePage() {
                       <td className="p-2 capitalize">{r.plan}</td>
                       <td className="p-2 text-right">{r.apiCallCount.toLocaleString()}</td>
                       <td className="p-2 text-right">¥{r.apiCostJpy.toLocaleString()}</td>
+                      {/* ADR-0022: 適用前の過去月は null → '-' 表示 */}
+                      <td className="p-2 text-right text-muted-foreground">
+                        {r.embeddingCallCount != null ? r.embeddingCallCount.toLocaleString() : '-'}
+                      </td>
+                      <td className="p-2 text-right text-muted-foreground">
+                        {r.embeddingCostJpy != null ? `¥${r.embeddingCostJpy.toLocaleString()}` : '-'}
+                      </td>
                       <td className="p-2 text-right">{r.activeUserCount}</td>
                     </tr>
                   )),
@@ -276,20 +302,32 @@ function DefaultTenantUsageSection({
           Default テナントが存在しません (seed 未投入または削除済)。
         </p>
       ) : (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
           <UsageCard
             label="アクティブユーザ"
             value={defaultTenant.activeUserCount.toString()}
             unit="人"
           />
           <UsageCard
-            label="今月の API 呼出"
+            label="今月の API 呼出 (LLM)"
             value={defaultTenant.currentMonthApiCallCount.toLocaleString()}
             unit="回"
           />
           <UsageCard
-            label="今月の API 費用 (参考)"
+            label="今月の API 費用 (LLM、参考)"
             value={`¥${defaultTenant.currentMonthApiCostJpy.toLocaleString()}`}
+            unit=""
+            subValue="(請求対象外)"
+          />
+          {/* ADR-0022 (2026-06-01): Embedding 内訳カード (Default テナントも件数記録、参考) */}
+          <UsageCard
+            label="今月の Embedding 呼出"
+            value={defaultTenant.currentMonthEmbeddingCallCount.toLocaleString()}
+            unit="回"
+          />
+          <UsageCard
+            label="今月の Embedding 費用 (参考)"
+            value={`¥${defaultTenant.currentMonthEmbeddingCostJpy.toLocaleString()}`}
             unit=""
             subValue="(請求対象外)"
           />

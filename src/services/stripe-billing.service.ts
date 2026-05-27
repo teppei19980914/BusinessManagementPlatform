@@ -238,6 +238,11 @@ export async function setupSubscriptionWithExistingCard(
   const prices = getStripePriceConfig();
   const haikuItem = subscription.items.data.find((i) => i.price.id === prices.haiku);
   const sonnetItem = subscription.items.data.find((i) => i.price.id === prices.sonnet);
+  // ADR-0022 (2026-06-01): Embedding Item は optional (STRIPE_PRICE_EMBEDDING 設定時のみ)
+  const embeddingItem =
+    prices.embedding != null
+      ? subscription.items.data.find((i) => i.price.id === prices.embedding)
+      : undefined;
   const currentYearMonth = getTenantCurrentYearMonth(
     new Date(),
     tenant.timezone ?? 'Asia/Tokyo',
@@ -251,6 +256,8 @@ export async function setupSubscriptionWithExistingCard(
         stripeSubscriptionStatus: subscription.status,
         stripeSubscriptionItemHaikuId: haikuItem?.id ?? null,
         stripeSubscriptionItemSonnetId: sonnetItem?.id ?? null,
+        // ADR-0022: Embedding Item ID も保存 (= 未設定なら null、Stripe-ready)
+        stripeSubscriptionItemEmbeddingId: embeddingItem?.id ?? null,
         stripeDefaultPaymentMethodId: paymentMethodId,
         cardLastVerifiedAt: new Date(),
         cardVerificationStatus: 'valid',
@@ -499,6 +506,11 @@ export async function completeStripeSetup(
   const prices = getStripePriceConfig();
   const haikuItem = subscription.items.data.find((i) => i.price.id === prices.haiku);
   const sonnetItem = subscription.items.data.find((i) => i.price.id === prices.sonnet);
+  // ADR-0022 (2026-06-01): Embedding Item は optional (STRIPE_PRICE_EMBEDDING 設定時のみ)
+  const embeddingItem =
+    prices.embedding != null
+      ? subscription.items.data.find((i) => i.price.id === prices.embedding)
+      : undefined;
 
   const currentYearMonth = getTenantCurrentYearMonth(
     new Date(),
@@ -513,6 +525,8 @@ export async function completeStripeSetup(
         stripeSubscriptionStatus: subscription.status,
         stripeSubscriptionItemHaikuId: haikuItem?.id ?? null,
         stripeSubscriptionItemSonnetId: sonnetItem?.id ?? null,
+        // ADR-0022: Embedding Item ID も保存 (= 未設定なら null、Stripe-ready)
+        stripeSubscriptionItemEmbeddingId: embeddingItem?.id ?? null,
         paymentMethod: 'credit_card',
       },
     });
@@ -809,11 +823,20 @@ export async function createSubscriptionForTenant(
   const stripe = getStripe();
   const prices = getStripePriceConfig();
 
-  // Subscription Items: Haiku + Sonnet のみ (= Storage add-on は廃止)
+  // Subscription Items: Haiku + Sonnet + (optional) Embedding。
+  // ADR-0022 (2026-06-01) Stripe-ready 設計:
+  //   - STRIPE_PRICE_EMBEDDING 未設定 (= リリース時の挙動): Haiku+Sonnet 2 本のみ
+  //   - STRIPE_PRICE_EMBEDDING 設定済 (= 将来 Stripe 有効化時): 3 本目として Embedding を追加
+  //     これにより withMeteredLLM が embedding event で投入する queue が flush 時に
+  //     Subscription Item と紐付き、Stripe Invoice に Embedding 課金が反映される。
+  //   コード変更ゼロで Stripe 有効化が完結する設計。
   const items: Stripe.SubscriptionCreateParams.Item[] = [
     { price: prices.haiku },
     { price: prices.sonnet },
   ];
+  if (prices.embedding != null) {
+    items.push({ price: prices.embedding });
+  }
 
   const params: Stripe.SubscriptionCreateParams = {
     customer: tenant.stripeCustomerId,
@@ -1046,6 +1069,8 @@ async function clearTenantStripeSubscriptionFields(tenantId: string): Promise<vo
       stripeSubscriptionStatus: 'canceled',
       stripeSubscriptionItemHaikuId: null,
       stripeSubscriptionItemSonnetId: null,
+      // ADR-0022 (2026-06-01): Embedding Item ID もクリア (= Subscription 全体が消えた前提)
+      stripeSubscriptionItemEmbeddingId: null,
       stripeDefaultPaymentMethodId: null,
       cardVerificationStatus: null,
       cardLastVerifiedAt: null,

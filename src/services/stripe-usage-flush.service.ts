@@ -112,15 +112,26 @@ export async function flushStripeUsageRecordQueue(): Promise<FlushStripeUsageRes
     // PR-V8: callType は 'haiku' / 'sonnet' の型を維持 (= STRIPE_METER_EVENT_NAMES で変換)
     // ADR-0020 (2026-05-25): 'db_capacity_overage' も追加 (= R6 案 A、quantity は円整数 / Price ¥1/unit)
     // ADR-0021 (2026-05-26): 'storage_file_overage' も追加 (同設計、Price ¥1/unit で円整数 quantity)
+    // ADR-0022 (2026-06-01): 'embedding' を追加 (= Embedding ¥1/call、Meter event 'tasukiba_embedding_call')。
+    //   withMeteredLLM が EMBEDDING_BILLABLE 呼出時に投入する queue 行をここで送信。
+    //   STRIPE_PRICE_EMBEDDING 未設定でも queue は積まれるが、Stripe 側で Subscription Item と
+    //   紐付かないため Meter event は受領されるが課金に反映されない (= Stripe-ready、運用作業で完結)。
     const stripeCustomerId = row.tenant.stripeCustomerId;
-    const callType: 'haiku' | 'sonnet' | 'db_capacity_overage' | 'storage_file_overage' =
+    const callType:
+      | 'haiku'
+      | 'sonnet'
+      | 'db_capacity_overage'
+      | 'storage_file_overage'
+      | 'embedding' =
       row.callType === 'sonnet'
         ? 'sonnet'
         : row.callType === 'db_capacity_overage'
           ? 'db_capacity_overage'
           : row.callType === 'storage_file_overage'
             ? 'storage_file_overage'
-            : 'haiku';
+            : row.callType === 'embedding'
+              ? 'embedding'
+              : 'haiku';
 
     if (stripeCustomerId == null) {
       // テナント設定不整合 (= setup 未完了 / 解約後 など)。DLQ 入りで運用調査。

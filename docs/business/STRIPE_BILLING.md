@@ -1,9 +1,19 @@
 # Stripe Metered Billing 連携仕様 (v1.x)
 
-最終更新: 2026-05-25 (ADR-0019 価格改定反映)
-ステータス: **仕様確定 + 実装済 (PR #425 で UAT 検出問題群を反映、PR #441 で ADR-0019 価格改定反映)**
+最終更新: 2026-06-01 (ADR-0022 Embedding 課金反映)
+ステータス: **仕様確定 + 実装済 (PR #425 で UAT 検出問題群を反映、PR #441 で ADR-0019 価格改定反映、ADR-0022 で Embedding 課金導入)**
 
-> 🆕 **ADR-0019 (2026-05-24) 価格改定反映済**: Expert ¥5 → ¥10 / Pro ¥15 据置 / 課金対象を `BILLABLE_FEATURE_UNITS` (project-upsert / suggestion-explanation / auto-tag-extract) のみに限定 / 資産入力・チャット検索・CSV インポート・月初 backfill cron は全プラン無料化。詳細: [ADR-0019](../adr/0019-billable-feature-units-and-free-tier-expansion.md)
+> 🆕 **ADR-0022 (2026-06-01) Embedding 課金導入反映済**:
+> - **Beginner プラン**: Embedding 系 (資産入力・チャット検索・CSV インポート・添付ファイル本文 embedding) は **¥0 維持** (= 「90 日完全無料」訴求保全)
+> - **Expert / Pro プラン**: Embedding 系を **¥1 / 業務操作** で従量課金 (= 1 ApiCallLog = 1 課金、CSV 100 件取込でも ¥1 の集約設計)
+> - **embedding-backfill** (月初 cron 自動リカバリ): 全プラン無料維持 (= ユーザ非起動の修復処理は不当請求リスク回避)
+> - **Fair Use Limit** (月 10,000 calls/tenant): Beginner プラン専用に縮小 (Expert/Pro は `monthlyBudgetCap` で自然防御)
+> - **新 Stripe Meter event 名**: `tasukiba_embedding_call`
+> - **新 Price ID 環境変数**: `STRIPE_PRICE_EMBEDDING` (= optional、リリース時は未設定、将来 Stripe 有効化時に設定 = Stripe-ready 設計)
+>
+> 詳細: [ADR-0022](../adr/0022-embedding-usage-based-billing.md)
+>
+> **ADR-0019 (2026-05-24) 価格改定反映済** (ADR-0022 で部分 supersede): Expert ¥5 → ¥10 / Pro ¥15 据置 / 課金対象を `BILLABLE_FEATURE_UNITS` (= ADR-0022 で 4 階層化、`LLM_BILLABLE` + `EMBEDDING_BILLABLE` + `STORAGE_OVERAGE` の合算) に限定。詳細: [ADR-0019](../adr/0019-billable-feature-units-and-free-tier-expansion.md)
 関連:
 - 詳細技術設計: [docs/design/STRIPE_TECHNICAL_DESIGN.md](../design/STRIPE_TECHNICAL_DESIGN.md) (= 本仕様の「how」レベル詳細)
 - 設計判断: [docs/adr/0006-stripe-metered-billing-integration.md](../adr/0006-stripe-metered-billing-integration.md)
@@ -164,8 +174,11 @@ model BillingHistory {
 |---|---|---|---|
 | Expert プロジェクト作成/更新 (Haiku) | `STRIPE_PRICE_HAIKU` | Metered (per_unit) | **¥10 / call** (ADR-0019 / 2026-05-24 改定: ¥5 → ¥10) |
 | Pro プロジェクト作成/更新 + なぜ機能 (Sonnet) | `STRIPE_PRICE_SONNET` | Metered (per_unit) | **¥15 / call** (据置) |
+| **Embedding 業務操作** (ADR-0022 / 2026-06-01) | `STRIPE_PRICE_EMBEDDING` *(optional)* | Metered (per_unit) | **¥1 / call** (Expert/Pro 共通、Beginner は Subscription 不要 / cost=0 のため queue 不投入) |
 | Storage Add-on (Plus) | `STRIPE_PRICE_STORAGE_PLUS` | Recurring (固定) | ¥500 / 月 |
 | Storage Add-on (Pro Storage) | `STRIPE_PRICE_STORAGE_PRO` | Recurring (固定) | ¥1,500 / 月 |
+
+> **ADR-0022 (2026-06-01) Stripe-ready 設計**: `STRIPE_PRICE_EMBEDDING` 環境変数は **optional**。リリース時 (2026-06-01) は credit_card 払い未対応のため未設定で動作 (= `createSubscriptionForTenant` は Haiku + Sonnet の 2 本だけ Subscription Item を作成)。将来 Stripe Dashboard で新 Meter (`tasukiba_embedding_call`) + 新 Price (¥1/call) を作成し env を設定すると、`createSubscriptionForTenant` が 3 本目の Subscription Item として自動追加し、コード変更ゼロでクレジットカード払い経路が動き出します。
 
 > **重要 (ADR-0019 / 2026-05-24 価格改定)**: Stripe では一度作成した Price の単価変更ができません。**新規 Price を作成して Subscription Item を切り替える運用** が必要です。手順:
 > 1. Stripe Dashboard で新 Haiku Price (¥10/call) を作成 (Sonnet は ¥15 据置のため変更不要)

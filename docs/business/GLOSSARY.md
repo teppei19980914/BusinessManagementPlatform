@@ -93,19 +93,25 @@ CSV sync-import は 17 列で完全網羅 (旧 16 列 CSV も後方互換 import
 
 テナントごとに選択する料金プラン。本サービスは LLM プランと Storage プランの 2 軸で構成される。
 
-#### LLM プラン (提案エンジン API 利用枠) — ADR-0019 確定版 (2026-05-24)
+#### LLM / Embedding プラン (提案エンジン API 利用枠) — ADR-0022 確定版 (2026-06-01)、ADR-0019 (2026-05-24) で部分 supersede
 
-| プラン | 月額固定 | 席数 | API 上限 | 単価 | モデル |
-|---|---|---|---|---|---|
-| Beginner | ¥0 | 5 席 | プロジェクト作成/更新 **月 50 回まで無料** (上限到達後は縮退) | — | Haiku |
-| Expert | ¥0 | 無制限 | 無制限 (`monthlyBudgetCapJpy` で予算上限設定可) | **プロジェクト作成/更新 ¥10/call** (ADR-0019 改定: ¥5 → ¥10) | Haiku |
-| Pro | ¥0 | 無制限 | 無制限 (同上) | **プロジェクト作成/更新 + なぜ機能 ¥15/call** (据置) | Sonnet |
+| プラン | 月額固定 | 席数 | API 上限 | LLM 単価 | Embedding 単価 (ADR-0022) | モデル |
+|---|---|---|---|---|---|---|
+| Beginner | ¥0 | 5 席 | プロジェクト作成/更新 **月 50 回まで無料** (上限到達後は縮退) | — | **¥0 (= 90 日完全無料訴求保全)** | Haiku |
+| Expert | ¥0 | 無制限 | 無制限 (`monthlyBudgetCapJpy` で予算上限設定可) | **プロジェクト作成/更新 ¥10/call** (ADR-0019 改定: ¥5 → ¥10) | **¥1 / 業務操作** | Haiku |
+| Pro | ¥0 | 無制限 | 無制限 (同上) | **プロジェクト作成/更新 + なぜ機能 ¥15/call** (据置) | **¥1 / 業務操作** | Sonnet |
 
-**ADR-0019 (2026-05-24) で全プラン無料化**: 資産入力 (Knowledge / RiskIssue / Retrospective / Memo) / チャット検索 / CSV インポート / 月初 embedding backfill cron は **全プラン無料・無制限**。課金対象は `BILLABLE_FEATURE_UNITS` (= project-upsert / suggestion-explanation / auto-tag-extract) のみ。
+**ADR-0022 (2026-06-01) Embedding 課金導入**: Beginner プランは Embedding 系 (`{knowledge,risk-issue,retrospective,memo}-embedding` / `chat-semantic-search` / `external-import-embedding` / `attachment-embedding`) を **¥0 維持** (= 「90 日完全無料」訴求保全)。Expert / Pro は **¥1 / 業務操作** で従量課金 (CSV 100 件取込でも 1 取込操作 = ¥1 集約)。月初 cron による失敗 embedding 自動リカバリ (`*-embedding-backfill` 5 種) は **全プラン無料維持** (= 不当請求リスク回避)。
 
-**「1 回の API 呼び出し」の定義 (1 業務操作 = 1 ApiCallLog ルール)**: ユーザ視点での 1 操作で内部的に複数の LLM/Embedding API を呼んでも、ApiCallLog は **1 件** に集約される (例: プロジェクト新規作成は `featureUnit='project-upsert'` で Anthropic auto-tag + Voyage embedding を 1 件に集約)。無料 featureUnit (chat-semantic-search 等) も ApiCallLog には記録するが `costJpy=0` で counter は +0。
+**4 階層 featureUnit 分類** (ADR-0022 / `src/config/billing-feature-units.ts`):
+1. `LLM_BILLABLE_FEATURE_UNITS`: project-upsert / suggestion-explanation / auto-tag-extract (plan 別単価、Beginner 50 件上限の対象)
+2. `EMBEDDING_BILLABLE_FEATURE_UNITS`: 上記 7 種 (Beginner ¥0 / Expert・Pro ¥1、Beginner 上限の対象外)
+3. `STORAGE_OVERAGE_FEATURE_UNITS`: db-capacity-overage / storage-file-overage (月初 cron INSERT)
+4. `EMBEDDING_BACKFILL_FEATURE_UNITS`: 5 種 backfill (全プラン明示的 ¥0)
 
-詳細: [ADR-0019](../adr/0019-billable-feature-units-and-free-tier-expansion.md) (最新確定版) + [TENANT_AND_BILLING.md Part 5](./TENANT_AND_BILLING.md)
+**「1 回の API 呼び出し」の定義 (1 業務操作 = 1 ApiCallLog ルール)**: ユーザ視点での 1 操作で内部的に複数の LLM/Embedding API を呼んでも、ApiCallLog は **1 件** に集約される。Embedding 系も同様 (CSV 100 件取込 = 1 ApiCallLog = 1 課金、ADR-0022 §2.1)。
+
+詳細: [ADR-0022](../adr/0022-embedding-usage-based-billing.md) (Embedding 課金最新版) / [ADR-0019](../adr/0019-billable-feature-units-and-free-tier-expansion.md) (部分 supersede 済) / [TENANT_AND_BILLING.md Part 5](./TENANT_AND_BILLING.md)
 
 #### Storage プラン (容量 add-on)
 

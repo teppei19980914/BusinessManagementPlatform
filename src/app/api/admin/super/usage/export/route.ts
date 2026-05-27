@@ -136,6 +136,9 @@ const HEADERS_CURRENT = [
   'drift警告',
   'drift呼出差分',
   'drift費用差分(円)',
+  // ADR-0022 (2026-06-01): Embedding 内訳列 (Beginner=0 / Expert=Pro=件数×¥1)
+  'Embedding呼出回数(counter)',
+  'Embedding課金額(counter, 円)',
   'アクティブユーザ数',
   '月次予算上限(円)',
   // chore/storage-addon-backend-removal (2026-05-26): 旧 4 段階プラン Storage 列は撤去
@@ -167,6 +170,9 @@ const HEADERS_HISTORY = [
   'プラン',
   'API呼出回数',
   'API課金額(円)',
+  // ADR-0022 (2026-06-01): Embedding 内訳列 (snapshot 時点、ADR-0022 適用前の過去月は空欄)
+  'Embedding呼出回数',
+  'Embedding課金額(円)',
   'アクティブユーザ数',
   // chore/storage-addon-backend-removal (2026-05-26): 旧 4 段階プラン Storage 列は撤去
   'Storage使用量(バイト)',
@@ -210,6 +216,9 @@ function buildCurrentMonthCsv(
         csvEscape(driftWarning),
         (driftCallDiff >= 0 ? '+' : '') + driftCallDiff.toString(),
         (driftCostDiff >= 0 ? '+' : '') + driftCostDiff.toString(),
+        // ADR-0022 (2026-06-01): Embedding 内訳 (counter ベース、Beginner=0 / Expert=Pro=件数×¥1)
+        t.currentMonthEmbeddingCallCount.toString(),
+        t.currentMonthEmbeddingCostJpy.toString(),
         t.activeUserCount.toString(),
         t.monthlyBudgetCapJpy?.toString() ?? '',
         // chore/storage-addon-backend-removal (2026-05-26): 旧 4 段階プラン列は撤去
@@ -217,7 +226,7 @@ function buildCurrentMonthCsv(
         // ADR-0021 (2026-05-26): ファイルストレージ peak + 想定請求額 (cron 確定前の予測)
         t.storageFileBytesPeakThisMonth.toString(),
         calculateFileStorageOverageJpy(BigInt(t.storageFileBytesPeakThisMonth)).toString(),
-        // 合計月額: SUM ベース (= DB / file storage 超過の従量課金も含む)
+        // 合計月額: SUM ベース (= LLM + Embedding + DB / file storage 超過の従量課金、ADR-0022 で Embedding も含む)
         sumCostJpy.toString(),
         // 2026-05-14: 解約日 (空欄=アクティブ)
         t.deletedAt != null ? t.deletedAt.toISOString() : '',
@@ -250,6 +259,9 @@ function buildHistoryCsv(rows: Awaited<ReturnType<typeof listMonthlyUsageHistory
         csvEscape(r.plan),
         r.apiCallCount.toString(),
         r.apiCostJpy.toString(),
+        // ADR-0022 (2026-06-01): Embedding 内訳 (ADR-0022 適用前の過去月は空欄)
+        r.embeddingCallCount != null ? r.embeddingCallCount.toString() : '',
+        r.embeddingCostJpy != null ? r.embeddingCostJpy.toString() : '',
         r.activeUserCount.toString(),
         // chore/storage-addon-backend-removal (2026-05-26): 旧 4 段階プラン列は撤去
         r.storageBytesUsed.toString(),

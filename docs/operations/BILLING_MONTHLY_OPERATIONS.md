@@ -1,8 +1,10 @@
 # 月次請求業務運用ガイド (super_admin 向け)
 
-最終更新: 2026-05-25 (ADR-0019 価格改定反映)
+最終更新: 2026-06-01 (ADR-0022 Embedding 課金反映)
 
-> 🆕 **ADR-0019 (2026-05-24) 反映済**: 月次請求集計 (billing-aggregation.service.ts) は `BILLABLE_FEATURE_UNITS` (project-upsert / suggestion-explanation / auto-tag-extract) のみ対象。資産入力・チャット検索・CSV インポート・月初 backfill cron は全プラン無料化のため請求金額に含まれない。Expert 単価 ¥5 → ¥10、Pro ¥15 据置。詳細: [ADR-0019](../adr/0019-billable-feature-units-and-free-tier-expansion.md)、Stripe Price 切替手順: [STRIPE_SETUP.md](./STRIPE_SETUP.md) §2.1
+> 🆕 **ADR-0022 (2026-06-01) Embedding 課金導入反映済**: 月次請求集計 (`billing-aggregation.service.ts`) は `BILLABLE_FEATURE_UNITS` (= LLM + Embedding + Storage Overage の合算、ADR-0022 で 4 階層化) を対象。**Beginner プラン** は Embedding 系も ¥0 維持 (= cost=0 で SUM 不変)、**Expert / Pro プラン** は Embedding 業務操作 ¥1/call が自動的に請求金額に乗る。月初 cron 自動リカバリ (`*-embedding-backfill`) は明示的 free のため請求金額には含まれない (= 不当請求リスク回避)。詳細: [ADR-0022](../adr/0022-embedding-usage-based-billing.md)
+>
+> **ADR-0019 (2026-05-24) 反映済** (ADR-0022 で部分 supersede): Expert 単価 ¥5 → ¥10、Pro ¥15 据置。詳細: [ADR-0019](../adr/0019-billable-feature-units-and-free-tier-expansion.md)、Stripe Price 切替手順: [STRIPE_SETUP.md](./STRIPE_SETUP.md) §2.1 / §2.2-bis
 
 ## 概要
 

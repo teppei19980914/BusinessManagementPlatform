@@ -44,6 +44,10 @@ export type TenantBasicInfo = {
   deletedAt: Date | null;
   currentMonthApiCallCount: number;
   currentMonthApiCostJpy: number;
+  /** ADR-0022 (2026-06-01): Embedding 系の当月呼出回数 counter (= 診断画面で Embedding 利用量を表示) */
+  currentMonthEmbeddingCallCount: number;
+  /** ADR-0022 (2026-06-01): Embedding 系の当月課金額 counter */
+  currentMonthEmbeddingCostJpy: number;
   lastResetAt: Date | null;
   updatedAt: Date;
 };
@@ -103,6 +107,9 @@ export async function getTenantDiagnostics(
       deletedAt: true,
       currentMonthApiCallCount: true,
       currentMonthApiCostJpy: true,
+      // ADR-0022 (2026-06-01): Embedding counter も診断対象
+      currentMonthEmbeddingCallCount: true,
+      currentMonthEmbeddingCostJpy: true,
       lastResetAt: true,
       updatedAt: true,
     },
