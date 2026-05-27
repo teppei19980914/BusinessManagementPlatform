@@ -66,4 +66,28 @@ describe('ChatPanel のマスコット統合 invariant', () => {
   it('結果カードは ChatSearchResultCard (result-card.tsx) 経由で描画する', () => {
     expect(source).toMatch(/import\s*\{\s*ChatSearchResultCard\s*\}\s*from\s*'\.\/result-card'/);
   });
+
+  it('ヘッダ avatar に priority を付与し LCP 候補として最適化されている', () => {
+    // ヘッダ avatar 周辺のブロックを抽出し priority が含まれているか検査。
+    const headerBlock = source.match(/data-testid="chat-panel-persona-avatar"[\s\S]{0,200}/);
+    expect(headerBlock).not.toBeNull();
+    // Image の priority prop は data-testid と同じ Image 要素内に含まれる想定。
+    const imageBlock = source.match(/<Image[\s\S]{0,400}?chat-panel-persona-avatar/);
+    expect(imageBlock?.[0]).toMatch(/priority/);
+  });
+
+  it('AssistantBubble の装飾 avatar は alt="" のみ (aria-hidden 冗長指定なし)', () => {
+    // AssistantBubble 内の Image 要素のブロックを抽出。
+    const assistantBubbleSource = source.match(/function AssistantBubble[\s\S]*?^}/m);
+    expect(assistantBubbleSource).not.toBeNull();
+    const block = assistantBubbleSource![0];
+    expect(block).toMatch(/alt=""/);
+    expect(block).not.toMatch(/aria-hidden="true"/);
+  });
+
+  it('全アバターが object-cover で確実にトリミングされる (KDD §5.X+165 横展開)', () => {
+    // header / AssistantBubble の Image いずれも object-cover を持つ。
+    const matches = source.match(/object-cover/g);
+    expect(matches?.length ?? 0).toBeGreaterThanOrEqual(2);
+  });
 });

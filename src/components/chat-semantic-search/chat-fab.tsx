@@ -10,9 +10,12 @@
  *
  * 2026-05-27 デザイン更新:
  *   - 旧: 絵文字バブル単独を bg-primary 円形ボタンに乗せた質素な実装
- *   - 新: マスコット「たすきフクロウ」(吹き出し + たすき帯 + 盾) のアイコン画像で
- *         「フクロウに相談する」体験を演出。画像自体が円形デザインのため bg は不要、
- *         hover/focus の ring のみで対話性を担保。
+ *   - 新: マスコット「たすきフクロウ」(吹き出し + たすき帯 + 盾) のアイコン画像を
+ *         **FAB 全面に占有させる** デザイン。派生画像自体がバッジで全面を埋めるよう
+ *         scripts/generate-mascot-derivatives.cjs で trim 抽出済 (KDD §5.X+165)。
+ *         そのため button 側に bg / ring は不要 (絵の外周がそのまま FAB の輪郭になる)。
+ *   - motion-reduce 対応: hover scale を accessibility ユーザ向けに無効化
+ *     (KDD §5.X+165 の付随 a11y 対策)。
  */
 
 import { useState } from 'react';
@@ -20,6 +23,8 @@ import Image from 'next/image';
 import { cn } from '@/lib/utils';
 import { CHAT_PERSONA } from '@/config';
 import { ChatPanel } from './chat-panel';
+
+const FAB_SIZE_PX = 64;
 
 export function ChatSemanticSearchFab() {
   const [open, setOpen] = useState(false);
@@ -33,19 +38,19 @@ export function ChatSemanticSearchFab() {
           aria-label={`${CHAT_PERSONA.name}に相談する`}
           data-testid="chat-fab"
           className={cn(
-            'fixed right-4 bottom-4 z-40 flex h-14 w-14 items-center justify-center',
-            'rounded-full bg-background shadow-lg ring-1 ring-border',
-            'transition-transform hover:scale-105',
+            'fixed right-4 bottom-4 z-40 h-16 w-16 overflow-hidden rounded-full shadow-lg',
+            'transition-transform motion-reduce:transition-none',
+            'hover:scale-105 motion-reduce:hover:scale-100',
             'focus:outline-none focus:ring-2 focus:ring-ring',
           )}
         >
           <Image
             src={CHAT_PERSONA.avatarSrc}
             alt={CHAT_PERSONA.avatarAlt}
-            width={56}
-            height={56}
+            width={FAB_SIZE_PX}
+            height={FAB_SIZE_PX}
             priority
-            className="rounded-full"
+            className="h-full w-full object-cover"
           />
         </button>
       )}

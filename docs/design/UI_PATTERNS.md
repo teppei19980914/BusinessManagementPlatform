@@ -1427,3 +1427,58 @@ source-pattern invariant テスト
 
 ---
 
+## 36. チャット意味検索 UI パターン (PR #452 / 2026-05-27)
+
+意味検索のユーザ自発経路として、**全画面共通のフローティングチャット UI** を導入。
+関連仕様: [CHAT_SEMANTIC_SEARCH.md](../specification/CHAT_SEMANTIC_SEARCH.md)、
+関連マスコット規範: [MASCOT.md](./MASCOT.md)。
+
+### 36.1 構成要素
+
+| 要素 | コンポーネント | 仕様 |
+|---|---|---|
+| FAB (フローティングボタン) | `chat-fab.tsx` | `fixed right-4 bottom-4 z-40`、64×64、画像 (たすきフクロウ) が全面を占有 |
+| サイドパネル | `chat-panel.tsx` | `fixed inset-y-0 right-0 z-40`、最大幅 `max-w-md` |
+| ヘッダ | (chat-panel 内) | 36×36 マスコットアバター + ペルソナ名「たすきフクロウ」 |
+| ユーザ発言バブル | `UserBubble` | 右寄せ、`rounded-tr-sm` 鋸歯、`bg-primary` |
+| アシスタント発言吹き出し | `AssistantBubble` | 左寄せ、32×32 アバター + `rounded-tl-sm` 吹き出し、`bg-muted` |
+| 結果カード | `result-card.tsx` (`ChatSearchResultCard`) | アシスタント吹き出し内にネスト、tier 別 (strong/medium/weak) |
+| ペルソナ定数 | `src/config/chat-persona.ts` | `CHAT_PERSONA = { name, avatarSrc, avatarAlt }` |
+
+### 36.2 アイコン全面占有設計 (KDD §5.X+165 結合)
+
+マスコット派生画像 `public/mascot-owl-chat.png` は元キャンバス (1254×1254、暗背景 +
+右下バッジ) から `sharp.trim({ threshold: 30 })` でバッジを抽出 → `fit:'cover'` で
+256×256 に拡縮することで **バッジが全面を占める** よう生成される。これにより:
+
+- FAB に `bg-background` / `ring` が不要 (画像自体が円形境界を構成)
+- ヘッダ・吹き出しアバター・FAB の全てで同じ画像を `object-cover` で表示でき、
+  サイズが変わっても黒枠 / 余白が出ない
+- 派生再生成は `node scripts/generate-mascot-derivatives.cjs` で冪等
+
+### 36.3 対話メタファ
+
+LINE / Teams 等の対話 UI と同じ「**自分の発言は右、相手の発言は左**」レイアウトを採用。
+結果カード群は **1 アシスタント吹き出し内に複数カードをネスト** することで、
+「フクロウが提案を返した」という体験を作る。縮退モード時 (degradeReason) の注意文も
+アシスタント吹き出しの冒頭に内包し、「フクロウからの説明」として読めるよう設計。
+
+### 36.4 アクセシビリティ
+
+- FAB の `aria-label` は `${CHAT_PERSONA.name}に相談する` 形式
+- アバター画像はヘッダで `alt={CHAT_PERSONA.avatarAlt}`、装飾用 (AssistantBubble) は `alt=""`
+  (`aria-hidden` は alt="" と冗長になるため指定しない)
+- `motion-reduce:transition-none` / `motion-reduce:hover:scale-100` で
+  vestibular disorder 等のユーザに配慮
+- FAB と ヘッダアバターは `priority` 指定で LCP 候補として最適化
+
+### 36.5 違反検知
+
+- `src/components/chat-semantic-search/chat-fab.test.ts` — 旧絵文字 💬 不残留、
+  motion-reduce 完備、object-cover、priority、bg-background/ring 不在
+- `src/components/chat-semantic-search/chat-panel.test.ts` — ヘッダ avatar の
+  priority、AssistantBubble の aria-hidden 不在、object-cover 横展開、
+  結果カードのアシスタント吹き出し内ネスト
+
+---
+

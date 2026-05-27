@@ -91,7 +91,23 @@ node scripts/generate-mascot-derivatives.cjs
 スクリプトは 2 つの元画像から以下を生成する:
 
 - `mascot-owl-source.png` → `public/mascot-owl.png`, `src/app/icon.png`, `src/app/apple-icon.png`, `public/og-image.png`
-- `mascot-owl-chat-source.png` → `public/mascot-owl-chat.png`
+- `mascot-owl-chat-source.png` → `public/mascot-owl-chat.png` (※ trim 抽出後 fit:'cover')
+
+### チャット派生のバッジ全面占有 (KDD §5.X+165)
+
+`mascot-owl-chat-source.png` は **暗い studio 背景 + 右下に白い円形バッジ + フクロウ**
+という複合キャンバス構成のため、そのまま `fit:'contain'` で 256 に縮めるとバッジが
+中央付近に小さく残り、FAB の `bg-background` が周囲に黒枠として見える事故が起きる。
+
+これを避けるため、スクリプトでは `sharp.trim({ threshold: 30 })` で暗背景を除去 →
+約 512×507 のバッジ単体を抽出 → `fit:'cover'` で 256×256 に拡縮し、**派生画像は
+バッジが全面を占める** 状態にする。これにより `chat-fab.tsx` / `chat-panel.tsx`
+ヘッダ / `AssistantBubble` のどこに置いても黒枠 / 余白が出ない。
+
+詳細は [docs/knowledge/KDD_PATTERNS.md §5.X+165](../knowledge/KDD_PATTERNS.md) と
+[docs/design/UI_PATTERNS.md §36](./UI_PATTERNS.md) を参照。
+
+### その他
 
 生成スクリプトは `sharp` (Next.js の依存パッケージ) を使用するため別途インストール不要。
 スクリプトは冪等で、既存ファイルを上書きする。`palette: false` を明示しており Next.js

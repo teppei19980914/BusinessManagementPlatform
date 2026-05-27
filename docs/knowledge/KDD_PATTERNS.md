@@ -16452,3 +16452,68 @@ update: <T>(args: {
 ### 関連
 - 関連 KDD: [§5.X+115](#5x115) (本パターンの初出) / [§5.X+141](#5x141) (xlsx CVE) / [§5.X+142](#5x142) (Semgrep 誤検知)
 - 関連 memory: [[feedback_pnpm_lockfile_sync]] (lockfile 同 commit の鉄則)
+
+---
+
+## 5.X+165 ★severity-2 (UI 視覚事故)★ 複合キャンバス source PNG は派生生成で `fit:'contain'` だと FAB に「黒丸の中に小さなアイコン」状態を引き起こす罠 (PR #452 マスコット icon 全面占有)
+
+### 罠の正体
+
+PR #452 (チャット FAB マスコット化) で `docs/design/assets/mascot-owl-chat-source.png`
+(1254×1254、暗 studio 背景 + 右下に白い円形バッジ + フクロウ) を元に
+`scripts/generate-mascot-derivatives.cjs` で `fit:'contain'` を使い 256×256 派生を
+生成した。すると `public/mascot-owl-chat.png` は **バッジが中央付近に小さく残る**
+(canvas の 1/4 程度) PNG になり、FAB に乗せたとき:
+
+- 画面 dark mode の `bg-background` が button 全面に出る
+- バッジは button の中央に小さく見える
+- 結果として **「黒丸の中に小さなアイコン」** という見た目になり、
+  「FAB ボタンの周囲に余白が出ている」とユーザに誤認される
+
+### 根本原因
+
+元画像が **単一の被写体** ではなく、studio 背景 + 被写体バッジの **複合キャンバス**
+だった。`fit:'contain'` は画像 **全体** を出力サイズに収めるため、背景の大部分も
+そのまま縮小コピーされる。背景が暗色なので、`bg-background` (dark mode) と区別が
+つかず、ユーザには「画像内のバッジ」と「FAB の背景」が混在して見える。
+
+### 修正
+
+`sharp.trim({ threshold: 30 })` で **暗背景を除去** → バッジ単体 (約 512×507) を
+抽出 → `fit:'cover'` で 256×256 に拡縮する。これでバッジが全面を占め、FAB の
+`bg-background` / `ring` は不要 (画像自体が円形境界を構成)。
+
+```diff
+ const chat256 = await sharp(chatSrcBuf)
+-  .resize(256, 256, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
++  .trim({ threshold: 30 })
++  .resize(256, 256, { fit: 'cover' })
+   .png({ palette: false, compressionLevel: 9 })
+```
+
+`threshold: 30` は経験値: 10 未満だと shadow gradient で除去しきれず、50+ だと
+バッジ縁の白が同色判定される可能性がある。実測 (probe-trim.cjs) では 30 / 50 / 80
+で同じ 512×507 が得られたため 30 を採用。
+
+### 横展開チェック
+
+- [ ] **新規アイコン source を導入する PR では、source の構図を必ず確認**:
+      被写体単独 (透過 PNG / 単色背景) なら `fit:'contain'` で OK、
+      複合キャンバス (背景 + 被写体) なら `.trim()` 必須
+- [ ] **派生画像 (`public/mascot-owl-chat.png` 等) を視認** してから commit する。
+      sharp の出力サイズ・KB だけでは画面表示問題を発見できない
+- [ ] **FAB に乗せるアイコンは bg / ring を持たせる前に画像の境界がどう見えるか確認**:
+      画像自体が円形/角丸を持つなら button 側の bg / ring は不要
+- [ ] **`object-cover` を Image に付ける**: width/height のアスペクト比と実画像が
+      ずれたときに余白が出ない (defense-in-depth)
+- [ ] **複数サイズで同一画像を使い回す場合の確認**: FAB (64×64) / ヘッダ (36×36) /
+      AssistantBubble (32×32) で同じ画像を使い、全箇所で `object-cover` を付ける
+      (PR #452 の「横展開」ポリシー)
+
+### 関連
+
+- 関連 KDD: [§5.X+160](#5x160) (sharp の palette PNG 問題)
+- 関連設計: [docs/design/UI_PATTERNS.md §36](../design/UI_PATTERNS.md) (チャット UI パターン)
+- 関連設計: [docs/design/MASCOT.md](../design/MASCOT.md) (マスコット派生規範)
+- 関連 PR: #452 (マスコット導入 + 全面占有設計)
+- a11y 副次修正: `motion-reduce:*` と Image `priority` 統一指定も同 PR で実施

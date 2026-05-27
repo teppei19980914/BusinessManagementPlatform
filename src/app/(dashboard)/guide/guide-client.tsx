@@ -126,6 +126,12 @@ export function GuideClient({ role, systemRole, userName }: Props) {
           <GlossaryItem term="メンション (@)">
             コメント中で <code>@ユーザ名</code> を入力するとそのユーザに通知が届きます。
           </GlossaryItem>
+          <GlossaryItem term="たすきフクロウ (チャット意味検索)">
+            全画面右下に常駐する公式マスコット「たすきフクロウ」アイコン。クリックするとチャットパネルが開き、
+            <strong>自然文で過去資産を相談</strong> できます。LINE / Teams 風の吹き出し UI で、
+            フクロウが Project / Knowledge / Risk / Issue / Retrospective / Memo / 添付ファイル
+            を横断検索して提案を返します (全プラン無料・無制限)。
+          </GlossaryItem>
 
           {/* admin/pm のみに表示する高度な用語 */}
           {showAdvancedTerms && (

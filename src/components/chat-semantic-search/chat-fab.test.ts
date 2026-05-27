@@ -9,6 +9,12 @@
  *   - aria-label にペルソナ名 (たすきフクロウ) を含む
  *   - fixed right-4 bottom-4 の常時表示位置を維持
  *   - 旧実装の「絵文字 💬」が混入していない (回帰防止)
+ *
+ * 2026-05-27 追加担保 (KDD §5.X+165):
+ *   - FAB は h-16 w-16 (64×64) でバッジが全面を占有する設計
+ *   - 旧 bg-background / ring-1 ring-border は撤去 (画像自体が円形バッジのため不要)
+ *   - 画像は object-cover で確実にトリミング
+ *   - motion-reduce 対応 (transition-none + scale-100) を完備
  */
 
 import { describe, it, expect } from 'vitest';
@@ -46,5 +52,30 @@ describe('ChatSemanticSearchFab のマスコット統合 invariant', () => {
 
   it('data-testid="chat-fab" を持つ (E2E / 視覚回帰で参照)', () => {
     expect(source).toMatch(/data-testid="chat-fab"/);
+  });
+
+  it('FAB サイズは h-16 w-16 (64×64) でバッジが全面を占有する', () => {
+    expect(source).toMatch(/h-16 w-16/);
+  });
+
+  it('button 自体に bg-background / ring-1 は付与されていない (画像が円形バッジなので不要)', () => {
+    // 旧実装は bg-primary / bg-background + ring を付けていたが、新派生画像は
+    // バッジが全面を占めるため button 側の背景・縁取りは不要。
+    expect(source).not.toMatch(/bg-background/);
+    expect(source).not.toMatch(/ring-1 ring-border/);
+  });
+
+  it('overflow-hidden + object-cover で画像をボタン境界に確実にクリップする', () => {
+    expect(source).toMatch(/overflow-hidden/);
+    expect(source).toMatch(/object-cover/);
+  });
+
+  it('motion-reduce 対応: transition-none + hover:scale-100 を完備', () => {
+    expect(source).toMatch(/motion-reduce:transition-none/);
+    expect(source).toMatch(/motion-reduce:hover:scale-100/);
+  });
+
+  it('priority を付与し LCP 候補としてプリロードさせる', () => {
+    expect(source).toMatch(/priority/);
   });
 });

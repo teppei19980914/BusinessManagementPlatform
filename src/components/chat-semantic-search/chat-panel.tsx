@@ -157,12 +157,18 @@ export function ChatPanel({ onClose }: { onClose: () => void }) {
           LINE / Teams 等の対話 UI と同じ「相手の名前が常に見える」パターン。
         */}
         <div className="flex items-center gap-2">
+          {/*
+            ヘッダ avatar: パネル開放時の "above the fold" 要素のため priority を付与
+            (LCP 候補としてプリロードさせる)。画像自体がバッジで全面を占めるため
+            object-cover で確実にトリミングする (KDD §5.X+165)。
+          */}
           <Image
             src={CHAT_PERSONA.avatarSrc}
             alt={CHAT_PERSONA.avatarAlt}
-            width={32}
-            height={32}
-            className="rounded-full"
+            width={36}
+            height={36}
+            priority
+            className="h-9 w-9 rounded-full object-cover"
             data-testid="chat-panel-persona-avatar"
           />
           <div className="flex flex-col">
@@ -317,13 +323,17 @@ function UserBubble({ text }: { text: string }) {
 function AssistantBubble({ children }: { children: React.ReactNode }) {
   return (
     <div className="mb-3 flex items-start gap-2" data-testid="chat-assistant-bubble">
+      {/*
+        装飾用アバター (発話者ラベルがすぐ右にあるので screen reader からは除外):
+          alt="" のみで AT は無視するため aria-hidden は不要 (冗長指定の回避)。
+          object-cover でバッジ自体が全面を占めるよう確実にトリミング (KDD §5.X+165)。
+      */}
       <Image
         src={CHAT_PERSONA.avatarSrc}
         alt=""
-        width={28}
-        height={28}
-        className="mt-1 shrink-0 rounded-full"
-        aria-hidden="true"
+        width={32}
+        height={32}
+        className="mt-1 h-8 w-8 shrink-0 rounded-full object-cover"
       />
       <div className="min-w-0 flex-1 rounded-2xl rounded-tl-sm bg-muted px-3 py-2 text-sm">
         <div className="mb-1 text-[10px] font-medium text-muted-foreground">

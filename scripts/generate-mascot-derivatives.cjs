@@ -147,7 +147,15 @@ async function main() {
 
   // 5) チャット FAB / chat-panel アバター用 256×256
   //    汎用マスコットとは別画像 (吹き出し + たすき帯 + 盾の構図) を採用。
-  //    元画像が透過 PNG なので fit:'contain' で alpha を維持する。
+  //
+  //    元画像 (1254×1254) は「暗い studio 背景 + 右下に白い円形バッジ + フクロウ」
+  //    という構図のため、そのまま fit:'contain' で 256 へリサイズすると **バッジが
+  //    中央付近に小さく残り、FAB の bg-background が周囲に黒枠として見える事故** が
+  //    起きる (KDD §5.X+165 / 2026-05-27)。
+  //
+  //    対策: sharp.trim({ threshold: 30 }) で暗い背景を除去 → 約 512×507 の
+  //    バッジ単体を抽出してから fit:'cover' で 256×256 に拡縮する。これで派生画像は
+  //    「バッジが全面を占める」状態になり、FAB / アバターのどこに置いても黒枠が出ない。
   //    palette: false は §5.X+160 の Image Optimizer 互換性確保のため上記同様必須。
   if (!fs.existsSync(SRC_CHAT)) {
     console.error(`チャット元画像が見つかりません: ${SRC_CHAT}`);
@@ -158,7 +166,8 @@ async function main() {
   console.log(`chat source: ${chatSrcMeta.width}x${chatSrcMeta.height} ${chatSrcMeta.format} (${(chatSrcBuf.length / 1024 / 1024).toFixed(2)} MB)`);
 
   const chat256 = await sharp(chatSrcBuf)
-    .resize(256, 256, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
+    .trim({ threshold: 30 })
+    .resize(256, 256, { fit: 'cover' })
     .png({ palette: false, compressionLevel: 9 })
     .toBuffer();
   await writePng(chat256, path.join(ROOT, 'public/mascot-owl-chat.png'));
