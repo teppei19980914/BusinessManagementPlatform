@@ -16315,3 +16315,35 @@ error: column "storage_addon_plan" of relation "tenants" does not exist
 ### 関連
 - 関連 KDD: [§5.X+158](#5x158) (元の 6 layers 定義、本 KDD で 7 layers に拡張)
 - 関連 memory: `feedback_db_column_removal_6layers` → 7 layers に更新
+
+---
+
+## 5.X+162 ★severity-2 (E2E)★ 機能撤去 PR で UI ラベルを簡素化したら、その文言を `getByText` で固定マッチしている E2E spec も同時に更新する (PR #451 で発覚、§5.X+161 と同 PR で連続発覚)
+
+**結論**: storage-addon 撤去で `<SummaryCard label="今月の合計課金 (LLM + Storage)" ... />` を `<SummaryCard label="今月の合計課金" ... />` に簡素化した瞬間、E2E spec の `getByText('今月の合計課金 (LLM + Storage)')` が完全に死ぬ。`exact: false` 指定でも substring 一致なので「(LLM + Storage)」が含まれた完全一致 string を見つけられなくなる (実際の UI には「(LLM + Storage)」が存在しない)。
+
+### 経緯 (PR #451 feat/mascot-owl-and-storage-cleanup, 2026-05-27)
+
+[§5.X+161](#5x161) で e2e fixture の raw SQL 残参照を修正 → CI 再実行 → 今度は `spec/13` が UI 文言マッチで fail:
+
+```
+Locator: getByText('今月の合計課金 (LLM + Storage)').first()
+Error: element(s) not found
+```
+
+実装側は `chore/storage-addon-backend-removal` (PR #450 ベース) で UI ラベルを `"今月の合計課金"` (旧括弧書き「(LLM + Storage)」を削除) と sub-label `"ApiCallLog 集計 (DB / ファイルストレージ超過の従量課金を含む)"` に書き換え済。spec 側は旧ラベルを期待し続けていた。
+
+### 教訓と防御
+
+1. **「機能撤去 PR で UI ラベルの簡素化」と「E2E spec」は 1 セットで PR に含める**。プロダクト側 PR の reviewer は `git grep "<旧ラベル>" e2e/` をレビューチェックリストに含める。
+2. **`getByText('完全文字列')` の `exact: false` は安全弁にならない**。`exact: false` は substring 一致だが、「期待 string が UI に存在しない」状況では成立しない (substring が見つからない)。`getByText(/部分パターン/)` の正規表現 partial 化、または `data-testid` 経由参照がより堅牢。
+3. **§5.X+161 の 7 レイヤ grep 対象**: column 名だけでなく **「撤去機能の UI ラベル文言」も同じく grep** すること (8 つ目のレイヤとして追加検討)。
+
+### 採用した修正
+
+- `e2e/specs/13-super-admin-dashboard.spec.ts` の `getByText('今月の合計課金 (LLM + Storage)')` を `getByText('今月の合計課金')` に変更
+- 旧「内訳: LLM ¥」も削除し、現行 sub-label の `getByText(/ApiCallLog 集計/)` を期待
+- test 名 / docblock 内の「(LLM + Storage)」表記も整合
+
+### 関連
+- 関連 KDD: [§5.X+161](#5x161) (同 PR で raw SQL の column 残参照を修正済) / [§5.X+159](#5x159) (UI モバイル縮退で getByText.first() が hidden 要素を拾った別パターン、いずれも「UI 変更 → E2E spec が古い文言を期待」系)

@@ -14,7 +14,7 @@
  *   1. 認可: admin / general は /admin/super/* にアクセス不可 (redirect or 403)
  *   2. サマリタブ: 顧客テナント A/B が合算され、Default は別セクションに表示される
  *   3. テナント一覧タブ: 顧客テナント A/B が表示され、Default は別行 (請求対象外ラベル)
- *   4. 使用量タブ: 合計課金が LLM + Storage の合算で表示される
+ *   4. 使用量タブ: 合計課金が ApiCallLog SUM で表示される (旧 LLM + Storage 合算は storage-addon 撤去で簡素化)
  *   5. CSV エクスポート: 顧客テナント A/B が含まれ、Default は含まれない
  *
  * 前提条件:
@@ -116,12 +116,16 @@ test.describe('@feature:super_admin:dashboard システム管理者ダッシュ�
       superAdminPage.getByText('顧客課金集計には含まれません', { exact: false }).first(),
     ).toBeVisible();
 
-    // 「今月の合計課金 (LLM + Storage)」カードが存在し、内訳行を含む
+    // 「今月の合計課金」カードが存在 + sub-label に ApiCallLog 集計の文言を含む
+    // 2026-05-27 (PR #451 / chore/storage-addon-backend-removal バンドル):
+    //   旧 4 段階プラン Storage 撤去で UI ラベルから "(LLM + Storage)" と「内訳: LLM ¥」が削除済。
+    //   現行カードは label="今月の合計課金" + sub="ApiCallLog 集計 (DB / ファイルストレージ超過の従量課金を含む)"
+    //   (src/app/(dashboard)/admin/super/page.tsx:144) — KDD §5.X+161 関連。
     await expect(
-      superAdminPage.getByText('今月の合計課金 (LLM + Storage)', { exact: false }).first(),
+      superAdminPage.getByText('今月の合計課金', { exact: false }).first(),
     ).toBeVisible();
     await expect(
-      superAdminPage.getByText(/内訳: LLM ¥/).first(),
+      superAdminPage.getByText(/ApiCallLog 集計/).first(),
     ).toBeVisible();
   });
 
@@ -162,7 +166,7 @@ test.describe('@feature:super_admin:dashboard システム管理者ダッシュ�
   // 3. 使用量タブ: 合計課金 + プラン別分布
   // ============================================================
 
-  test('使用量タブ: 合計課金 (LLM + Storage) が併記、プラン別分布が顧客テナントのみ', async () => {
+  test('使用量タブ: 合計課金が表示され、プラン別分布が顧客テナントのみ', async () => {
     await superAdminPage.goto('/admin/super/usage');
     await superAdminPage.waitForLoadState('networkidle');
 
@@ -171,9 +175,9 @@ test.describe('@feature:super_admin:dashboard システム管理者ダッシュ�
       superAdminPage.getByRole('heading', { name: '使用量サマリ (全テナント横断)' }),
     ).toBeVisible();
 
-    // 「今月の合計課金 (LLM + Storage)」カード + 内訳
+    // 「今月の合計課金」カード (旧 "(LLM + Storage)" 文言は storage-addon 撤去で簡素化済、KDD §5.X+161)
     await expect(
-      superAdminPage.getByText('今月の合計課金 (LLM + Storage)', { exact: false }).first(),
+      superAdminPage.getByText('今月の合計課金', { exact: false }).first(),
     ).toBeVisible();
 
     // Default テナント (運営者自身) セクションが存在
