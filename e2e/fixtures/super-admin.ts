@@ -6,9 +6,12 @@
  *
  * 作成するデータ:
  *   - 管理テナント (= MANAGEMENT_TENANT_ID、既存) に super_admin user を 1 名作成
- *   - 顧客テナント 2 件 (各プラン x ストレージ add-on の組み合わせ)
+ *   - 顧客テナント 2 件 (各プラン)
  *     - tenantSeq / currentMonthApiCallCount / currentMonthApiCostJpy /
- *       storageAddonPlan / storageBytesUsed を明示的に設定
+ *       storageBytesUsed を明示的に設定
+ *     - 2026-05-27 (PR #451 / KDD §5.X+161): storage_addon_plan 列は撤去済のため
+ *       fixture INSERT からも削除。column 撤去 PR (#450) で 6 レイヤを grep したが
+ *       e2e/fixtures/ は対象外だったため、本 PR で 7 レイヤ目として記録。
  *   - 各顧客テナントに admin user 1 名 (= activeUserCount=1 の検証用)
  *   - Default テナントには余分なユーザを作らない (= 既存 admin のみ)
  *
@@ -141,11 +144,11 @@ export async function setupSuperAdminFixture(runId: string): Promise<SuperAdminF
   const tenantA = await pool.query<{ id: string }>(
     `INSERT INTO tenants (
        slug, name, plan, current_month_api_call_count, current_month_api_cost_jpy,
-       storage_addon_plan, storage_bytes_used,
+       storage_bytes_used,
        billing_type, billing_company_name, billing_contact_name, billing_contact_email,
        payment_method, created_at, updated_at
      )
-     VALUES ($1, $2, 'expert', 300, 1500, 'plus', 0,
+     VALUES ($1, $2, 'expert', 300, 1500, 0,
              'corporate', 'E2E Corp A', '担当者A', 'a@example.com',
              'invoice', NOW(), NOW())
      RETURNING id`,
@@ -192,18 +195,18 @@ export async function setupSuperAdminFixture(runId: string): Promise<SuperAdminF
     [adminARes.rows[0]!.id, tenantAId],
   );
 
-  // 3. 顧客テナント B: pro / pro_storage = LLM ¥22500 + Storage ¥1500
+  // 3. 顧客テナント B: pro = LLM ¥22500 (DB 容量は ADR-0020 で従量課金化済、fixture では bytes のみ設定)
   //   ADR-0019: featureUnit は課金対象 `project-upsert` で seed (旧 `project-embedding` は無効)。
   const slugB = `e2e-sa-${runId}-${suffix}-b`;
   const nameB = `E2E Tenant B ${runId}-${suffix}`; // 名前にも suffix (上記 nameA と同理由)
   const tenantB = await pool.query<{ id: string }>(
     `INSERT INTO tenants (
        slug, name, plan, current_month_api_call_count, current_month_api_cost_jpy,
-       storage_addon_plan, storage_bytes_used,
+       storage_bytes_used,
        billing_type, billing_company_name, billing_contact_name, billing_contact_email,
        payment_method, created_at, updated_at
      )
-     VALUES ($1, $2, 'pro', 1500, 22500, 'pro_storage', 524288000,
+     VALUES ($1, $2, 'pro', 1500, 22500, 524288000,
              'corporate', 'E2E Corp B', '担当者B', 'b@example.com',
              'invoice', NOW(), NOW())
      RETURNING id`,

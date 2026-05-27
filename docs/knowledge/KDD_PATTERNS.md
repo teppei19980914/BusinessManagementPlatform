@@ -16273,3 +16273,45 @@ Next.js Image Optimizer は palette PNG の Content-Type を解決できず「re
 ### 関連
 - 関連 KDD: [§5.X+159](#5x159) (同一 PR で発覚した chromium-mobile flake)
 - 関連 memory: なし (初出)
+
+---
+
+## 5.X+161 ★severity-high★ 旧機能の DB column 撤去は「7 layers」(= 6 layers + e2e/fixtures/) (PR #451 で発覚、§5.X+158 の続報)
+
+**結論**: [§5.X+158](#5x158) で「schema + service + UI + JWT claim + script + docs の 6 レイヤを grep」と記録したが、**E2E fixture の raw SQL INSERT 文** という 7 レイヤ目を見落としていた。本 PR でストレージプラン関連 column を撤去した migration を取り込んだバンドル PR (#451) で、`e2e/fixtures/super-admin.ts` が `INSERT INTO tenants (..., storage_addon_plan, ...)` を実行し、CI E2E が **`column "storage_addon_plan" of relation "tenants" does not exist`** で fail。
+
+### 経緯 (PR #451 feat/mascot-owl-and-storage-cleanup, 2026-05-27)
+
+PR #450 (storage-addon backend removal) を未マージのまま PR #451 にバンドル取り込み。tsc / lint / unit-test はすべて green、ローカル build も EXIT 0。CI で **Playwright E2E `13-super-admin-dashboard.spec.ts`** が以下で fail:
+
+```
+error: column "storage_addon_plan" of relation "tenants" does not exist
+   at fixtures/super-admin.ts:141
+```
+
+`e2e/fixtures/super-admin.ts` は **prisma を経由せず pg ライブラリで raw SQL INSERT** を実行する。tsc は型を見ない、prisma は迂回されるため、撤去された column 名を含む生 SQL がレビュー段階で検出できなかった。
+
+### 教訓と防御
+
+**列撤去時の grep 対象を「7 layers」に拡張する**:
+
+| # | レイヤ | grep 観点 |
+|---|---|---|
+| 1 | Prisma schema (`schema.prisma`) | column 定義の有無 |
+| 2 | Service 層 (`src/services/*`) | Prisma model の select / where / data |
+| 3 | UI (`src/app/**/page.tsx`, `src/components/**`) | 列名・関連表示要素 |
+| 4 | JWT claim / 型宣言 (`src/types/*.d.ts`, `src/lib/auth.config.ts`) | session 経由の参照 |
+| 5 | スクリプト (`scripts/*`) | ad-hoc 修復スクリプトの参照 |
+| 6 | ドキュメント (`docs/**/*.md`) | 仕様書・運用手順の列名 |
+| 7 | **E2E fixture / raw SQL (`e2e/fixtures/**`, `prisma/migrations/seed.sql` 等)** | **Prisma を経由しない直接 SQL の参照** ← 本 KDD で追加 |
+
+特に「Prisma を経由しない raw SQL」は静的解析が届かないため、撤去 PR の最後に **`grep -rn "<column_name>" e2e/`** を実行することを習慣化する。
+
+### 採用した修正
+
+`e2e/fixtures/super-admin.ts` の 2 箇所の `INSERT INTO tenants` から `storage_addon_plan` カラムと値を削除。
+あわせて `e2e/specs/13-super-admin-dashboard.spec.ts` の CSV エクスポート assertion から旧 storage プラン (`plus` / `pro_storage` / `Storage月額(円)`) の期待値を撤去し、現行 CSV ヘッダ (`Storage使用量(バイト)` + ADR-0021 ファイルストレージ列) に整合させた。
+
+### 関連
+- 関連 KDD: [§5.X+158](#5x158) (元の 6 layers 定義、本 KDD で 7 layers に拡張)
+- 関連 memory: `feedback_db_column_removal_6layers` → 7 layers に更新
