@@ -58,9 +58,9 @@ Project 作成成功時に自動で `/projects/[id]?suggestions=1` に遷移し�
 
 | # | 項目 | 確認方法 |
 |---|---|---|
-| 1 | Vercel 環境変数 `ANTHROPIC_API_KEY` 設定済 | Vercel Dashboard → Settings → Environment Variables |
-| 2 | Vercel 環境変数 `VOYAGE_API_KEY` 設定済 | 同上 |
-| 3 | Vercel 環境変数 `DIRECT_URL` (Session Pooler、port 5432) 設定済 | 同上 (PR #234 で対応済の場合スキップ) |
+| 1 | Netlify 環境変数 `ANTHROPIC_API_KEY` 設定済 | Netlify Dashboard → Site configuration → Environment variables |
+| 2 | Netlify 環境変数 `VOYAGE_API_KEY` 設定済 | 同上 |
+| 3 | Netlify 環境変数 `DIRECT_URL` (Session Pooler、port 5432) 設定済 | 同上 (PR #234 で対応済の場合スキップ) |
 | 4 | Supabase で `vector` 拡張が有効 | Dashboard → Database → Extensions |
 | 5 | Anthropic Console で workspace 月次ハード上限 ($100 推奨) 設定 | https://console.anthropic.com/ |
 | 6 | Voyage Budget Alert ($5-10) 設定 | https://dashboard.voyageai.com/budget-limits |
@@ -70,7 +70,7 @@ Project 作成成功時に自動で `/projects/[id]?suggestions=1` に遷移し�
 
 | 頻度 | 項目 | 確認/操作 |
 |---|---|---|
-| 毎日 | Vercel Logs で `daily-usage-aggregation` cron の正常完了確認 | エラーログがないこと |
+| 毎日 | Netlify Function Logs で `daily-usage-aggregation` cron の正常完了確認 | エラーログがないこと |
 | 毎日 | admin にメールアラートが届いていないか確認 | 異常検知 / 予算アラート発火時のみ届く |
 | 月初 | Anthropic Console / Voyage Dashboard で先月の使用量確認 | 想定外の費用発生がないこと |
 | 月初 | テナント別の使用量を `GET /api/admin/usage-summary` で確認 | 各テナントへの請求書発行の根拠データ |
@@ -85,7 +85,7 @@ Project 作成成功時に自動で `/projects/[id]?suggestions=1` に遷移し�
 | Anthropic Haiku (タグ抽出 ×100 回) | 約 ¥80 |
 | Voyage (embedding 生成 ×1,000 回) | ¥0 (無料枠 200M の 0.75%) |
 | Supabase Free | ¥0 (DB 数十 MB) |
-| Vercel Hobby | ¥0 |
+| Netlify Personal | ¥1,350 (~$9/月) |
 | **合計** | **月 ¥80 程度** |
 
 ---
@@ -94,13 +94,13 @@ Project 作成成功時に自動で `/projects/[id]?suggestions=1` に遷移し�
 
 ### Scenario A: LLM API 障害で大量エラーが発生している
 
-**症状**: Vercel Logs に `voyage_api_error` / `anthropic_api_error` が大量に出ている、ユーザのプロジェクト作成が遅い。
+**症状**: Netlify Function Logs に `voyage_api_error` / `anthropic_api_error` が大量に出ている、ユーザのプロジェクト作成が遅い。
 
 **対応** (5 分以内):
 
-1. Vercel Dashboard → Settings → Environment Variables
+1. Netlify Dashboard → Site configuration → Environment variables
 2. **`SUGGESTION_ENGINE_DISABLED`** = **`true`** を追加 (Production)
-3. Vercel Dashboard → Deployments → 最新を **Redeploy** (環境変数反映)
+3. Netlify Dashboard → Deploys → 最新を **Trigger deploy → Deploy site** (環境変数反映)
 4. デプロイ完了後 (~2 分)、提案機能が空配列を返すようになり LLM 呼び出しもゼロに
 
 **復旧時**: `SUGGESTION_ENGINE_DISABLED` を **削除** (or `false`) → Redeploy。
@@ -131,14 +131,14 @@ UPDATE tenants SET monthly_budget_cap_jpy = 0 WHERE id = '<tenant-uuid>';
 
 **A**: 以下を順に確認:
 
-1. **`SUGGESTION_ENGINE_DISABLED=true`** が設定されていないか (Vercel 環境変数を確認)
+1. **`SUGGESTION_ENGINE_DISABLED=true`** が設定されていないか (Netlify 環境変数を確認)
 2. default-tenant に **シードナレッジが投入済**か (`SELECT COUNT(*) FROM knowledges WHERE tenant_id='00000000...001' AND visibility='public';`)
 3. プロジェクトの `purpose`/`background`/`scope` が **空**でないか (空だと類似度計算できず候補ゼロ)
 4. プロジェクトの **タグ + embedding** が両方 NULL でないか (両方 NULL なら 3 軸とも 0 でスコア閾値未到達)
 
 ### Q2. embedding が NULL のままで効かない
 
-**A**: PR #5-c 以降は新規データに対して自動生成される。既存データに対しては **PR #368 の月初バッチ** (`runMonthlyEmbeddingBackfill`) で自動補完される (テナント TZ 月初に Vercel Cron 実行)。手動再実行が必要な場合は `/api/cron/tenant-monthly-reset` を CRON_SECRET 付きで叩く。
+**A**: PR #5-c 以降は新規データに対して自動生成される。既存データに対しては **PR #368 の月初バッチ** (`runMonthlyEmbeddingBackfill`) で自動補完される (テナント TZ 月初に外部 cron (cron-job.org) で実行)。手動再実行が必要な場合は `/api/cron/tenant-monthly-reset` を CRON_SECRET 付きで叩く。
 
 ただし embedding が NULL でも **重み再配分縮退モード (タグ：テキスト = 5：5、合計重み 1.0)** で動作するため、致命的ではない（詳細は [docs/business/TENANT_AND_BILLING.md §34.14.4](../business/TENANT_AND_BILLING.md) 参照）。
 
@@ -184,7 +184,7 @@ GET /api/admin/usage-summary?date=2026-06-01
 
 つまり「Anthropic クレジットが減らない」と感じる場合は **Anthropic API key が正しく設定されているか / call が実際に発火しているか** を確認する。観測ポイント:
 
-1. **API key 設定**: Vercel 環境変数 `ANTHROPIC_API_KEY` が正しいか / 該当 key の Console を見ているか
+1. **API key 設定**: Netlify 環境変数 `ANTHROPIC_API_KEY` が正しいか / 該当 key の Console を見ているか
 2. **呼び出し発火**: `ApiCallLog` テーブルに該当 `featureUnit` (`project-upsert` / `suggestion-explanation` 等) のレコードが入っているか — 入っていれば呼び出しは成功しトークン消費もしているはず (2026-05-15: `auto-tag-extract` + `project-embedding` は `project-upsert` に統合された)
 3. **集計タイミング**: Anthropic Console は数十秒〜数分の遅延があるため、即時反映を期待しない
 4. **無料クレジット**: 新規アカウントの無料クレジット枠から先に消費されるため、有償残高表示が動かないように見えることがある

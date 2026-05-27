@@ -153,7 +153,7 @@ Pro プランの差別化価値として、提案結果上位 N 件に **Anthrop
 **用語の意味**:
 - **DB 容量**: テーブル + インデックス + embedding ベクトルの合計サイズ
 - **API 帯域 (egress)**: Supabase から外部 (ブラウザ・サーバ) へ送信されたデータ量。**ダウンロード方向のみ**課金 (アップロードは無料)
-- **同時接続**: PostgreSQL に同時に張られる TCP コネクション数。Vercel serverless で大量並列実行する場合、Supavisor (Transaction pooler) を使うことで実質無制限化可能 (本サービスは利用済)
+- **同時接続**: PostgreSQL に同時に張られる TCP コネクション数。Netlify Functions (= AWS Lambda) で大量並列実行する場合、Supavisor (Transaction pooler) を使うことで実質無制限化可能 (本サービスは利用済)
 
 ### E. 月次コスト試算 (シナリオ別)
 
@@ -372,7 +372,7 @@ LLM (Anthropic) と Embedding (Voyage AI) の呼び出しは、それぞれ専�
 
 embedding はデータ作成・更新時に同期的に生成する。Knowledge / RiskIssue / Retrospective / Memo / Project の `create` / `update` で content フィールドが変更された場合、その Server Action 内で embedding を再生成する。生成中の不整合を避けるため、embedding 生成失敗時はトランザクション全体をロールバックせず、`content_embedding` を NULL にしてから commit する (本体データの保存を優先する設計)。
 
-NULL になった embedding は、Vercel Cron で日次に動作する `@/cron/regenerate-embeddings.ts` が検出して非同期に再生成する。これにより、API 障害時でもデータ保存は成功し、後続の cron で復旧する優雅な縮退を実現する。
+NULL になった embedding は、外部 cron (cron-job.org) で日次に動作する `@/cron/regenerate-embeddings.ts` が検出して非同期に再生成する。これにより、API 障害時でもデータ保存は成功し、後続の cron で復旧する優雅な縮退を実現する。
 
 ### 34.6 監視と異常検知のデータモデル
 
@@ -410,7 +410,7 @@ embedding カラムの追加に伴う既存データの backfill は、初回 de
 
 Phase 3 (LLM Re-ranking) を追加する際は、`@/services/suggestion.service.ts` に `rerank()` 関数を追加し、Phase 2 の結果を入力として受け取る。Pro プラン (Sonnet) と Free プラン (Haiku) の切り替えは、`User.subscription_tier` を見るモデル名分岐で実装する。プロンプトキャッシュは Anthropic SDK の prompt caching 機能と Postgres でのアプリケーションレベルキャッシュ (5〜10 分 TTL) を併用する。
 
-30 日無料試用は `User.subscription_tier='pro_trial'` と `trial_ends_at` カラムで実装し、Vercel Cron で日次に期限切れユーザを `'free'` にダウングレードする。ティーザー機能は `User.teaser_uses_this_month` カラムで管理し、月 3 回まで Sonnet 出力を許可する。
+30 日無料試用は `User.subscription_tier='pro_trial'` と `trial_ends_at` カラムで実装し、外部 cron (cron-job.org) で日次に期限切れユーザを `'free'` にダウングレードする。ティーザー機能は `User.teaser_uses_this_month` カラムで管理し、月 3 回まで Sonnet 出力を許可する。
 
 組織単位課金は将来 Organization テーブルを新設して User.organization_id で紐付けする形で導入する。この時 subscription_tier は Organization に移管し、User 側のフィールドは互換のため残しつつ Organization の値を優先する設計とする。これは v2 以降の本格的なエンタープライズ展開時に検討する。
 
@@ -560,7 +560,7 @@ Supabase Free プランの主要な制約は、データベースサイズ (500M
 
 インフラ移行は早すぎても遅すぎてもコストになる。以下を **移行検討のトリガー** として記録しておく。
 
-第一に、月次の Vercel Function timeout エラー率が 1% を超えた場合。これはユーザが「ロードが終わらない」体験をする頻度を意味し、サービス品質の悪化シグナルとなる。
+第一に、月次の Netlify Function timeout エラー率が 1% を超えた場合。これはユーザが「ロードが終わらない」体験をする頻度を意味し、サービス品質の悪化シグナルとなる。
 
 第二に、Supabase データベースサイズが Free / Pro プランの 80% に達した場合。これは数ヶ月以内に上限到達することを意味し、移行を計画する時間的余裕を確保する。
 
@@ -570,11 +570,11 @@ Supabase Free プランの主要な制約は、データベースサイズ (500M
 
 #### 34.13.4 移行時のコード変更ポイント
 
-本サービスのアーキテクチャは、現時点で **インフラに対する依存をほぼコード化していない** ため、移行コストは比較的低い。具体的には、Prisma が DB プロバイダを抽象化しており、PostgreSQL 互換 DB への移行は接続文字列の変更で完結する。Next.js のサーバランタイムも `output: 'standalone'` で Docker 化可能で、Vercel 依存の API (例: `@vercel/cron`) は標準の cron に置き換える程度の変更で対応できる。
+本サービスのアーキテクチャは、現時点で **インフラに対する依存をほぼコード化していない** ため、移行コストは比較的低い。具体的には、Prisma が DB プロバイダを抽象化しており、PostgreSQL 互換 DB への移行は接続文字列の変更で完結する。Next.js のサーバランタイムも `output: 'standalone'` で Docker 化可能で、cron は外部サービス (cron-job.org) を使っているためインフラ移行時の切替は env 設定のみ。
 
-移行時の主な作業は、環境変数の再設定、Docker image の構築、CI/CD パイプラインの再構築 (GitHub Actions → AWS / Azure)、監視・ログの再設定 (Vercel Analytics → CloudWatch / Application Insights) である。実工数は 1〜2 週間と見込む。
+移行時の主な作業は、環境変数の再設定、Docker image の構築、CI/CD パイプラインの再構築 (GitHub Actions → AWS / Azure)、監視・ログの再設定 (Netlify Analytics → CloudWatch / Application Insights) である。実工数は 1〜2 週間と見込む。
 
-これらは将来の判断材料として記録するが、v1 リリース時点ではすべて Vercel + Supabase で運用する。本格的な事業拡大段階で判断する。
+これらは将来の判断材料として記録するが、v1 リリース時点ではすべて Netlify + Supabase で運用する (ADR-0023 で Vercel から移行済)。本格的な事業拡大段階で判断する。
 
 ### 34.14 課金モデル: 3 プラン構成と従量課金 (per-API-call) の確定版
 
@@ -637,7 +637,7 @@ Beginner プランは月間 100 回の API 呼び出し上限に達した時点�
 
 ユーザには明示的に「今月の AI 詳細解析の上限に達しました。来月 1 日にリセットされます。Expert / Pro プランへのアップグレードで上限なくご利用いただけます」というメッセージを表示し、アップグレード導線を強化する。これは「無料で価値を体験 → 限界を感じる → アップグレード」という SaaS の典型的な funnel である。
 
-月初リセットは Vercel Cron で日次に動作するバッチが、`lastResetAt` が前月以前のテナントを検出して `currentMonthApiCallCount = 0` にリセットする。リセット時刻は UTC 月初の 00:00 (= JST 09:00) で、これはユーザの利用パターンと反対のため運用上の影響が小さい。
+月初リセットは外部 cron (cron-job.org) で日次に動作するバッチが、`lastResetAt` が前月以前のテナントを検出して `currentMonthApiCallCount = 0` にリセットする。リセット時刻は UTC 月初の 00:00 (= JST 09:00) で、これはユーザの利用パターンと反対のため運用上の影響が小さい。
 
 #### 34.14.5 月次予算上限の自己設定機能
 

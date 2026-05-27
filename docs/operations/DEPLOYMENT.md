@@ -654,7 +654,7 @@ DB スキーマ変更を伴うロールバックは [`ROLLBACK.md`](./ROLLBACK.m
 
 **症状**: クライアント側の `useSession().update({ X: ... })` で JWT を更新する経路で、レスポンスの `Set-Cookie` がブラウザに反映されず、JWT 内 claim が古いまま固定化される。MFA 検証 / テナント TZ-Locale 変更 / 画面テーマ変更で同時発覚。
 
-**根本原因**: NextAuth v5 0-beta.31 + @netlify/plugin-nextjs の組合せで `POST /api/auth/session` のレスポンス cookie がプロキシ層に吸収される (一次ソース未検証、ヘッダ観察で再現確認)。Vercel 環境では発生しない。
+**根本原因**: NextAuth v5 0-beta.31 + @netlify/plugin-nextjs の組合せで `POST /api/auth/session` のレスポンス cookie がプロキシ層に吸収される (一次ソース未検証、ヘッダ観察で再現確認)。旧 Vercel 環境では発生しなかった事象。
 
 **対応 (本サービスで実施済)**:
 

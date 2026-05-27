@@ -76,7 +76,7 @@
 
 ### 毎月 1 日 00:00 UTC (JST 09:00) — 自動
 
-Vercel Cron が `tenant-monthly-reset` ジョブを実行し、以下を自動処理する。
+外部 cron (cron-job.org) が `tenant-monthly-reset` ジョブを実行し、以下を自動処理する。
 
 1. `saveMonthlyUsageSnapshots()` — リセット直前の各テナント使用量を `tenant_monthly_usage_history` に保存 (= 前月分の確定スナップショット)
 2. `resetTenantMonthlyCounters()` — 各テナントの `currentMonthApiCallCount` / `currentMonthApiCostJpy` を 0 にリセット

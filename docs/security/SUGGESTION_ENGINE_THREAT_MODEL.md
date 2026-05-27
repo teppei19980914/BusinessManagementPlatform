@@ -144,7 +144,7 @@ PR #8 (統合テスト + リリース準備) で、`scripts/security-check.ts` �
 
 **新種のプロンプトインジェクション攻撃** は LLM の進化と共に新パターンが出現する領域であり、四半期に一度の脅威モデル再評価で更新する運用とする。本ドキュメント自体が継続的に更新される対象である。
 
-**極めて大規模な DDoS 攻撃** (例: 数百万 IP からの分散攻撃) は、Vercel 標準の DDoS 保護で対処される範囲を超える可能性がある。発生時は Cloudflare 等の追加レイヤを緊急導入する手順を、別途インシデント対応プランとして整備する。
+**極めて大規模な DDoS 攻撃** (例: 数百万 IP からの分散攻撃) は、Netlify 標準の DDoS 保護で対処される範囲を超える可能性がある。発生時は Cloudflare 等の追加レイヤを緊急導入する手順を、別途インシデント対応プランとして整備する。
 
 ---
 
@@ -152,7 +152,7 @@ PR #8 (統合テスト + リリース準備) で、`scripts/security-check.ts` �
 
 ご要望に基づき、本機能の異常検知は将来のサービス内ダッシュボードと統合できる設計とする。詳細は [DESIGN.md §34](../developer/DESIGN.md) の監視設計セクションを参照。
 
-短期 (v1) では Vercel Cron による日次バッチで集計し admin にメール通知する最小実装を行い、中期 (v2 以降) で `/admin/observability/llm` ダッシュボードとして可視化する。これは [RELEASE_ROADMAP.md](../administrator/RELEASE_ROADMAP.md) Phase 3c の `/admin/observability` の一部として組み込まれる予定である。
+短期 (v1) では外部 cron (cron-job.org) による日次バッチで集計し admin にメール通知する最小実装を行い、中期 (v2 以降) で `/admin/observability/llm` ダッシュボードとして可視化する。これは [RELEASE_ROADMAP.md](../administrator/RELEASE_ROADMAP.md) Phase 3c の `/admin/observability` の一部として組み込まれる予定である。
 
 ---
 
@@ -176,13 +176,13 @@ PR #8 (統合テスト + リリース準備) で、`scripts/security-check.ts` �
 
 **脅威**: テナント削除操作時に、何らかのテーブルでカスケード削除が漏れて、削除されたテナントのデータが孤児レコードとして残存してしまう。後の DB スキャンで「削除済テナントのナレッジ」が発見される可能性がある。
 
-**対策**: テナント削除は **専用の `deleteTenant(tenantId)` 関数を経由し、すべての関連テーブルを順序立てて削除する** 設計とする。削除順序は外部キー制約を考慮し、子テーブルから順に削除する (Comment → Mention → Notification → Attachment → Knowledge → Project → User → Tenant のような順序)。Prisma の `onDelete: Cascade` を schema 定義に明示し、Postgres 側でも参照整合性を保つ。テナント削除後、定期的に `tenantId` が orphan な (削除済み tenant ID を持つ) レコードを scan するメンテナンスバッチを Vercel Cron で動作させ、孤児レコードを検出したら admin に通知する。
+**対策**: テナント削除は **専用の `deleteTenant(tenantId)` 関数を経由し、すべての関連テーブルを順序立てて削除する** 設計とする。削除順序は外部キー制約を考慮し、子テーブルから順に削除する (Comment → Mention → Notification → Attachment → Knowledge → Project → User → Tenant のような順序)。Prisma の `onDelete: Cascade` を schema 定義に明示し、Postgres 側でも参照整合性を保つ。テナント削除後、定期的に `tenantId` が orphan な (削除済み tenant ID を持つ) レコードを scan するメンテナンスバッチを外部 cron (cron-job.org) で動作させ、孤児レコードを検出したら admin に通知する。
 
 ### MT-4: テナント単位コスト追跡の改ざん (Tampering)
 
 **脅威**: 攻撃者が `Tenant.current_month_token_usage` を直接 0 にリセットする経路を見つければ、無制限に LLM を使い続けられてしまう。これは T-1 と同類だが、テナント単位なので影響範囲が拡大する (テナント内の全ユーザが恩恵を受ける)。
 
-**対策**: T-1 と同じ方針で、**`current_month_token_usage` の更新は専用関数 `incrementTenantTokenUsage()` 経由でのみ行う**。`token_usage_audit` テーブルには `tenant_id` を含め、テナント単位の毎日のスナップショットを記録する。月初リセットを行う Vercel Cron は固定 tenant 一覧をループする方式で実装し、外部から「リセット API」のようなエンドポイントは公開しない。
+**対策**: T-1 と同じ方針で、**`current_month_token_usage` の更新は専用関数 `incrementTenantTokenUsage()` 経由でのみ行う**。`token_usage_audit` テーブルには `tenant_id` を含め、テナント単位の毎日のスナップショットを記録する。月初リセットを行う外部 cron (cron-job.org) は固定 tenant 一覧をループする方式で実装し、外部から「リセット API」のようなエンドポイントは公開しない。
 
 ### MT-5: 初期シードデータを通じたテナント間情報漏洩 (Information Disclosure)
 

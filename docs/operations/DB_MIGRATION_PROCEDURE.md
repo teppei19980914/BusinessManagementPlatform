@@ -32,41 +32,41 @@ npx prisma migrate dev --name <変更内容を英数字で>
 npx prisma generate
 ```
 
-### 3.3 Supabase 本番への適用 (Vercel ビルド時自動 + 緊急時手動)
+### 3.3 Supabase 本番への適用 (Netlify ビルド時自動 + 緊急時手動)
 
-> **2026-05-03 PR fix/missing-migrations 改修**: 従来の **「Supabase ダッシュボード SQL Editor で手動実行」** 運用を、**Vercel ビルド時の `prisma migrate deploy` 自動実行** に切り替えた。手動実行は緊急時のフォールバックとして残す。
+> **2026-05-03 PR fix/missing-migrations 改修**: 従来の **「Supabase ダッシュボード SQL Editor で手動実行」** 運用を、**Netlify ビルド時の `prisma migrate deploy` 自動実行** に切り替えた。手動実行は緊急時のフォールバックとして残す。
 >
 > 改修理由: 手動 SQL Editor 運用は migration ごとに人手作業を強いる + 適用漏れ事故が発生しうる (実際 PR #229 マージ後に `tenant_id` 列が本番に反映されず本番ログイン全停止の事故が発生)。
 
-#### 3.3.1 通常運用: Vercel 自動デプロイ (推奨)
+#### 3.3.1 通常運用: Netlify 自動デプロイ (推奨)
 
 **前提条件**:
 
 | 設定項目 | 値 | 設定場所 |
 |---|---|---|
-| `vercel.json` の `buildCommand` | `pnpm prisma generate && pnpm prisma migrate deploy && pnpm build` | リポジトリ |
+| `netlify.toml` の `[build] command` (`bash scripts/netlify-build.sh` 経由で `pnpm build:netlify` = `prisma generate + migrate deploy + next build` を実行) | wrapper script で全工程をカバー | リポジトリ |
 | `prisma.config.ts` の `datasource.url` | `process.env['DIRECT_URL'] || process.env['DATABASE_URL']` (DIRECT_URL 優先) | リポジトリ |
-| Vercel 環境変数 `DATABASE_URL` | `postgresql://postgres.[ref]:[pw]@aws-1-ap-northeast-1.pooler.supabase.com:6543/postgres?pgbouncer=true` (Transaction pooler) | Vercel |
-| Vercel 環境変数 `DIRECT_URL` | `postgresql://postgres.[ref]:[pw]@aws-1-ap-northeast-1.pooler.supabase.com:5432/postgres` (Session pooler、port **5432** 注意) | Vercel |
+| Netlify 環境変数 `DATABASE_URL` | `postgresql://postgres.[ref]:[pw]@aws-1-ap-northeast-1.pooler.supabase.com:6543/postgres?pgbouncer=true` (Transaction pooler) | Vercel |
+| Netlify 環境変数 `DIRECT_URL` | `postgresql://postgres.[ref]:[pw]@aws-1-ap-northeast-1.pooler.supabase.com:5432/postgres` (Session pooler、port **5432** 注意) | Vercel |
 
 **重要**: Prisma 7 から `url` / `directUrl` を `schema.prisma` に書けなくなり (P1012 エラー)、`prisma.config.ts` の `datasource.url` で指定する仕様に変更されている。ランタイム (PrismaClient) は `process.env.DATABASE_URL` を自動利用、migrate 系は `prisma.config.ts` で指定した URL を使う。
 
 **仕組み**:
-- Vercel ビルド時に `prisma migrate deploy` が `DIRECT_URL` 経由で本番 DB に未適用の migration を順番に適用
+- Netlify ビルド時に `prisma migrate deploy` が `DIRECT_URL` 経由で本番 DB に未適用の migration を順番に適用
 - pgbouncer (port 6543) は prepared statement 不可で DDL 失敗するため `DIRECT_URL` で **session pooler (port 5432)** を使う必要あり
 - pgvector 等の **拡張は事前に Supabase Dashboard → Extensions で手動有効化**しておくこと (`CREATE EXTENSION` は Supabase 権限制限で migration 内では失敗するケースあり)
 
 ##### ⚠ よくある間違い: DIRECT_URL に「Direct connection」URL を使うと P1001 エラー
 
-Supabase Dashboard の Connection string ページには **3 種類の URL** が表示される。Vercel に登録するときに **どれを使うかを必ず確認**すること。
+Supabase Dashboard の Connection string ページには **3 種類の URL** が表示される。Netlify に登録するときに **どれを使うかを必ず確認**すること。
 
-| URL 種別 | Host | Port | IP | Vercel から使えるか |
+| URL 種別 | Host | Port | IP | Netlify から使えるか |
 |---|---|---|---|---|
 | ❌ **Direct connection** | `db.[ref].supabase.co` | 5432 | **IPv6 のみ** | **❌ 使えない** (P1001 エラー) |
 | ✅ **Session Pooler** (Supavisor) | `aws-1-[region].pooler.supabase.com` | **5432** | IPv4 互換 | ✅ **DIRECT_URL に使う** |
 | ✅ **Transaction Pooler** (Supavisor) | `aws-1-[region].pooler.supabase.com` | 6543 | IPv4 互換 | ✅ DATABASE_URL に使う (`?pgbouncer=true`) |
 
-**Vercel build が失敗する典型例**:
+**Netlify build が失敗する典型例**:
 ```
 Error: P1001: Can't reach database server at db.[ref].supabase.co:5432
 ```
@@ -77,16 +77,16 @@ Error: P1001: Can't reach database server at db.[ref].supabase.co:5432
 2. 左サイドバーの **Connect** ボタン (上部にも) をクリック
 3. **Connection string** タブ
 4. **Session pooler** タブを選択 (Direct connection ではない)
-5. 表示された URL をコピーして Vercel `DIRECT_URL` に貼り付け
+5. 表示された URL をコピーして Netlify `DIRECT_URL` に貼り付け
 6. ホスト名が `pooler.supabase.com` になっていることを再確認
 
 **確認手順**:
-1. Vercel ビルドログで `Applying migration X_Y_Z` 等のメッセージを確認
+1. Netlify ビルドログで `Applying migration X_Y_Z` 等のメッセージを確認
 2. Supabase SQL Editor で `SELECT * FROM _prisma_migrations ORDER BY finished_at DESC LIMIT 5;` を実行し、最新 migration が適用されているか確認
 
 #### 3.3.2 緊急時: ローカルから本番へ手動 deploy
 
-Vercel ビルドが失敗していて本番デプロイ自体ができないが、DB は適用したい状況 (例: 本番ログイン障害が起きていて先に DB を整えたい):
+Netlify ビルドが失敗していて本番デプロイ自体ができないが、DB は適用したい状況 (例: 本番ログイン障害が起きていて先に DB を整えたい):
 
 ```bash
 # 1. .env.local に本番 DATABASE_URL / DIRECT_URL を一時設定

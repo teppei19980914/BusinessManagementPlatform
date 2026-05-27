@@ -16,8 +16,8 @@
 2. `npx prisma migrate dev --name xxx` で migration ファイル生成 + ローカル適用
 3. PR を作成
 4. **本番デプロイ前**に Supabase ダッシュボードの SQL Editor で migration SQL を
-   手動実行する (Vercel ビルドでは自動適用されない設計)
-5. 本番 DB 更新後に PR をマージ → Vercel が自動デプロイ
+   手動実行する (Netlify ビルドでも `bash scripts/netlify-build.sh` の `migrate deploy` で自動適用されるが、ローカル先行確認用)
+5. 本番 DB 更新後に PR をマージ → Netlify が自動デプロイ
 
 ---
 
@@ -59,7 +59,7 @@ PR 本文には以下を含めると後の引き継ぎがスムーズです:
 1. GitHub 上で PR をマージ (手動)
 2. **DB スキーマ変更を含む場合**: マージ前に Supabase で migration を手動実行
    (詳細: OPERATION.md §3)
-3. Vercel が `main` ブランチを自動デプロイ
+3. Netlify が `main` ブランチを自動デプロイ
 4. 本番 URL で動作確認
 
 #### 10.4.1 リリース (= ユーザに告知して公開する単位) を出す場合の追加手順
@@ -581,7 +581,7 @@ mismatch (`#418 Minified hydration failed because the server rendered text
 didn't match the client`) が発生する。
 
 **原因**: Next.js の Server Component → Client Component ハイドレーション時、
-サーバは UTC (Vercel/Docker 等) でレンダリングし、クライアントは JST で再計算する。
+サーバは UTC (Netlify/Docker 等) でレンダリングし、クライアントは JST で再計算する。
 `toLocaleString` / `getHours()` 等は実行環境の TZ を使うため、両者で文字列が
 異なり、React が「マウント時の DOM が SSR 出力と一致しない」と判定する。
 

@@ -74,7 +74,7 @@ STRIDE は Microsoft が提唱した脅威分類モデル。**「攻撃者目線
   - 外部の匿名攻撃者 (未認証)
   - 一般ユーザ (認証済、悪意あり)
   - 内部関係者 (admin 権限の悪用)
-  - サービスベンダー側 (Anthropic / Voyage / Supabase / Vercel)
+  - サービスベンダー側 (Anthropic / Voyage / Supabase / Netlify)
 
 ### Step 2: 攻撃面 (Attack Surface) を分解 (30-60 分)
 

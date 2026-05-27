@@ -11,12 +11,12 @@
 ## T-2 週間前 (2026-05-18 頃) — 凍結前準備
 
 - [ ] **機能スコープの凍結**: v1.0 で含める機能 / 含めない機能の最終決定 ([RELEASE_NOTES_v1.md](./RELEASE_NOTES_v1.md))
-- [ ] **本番ステージング環境の準備**: 本番と同等構成の Vercel + Supabase project を起動 (まだ未整備なら本日着手)
+- [ ] **本番ステージング環境の準備**: 本番と同等構成の Netlify + Supabase project を起動 (まだ未整備なら本日着手)
 - [ ] **データバックアップ機構の動作確認**: [BACKUP_VERIFICATION.md](./BACKUP_VERIFICATION.md) §3.1 を 1 回完了
 - [ ] **ドキュメント全体の最終整合性確認**:
   - リーディングパス (docs/README.md) のリンク全部 OK ← CI link checker で自動
   - CONTRIBUTING.md / CLAUDE.md / ONBOARDING.md の整合
-- [ ] **環境変数の最終確認**: [ENV_VARS.md](./ENV_VARS.md) の必須項目が本番 Vercel に全て設定済
+- [ ] **環境変数の最終確認**: [ENV_VARS.md](./ENV_VARS.md) の必須項目が本番 Netlify に全て設定済
 - [ ] **シークレットの 1Password 保管**: NEXTAUTH_SECRET / DATABASE_URL / 各 API キーを暗号化保管
 
 ## T-1 週間前 (2026-05-25 頃) — 凍結
@@ -32,12 +32,12 @@
 ## T-3 営業日前 (2026-05-29 木) — 直前確認
 
 - [ ] **monitoring の準備**:
-  - Vercel Functions ログを毎時確認できる体制
+  - Netlify Function ログを毎時確認できる体制
   - Supabase Dashboard でリアルタイム接続数モニタ
   - エラー集約 (`system_error_logs`) を 30 分ごとに確認
 - [ ] **インシデント対応の練習**:
   - [INCIDENT_RESPONSE.md](./INCIDENT_RESPONSE.md) §6.5 (ログイン失敗) を手元で 1 回試行
-  - Vercel Rollback (§7.1) を **ステージング環境で 1 回実施**
+  - Netlify Rollback (Publish deploy、§7.1) を **ステージング環境で 1 回実施**
 - [ ] **告知準備**:
   - リリース告知文の最終版作成 (Twitter / LinkedIn / 知人連絡用)
   - リリースノートを自社サイト掲載 (もしあれば)
@@ -48,7 +48,7 @@
 - [ ] **リリース真値ファイルの最終更新** — [`RELEASE_PROCEDURE.md`](./RELEASE_PROCEDURE.md) §1 / §2.1 の (1)-(4) を確認
   - `CHANGELOG.md` に `## [1.0.0] — 2026-06-01` セクションが完成 / `package.json.version` が `1.0.0` / Netlify `NEXT_PUBLIC_RELEASE_DATE=2026-06-01` 設定済 / `/announcements/2026-06-01-launch.md` 完成
 - [ ] **本番デプロイ前の最終 commit**: main の最新コミット SHA を記録
-- [ ] **本番環境変数の再確認**: Vercel Dashboard で全変数の値を目視 (typo / 改行混入チェック)
+- [ ] **本番環境変数の再確認**: Netlify Dashboard で全変数の値を目視 (typo / 改行混入チェック)
 - [ ] **ステージング環境で最終 dry-run**:
   - 新規ユーザサインアップ → メール認証 → ログイン → プロジェクト作成 → ナレッジ登録 → 提案エンジン実行
   - 全フロー成功確認
@@ -58,7 +58,7 @@
   - super_admin アカウントが作成済 (Teppei 自身)
 - [ ] **休日のオンコール準備**:
   - 6/1 (日) は終日対応可能な状態
-  - 緊急連絡先 (Supabase / Vercel) を即引ける位置に
+  - 緊急連絡先 (Supabase / Netlify) を即引ける位置に
 
 ---
 
@@ -68,7 +68,7 @@
 
 - [ ] **コーヒーを淹れる ☕** (本気で)
 - [ ] **Supabase Status Page 確認**: 障害告知がないか https://status.supabase.com/
-- [ ] **Vercel Status Page 確認**: https://www.vercel-status.com/
+- [ ] **Netlify Status Page 確認**: https://www.netlifystatus.com/
 - [ ] **Anthropic Status 確認**: https://status.anthropic.com/
 - [ ] **本番アプリの health check**:
   - `curl https://<production-domain>/` で 200 が返る
@@ -95,7 +95,7 @@
 
 30 分ごとに以下を確認:
 
-- [ ] Vercel Functions ログでエラー / 警告
+- [ ] Netlify Function ログでエラー / 警告
 - [ ] Supabase 接続数 / クエリ実行時間
 - [ ] `system_error_logs` テーブルの新規エントリ
 - [ ] サポートメール / Discord / GitHub Issues の新着
@@ -130,7 +130,7 @@
 
 ### 即時ロールバック判断基準
 
-以下のいずれかで Vercel の前バージョンへ即時ロールバック ([INCIDENT_RESPONSE.md §7.1](./INCIDENT_RESPONSE.md)):
+以下のいずれかで Netlify の前バージョンへ即時ロールバック ([INCIDENT_RESPONSE.md §7.1](./INCIDENT_RESPONSE.md)):
 
 - ログイン機能が全ユーザで失敗
 - 提案エンジンが全テナントで失敗 (LLM 障害ではなく自プロダクト由来)
@@ -139,7 +139,7 @@
 
 ### ロールバック手順
 
-1. Vercel Dashboard → Deployments → 1 つ前の Production → **Promote to Production**
+1. Netlify Dashboard → Deploys → 1 つ前の Published deploy → **Publish deploy**
 2. ロールバック完了確認 (数秒〜数十秒)
 3. ユーザ向け告知 (障害テンプレート、[INCIDENT_RESPONSE.md §8.2](./INCIDENT_RESPONSE.md))
 4. 根本原因調査 → fix PR → 再度 6/1 リリース手順に従って公開

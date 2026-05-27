@@ -234,14 +234,14 @@
 
 ### 環境変数準備 (実装開始前に super_admin が完了させる)
 - [docs/operations/STRIPE_SETUP.md](../operations/STRIPE_SETUP.md) に従い Stripe Dashboard セットアップ
-- 全 7 環境変数 (`STRIPE_SECRET_KEY` 等) を Vercel に登録 (Test / Production 両方)
+- 全 7 環境変数 (`STRIPE_SECRET_KEY` 等) を Netlify に登録 (Test / Production 両方)
 
 ### 各 PR 共通のチェックリスト
 - [ ] `pnpm test` で全テスト PASS
 - [ ] `pnpm lint` errors 0
 - [ ] `pnpm tsc --noEmit` で型エラー 0
 - [ ] `pnpm e2e:coverage-check` PASS (新規 route 追加した PR のみ)
-- [ ] Vercel Preview Deploy で動作確認
+- [ ] Netlify Deploy Preview で動作確認
 - [ ] KDD ナレッジ追記 (落とし穴に遭遇したら)
 
 ---
