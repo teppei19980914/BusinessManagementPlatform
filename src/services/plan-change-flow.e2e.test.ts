@@ -56,8 +56,7 @@ type FakeTenant = {
   deletedAt: Date | null;
   // PR-4 (2026-05-15): テナント TZ
   timezone: string;
-  // PR-3 / Storage add-on 関連 (本テストでは未使用だが型整合のため)
-  storageAddonPlan: string;
+  // chore/storage-addon-backend-removal (2026-05-26): storageAddonPlan は撤去済
   storageBytesUsed: bigint;
 };
 
@@ -80,7 +79,6 @@ const initialState = (): FakeTenant => ({
   deletedAt: null,
   // PR-4: UTC TZ で本テストの境界判定 (2026-06-01T00:00:00Z) が UTC ベースの旧仕様と一致
   timezone: 'UTC',
-  storageAddonPlan: 'standard',
   storageBytesUsed: BigInt(0),
 });
 

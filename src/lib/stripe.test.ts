@@ -61,8 +61,7 @@ describe('getStripePriceConfig', () => {
   beforeEach(() => {
     delete process.env['STRIPE_PRICE_HAIKU'];
     delete process.env['STRIPE_PRICE_SONNET'];
-    delete process.env['STRIPE_PRICE_STORAGE_PLUS'];
-    delete process.env['STRIPE_PRICE_STORAGE_PRO'];
+    // chore/storage-addon-backend-removal (2026-05-26): STRIPE_PRICE_STORAGE_PLUS / PRO は撤去済
   });
 
   afterEach(() => {

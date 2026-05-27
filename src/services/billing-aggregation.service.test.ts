@@ -45,9 +45,9 @@ beforeEach(() => {
   mockSendSuperAdminAlert.mockResolvedValue({ sentTo: ['admin@example.com'], failures: [] });
 });
 
-const TENANT_A = { id: 'tenant-a', timezone: 'Asia/Tokyo', storageAddonPlan: 'standard', deletedAt: null };
-const TENANT_B = { id: 'tenant-b', timezone: 'Asia/Tokyo', storageAddonPlan: 'plus', deletedAt: null };
-const TENANT_DELETED = { id: 'tenant-del', timezone: 'Asia/Tokyo', storageAddonPlan: 'standard', deletedAt: new Date() };
+const TENANT_A = { id: 'tenant-a', timezone: 'Asia/Tokyo', deletedAt: null };
+const TENANT_B = { id: 'tenant-b', timezone: 'Asia/Tokyo', deletedAt: null };
+const TENANT_DELETED = { id: 'tenant-del', timezone: 'Asia/Tokyo', deletedAt: new Date() };
 
 describe('aggregateInvoiceBillingForMonth', () => {
   it('API ¥1,000 + Storage ¥0 (standard) → subtotal=¥1000 / tax=¥100 / total=¥1100 で upsert', async () => {

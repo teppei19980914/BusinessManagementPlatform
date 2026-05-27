@@ -117,10 +117,9 @@ function buildPaymentMethod(overrides: Partial<Stripe.PaymentMethod> = {}): Stri
 beforeEach(() => {
   vi.clearAllMocks();
   // Default: env vars for extractSubscriptionItemIds
+  // chore/storage-addon-backend-removal (2026-05-26): STRIPE_PRICE_STORAGE_PLUS / PRO は撤去済
   process.env['STRIPE_PRICE_HAIKU'] = 'price_haiku_test';
   process.env['STRIPE_PRICE_SONNET'] = 'price_sonnet_test';
-  process.env['STRIPE_PRICE_STORAGE_PLUS'] = 'price_storage_plus_test';
-  process.env['STRIPE_PRICE_STORAGE_PRO'] = 'price_storage_pro_test';
 });
 
 // ============================================================
@@ -428,13 +427,14 @@ describe('handlePaymentMethodUpdated', () => {
 // ============================================================
 
 describe('extractSubscriptionItemIds', () => {
-  it('Haiku / Sonnet / Storage の SubscriptionItem ID を抽出する', () => {
+  it('Haiku / Sonnet の SubscriptionItem ID を抽出する', () => {
+    // chore/storage-addon-backend-removal (2026-05-26): Storage item テストは削除済
+    // (Storage add-on は ADR-0020/0021 で完全従量課金化により撤去)
     const sub = buildSubscription({
       items: {
         data: [
           { id: 'si_haiku', price: { id: 'price_haiku_test' } },
           { id: 'si_sonnet', price: { id: 'price_sonnet_test' } },
-          { id: 'si_storage', price: { id: 'price_storage_plus_test' } },
         ],
       },
     } as unknown as Partial<Stripe.Subscription>);
@@ -442,19 +442,18 @@ describe('extractSubscriptionItemIds', () => {
     const result = extractSubscriptionItemIds(sub);
     expect(result.haikuItemId).toBe('si_haiku');
     expect(result.sonnetItemId).toBe('si_sonnet');
-    expect(result.storageItemId).toBe('si_storage');
   });
 
-  it('Storage Pro Price ID も storageItemId にマップされる', () => {
+  it('未知の Price ID は null を返す', () => {
     const sub = buildSubscription({
       items: {
-        data: [{ id: 'si_storage_pro', price: { id: 'price_storage_pro_test' } }],
+        data: [{ id: 'si_unknown', price: { id: 'price_unknown' } }],
       },
     } as unknown as Partial<Stripe.Subscription>);
 
     const result = extractSubscriptionItemIds(sub);
-    expect(result.storageItemId).toBe('si_storage_pro');
     expect(result.haikuItemId).toBeNull();
+    expect(result.sonnetItemId).toBeNull();
   });
 });
 

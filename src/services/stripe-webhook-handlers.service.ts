@@ -116,7 +116,7 @@ async function handleSubscriptionUpdated(
     return { ok: true, action: 'tenant_not_found' };
   }
 
-  const { haikuItemId, sonnetItemId, storageItemId } = extractSubscriptionItemIds(subscription);
+  const { haikuItemId, sonnetItemId } = extractSubscriptionItemIds(subscription);
   const now = new Date();
 
   // 自動 suspend スケジュールの判定
@@ -134,7 +134,9 @@ async function handleSubscriptionUpdated(
       stripeSubscriptionStatus: subscription.status,
       stripeSubscriptionItemHaikuId: haikuItemId,
       stripeSubscriptionItemSonnetId: sonnetItemId,
-      stripeSubscriptionItemStorageId: storageItemId,
+      // chore/storage-addon-backend-removal (2026-05-26): stripeSubscriptionItemStorageId カラムは
+      //   schema から撤去済 (Prisma の XOR<UpdateInput, UncheckedUpdateInput> 型は excess
+      //   property check が効かず tsc 検出されないため、KDD §5.X+163 に記録)
       ...(autoSuspendScheduledAt !== undefined ? { autoSuspendScheduledAt } : {}),
     },
   });
@@ -524,35 +526,31 @@ async function resolveTenantByPaymentMethod(
 
 /**
  * Subscription Item の Price ID と Tenant の subscriptionItemId* を突合せて
- * haiku / sonnet / storage のそれぞれを抽出。
+ * haiku / sonnet を抽出。
  *
  * Stripe の `subscription.items.data` は items の配列で、各 item の `price.id` と
- * 環境変数 (= STRIPE_PRICE_*) を比較して識別する。
+ * 環境変数 (= STRIPE_PRICE_HAIKU / STRIPE_PRICE_SONNET) を比較して識別する。
+ *
+ * chore/storage-addon-backend-removal (2026-05-26): 旧 4 段階 Storage add-on プランは
+ * ADR-0020/0021 で完全従量課金化により撤去。STRIPE_PRICE_STORAGE_PLUS / PRO 環境変数も不要に。
  */
 function extractSubscriptionItemIds(subscription: Stripe.Subscription): {
   haikuItemId: string | null;
   sonnetItemId: string | null;
-  storageItemId: string | null;
 } {
   const haikuPriceId = process.env['STRIPE_PRICE_HAIKU'];
   const sonnetPriceId = process.env['STRIPE_PRICE_SONNET'];
-  const storagePlusPriceId = process.env['STRIPE_PRICE_STORAGE_PLUS'];
-  const storageProPriceId = process.env['STRIPE_PRICE_STORAGE_PRO'];
 
   let haikuItemId: string | null = null;
   let sonnetItemId: string | null = null;
-  let storageItemId: string | null = null;
 
   for (const item of subscription.items.data) {
     const priceId = item.price.id;
     if (priceId === haikuPriceId) haikuItemId = item.id;
     else if (priceId === sonnetPriceId) sonnetItemId = item.id;
-    else if (priceId === storagePlusPriceId || priceId === storageProPriceId) {
-      storageItemId = item.id;
-    }
   }
 
-  return { haikuItemId, sonnetItemId, storageItemId };
+  return { haikuItemId, sonnetItemId };
 }
 
 /**

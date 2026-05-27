@@ -250,7 +250,6 @@ describe('runTenantMonthlyReset (バッチ全体)', () => {
         lastResetAt: null,
         storageBytesUsed: BigInt(0),
         storageBytesPeakThisMonth: BigInt(0),
-        storageGracePeriodStartedAt: null,
       },
       {
         id: 'tenant-b',
@@ -258,7 +257,6 @@ describe('runTenantMonthlyReset (バッチ全体)', () => {
         lastResetAt: null,
         storageBytesUsed: BigInt(0),
         storageBytesPeakThisMonth: BigInt(0),
-        storageGracePeriodStartedAt: null,
       },
     ] as never);
     // $transaction は処理を実行するモック (peak=0 なら ApiCallLog INSERT なし、peak reset のみ)
@@ -400,7 +398,6 @@ describe('saveMonthlyUsageSnapshots (P-5b / 2026-05-08)', () => {
         lastResetAt: null,
         currentMonthApiCallCount: 80,
         currentMonthApiCostJpy: 0,
-        storageAddonPlan: 'standard',
         storageBytesUsed: BigInt(0),
       },
       {
@@ -410,7 +407,6 @@ describe('saveMonthlyUsageSnapshots (P-5b / 2026-05-08)', () => {
         lastResetAt: null,
         currentMonthApiCallCount: 1200,
         currentMonthApiCostJpy: 36000,
-        storageAddonPlan: 'standard',
         storageBytesUsed: BigInt(0),
       },
     ] as never);

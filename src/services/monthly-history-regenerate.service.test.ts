@@ -72,7 +72,6 @@ describe('regenerateMonthlyHistoryFromApiCallLog', () => {
       id: TENANT_A,
       plan: 'beginner',
       timezone: 'Asia/Tokyo',
-      storageAddonPlan: 'standard',
       storageBytesUsed: BigInt(1000),
     } as never);
     vi.mocked(prisma.apiCallLog.aggregate).mockResolvedValue({
@@ -110,7 +109,6 @@ describe('regenerateMonthlyHistoryFromApiCallLog', () => {
       id: TENANT_A,
       plan: 'expert',
       timezone: 'Asia/Tokyo',
-      storageAddonPlan: 'standard',
       storageBytesUsed: BigInt(0),
     } as never);
     vi.mocked(prisma.apiCallLog.aggregate).mockResolvedValue({
@@ -136,7 +134,6 @@ describe('regenerateMonthlyHistoryFromApiCallLog', () => {
       id: TENANT_A,
       plan: 'beginner',
       timezone: 'Asia/Tokyo',
-      storageAddonPlan: 'standard',
       storageBytesUsed: BigInt(0),
     } as never);
     vi.mocked(prisma.apiCallLog.aggregate).mockResolvedValue({
@@ -162,7 +159,6 @@ describe('regenerateMonthlyHistoryFromApiCallLog', () => {
       id: TENANT_A,
       plan: 'expert',
       timezone: 'UTC',
-      storageAddonPlan: 'standard',
       storageBytesUsed: BigInt(0),
     } as never);
     vi.mocked(prisma.apiCallLog.aggregate).mockResolvedValue({

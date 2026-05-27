@@ -103,7 +103,7 @@ const baseTenant = {
   stripeSubscriptionStatus: null,
   stripeSubscriptionItemHaikuId: null,
   stripeSubscriptionItemSonnetId: null,
-  stripeSubscriptionItemStorageId: null,
+  // chore/storage-addon-backend-removal (2026-05-26): stripeSubscriptionItemStorageId 撤去済
   stripeDefaultPaymentMethodId: null,
   cardLastVerifiedAt: null,
   cardVerificationStatus: null,

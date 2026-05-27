@@ -406,7 +406,6 @@ describe('deleteTenant (P-A / 2026-05-08)', () => {
       timezone: 'Asia/Tokyo',
       currentMonthApiCallCount: 250,
       currentMonthApiCostJpy: 2500,
-      storageAddonPlan: 'standard',
       storageBytesUsed: BigInt(0),
     } as never);
 
@@ -543,7 +542,6 @@ describe('deleteTenant (P-A / 2026-05-08)', () => {
       timezone: 'Asia/Tokyo',
       currentMonthApiCallCount: 0,
       currentMonthApiCostJpy: 0,
-      storageAddonPlan: 'standard',
       storageBytesUsed: BigInt(0),
     } as never);
 
@@ -1165,7 +1163,6 @@ describe('getDefaultTenantOwnSummary (2026-05-11)', () => {
       createdAt: new Date('2026-01-01T00:00:00Z'),
       currentMonthApiCallCount: 42,
       currentMonthApiCostJpy: 420,
-      storageAddonPlan: 'standard',
       storageBytesUsed: BigInt(10 * 1024 * 1024), // 10MB
     } as never);
     vi.mocked(prisma.user.count).mockResolvedValueOnce(5 as never);
@@ -1200,7 +1197,7 @@ describe('getDefaultTenantOwnSummary (2026-05-11)', () => {
     expect(prisma.user.count).not.toHaveBeenCalled();
   });
 
-  it('不正な plan / storageAddonPlan は beginner / standard へフォールバック', async () => {
+  it('不正な plan は beginner へフォールバック', async () => {
     vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce({
       id: '00000000-0000-0000-0000-000000000001',
       tenantSeq: null,
@@ -1210,7 +1207,6 @@ describe('getDefaultTenantOwnSummary (2026-05-11)', () => {
       createdAt: new Date('2026-01-01T00:00:00Z'),
       currentMonthApiCallCount: 0,
       currentMonthApiCostJpy: 0,
-      storageAddonPlan: 'unknown_addon',
       storageBytesUsed: BigInt(0),
     } as never);
     vi.mocked(prisma.user.count).mockResolvedValueOnce(0 as never);
@@ -1447,7 +1443,7 @@ describe('listAllTenants — 請求対象テナント一覧 (顧客のみ)', () 
         billingAddress: null, billingPostalCode: null, billingPrefecture: null,
         billingCity: null, billingStreetAddress: null, billingBuildingName: null,
         billingPhoneNumber: null, paymentMethod: 'invoice',
-        storageAddonPlan: 'standard', storageBytesUsed: BigInt(0),
+        storageBytesUsed: BigInt(0),
         deletedAt: null,
       },
       // expert plan, plus storage (¥500): LLM ¥1500 (300 calls × ¥5/call、2026-05-15 改定後) + Storage ¥500 = ¥2000
@@ -1460,7 +1456,7 @@ describe('listAllTenants — 請求対象テナント一覧 (顧客のみ)', () 
         billingAddress: null, billingPostalCode: null, billingPrefecture: null,
         billingCity: null, billingStreetAddress: null, billingBuildingName: null,
         billingPhoneNumber: null, paymentMethod: 'credit_card',
-        storageAddonPlan: 'plus', storageBytesUsed: BigInt(100 * 1024 * 1024),
+        storageBytesUsed: BigInt(100 * 1024 * 1024),
         deletedAt: null,
       },
       // pro plan, pro_storage (¥1500): LLM ¥15000 (1000 calls × ¥15/call、2026-05-15 改定後) + Storage ¥1500 = ¥16500
@@ -1473,7 +1469,7 @@ describe('listAllTenants — 請求対象テナント一覧 (顧客のみ)', () 
         billingAddress: null, billingPostalCode: null, billingPrefecture: null,
         billingCity: null, billingStreetAddress: null, billingBuildingName: null,
         billingPhoneNumber: null, paymentMethod: 'invoice',
-        storageAddonPlan: 'pro_storage', storageBytesUsed: BigInt(500 * 1024 * 1024),
+        storageBytesUsed: BigInt(500 * 1024 * 1024),
         deletedAt: null,
       },
     ] as never);
@@ -1516,7 +1512,7 @@ describe('listAllTenants — 請求対象テナント一覧 (顧客のみ)', () 
         billingAddress: null, billingPostalCode: null, billingPrefecture: null,
         billingCity: null, billingStreetAddress: null, billingBuildingName: null,
         billingPhoneNumber: null, paymentMethod: 'invoice',
-        storageAddonPlan: 'standard', storageBytesUsed: BigInt(0),
+        storageBytesUsed: BigInt(0),
         deletedAt: null,
       },
       {
@@ -1528,7 +1524,7 @@ describe('listAllTenants — 請求対象テナント一覧 (顧客のみ)', () 
         billingAddress: null, billingPostalCode: null, billingPrefecture: null,
         billingCity: null, billingStreetAddress: null, billingBuildingName: null,
         billingPhoneNumber: null, paymentMethod: 'invoice',
-        storageAddonPlan: 'standard', storageBytesUsed: BigInt(0),
+        storageBytesUsed: BigInt(0),
         deletedAt: new Date('2026-05-20T03:00:00Z'),
       },
     ] as never);
@@ -1569,7 +1565,7 @@ describe('listAllTenants — 請求対象テナント一覧 (顧客のみ)', () 
         billingAddress: null, billingPostalCode: null, billingPrefecture: null,
         billingCity: null, billingStreetAddress: null, billingBuildingName: null,
         billingPhoneNumber: null, paymentMethod: 'invoice',
-        storageAddonPlan: 'standard', storageBytesUsed: BigInt(0),
+        storageBytesUsed: BigInt(0),
         deletedAt: null,
       },
     ] as never);
@@ -1655,9 +1651,9 @@ describe('getTenantDetail — テナント単位の詳細 (請求の根拠デー
       billingAddress: null, billingPostalCode: null, billingPrefecture: null,
       billingCity: null, billingStreetAddress: null, billingBuildingName: null,
       billingPhoneNumber: null, paymentMethod: 'invoice',
-      storageAddonPlan: 'standard', storageBytesUsed: BigInt(10 * 1024 * 1024),
-      storageGracePeriodStartedAt: null, scheduledStorageAddonAt: null,
-      scheduledNextStorageAddon: null, beginnerMonthlyCallLimit: 50,
+      // chore/storage-addon-backend-removal (2026-05-26): 4 段階 Storage プラン関連カラム撤去済
+      storageBytesUsed: BigInt(10 * 1024 * 1024),
+      beginnerMonthlyCallLimit: 50,
       beginnerMaxSeats: 5, scheduledPlanChangeAt: null, scheduledNextPlan: null,
       beginnerEverUpgraded: false,
     } as never);
@@ -1693,9 +1689,8 @@ describe('getTenantDetail — テナント単位の詳細 (請求の根拠デー
       billingAddress: null, billingPostalCode: null, billingPrefecture: null,
       billingCity: null, billingStreetAddress: null, billingBuildingName: null,
       billingPhoneNumber: null, paymentMethod: 'invoice',
-      storageAddonPlan: 'standard', storageBytesUsed: BigInt(0),
-      storageGracePeriodStartedAt: null, scheduledStorageAddonAt: null,
-      scheduledNextStorageAddon: null, beginnerMonthlyCallLimit: 50,
+      storageBytesUsed: BigInt(0),
+      beginnerMonthlyCallLimit: 50,
       beginnerMaxSeats: 5, scheduledPlanChangeAt: null, scheduledNextPlan: null,
       beginnerEverUpgraded: false,
     } as never);
@@ -1740,9 +1735,8 @@ describe('getTenantDetail — テナント単位の詳細 (請求の根拠デー
       billingAddress: null, billingPostalCode: null, billingPrefecture: null,
       billingCity: null, billingStreetAddress: null, billingBuildingName: null,
       billingPhoneNumber: null, paymentMethod: 'invoice',
-      storageAddonPlan: 'standard', storageBytesUsed: BigInt(0),
-      storageGracePeriodStartedAt: null, scheduledStorageAddonAt: null,
-      scheduledNextStorageAddon: null, beginnerMonthlyCallLimit: 50,
+      storageBytesUsed: BigInt(0),
+      beginnerMonthlyCallLimit: 50,
       beginnerMaxSeats: 5, scheduledPlanChangeAt: null, scheduledNextPlan: null,
       beginnerEverUpgraded: false, // upgrade 履歴なし = 期限切れ判定対象
     } as never);

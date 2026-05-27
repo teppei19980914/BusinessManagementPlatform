@@ -16347,3 +16347,71 @@ Error: element(s) not found
 
 ### 関連
 - 関連 KDD: [§5.X+161](#5x161) (同 PR で raw SQL の column 残参照を修正済) / [§5.X+159](#5x159) (UI モバイル縮退で getByText.first() が hidden 要素を拾った別パターン、いずれも「UI 変更 → E2E spec が古い文言を期待」系)
+
+---
+
+## 5.X+163 ★severity-1 (本番 runtime 障害リスク)★ Prisma `XOR<UpdateInput, UncheckedUpdateInput>` は excess property check が効かず tsc で検出されない (PR #451 post-PR フルスキャン検証で発見)
+
+**結論**: Prisma の `prisma.tenant.update({ data: {...} })` の `data` パラメータ型は `XOR<TenantUpdateInput, TenantUncheckedUpdateInput>` で、TypeScript の **excess property check が抑制される**。撤去済 column (例: `stripeSubscriptionItemStorageId`) を `data` に渡しても **tsc は無警告**、build は EXIT 0、unit test は mock のため動く、しかし本番 Stripe webhook 発火時に **Prisma `Unknown argument` で実行時例外** → Webhook 失敗 → Stripe 状態同期不全 (severity-1 課金事故)。
+
+### 経緯 (PR #451 post-PR フルスキャン, 2026-05-27)
+
+[§5.X+161](#5x161) で「7 layers grep」を確立した直後の post-PR フルスキャン検証 ([feedback_repeated_verification_request](C:\Users\SF02512\.claude\projects\c--Users-SF02512-GitHub-Private-BusinessManagementPlatform\memory\feedback_repeated_verification_request.md) ルーチン適用) で、`src/services/stripe-webhook-handlers.service.ts:137` に以下を発見:
+
+```ts
+await prisma.tenant.update({
+  data: {
+    stripeSubscriptionItemHaikuId: haikuItemId,
+    stripeSubscriptionItemSonnetId: sonnetItemId,
+    stripeSubscriptionItemStorageId: storageItemId,  // ← schema から撤去済カラム
+  },
+});
+```
+
+- `schema.prisma`: `stripeSubscriptionItemStorageId` 列は migration `20260531_remove_storage_addon` で DROP 済、prisma model からも削除済
+- `prisma client 生成型 TenantUncheckedUpdateInput`: 該当フィールドは型定義に存在しない
+- **にも関わらず tsc は警告を出さない**
+- 同パターンの runtime bomb が `extractSubscriptionItemIds()` の戻り値 (storageItemId) + その読み取り env var `STRIPE_PRICE_STORAGE_PLUS/PRO` まで連鎖して残存していた
+
+### 原因: TypeScript の XOR 型と excess property check の関係
+
+Prisma の生成型はおおよそ次の形:
+
+```ts
+update: <T>(args: {
+  data: XOR<TenantUpdateInput, TenantUncheckedUpdateInput>;
+  ...
+})
+```
+
+`XOR<A, B>` の実装は `(A & Without<B, A>) | (B & Without<A, B>)` のようなユニオン型。**TypeScript はユニオン型に対する object literal の excess property check を行わない** (= 「片方の型にしかないプロパティ」と「両方にないプロパティ」を区別できない、保守的に許可)。
+
+このため `data: { 存在しないフィールド: "x" }` が tsc を通過する。
+ランタイムでは Prisma が `PrismaClientValidationError: Unknown argument` を投げる。
+
+### 教訓と防御
+
+**§5.X+158 / §5.X+161 で確立した「7 layers grep」を更に強化**:
+
+| # | レイヤ | 検出方法 |
+|---|---|---|
+| 1-7 | (§5.X+161 の 7 layers) | 既出 |
+| 8 | **Prisma data オブジェクト内** | `grep -rE "(create\|update\|upsert).*data:.*\{[^}]*<撤去カラム名>" src/` — XOR 型のため tsc は通すがランタイム fail |
+| 9 | **mock データ** | `grep -rnE "<撤去カラム名>" --include="*.test.ts" .` — テストは pass し続けるが production 整合性が崩れる |
+
+**新たな防御策**:
+1. **DB column 撤去 PR の post-PR チェックリスト**: 撤去カラム名で `grep -rn` を `src/services/` 配下で実行、`prisma.X.{create|update|upsert}` の `data:` ブロック内に出現していないか目視確認
+2. **runtime テストで実カラム名検証**: 重要 service には `prisma.$queryRaw` で実際の column 存在を検査する smoke test を 1 件以上書く (mock では検出不可)
+3. **コードレビュー時**: `data: {` の中に migration で DROP した column 名が無いか必ず grep 確認
+
+### 採用した修正
+
+- `src/services/stripe-webhook-handlers.service.ts`: `extractSubscriptionItemIds()` の戻り値型と実装から `storageItemId` を除去、`STRIPE_PRICE_STORAGE_PLUS / PRO` env var 読み取りも削除
+- 該当する `prisma.tenant.update` から `stripeSubscriptionItemStorageId: ...` 行を撤去
+- 関連 test (`stripe-webhook-handlers.service.test.ts`, `stripe.test.ts`, `tenant-self.service.test.ts`, 他 7 ファイル) から stale mock fields (`storageAddonPlan`, `storageAddonJpy`, `storageGracePeriodStartedAt`, `scheduledStorageAddonAt`, `scheduledNextStorageAddon`) を一斉除去
+- 227 unit test 全て PASS、build EXIT 0、CI green を確認
+
+### 関連
+- 関連 KDD: [§5.X+158](#5x158) (6 layers の初出) / [§5.X+161](#5x161) (7 layers 拡張) / 本 KDD で **Prisma XOR が tsc 静的検査をすり抜ける** ことを追加
+- 関連 memory: `feedback_db_column_removal_6layers` (→ 7layers + XOR 罠記述に更新)
+- 関連 memory: `feedback_repeated_verification_request` (= post-PR フルスキャン N 回目で重大バグ検出、本件は 4 回目で発見)
