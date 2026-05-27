@@ -16601,3 +16601,91 @@ PR #452 2 回目で FAB を h-14 → h-16 (56→64) に拡大した。Tailwind �
 - 関連設計: [docs/design/UI_PATTERNS.md §36](../design/UI_PATTERNS.md) (チャット UI パターン)
 - 関連 PR: #452 (3 回目フルスキャンで発見)
 - 関連 memory: [feedback_repeated_verification_request] (繰り返しスキャンの観点深掘り)
+
+## 5.X+167 ★severity-medium (docs drift / 整合性)★ インフラ移行に伴うドキュメント全面 cleanup は「2 段階 PR + 4 ステージ判断」で進めると整合性が保てる (PR #454/#455 + ADR-0023 Vercel→Netlify Personal 移行)
+
+### 発覚契機
+
+2026-05-27 のフルスキャン依頼で、2026-05-18 の Netlify 初期移行から約 10 日経過時点で **40+ ファイルに Vercel 言及が残存**していた事実が判明:
+
+- 移行 PR #394 (Vercel→Netlify Starter) は **インフラ設定 (netlify.toml / 環境変数 / cron) の最小変更** のみ
+- ドキュメント (`docs/operations/CRON.md` / `INCIDENT_RESPONSE.md` / `GO_LIVE_RUNBOOK.md` 等) は **「ADR-0023 で移行済」の注記なしに古い記述のまま放置**
+- src/ コメント (`Vercel Cron` / `Vercel Functions ログ` / `Vercel Dashboard`) も同様
+- 結果: 「現役運用ドキュメントが実態と乖離した状態」が約 10 日間継続
+
+### 根本原因
+
+- インフラ移行 PR は「動くものを最短で出す」が優先され、ドキュメント整合性は後回しになりがち
+- 移行注記 (例: `netlify.toml L2: "Migrated from Vercel: 2026-05-18"`) だけでは、間接参照しているファイル群 (運用 SOP / 設計書 / セキュリティ脅威モデル / ADR 内クロスリンク) はカバーできない
+- 「即時に直さなくても動くドキュメント」は技術的負債として蓄積する典型例
+
+### 解決策: 2 段階 PR 構成
+
+| PR | 範囲 | 件数 | 目的 |
+|---|---|---|---|
+| **Phase 1 ([PR #454](https://github.com/teppei19980914/BusinessManagementPlatform/pull/454))** | src/ 全件 + 主要 docs/ (README / INFRASTRUCTURE / DEPLOYMENT / DEVELOPMENT_FLOW / business/) + ADR-0023 新規 + ADR-0012 Superseded 化 + memory 整理 | 73 ファイル / +339 / -175 | **動作影響あり (定数値変更 300→1000) + 公開資料優先** |
+| **Phase 2 ([PR #455](https://github.com/teppei19980914/BusinessManagementPlatform/pull/455))** | docs/operations/{CRON 全面書き直し / INCIDENT_RESPONSE / GO_LIVE_RUNBOOK / DB_MIGRATION_PROCEDURE / BACKUP_VERIFICATION / MIGRATION_TO_AWS / その他 11 件} + docs/design/{SUGGESTION_ENGINE / API_DESIGN / SECURITY} + docs/security/3 件 + docs/developer-guide + docs/roadmap | 24 ファイル / +184 / -162 | **docs のみ、動作影響なし、レビュー時間を Phase 1 と分離** |
+
+**分割の根拠** ([memory: realistic_1pr_scope](../../memory/feedback_realistic_1pr_scope.md)):
+- Phase 1+2 を 1 PR にすると **97 ファイル / +523 / -337** の巨大 PR になり、レビュー困難 + 動作影響 (Phase 1) と純 docs (Phase 2) の検証粒度が混在
+- 機能影響のある Phase 1 を先行マージ → 動作確認 → Phase 2 をマージ、という安全策
+
+### 4 ステージ判断 (各ファイルの修正方針)
+
+```
+1. 即時書き換え対象 (現役運用記述)
+   → 例: docs/operations/INCIDENT_RESPONSE.md の "Vercel Dashboard" → "Netlify Dashboard"
+   → 判定基準: 障害対応時にこの記述を見て操作するか?
+
+2. 「旧 Vercel」注記併記で書き換え (歴史的事実が残っている方が便利)
+   → 例: "旧 Vercel Hobby 時代の cron 最小間隔制約に合わせて日次運用 (Netlify + 外部 cron では緩和済)"
+   → 判定基準: なぜこの設計になったか、過去の制約が現在の挙動に影響しているか?
+
+3. 設計判断記録として残置 (ADR superseded notes)
+   → 例: ADR-0012 (Vercel + Supabase MVP 採用) は Status: Superseded by ADR-0023 で残置
+   → 判定基準: 当時の判断記録自体に価値があるか? (= 後の参照者が「なぜ Vercel を選んだか」を辿れる)
+
+4. 過去事実として残置 (archive / migrations / E2E_LESSONS / KDD / .gitignore コメント)
+   → 例: docs/archive/* / prisma/migrations/* / docs/test/E2E_LESSONS.md の「PR #149 で Vercel deploy 後...」
+   → 判定基準: 時系列の事実記録か? (= 書き換えると過去事実と矛盾する)
+```
+
+### 横断的に効率化した修正パターン
+
+- **`replace_all=true`** (Edit tool):
+  - 同一文字列が単一ファイルに複数回出現する場合に有効 ("Vercel Dashboard" → "Netlify Dashboard" 等)
+  - 大量ファイルで「文脈に依存しない単純置換」を一発で済ませる
+- **個別 Edit** (replace_all=false):
+  - 文脈次第で訳語が変わる場合 ("Vercel Cron" → 文脈により "外部 cron (cron-job.org)" or "ADR-0023 で Vercel Cron から移行" の 2 種を使い分け)
+  - JSDoc 内部の関連リンク注記等は周辺コンテキストとの整合性を見て個別判断
+- **Write での全面書き直し**:
+  - `docs/operations/CRON.md` のように「Vercel Cron 表 → 外部 cron 表」の構造変更が必要なファイルは全面 Write の方が早い
+
+### 検証アプローチ (繰り返し fullscan の逓減確認)
+
+| 回数 | 残存 ファイル数 | 主な発見 |
+|---|---|---|
+| 1 回目 (Phase 1 着手前) | 76 ファイル | src/ コメントの大量見落とし発覚 |
+| 2 回目 (Phase 1 完了直後) | 47 ファイル | Phase 2 候補をリスト化 |
+| 3 回目 (Phase 2 完了直後) | 47 ファイル | 残存はすべて 4 ステージ判断の「2/3/4 残置 OK」カテゴリと確認、+ 1 件漏れ修正 (stripe-usage-flush/route.ts L24 `vercel.json` → `cron-job.org dashboard`) |
+
+[memory: repeated_verification_request](../../memory/feedback_repeated_verification_request.md) のとおり、同一観点の繰り返し fullscan は「もっと深く見て」のシグナル。**各回で観点を変える** ことで漏れを発見:
+
+- 1 回目: 単純な「Vercel」/「vercel」grep
+- 2 回目: 「Netlify Starter / Netlify Pro」誤記載 + 「ADR-0023 ファイル名に Pro と書いたが Personal だった」訂正
+- 3 回目: src/ コメント内の「vercel.json」言及残 + CI Security Scan (Semgrep / OSV / Trivy / Secret Scan / pnpm audit / Security Score Gate >= 90) 全 PASS 確認
+
+### 横展開チェック
+
+- [ ] **インフラ移行 PR (例: Vercel→Netlify、Supabase→AWS RDS、Brevo→SendGrid 等) では、移行 PR の merge から 1 週間以内にドキュメント全面 cleanup PR を必ず計画する**
+- [ ] 移行直後の最小変更 PR (= netlify.toml 追加 / 環境変数移行 / cron 設定) ではドキュメント整合性は **意図的に後回し** にする (動作優先) が、TODO として明示する
+- [ ] 後追い cleanup PR は **Phase 1 (動作影響あり) と Phase 2 (純 docs) に分割** することでレビュー効率と安全性を両立
+- [ ] 各ファイルの修正方針は「即時書換 / 歴史的注記併記 / 設計判断記録 / 過去事実残置」の 4 ステージで判断
+- [ ] **完了判定**: 3 回連続の fullscan で残存ファイル数が逓減しなくなった時点 (= 残はすべて適切な残置)
+- [ ] **CI 視点**: docs 主体の PR でも Security Scan (Semgrep / Secret Scan / OSV / Trivy 等) を必ず通すこと、URL 変更を含む場合は Markdown Link Check も重要
+
+### 関連
+
+- 関連 ADR: [ADR-0012 (Vercel + Supabase、Superseded)](../adr/0012-vercel-supabase-mvp-hosting.md) / [ADR-0023 (Vercel→Netlify Personal 移行)](../adr/0023-netlify-starter-migration.md)
+- 関連 PR: #454 (Phase 1) / #455 (Phase 2) / HomePage #6 (LP 反映)
+- 関連 memory: [feedback_realistic_1pr_scope](../../memory/feedback_realistic_1pr_scope.md) (1 PR 規模上限の判断) / [feedback_repeated_verification_request](../../memory/feedback_repeated_verification_request.md) (繰り返しスキャンの観点深掘り) / [project_infra_state_2026_05_27](../../memory/project_infra_state_2026_05_27.md) (現状インフラ確定事項)
