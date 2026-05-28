@@ -428,6 +428,10 @@ test.describe('@feature:security:tenant-isolation テナント越境遮断 (Phas
 
   test('★severity-1 regression: A admin が起票した risk は A 自身の一覧で見える (Default 混入防止)', async () => {
     // 1. Tenant A admin が risk を新規起票
+    //   visibility='draft' (default) で起票。listRisks の admin 分岐は visibilityWhere={} で
+    //   全 visibility を返すため、draft でも一覧に含まれる。
+    //   2026-05-26 feat/risk-issue-4-section: public 時は occurrence 必須化のため、
+    //   ここでは draft (任意項目少) を採用して regression 検証の焦点を「tenantId 保存」に絞る。
     const postRes = await adminARequest.post(`/api/projects/${tenantA.projectId}/risks`, {
       data: {
         type: 'issue',
@@ -439,7 +443,7 @@ test.describe('@feature:security:tenant-isolation テナント越境遮断 (Phas
         responseDetail: null,
         assigneeId: null,
         deadline: null,
-        visibility: 'public', // 一覧に出やすくするため public
+        visibility: 'draft',
         riskNature: null,
       },
     });
@@ -455,6 +459,8 @@ test.describe('@feature:security:tenant-isolation テナント越境遮断 (Phas
   });
 
   test('★severity-1 regression: A admin が起票した retrospective は A 自身の一覧で見える', async () => {
+    // visibility='draft' で起票 (admin は listRetrospectives で全 visibility を取得できる)。
+    // public 時は conductedDate 必須だが draft でも OK。
     const postRes = await adminARequest.post(`/api/projects/${tenantA.projectId}/retrospectives`, {
       data: {
         conductedDate: '2026-05-01',
@@ -464,7 +470,7 @@ test.describe('@feature:security:tenant-isolation テナント越境遮断 (Phas
         problems: 'problem',
         improvements: 'improve',
         knowledgeToShare: null,
-        visibility: 'public',
+        visibility: 'draft',
       },
     });
     expect(postRes.status()).toBe(201);

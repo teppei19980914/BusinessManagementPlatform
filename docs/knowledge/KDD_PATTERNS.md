@@ -16869,3 +16869,21 @@ prisma.riskIssue.create({
 - 関連 ADR: [ADR-0024](../adr/0024-explicit-tenant-id-no-db-default.md)
 - 関連 KDD: [§5.X+169 tenant_id DB DEFAULT silent fall-through](#5x169) (本件の root cause)
 - 関連 memory: [feedback_repeated_verification_request](../../memory/feedback_repeated_verification_request.md) (2 回目検証で重大バグ検出する実例、本件もまさにこのパターン)
+
+### 追加教訓 (round 3 fix, 2026-05-28 PM): 新規 E2E regression test を書く時はバリデータ仕様を必ず確認する
+
+本 PR で追加した E2E regression test (「Tenant A admin が起票した risk は A 自身の一覧で見える」) が、本番では問題ない `visibility='public'` をリクエスト body で送っていたが、**2026-05-26 feat/risk-issue-4-section で `public` 時に `occurrence` 必須化**された仕様変更を知らずに API 400 で落ちた。
+
+```typescript
+// ❌ NG: public だと occurrence 必須 (validator が 400)
+data: { type: 'issue', visibility: 'public', title: '...', ... }
+
+// ✓ OK: draft なら任意項目少 + admin は自分の draft を listRisks() で取得できる
+data: { type: 'issue', visibility: 'draft', title: '...', ... }
+```
+
+#### 教訓
+- **E2E test の HTTP リクエスト body を書く時は、対応する validator (`src/lib/validators/*.ts`) を必ず開いて superRefine の必須条件を確認する**
+- 「過去動いていたフィクスチャの body をコピペ」は危険 (仕様が後から強化されるケース)
+- regression test の目的が **「サーバが正常応答すること」** であれば、なるべく **default 値 / 必須条件の少ない visibility** を選んで「テストが検証したい本質」(今回は tenantId 保存) 以外の理由で落ちないようにする
+- API contract に依存する E2E は、API contract が変わったら同時更新する必要があるため `docs/test/E2E_LESSONS.md §4.60` に「fixture も 5 軸網羅対象」の派生として記録
