@@ -24,6 +24,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getAuthenticatedUser, requireAdmin } from '@/lib/api-helpers';
 import { importTenantData } from '@/services/data-import.service';
 import { recordAuditLog } from '@/services/audit.service';
+import { runImportStoragePrecheck } from '@/services/import-storage-precheck.service';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -79,6 +80,24 @@ export async function POST(req: NextRequest) {
   }
 
   const zipBuffer = Buffer.from(await file.arrayBuffer());
+
+  // 4 巡目フルスキャン (2026-05-28): DB 容量事前判定。ZIP 解凍前なので正確な row count は
+  //   分からないが、ZIP→JSON 解凍は典型 3-5 倍。conservative に file.size × 3 を推定値として
+  //   Beginner プラン 50MB 無料枠を超える取込を事前ブロックする。
+  //   解凍後の正確な値は data-import.service の assertStorageLimitInTx (post-check) で担保。
+  const estimatedAddedBytesFromZip = zipBuffer.length * 3;
+  const storage = await runImportStoragePrecheck({
+    tenantId: user.tenantId,
+    entity: 'knowledge', // placeholder (override 使用のため)
+    newRowCount: 0,
+    estimatedAddedBytesOverride: estimatedAddedBytesFromZip,
+  });
+  if (storage.isBlocker && storage.errorBody) {
+    return NextResponse.json(
+      { ok: false, error: storage.errorBody.error },
+      { status: 403 },
+    );
+  }
 
   const result = await importTenantData(user.tenantId, zipBuffer, user.id);
 

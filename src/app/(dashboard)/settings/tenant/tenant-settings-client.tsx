@@ -1267,16 +1267,28 @@ function DataImportSection() {
               </ul>
             </div>
             <div>
-              <p className="font-semibold text-foreground">料金</p>
+              <p className="font-semibold text-foreground">料金とプラン別の挙動 (2026-05-28 改修)</p>
               <p>
                 CSV インポート操作自体は <strong>全プラン無料</strong> (embedding 生成費用も発生しません / ADR-0019)。
-                取込件数に応じた追加課金はかかりません。
               </p>
               <p className="mt-1">
-                ただし取込結果として DB 容量が <strong>50 MB を超えた分</strong> は{' '}
-                <strong>¥50/GB tier の従量課金</strong> 対象になります (ADR-0020、全プラン共通)。
-                Beginner プランでも超過分は課金対象です。50 GB のハードキャップに到達した場合は書込みが拒否されます (読取り・エクスポートは可)。
+                ただし取込により DB 容量が <strong>50 MB の無料枠</strong> を超えると、
+                <strong>プランごとに異なる挙動</strong> になります (ADR-0020 §11):
               </p>
+              <ul className="ml-4 list-disc">
+                <li>
+                  <strong>Beginner プラン</strong>: 50 MB を超える取込は{' '}
+                  <strong className="text-destructive">取込前に自動でブロック</strong>{' '}
+                  (preview で警告表示 + 取込ボタン無効化)。意図せず課金が発生することはありません
+                </li>
+                <li>
+                  <strong>Expert / Pro プラン</strong>: 50 MB 超過分は{' '}
+                  <strong>¥50/GB tier の従量課金</strong>。preview で「取込後の予測使用量」と「予測月次課金額」が表示されます
+                </li>
+                <li>
+                  <strong>共通</strong>: 50 GB ハードキャップに到達した場合は全プランで書込み拒否 (読取り・エクスポートは可)
+                </li>
+              </ul>
             </div>
             <div>
               <p className="font-semibold text-foreground">1 ファイルあたりの行数上限</p>

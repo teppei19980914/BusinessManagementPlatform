@@ -314,8 +314,7 @@ export function HelpClient({ isTenantAdmin }: Props) {
               a={
                 <>
                   <p>
-                    <strong>取込本体の容量・行数上限は全プラン共通</strong> です。
-                    Beginner だから取り込めない、Expert/Pro だから無制限、という挙動はありません。
+                    <strong>ファイル容量・行数の上限は全プラン共通</strong> です:
                   </p>
                   <ul className="mt-2 list-disc space-y-1 pl-5">
                     <li>
@@ -326,20 +325,55 @@ export function HelpClient({ isTenantAdmin }: Props) {
                     </li>
                   </ul>
                   <p className="mt-2">
-                    一方、<strong>DB 容量の従量課金</strong> (ADR-0020) も全プラン共通の仕組みで:
+                    一方、<strong>DB 容量超過時の挙動</strong> は <strong>プランごとに異なります</strong> (ADR-0020 §11、2026-05-28 改修):
                   </p>
-                  <ul className="mt-1 list-disc space-y-1 pl-5">
-                    <li><strong>50 MB まで</strong>: 無料 (全プラン)</li>
-                    <li><strong>超過分</strong>: ¥50/GB tier の従量課金 (Beginner プランでも発生)</li>
-                    <li><strong>50 GB</strong>: ハードキャップ (書込み拒否、読取り・エクスポートは可)</li>
-                  </ul>
+                  <div className="mt-2 overflow-x-auto rounded-md border">
+                    <table className="w-full border-collapse text-xs">
+                      <thead className="bg-muted/40">
+                        <tr>
+                          <th className="border-b p-2 text-left">取込後の予測使用量</th>
+                          <th className="border-b p-2 text-left">Beginner</th>
+                          <th className="border-b p-2 text-left">Expert / Pro</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <td className="border-b p-2">&lt; 50 MB (無料枠内)</td>
+                          <td className="border-b p-2 text-emerald-700 dark:text-emerald-400">取込可</td>
+                          <td className="border-b p-2 text-emerald-700 dark:text-emerald-400">取込可</td>
+                        </tr>
+                        <tr>
+                          <td className="border-b p-2">50 MB - 1 GB</td>
+                          <td className="border-b p-2 text-destructive">⛔ 取込ブロック</td>
+                          <td className="border-b p-2">取込可 (¥0〜¥50/月)</td>
+                        </tr>
+                        <tr>
+                          <td className="border-b p-2">1 GB - 10 GB (L1)</td>
+                          <td className="border-b p-2 text-destructive">⛔ 取込ブロック</td>
+                          <td className="border-b p-2 text-amber-700 dark:text-amber-400">⚠ 警告 (取込可)</td>
+                        </tr>
+                        <tr>
+                          <td className="border-b p-2">10 GB - 50 GB (L2)</td>
+                          <td className="border-b p-2 text-destructive">⛔ 取込ブロック</td>
+                          <td className="border-b p-2 text-amber-700 dark:text-amber-400">⚠ 警告 (取込可)</td>
+                        </tr>
+                        <tr>
+                          <td className="p-2">≥ 50 GB (ハードキャップ)</td>
+                          <td className="p-2 text-destructive">⛔ 取込ブロック</td>
+                          <td className="p-2 text-destructive">⛔ 取込ブロック</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
                   <p className="mt-2 text-muted-foreground">
-                    つまり「Beginner プランだから 50 MB 以上取り込めない」のではなく「50 MB 超過分は従量課金になる」が正しい仕様です。
-                    詳細は{' '}
+                    <strong>Beginner プランの方</strong>: 50 MB 無料枠を超える取込は preview で警告表示 + 取込ボタン無効化されます (= 意図せず課金が発生することはありません)。50 MB を超えるデータをまとめて取り込みたい場合は Expert / Pro プランへアップグレードしてください。
+                  </p>
+                  <p className="mt-2 text-muted-foreground">
+                    <strong>Expert / Pro プランの方</strong>: preview 画面で「取込後の予測使用量」と「予測月次課金額」が表示されます。内容を確認のうえ取込を実行してください。詳細は{' '}
                     <Link href="/settings/tenant" className="text-primary underline">
                       テナント設定
                     </Link>{' '}
-                    →「使用量」タブ → DB 容量セクションでも確認できます。
+                    →「使用量」タブで確認できます。
                   </p>
                 </>
               }

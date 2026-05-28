@@ -31,6 +31,13 @@ import {
 import { recordAuditLog } from '@/services/audit.service';
 import { logUnknownError } from '@/services/error-log.service';
 import { checkCsvSize, checkCsvRowCount, handleCsvParseError } from '@/lib/csv-import-helpers';
+import { runImportStoragePrecheck } from '@/services/import-storage-precheck.service';
+import {
+  assertStorageLimitInTx,
+  StorageLimitExceededError,
+  mapStorageGuardErrorToResponse,
+} from '@/services/storage-guard.service';
+import { prisma } from '@/lib/db';
 
 export const runtime = 'nodejs';
 
@@ -114,13 +121,35 @@ export async function POST(
   const rowCountError = checkCsvRowCount(csvRows.length, t);
   if (rowCountError) return rowCountError;
 
+  // 4 巡目フルスキャン: DB 容量事前判定 (Beginner block / Expert-Pro warning)
+  const newRowCount = csvRows.filter((r) => !r.id).length;
+  const storage = await runImportStoragePrecheck({
+    tenantId: user.tenantId,
+    entity: 'risksIssues',
+    newRowCount,
+  });
+  if (storage.isBlocker && storage.errorBody) {
+    return NextResponse.json(storage.errorBody, { status: 403 });
+  }
+
   if (isDryRun) {
     const diff = await computeRiskSyncDiff(projectId, csvRows, user.tenantId);
-    return NextResponse.json({ data: diff });
+    return NextResponse.json({ data: { ...diff, storagePrecheck: storage.precheck } });
   }
 
   try {
     const result = await applyRiskSyncImport(projectId, csvRows, removeMode, user.id, user.tenantId);
+    // 4 巡目: apply 後の post-check (50GB hard cap 担保)
+    try {
+      await prisma.$transaction(
+        async (tx) => assertStorageLimitInTx(tx, user.tenantId),
+        { timeout: 10_000 },
+      );
+    } catch (storageErr) {
+      const mapped = mapStorageGuardErrorToResponse(storageErr);
+      if (mapped) return NextResponse.json(mapped.body, { status: mapped.status });
+      if (storageErr instanceof StorageLimitExceededError) throw storageErr;
+    }
 
     await recordAuditLog({
       tenantId: user.tenantId,

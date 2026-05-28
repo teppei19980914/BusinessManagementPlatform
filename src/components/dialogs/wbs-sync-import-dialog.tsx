@@ -57,6 +57,33 @@ type SyncDiffRow = {
   warningLevel?: 'INFO' | 'WARN' | 'ERROR';
 };
 
+/**
+ * 4 巡目フルスキャン (2026-05-28): preview レスポンスに同梱される DB 容量事前判定。
+ * route layer の `runImportStoragePrecheck` から返される [`ImportStoragePrecheckResult`] と同型。
+ */
+type StoragePrecheck = {
+  currentBytes: number;
+  estimatedAddedBytes: number;
+  estimatedPostImportBytes: number;
+  freeQuotaBytes: number;
+  hardCapBytes: number;
+  level:
+    | 'none'
+    | 'beginner-block'
+    | 'l1-warning'
+    | 'l2-warning'
+    | 'l3-block';
+  isBlocker: boolean;
+  code:
+    | 'OK'
+    | 'BEGINNER_FREE_QUOTA_EXCEEDED'
+    | 'L1_WARNING'
+    | 'L2_WARNING'
+    | 'L3_HARD_CAP_EXCEEDED';
+  message: string;
+  expectedOverageJpy: number;
+};
+
 type SyncDiffResult = {
   summary: {
     added: number;
@@ -70,6 +97,8 @@ type SyncDiffResult = {
   globalErrors: string[];
   /** [C2] OCC 用: dry-run 時点での project 配下 task の最大 updatedAt */
   snapshotAt?: string | null;
+  /** 4 巡目フルスキャン (2026-05-28): DB 容量事前判定 */
+  storagePrecheck?: StoragePrecheck | null;
 };
 
 type RowFilter = 'all' | 'errors' | 'warnings';
@@ -301,7 +330,9 @@ export function WbsSyncImportDialog({
   const canExecute =
     preview != null
     && preview.canExecute
-    && !(removeMode === 'delete' && blockedRemovals.length > 0);
+    && !(removeMode === 'delete' && blockedRemovals.length > 0)
+    // 4 巡目フルスキャン (2026-05-28): Beginner 50MB block / L3 50GB block の事前判定
+    && !(preview.storagePrecheck?.isBlocker === true);
 
   // [B1] フィルタ別の行集合
   const errorRows = preview?.rows.filter((r) => r.warningLevel === 'ERROR') ?? [];
@@ -398,6 +429,11 @@ export function WbsSyncImportDialog({
                     ))}
                   </ul>
                 </div>
+              )}
+
+              {/* 4 巡目フルスキャン (2026-05-28): DB 容量事前判定の警告/ブロック表示 */}
+              {preview.storagePrecheck && preview.storagePrecheck.level !== 'none' && (
+                <StoragePrecheckPanel precheck={preview.storagePrecheck} />
               )}
 
               {/* [B7] サマリ — sm 未満は 2 列、sm 以上は 5 列 */}
@@ -636,6 +672,52 @@ function RadioOption({
       <span>{label}</span>
     </label>
   );
+}
+
+/**
+ * 4 巡目フルスキャン (2026-05-28): DB 容量事前判定パネル (entity-sync-import-dialog と同型)。
+ * Beginner-block / L3-block は赤色エラー、L1/L2 警告は黄色警告で表示。
+ */
+function StoragePrecheckPanel({ precheck }: { precheck: StoragePrecheck }) {
+  const isBlocker = precheck.isBlocker;
+  return (
+    <div
+      className={
+        isBlocker
+          ? 'rounded-md border border-destructive bg-destructive/10 p-3 text-sm'
+          : 'rounded-md border border-warning bg-warning/10 p-3 text-sm'
+      }
+      data-testid="storage-precheck-panel"
+      data-level={precheck.level}
+    >
+      <div
+        className={
+          isBlocker ? 'mb-1 font-semibold text-destructive' : 'mb-1 font-semibold'
+        }
+      >
+        {isBlocker ? '⛔ DB 容量の上限超過予測 (取込は実行できません)' : '⚠ DB 容量の警告'}
+      </div>
+      <p className="mb-2">{precheck.message}</p>
+      <div className="grid grid-cols-1 gap-1 text-xs text-muted-foreground sm:grid-cols-3">
+        <div>
+          現在の DB 使用量: <strong>{formatBytesShort(precheck.currentBytes)}</strong>
+        </div>
+        <div>
+          取込後の予測値: <strong>{formatBytesShort(precheck.estimatedPostImportBytes)}</strong>
+        </div>
+        <div>
+          無料枠: <strong>{formatBytesShort(precheck.freeQuotaBytes)}</strong>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function formatBytesShort(bytes: number): string {
+  if (bytes >= 1_000_000_000) return (bytes / 1_000_000_000).toFixed(2) + ' GB';
+  if (bytes >= 1_000_000) return (bytes / 1_000_000).toFixed(1) + ' MB';
+  if (bytes >= 1_000) return (bytes / 1_000).toFixed(1) + ' KB';
+  return bytes + ' bytes';
 }
 
 function FilterButton({

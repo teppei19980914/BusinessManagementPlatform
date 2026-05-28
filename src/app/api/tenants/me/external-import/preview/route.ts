@@ -18,6 +18,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthenticatedUser, requireAdmin } from '@/lib/api-helpers';
 import { previewImport, type EntityMapping } from '@/services/external-data-import.service';
+import {
+  AVG_BYTES_PER_IMPORTED_ROW,
+  runImportStoragePrecheck,
+} from '@/services/import-storage-precheck.service';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -113,5 +117,23 @@ export async function POST(req: NextRequest) {
   // result.ok=true は既に確定しているので分割代入で使う
   const { ok: _ok, ...rest } = result;
   void _ok;
-  return NextResponse.json({ ok: true, ...rest }, { status: 200 });
+
+  // 4 巡目フルスキャン (2026-05-28): DB 容量事前判定を preview に同梱。
+  //   external-import は Knowledge + RiskIssue の混在取込なので、各 entity の平均行サイズで
+  //   合算して見積もる。preview では blocker でも UI を返し、警告として表示する
+  //   (= apply 側で再度 precheck → 403 で実際にブロック)。
+  const estimatedAddedBytes =
+    rest.summary.knowledge.validRows * AVG_BYTES_PER_IMPORTED_ROW.knowledge +
+    rest.summary.risksIssues.validRows * AVG_BYTES_PER_IMPORTED_ROW.risksIssues;
+  const storage = await runImportStoragePrecheck({
+    tenantId: user.tenantId,
+    entity: 'knowledge', // placeholder (override 使用のため)
+    newRowCount: 0,
+    estimatedAddedBytesOverride: estimatedAddedBytes,
+  });
+
+  return NextResponse.json(
+    { ok: true, ...rest, storagePrecheck: storage.precheck },
+    { status: 200 },
+  );
 }
