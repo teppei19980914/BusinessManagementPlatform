@@ -1504,3 +1504,17 @@ tenantId: input.tenantId ?? DEFAULT_TENANT_ID,
 
 ---
 
+## アクセス制御の最小特権原則 — Beginner プラン write block (ADR-0025、2026-05-29)
+
+Beginner プランは「90 日完全無料試用」訴求のため、容量超過時の課金を発生させない設計上の制約がある。これを保証するため、最小特権原則 (principle of least privilege) に従い:
+
+- **INSERT / UPDATE 拒否**: DB 50MB / File Storage 100MB を超過した Beginner テナントは「容量を増やす操作」を一切禁止
+- **DELETE のみ許可**: 「容量を減らす操作」だけは継続許可 (= ユーザが状態回復できる経路を残す)
+- **READ / EXPORT 継続許可**: 既存データの閲覧・エクスポートはガード対象外 (= ユーザロックインを防ぐ)
+
+実装は [src/services/storage-guard.service.ts](../../src/services/storage-guard.service.ts) の `BeginnerWriteGuardExceededError` (HTTP 403)。エラーレスポンスには `upgradeUrl: '/settings/tenant'` を含めユーザに復旧経路を提示する。
+
+詳細: [ADR-0025](../adr/0025-beginner-write-guard.md) / [仕様書 BEGINNER_PLAN.md](../specification/BEGINNER_PLAN.md)
+
+---
+

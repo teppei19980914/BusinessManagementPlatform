@@ -34,6 +34,8 @@
 import { prisma } from '@/lib/db';
 import { assertAssigneeTenant } from '@/lib/assignee-validation';
 import { generateAndPersistEntityEmbedding, generateAndPersistBatchEmbeddings } from './embedding.service';
+// ADR-0025 (2026-05-29): DELETE 後に Beginner プランのテナント容量を自動再集計するための hook
+import { maybeRecalcAfterBeginnerDelete } from './tenant-storage.service';
 import type { Prisma } from '@/generated/prisma/client';
 import type { CreateKnowledgeInput } from '@/lib/validators/knowledge';
 
@@ -660,6 +662,10 @@ export async function deleteKnowledge(
       data: { deletedAt: now },
     }),
   ]);
+
+  // ADR-0025 (2026-05-29): Beginner プラン超過状態からの DELETE で容量キャッシュを即時更新。
+  //   transaction commit 後に呼ぶ (= isolation level race 回避)。fail-safe で throw しない。
+  await maybeRecalcAfterBeginnerDelete(viewerTenantId);
 }
 
 /**

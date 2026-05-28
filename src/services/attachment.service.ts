@@ -236,6 +236,11 @@ export async function deleteAttachment(
       await assertFileStorageLimitInTx(tx, viewerTenantId, -Number(existing.sizeBytes));
     }
   });
+
+  // ADR-0025 (2026-05-29): Beginner プラン超過状態からの DELETE で容量キャッシュを即時更新。
+  //   attachment は File Storage の主たる消費源 (画像 / PDF 等)。transaction 後に呼ぶ。
+  const { maybeRecalcAfterBeginnerDelete } = await import('@/services/tenant-storage.service');
+  await maybeRecalcAfterBeginnerDelete(viewerTenantId);
 }
 
 /**

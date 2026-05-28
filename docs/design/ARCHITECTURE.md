@@ -228,3 +228,17 @@ src/
 
 ---
 
+## ADR-0025: Beginner プラン write ガード層 (2026-05-29 追加)
+
+[src/services/storage-guard.service.ts](../../src/services/storage-guard.service.ts) の 4 関数 (`precheckStorageLimit` / `assertStorageLimitInTx` / `precheckFileStorageLimit` / `assertFileStorageLimitInTx`) に Beginner プラン専用判定を統合:
+
+- `plan === 'beginner' && cached usage > BEGINNER_DB_FREE_TIER_BYTES (50MB)` で `BeginnerWriteGuardExceededError` を throw
+- DELETE は storage-guard を通らないため自動許可、`addedBytes < 0` (= ファイル削除) もガード対象外
+- 既存の 50GB ハードキャップ判定より前段で評価し、Beginner は早期 short-circuit
+
+DELETE 後の自動再集計 (`maybeRecalcAfterBeginnerDelete()`) は post-commit hook として 6 主要 service (knowledge / project / risk / retrospective / memo / attachment) の DELETE 関数末尾で呼出。debounce 30 秒、fail-safe (re-calc 失敗は DELETE 本体を巻き戻さない)。
+
+詳細: [ADR-0025](../adr/0025-beginner-write-guard.md) / [仕様書 BEGINNER_PLAN.md](../specification/BEGINNER_PLAN.md)
+
+---
+

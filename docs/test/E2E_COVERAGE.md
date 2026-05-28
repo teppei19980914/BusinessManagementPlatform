@@ -336,3 +336,22 @@ PR 中に baseline 更新したい場合は `pnpm test:e2e:update-snapshots` →
    - `src/app/(dashboard)/**/page.tsx` で新規追加されたが本ファイルに未記載の page
 
 3. `skip:` 行は一時的な未実装を許容するが、CI 上は警告表示 (fail にはしない、段階的実装を許容)
+
+---
+
+## ADR-0025: Beginner プラン write block カバレッジ (2026-05-29 追加)
+
+新規 page / route なしのため `pnpm e2e:coverage-check` は通過する。本機能のテストは単体テスト 22 ケース (`src/services/storage-guard.service.test.ts` + `src/services/tenant-monthly-reset.service.test.ts` + `src/services/tenant-storage.service.test.ts`) で構造的にカバー済:
+
+- **storage-guard 8 関数**: Beginner DB 50MB / Storage 100MB の境界判定 (precheck + assertInTx 各 2 軸)
+- **monthly-reset Beginner skip**: db-capacity-overage / storage-file-overage 両系統で課金 skip + audit_log 証跡
+- **debounce recalc**: 直近 30s 以内 skip + fail-safe (recalc 失敗で throw しない)
+- **maybeRecalcAfterBeginnerDelete**: plan==='beginner' のみ recalc、Expert/Pro は早期 return
+
+E2E 追加 (将来 PR): `e2e/specs/12-beginner-write-block.spec.ts`
+- [ ] Beginner プランで INSERT 拒否 + UX エラーバナー表示 (skip: ADR-0025 PR-2 で追加予定)
+- [ ] Beginner プランで UPDATE 拒否 (skip: 同上)
+- [ ] Beginner プランで DELETE は許可 + 自動再集計後に INSERT 可能になる Golden Path (skip: 同上)
+- [ ] attachment アップロード 100MB 超で拒否 (skip: 同上)
+
+詳細: [ADR-0025](../adr/0025-beginner-write-guard.md) / [仕様書 BEGINNER_PLAN.md](../specification/BEGINNER_PLAN.md)

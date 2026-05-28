@@ -648,10 +648,59 @@ export async function billOneTenantDbCapacityOverage(args: {
   const requestId = `db-capacity-overage-${tenantId}-${yearMonthForRequest}-${billingScope}`;
 
   let createdLogId: string | null = null;
+  // ADR-0025 (2026-05-29): Beginner プラン skip フラグ。transaction 内で plan を取得し
+  //   true なら ApiCallLog INSERT / Tenant counter update / Stripe queue を skip、
+  //   audit_log のみ記録して return { billedJpy: 0 }。詳細: docs/adr/0025-beginner-write-guard.md §6
+  let beginnerSkipped = false;
 
   // 単一 transaction で billing invariant を確定 (ApiCallLog + counter + Stripe queue + audit_log)
   await prisma.$transaction(async (tx) => {
-    if (costJpy > 0) {
+    // ADR-0025: Beginner プラン判定 (transaction 先頭で 1 度だけ実行)
+    const tenantForBilling = await tx.tenant.findFirst({
+      where: { id: tenantId },
+      select: { plan: true },
+    });
+    const isBeginner = tenantForBilling?.plan === 'beginner';
+
+    if (costJpy > 0 && isBeginner) {
+      // ADR-0025: Beginner プランは overage 課金対象外。
+      //   ApiCallLog INSERT / counter / Stripe queue を skip し、audit_log で「skip した事実」を
+      //   不可逆に記録する。後から「請求漏れではなく ADR-0025 による意図的 skip」を証跡として残す。
+      beginnerSkipped = true;
+      let systemUserId: string | null = args.systemUserIdForAudit ?? null;
+      if (systemUserId === null) {
+        const systemUserForAudit = await tx.user.findFirst({
+          where: { systemRole: 'super_admin', isActive: true, deletedAt: null },
+          select: { id: true },
+          orderBy: { createdAt: 'asc' },
+        });
+        systemUserId = systemUserForAudit?.id ?? null;
+      }
+      if (systemUserId) {
+        await tx.auditLog.create({
+          data: {
+            tenantId,
+            userId: systemUserId,
+            action: 'CREATE',
+            // 専用 entityType で監査クエリから明示的に区別可能にする
+            entityType: 'api_call_log_skip',
+            entityId: requestId,
+            beforeValue: { storageBytesPeakThisMonth: peakBytes.toString() },
+            afterValue: {
+              featureUnit: 'db-capacity-overage',
+              billingScope,
+              costJpy: 0, // Beginner プランは ¥0 強制
+              calculatedCostJpyIfBilled: costJpy, // 参考: 仮に課金していた場合の金額
+              stripeQuantity: 0,
+              requestId,
+              billedAt: createdAtForBilling.toISOString(),
+              skipReason: 'beginner plan - overage charge waived per ADR-0025',
+              adr: 'ADR-0025',
+            },
+          },
+        });
+      }
+    } else if (costJpy > 0) {
       // 1. ApiCallLog INSERT (真値、ADR-0020)
       const log = await tx.apiCallLog.create({
         data: {
@@ -742,7 +791,11 @@ export async function billOneTenantDbCapacityOverage(args: {
     });
   });
 
-  return { billedJpy: costJpy, apiCallLogId: createdLogId };
+  // ADR-0025: Beginner プランは課金 skip のため billedJpy=0 / apiCallLogId=null で返却
+  return {
+    billedJpy: beginnerSkipped ? 0 : costJpy,
+    apiCallLogId: createdLogId,
+  };
 }
 
 // ============================================================
@@ -853,9 +906,54 @@ export async function billOneTenantFileStorageOverage(args: {
   const requestId = `storage-file-overage-${tenantId}-${yearMonthForRequest}-${billingScope}`;
 
   let createdLogId: string | null = null;
+  // ADR-0025 (2026-05-29): Beginner プラン skip フラグ (db-capacity-overage と同設計)
+  let beginnerSkipped = false;
 
   await prisma.$transaction(async (tx) => {
-    if (costJpy > 0) {
+    // ADR-0025: Beginner プラン判定 (transaction 先頭で 1 度だけ実行)
+    const tenantForBilling = await tx.tenant.findFirst({
+      where: { id: tenantId },
+      select: { plan: true },
+    });
+    const isBeginner = tenantForBilling?.plan === 'beginner';
+
+    if (costJpy > 0 && isBeginner) {
+      // ADR-0025: Beginner プランは overage 課金対象外。
+      //   ApiCallLog INSERT / counter / Stripe queue を skip し、audit_log で skip 証跡を残す。
+      beginnerSkipped = true;
+      let systemUserId: string | null = args.systemUserIdForAudit ?? null;
+      if (systemUserId === null) {
+        const systemUserForAudit = await tx.user.findFirst({
+          where: { systemRole: 'super_admin', isActive: true, deletedAt: null },
+          select: { id: true },
+          orderBy: { createdAt: 'asc' },
+        });
+        systemUserId = systemUserForAudit?.id ?? null;
+      }
+      if (systemUserId) {
+        await tx.auditLog.create({
+          data: {
+            tenantId,
+            userId: systemUserId,
+            action: 'CREATE',
+            entityType: 'api_call_log_skip',
+            entityId: requestId,
+            beforeValue: { storageFileBytesPeakThisMonth: peakBytes.toString() },
+            afterValue: {
+              featureUnit: 'storage-file-overage',
+              billingScope,
+              costJpy: 0,
+              calculatedCostJpyIfBilled: costJpy,
+              stripeQuantity: 0,
+              requestId,
+              billedAt: createdAtForBilling.toISOString(),
+              skipReason: 'beginner plan - overage charge waived per ADR-0025',
+              adr: 'ADR-0025',
+            },
+          },
+        });
+      }
+    } else if (costJpy > 0) {
       const log = await tx.apiCallLog.create({
         data: {
           tenantId,
@@ -935,7 +1033,11 @@ export async function billOneTenantFileStorageOverage(args: {
     });
   });
 
-  return { billedJpy: costJpy, apiCallLogId: createdLogId };
+  // ADR-0025: Beginner プランは課金 skip のため billedJpy=0 で返却
+  return {
+    billedJpy: beginnerSkipped ? 0 : costJpy,
+    apiCallLogId: createdLogId,
+  };
 }
 
 /**

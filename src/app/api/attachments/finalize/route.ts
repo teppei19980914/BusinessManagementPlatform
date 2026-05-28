@@ -32,6 +32,9 @@ import {
   assertFileStorageLimitInTx,
   mapFileStorageGuardErrorToResponse,
   FileStorageLimitExceededError,
+  // ADR-0025 (2026-05-29): Beginner プラン超過時の専用エラーマッパー
+  BeginnerWriteGuardExceededError,
+  mapBeginnerWriteGuardErrorToResponse,
 } from '@/services/storage-guard.service';
 import { deleteObject, getObjectInfo } from '@/lib/supabase-storage';
 import {
@@ -214,6 +217,11 @@ export async function POST(req: NextRequest) {
     //   失敗時にこの cleanup を実行 → 例外を再 throw する設計に統一する。
     await deleteObject(input.objectKey).catch(() => undefined);
 
+    // ADR-0025 (2026-05-29): Beginner プラン超過エラーを最優先で応答 (= 専用 UX 文言、アップロード object はクリーンアップ済)
+    if (e instanceof BeginnerWriteGuardExceededError) {
+      const beginnerMapped = mapBeginnerWriteGuardErrorToResponse(e);
+      if (beginnerMapped) return NextResponse.json(beginnerMapped.body, { status: beginnerMapped.status });
+    }
     if (e instanceof FileStorageLimitExceededError) {
       const mapped = mapFileStorageGuardErrorToResponse(e);
       if (mapped) return NextResponse.json(mapped.body, { status: mapped.status });

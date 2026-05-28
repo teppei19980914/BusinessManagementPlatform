@@ -22,6 +22,8 @@ import {
   assertStorageLimitInTx,
   StorageLimitExceededError,
   mapStorageGuardErrorToResponse,
+  // ADR-0025 (2026-05-29): Beginner プラン超過時の専用エラーマッパー
+  mapBeginnerWriteGuardErrorToResponse,
 } from '@/services/storage-guard.service';
 import { prisma } from '@/lib/db';
 
@@ -121,6 +123,9 @@ export async function POST(
         { timeout: 10_000 },
       );
     } catch (storageErr) {
+      // ADR-0025: Beginner プラン超過エラーを最優先で応答 (= 専用 UX 文言)
+      const beginnerMapped = mapBeginnerWriteGuardErrorToResponse(storageErr);
+      if (beginnerMapped) return NextResponse.json(beginnerMapped.body, { status: beginnerMapped.status });
       const mapped = mapStorageGuardErrorToResponse(storageErr);
       if (mapped) return NextResponse.json(mapped.body, { status: mapped.status });
       if (storageErr instanceof StorageLimitExceededError) throw storageErr;

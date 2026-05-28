@@ -788,6 +788,11 @@ export async function deleteProject(
       data: { deletedAt: now },
     }),
   ]);
+
+  // ADR-0025 (2026-05-29): Beginner プラン超過状態からの DELETE で容量キャッシュを即時更新。
+  //   プロジェクト削除は task / estimate / attachment cascade で大きな容量解放の可能性。
+  const { maybeRecalcAfterBeginnerDelete } = await import('@/services/tenant-storage.service');
+  await maybeRecalcAfterBeginnerDelete(viewerTenantId);
 }
 
 /**
@@ -1044,6 +1049,12 @@ export async function deleteProjectCascade(
     await tx.suggestionExplanation.deleteMany({ where: { tenantId: viewerTenantId, projectId } });
     await tx.project.delete({ where: { id: projectId } });
   }, { timeout: 30_000 });
+
+  // ADR-0025 (2026-05-29): Beginner プラン超過状態からの cascade DELETE で容量キャッシュを即時更新。
+  //   cascade は最大規模の容量解放経路 (knowledge / risk / retro / task / attachment 全て削除)。
+  //   transaction 後に呼ぶ (= isolation level race 回避)。fail-safe で throw しない。
+  const { maybeRecalcAfterBeginnerDelete } = await import('@/services/tenant-storage.service');
+  await maybeRecalcAfterBeginnerDelete(viewerTenantId);
 
   return {
     risks: risksCount,

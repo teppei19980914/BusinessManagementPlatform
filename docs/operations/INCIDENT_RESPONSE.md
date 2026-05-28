@@ -690,3 +690,23 @@ S-1 / S-2 の障害対応完了後、48 時間以内に作成する。
 
 ---
 
+## ADR-0025: Beginner プラン write block 関連 SOP (2026-05-29 追加)
+
+### ユーザからの問い合わせ「Beginner で新規作成できない」
+
+1. **状況確認**: テナント設定画面 (`/settings/tenant?tab=usage`) で容量バナー (Beginner 専用) を確認させる
+2. **超過判定**: DB 50MB / Storage 100MB のいずれかが「無料枠超過 (write ブロック中)」表示なら ADR-0025 ガード発火中
+3. **誘導**:
+   - 即時復旧したい場合: 不要な資産 (Knowledge / 添付 / Memo) の削除を案内 → 削除後 30 秒以内に自動再集計 → 書込み可能に
+   - 反映されない場合: 設定画面上部の `[DB 容量 / API 利用量を再集計]` ボタンを押下
+   - Beginner プランを継続できない規模なら Expert プラン (¥10/call + ¥50/GB tier / ¥10/GB tier) へアップグレード誘導
+4. **誤検知の確認**: `tenant.storageBytesUsed` が cron キャッシュ (最大 24h ズレ許容) のため、ユーザが認識している実使用量と乖離する可能性。super_admin の手動 recalc (`POST /api/admin/super/tenants/[id]/recalculate`) で即時更新可
+
+### audit ログでの「skip 証跡」確認
+
+月初 cron で Beginner overage が skip された場合、`auditLog` に `entityType='api_call_log_skip'` + `afterValue.adr='ADR-0025'` + `skipReason='beginner plan - overage charge waived per ADR-0025'` が記録される。「請求漏れの可能性」を疑われた際の証跡として使用。
+
+詳細: [ADR-0025](../adr/0025-beginner-write-guard.md) / [仕様書 BEGINNER_PLAN.md](../specification/BEGINNER_PLAN.md)
+
+---
+

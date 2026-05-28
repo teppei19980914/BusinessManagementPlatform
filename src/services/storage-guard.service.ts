@@ -45,12 +45,14 @@
 import type { PrismaClient } from '@/generated/prisma/client';
 import { prisma } from '@/lib/db';
 import {
+  BEGINNER_DB_FREE_TIER_BYTES,
   DB_CAPACITY_L3_HARD_CAP_BYTES,
   STORAGE_GUARD_CIRCUIT_BREAKER_THRESHOLD,
   classifyDbCapacityLevel,
   type DbCapacityWarningLevel,
 } from '@/config/db-capacity-pricing';
 import {
+  BEGINNER_STORAGE_FREE_TIER_BYTES,
   FILE_STORAGE_L3_HARD_CAP_BYTES,
   classifyFileStorageLevel,
   type FileStorageWarningLevel,
@@ -81,6 +83,45 @@ export class StorageLimitExceededError extends Error {
       `Tenant ${args.tenantId} storage usage ${args.currentBytes} bytes exceeds hard cap ${args.limitBytes} bytes`,
     );
     this.name = 'StorageLimitExceededError';
+    this.currentBytes = args.currentBytes;
+    this.limitBytes = args.limitBytes;
+  }
+}
+
+/**
+ * Beginner プラン無料枠超過 write ブロック例外 (ADR-0025、2026-05-29)。
+ *
+ * Beginner プランのテナントが DB 50MB / File Storage 100MB を超過した状態で
+ * INSERT / UPDATE を実行しようとした際に throw される。ハードキャップ (50GB) とは
+ * 別ロジックで、Beginner プランのみ対象。
+ *
+ * - quotaType='db': DB 容量超過 (BEGINNER_DB_FREE_TIER_BYTES=50MB)
+ * - quotaType='storage': File Storage 容量超過 (BEGINNER_STORAGE_FREE_TIER_BYTES=100MB)
+ *
+ * 呼出側 API は本例外を catch して mapBeginnerWriteGuardErrorToResponse() で
+ * HTTP 403 + Beginner 専用エラー文言で応答する。
+ */
+export class BeginnerWriteGuardExceededError extends Error {
+  readonly code: 'BEGINNER_DB_QUOTA_EXCEEDED' | 'BEGINNER_STORAGE_QUOTA_EXCEEDED';
+  readonly quotaType: 'db' | 'storage';
+  readonly currentBytes: number;
+  readonly limitBytes: number;
+
+  constructor(args: {
+    tenantId: string;
+    quotaType: 'db' | 'storage';
+    currentBytes: number;
+    limitBytes: number;
+  }) {
+    super(
+      `Tenant ${args.tenantId} (beginner plan) ${args.quotaType} usage ${args.currentBytes} bytes exceeds free tier ${args.limitBytes} bytes (ADR-0025)`,
+    );
+    this.name = 'BeginnerWriteGuardExceededError';
+    this.code =
+      args.quotaType === 'db'
+        ? 'BEGINNER_DB_QUOTA_EXCEEDED'
+        : 'BEGINNER_STORAGE_QUOTA_EXCEEDED';
+    this.quotaType = args.quotaType;
     this.currentBytes = args.currentBytes;
     this.limitBytes = args.limitBytes;
   }
@@ -127,14 +168,20 @@ export async function precheckStorageLimit(
   | { ok: true; cachedUsedBytes: number; limitBytes: number }
   | {
       ok: false;
-      code: 'STORAGE_LIMIT_EXCEEDED';
+      code: 'STORAGE_LIMIT_EXCEEDED' | 'BEGINNER_DB_QUOTA_EXCEEDED';
       cachedUsedBytes: number;
       limitBytes: number;
     }
 > {
   const tenant = await prisma.tenant.findFirst({
     where: { id: tenantId, deletedAt: null },
-    select: { storageBytesUsed: true, storageGuardCircuitOpenedAt: true },
+    // ADR-0025 (2026-05-29): Beginner プラン判定のため plan を select に追加。
+    //   既存 select に追加するだけで N+1 にはならない (= 同じ findFirst 1 回)。
+    select: {
+      plan: true,
+      storageBytesUsed: true,
+      storageGuardCircuitOpenedAt: true,
+    },
   });
   if (!tenant) {
     // テナント不在 → 上位で 401/404 が出ているはずだが defensive に通す (404 を Pre-check で扱わない)
@@ -152,6 +199,24 @@ export async function precheckStorageLimit(
   }
 
   const cachedUsedBytes = Number(tenant.storageBytesUsed);
+
+  // ADR-0025: Beginner プラン専用 50MB 無料枠ガード (ハードキャップ判定より優先)。
+  //   ADR-0019 / ADR-0022 の「90 日完全無料」訴求を保証するため、Beginner プランは
+  //   50MB 超過状態で INSERT/UPDATE を一律拒否し、overage 課金も発生させない。
+  //   DELETE は許可 (= storage-guard を通らないため自動的に許可される)。
+  //   詳細: docs/adr/0025-beginner-write-guard.md
+  if (
+    tenant.plan === 'beginner' &&
+    cachedUsedBytes + estimatedNewBytes > BEGINNER_DB_FREE_TIER_BYTES
+  ) {
+    return {
+      ok: false,
+      code: 'BEGINNER_DB_QUOTA_EXCEEDED',
+      cachedUsedBytes,
+      limitBytes: BEGINNER_DB_FREE_TIER_BYTES,
+    };
+  }
+
   if (cachedUsedBytes + estimatedNewBytes > DB_CAPACITY_L3_HARD_CAP_BYTES) {
     return {
       ok: false,
@@ -202,6 +267,8 @@ export async function assertStorageLimitInTx(
     where: { id: tenantId, deletedAt: null },
     select: {
       id: true,
+      // ADR-0025 (2026-05-29): Beginner プラン判定のため plan を select に追加
+      plan: true,
       storageBytesPeakThisMonth: true,
       storageGuardCircuitFailCount: true,
       storageGuardCircuitOpenedAt: true,
@@ -302,7 +369,21 @@ export async function assertStorageLimitInTx(
     });
   }
 
-  // 5. ハードキャップ判定
+  // 5a. ADR-0025 (2026-05-29): Beginner プラン 50MB 無料枠ガード (ハードキャップ判定より優先)。
+  //   ADR-0019 / ADR-0022 の「90 日完全無料」訴求を保証するため、Beginner プランは
+  //   50MB 超過状態で INSERT/UPDATE を一律拒否し、overage 課金も発生させない。
+  //   DELETE は storage-guard を通らないため自動的に許可される。
+  //   詳細: docs/adr/0025-beginner-write-guard.md / docs/specification/BEGINNER_PLAN.md
+  if (tenant.plan === 'beginner' && usedBytes > BigInt(BEGINNER_DB_FREE_TIER_BYTES)) {
+    throw new BeginnerWriteGuardExceededError({
+      tenantId,
+      quotaType: 'db',
+      currentBytes: usedBytesNumber,
+      limitBytes: BEGINNER_DB_FREE_TIER_BYTES,
+    });
+  }
+
+  // 5b. ハードキャップ判定 (全プラン共通、Beginner は §5a で先に弾かれる)
   if (usedBytes > BigInt(DB_CAPACITY_L3_HARD_CAP_BYTES)) {
     throw new StorageLimitExceededError({
       tenantId,
@@ -462,20 +543,39 @@ export async function precheckFileStorageLimit(
   | { ok: true; cachedUsedBytes: number; limitBytes: number }
   | {
       ok: false;
-      code: 'STORAGE_FILE_HARD_CAP_EXCEEDED';
+      code: 'STORAGE_FILE_HARD_CAP_EXCEEDED' | 'BEGINNER_STORAGE_QUOTA_EXCEEDED';
       cachedUsedBytes: number;
       limitBytes: number;
     }
 > {
   const tenant = await prisma.tenant.findFirst({
     where: { id: tenantId, deletedAt: null },
-    select: { storageFileBytesUsed: true },
+    // ADR-0025 (2026-05-29): Beginner プラン判定のため plan を select に追加
+    select: { plan: true, storageFileBytesUsed: true },
   });
   if (!tenant) {
     return { ok: true, cachedUsedBytes: 0, limitBytes: FILE_STORAGE_L3_HARD_CAP_BYTES };
   }
 
   const cachedUsedBytes = Number(tenant.storageFileBytesUsed);
+
+  // ADR-0025: Beginner プラン専用 100MB 無料枠ガード (ハードキャップ判定より優先)。
+  //   Pre-signed URL 発行前の判定。Beginner プランは 100MB 超過状態でアップロード拒否、
+  //   overage 課金も発生させない。File 削除は許可 (assertFileStorageLimitInTx で
+  //   addedBytes < 0 のときは Beginner ガード判定を skip する)。
+  //   詳細: docs/adr/0025-beginner-write-guard.md / docs/specification/BEGINNER_PLAN.md
+  if (
+    tenant.plan === 'beginner' &&
+    cachedUsedBytes + estimatedNewBytes > BEGINNER_STORAGE_FREE_TIER_BYTES
+  ) {
+    return {
+      ok: false,
+      code: 'BEGINNER_STORAGE_QUOTA_EXCEEDED',
+      cachedUsedBytes,
+      limitBytes: BEGINNER_STORAGE_FREE_TIER_BYTES,
+    };
+  }
+
   if (cachedUsedBytes + estimatedNewBytes > FILE_STORAGE_L3_HARD_CAP_BYTES) {
     return {
       ok: false,
@@ -523,6 +623,8 @@ export async function assertFileStorageLimitInTx(
     where: { id: tenantId, deletedAt: null },
     select: {
       id: true,
+      // ADR-0025 (2026-05-29): Beginner プラン判定のため plan を select に追加
+      plan: true,
       storageFileBytesUsed: true,
       storageFileBytesPeakThisMonth: true,
       fileStorageWarningLevel: true,
@@ -573,6 +675,23 @@ export async function assertFileStorageLimitInTx(
     });
   }
 
+  // ADR-0025 (2026-05-29): Beginner プラン 100MB 無料枠ガード (ハードキャップ判定より優先)。
+  //   addedBytes > 0 (= アップロード) のときのみ判定。addedBytes < 0 (= ファイル削除) は
+  //   容量を減らす方向のため Beginner ガード対象外 (DELETE 許可ポリシー)。
+  //   詳細: docs/adr/0025-beginner-write-guard.md / docs/specification/BEGINNER_PLAN.md
+  if (
+    tenant.plan === 'beginner' &&
+    addedBytes > 0 &&
+    safeNewUsed > BigInt(BEGINNER_STORAGE_FREE_TIER_BYTES)
+  ) {
+    throw new BeginnerWriteGuardExceededError({
+      tenantId,
+      quotaType: 'storage',
+      currentBytes: Number(safeNewUsed),
+      limitBytes: BEGINNER_STORAGE_FREE_TIER_BYTES,
+    });
+  }
+
   if (safeNewUsed > BigInt(FILE_STORAGE_L3_HARD_CAP_BYTES)) {
     throw new FileStorageLimitExceededError({
       tenantId,
@@ -593,6 +712,62 @@ function shouldNotifyFileStorageAdmin(
 /**
  * ファイルストレージエラーの API レスポンスマッピング。
  */
+/**
+ * ADR-0025 (2026-05-29): Beginner プラン write guard エラーの API レスポンスマッピング。
+ *
+ * BeginnerWriteGuardExceededError を catch し、HTTP 403 + Beginner 専用 UX 文言で応答する。
+ * 既存 mapStorageGuardErrorToResponse / mapFileStorageGuardErrorToResponse とは別マッパーとし、
+ * 呼出側で順番に try する設計 (= 既存エラーマッパーは未改変、後方互換維持)。
+ *
+ * 呼出パターン:
+ *   ```ts
+ *   try {
+ *     await withStorageGuard(tenantId, (tx) => tx.knowledge.create(...));
+ *   } catch (e) {
+ *     const beginner = mapBeginnerWriteGuardErrorToResponse(e);
+ *     if (beginner) return NextResponse.json(beginner.body, { status: beginner.status });
+ *     const storage = mapStorageGuardErrorToResponse(e);
+ *     if (storage) return NextResponse.json(storage.body, { status: storage.status });
+ *     throw e;
+ *   }
+ *   ```
+ *
+ * UX 文言は ADR-0025 §4.1 で確定済の統一メッセージを使用 (3 経路 = トースト/API/フォーム 統一)。
+ */
+export function mapBeginnerWriteGuardErrorToResponse(error: unknown):
+  | {
+      status: 403;
+      body: {
+        error: {
+          code: 'BEGINNER_DB_QUOTA_EXCEEDED' | 'BEGINNER_STORAGE_QUOTA_EXCEEDED';
+          message: string;
+          quotaType: 'db' | 'storage';
+          currentBytes: number;
+          limitBytes: number;
+          upgradeUrl: string;
+        };
+      };
+    }
+  | null {
+  if (error instanceof BeginnerWriteGuardExceededError) {
+    return {
+      status: 403,
+      body: {
+        error: {
+          code: error.code,
+          message:
+            'Beginner プランの無料枠 (DB 50MB / Storage 100MB) を超えました。不要なデータを削除する、または Expert プランへアップグレードしてください。',
+          quotaType: error.quotaType,
+          currentBytes: error.currentBytes,
+          limitBytes: error.limitBytes,
+          upgradeUrl: '/settings/tenant',
+        },
+      },
+    };
+  }
+  return null;
+}
+
 export function mapFileStorageGuardErrorToResponse(error: unknown):
   | {
       status: 403;
