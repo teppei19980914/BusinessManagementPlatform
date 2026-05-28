@@ -33,8 +33,11 @@
 ### 公開ページ (未認証アクセス可)
 - (2026-05-21 / feat/legal-pages-lp-integration): 利用規約・プライバシーポリシーは外部 LP
   (HomePage / tasukiba-user.md の #terms / #privacy アンカー) に集約済。本サービス内の
-  /terms /privacy ページは廃止 (= E2E 対象外)。ログイン画面フッタの LP リンク href 値は
-  e2e/specs/00-smoke.spec.ts で検証。
+  /terms /privacy ページは廃止 (= E2E 対象外)。
+- (2026-05-28 / feat/login-setup-guide-link): ログイン画面フッタは「招待制案内 + LP 利用規約/プラポリ
+  リンク」から「初回ログイン手順ガイド (tasukiba-setup-guide) への一本化」に変更。
+  e2e/specs/00-smoke.spec.ts では `data-testid="login-setup-guide-link"` の href / target / rel
+  属性と CardHeader の たすきフクロウロゴ (`data-testid="login-mascot-owl"`) の visibility を検証する。
 - [x] `/changelog` — e2e/specs/15-version-and-announcements.spec.ts (feat/app-version-changelog-footer / 2026-05-23 / CHANGELOG.md 読み出し + v1.0.0 エントリ render + ページ titleと intro 文言)
 - [x] `/announcements` — e2e/specs/15-version-and-announcements.spec.ts (一覧 render + 2026-06-01 launch エントリの slug link + severity badge)
 - [x] `/announcements/[slug]` — e2e/specs/15-version-and-announcements.spec.ts (slug=2026-06-01-launch の詳細 render + frontmatter から title 表示 + 一覧へ戻るリンク)

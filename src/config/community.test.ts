@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
   DEFAULT_DISCORD_INVITE_URL,
   PRODUCT_LP_URL,
+  SETUP_GUIDE_URL,
   getDiscordInviteUrl,
   getFeatureRequestUrl,
 } from './community';
@@ -14,6 +15,8 @@ import {
  *   - getDiscordInviteUrl: env 未設定 → デフォルト、env 設定 → 上書き、'disabled' → null
  *   - getFeatureRequestUrl: env 未設定 → null (UI 側で fallback)、env 設定 → そのまま
  *   - PRODUCT_LP_URL は固定の HomePage URL
+ *   - SETUP_GUIDE_URL (2026-05-28 / feat/login-setup-guide-link) は HomePage 上の
+ *     初回ログイン手順ガイドへの URL。login/page.tsx と smoke spec で共有される
  */
 
 describe('community.ts', () => {
@@ -48,6 +51,17 @@ describe('community.ts', () => {
     it('https で始まり tasukiba を含む', () => {
       expect(PRODUCT_LP_URL).toMatch(/^https:\/\//);
       expect(PRODUCT_LP_URL).toContain('tasukiba');
+    });
+  });
+
+  describe('SETUP_GUIDE_URL', () => {
+    it('https で始まり tasukiba-setup-guide を含む (HomePage 上の初回ログイン手順ガイド)', () => {
+      expect(SETUP_GUIDE_URL).toMatch(/^https:\/\//);
+      expect(SETUP_GUIDE_URL).toContain('tasukiba-setup-guide');
+    });
+
+    it('HomePage の公式ドメインを指す (drift 検知: 別 host 化したら気付ける)', () => {
+      expect(SETUP_GUIDE_URL.startsWith('https://teppei19980914.github.io/')).toBe(true);
     });
   });
 

@@ -55,3 +55,18 @@ export function getFeatureRequestUrl(): string | null {
  * 一般 Discord と異なり常時公開のため定数で管理。
  */
 export const PRODUCT_LP_URL = 'https://teppei19980914.github.io/HomePage/ja/product/tasukiba/';
+
+/**
+ * テナント管理者向け「初回ログイン手順ガイド」ページ (HomePage) の URL。
+ *
+ * 2026-05-28 (feat/login-setup-guide-link / KDD §5.X+168) で集約。
+ * ログイン画面フッタとそれを検証する smoke spec で同 literal が並列して書かれていたため、
+ * URL 変更時の片側更新漏れによる drift を防ぐ目的で本ファイルに集約。
+ *
+ * 利用箇所:
+ *   - `src/app/(auth)/login/page.tsx` フッタの「セットアップガイド」リンク
+ *   - `e2e/specs/00-smoke.spec.ts` のリンク href assertion
+ *
+ * 変更時の影響: 上記 2 箇所は必ず本定数経由で参照する。直 literal 化を見つけたら本定数に差し戻す。
+ */
+export const SETUP_GUIDE_URL = 'https://teppei19980914.github.io/HomePage/ja/product/tasukiba-setup-guide/';
