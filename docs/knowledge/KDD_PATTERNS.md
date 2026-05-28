@@ -16689,3 +16689,64 @@ PR #452 2 回目で FAB を h-14 → h-16 (56→64) に拡大した。Tailwind �
 - 関連 ADR: [ADR-0012 (Vercel + Supabase、Superseded)](../adr/0012-vercel-supabase-mvp-hosting.md) / [ADR-0023 (Vercel→Netlify Personal 移行)](../adr/0023-netlify-starter-migration.md)
 - 関連 PR: #454 (Phase 1) / #455 (Phase 2) / HomePage #6 (LP 反映)
 - 関連 memory: [feedback_realistic_1pr_scope](../../memory/feedback_realistic_1pr_scope.md) (1 PR 規模上限の判断) / [feedback_repeated_verification_request](../../memory/feedback_repeated_verification_request.md) (繰り返しスキャンの観点深掘り) / [project_infra_state_2026_05_27](../../memory/project_infra_state_2026_05_27.md) (現状インフラ確定事項)
+
+---
+
+## 5.X+168 ★severity-1★ Client-side 履歴の sessionStorage 永続化は「ログアウト clear + ユーザ ID 変化検知 + 件数上限」の 3 点セットが必須 (feat/chat-history-and-accordion 2nd-round fullscan で T-CS-13/14 検出)
+
+### 発覚契機
+
+`feat/chat-history-and-accordion` でチャット意味検索の会話履歴を sessionStorage に永続化する実装をマージ前のフルスキャン (2nd round 検証) を実施。1st round では「ログアウト検知 → clearHistory」を実装し PASS としていたが、2nd round で **「同一タブでユーザ A サインアウト → ユーザ B サインインのシナリオ」** を観点として追加検証したところ、`'unauthenticated'` を経由しない session 切替経路の存在を発見 (NextAuth v5 + Netlify 環境では visibilitychange / Set-Cookie 経由で status 遷移を skip しうる)。
+
+### 根本原因
+
+Client-side 履歴永続化は **3 つの脅威ベクトル** を同時に持つ:
+
+1. **ユーザ越境 (severity-1)**: 同一 origin / 同一タブで複数ユーザが順次サインインするケース。sessionStorage は origin 単位で分離されるが、user 単位ではないため、ログイン状態をまたいで履歴が残る
+2. **DoS / 容量枯渇 (severity-medium)**: sessionStorage の 5MB 上限を埋めると以降の保存失敗、UI freeze、DevTools 経由で攻撃者が大量挿入し再描画コストを爆発させる
+3. **改ざん挿入 (severity-medium)**: 攻撃者が DevTools で偽の hit を挿入し、別テナント URL を「履歴の延長」としてクリックさせる詐欺経路
+
+### 解決策: 3 点セット
+
+```typescript
+// (1) ログアウト経路: useSession().status === 'unauthenticated' を契機に clear
+useEffect(() => {
+  if (session.status === 'unauthenticated') {
+    clearHistory();
+    setTurns([]);
+  }
+}, [session.status]);
+
+// (2) ユーザ ID 変化検知: 'unauthenticated' を経由しないユーザ切替の追加防御
+const prevUserIdRef = useRef<string | undefined>(viewerUserId);
+useEffect(() => {
+  const prev = prevUserIdRef.current;
+  if (prev !== undefined && viewerUserId !== undefined && prev !== viewerUserId) {
+    clearHistory();
+    setTurns([]);
+  }
+  prevUserIdRef.current = viewerUserId;
+}, [viewerUserId]);
+
+// (3) 件数上限: load / save 両側で trim (defense-in-depth)
+const MAX_HISTORY_TURNS = 50;
+function loadHistory() { /* slice(-MAX_HISTORY_TURNS) で末尾 N 件のみ */ }
+function saveHistory(turns) { /* slice(-MAX_HISTORY_TURNS) で末尾 N 件のみ */ }
+```
+
+### 横展開チェック
+
+将来 Client-side ストレージ (sessionStorage / localStorage / IndexedDB) にユーザ固有データを永続化する PR を作るときは、以下 4 点を **必ず** 確認:
+
+- [ ] **ログアウト clear**: `useSession().status === 'unauthenticated'` を契機にした明示削除コード
+- [ ] **ユーザ ID 変化検知**: `useSession().data?.user?.id` 遷移時の自動 clear (= NextAuth v5 の `'unauthenticated'` skip ケース対策)
+- [ ] **件数 / 容量上限**: 攻撃者の大量挿入を弾く defense-in-depth (load + save の両側)
+- [ ] **shape 検証**: parse 後の type guard 必須 (id / userId / 必須フィールドの型チェック)。クリック先 URL を信頼せず、**結果カード遷移先で必ず server-side 認可検証** すること
+
+加えて、クリック遷移先の server-side コードに **「Client storage の hit を信頼しない」テスト** を I-N invariant として追加するのが望ましい (例: 偽 project_id で /projects/[id] を踏ませても 403/404 で確実に拒否される)。
+
+### 関連
+
+- 関連 PR: feat/chat-history-and-accordion (本 PR)
+- 関連 doc: [CHAT_SEMANTIC_SEARCH.md §2.7 + §4 (T-CS-13 / T-CS-14)](../specification/CHAT_SEMANTIC_SEARCH.md)
+- 関連 memory: [feedback_client_sessionstorage_user_isolation](../../memory/feedback_client_sessionstorage_user_isolation.md) (本 PR で新規作成、本 KDD のサマリ + 適用ルール) / [feedback_session_clearance_pattern](../../memory/feedback_session_clearance_pattern.md) (Cookie 削除に依存しない実質削除の思想 — Client storage clear も同パターン) / [feedback_repeated_verification_request](../../memory/feedback_repeated_verification_request.md) (2nd round 観点深掘りで T-CS-13/14 検出した実例)
