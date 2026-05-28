@@ -87,6 +87,23 @@ describe('parseRiskSyncImportCsv (T-22 Phase 22a)', () => {
     expect(rows[0].visibility).toBe('public');
     expect(rows[0].riskNature).toBe(null);
   });
+
+  // fix/csv-import-multiline-text-data-loss: 内容/原因/対応方針/対応詳細/結果/教訓 は textarea
+  //   入力で改行を含むことが多く、旧 split 方式は 2 行目以降を silent に欠落させていた。
+  it('★★ content/cause/responsePolicy/responseDetail の quoted multi-line cell が欠落しない', () => {
+    const csv = [
+      HEADER_16,
+      'r-1,risk,T1,"内容1\n内容2","原因A\n原因B",high,medium,"方針X\n方針Y","詳細1\n詳細2\n詳細3",Alice,2026-06-01,open,"結果\n複数行","教訓\n2行",public,threat',
+    ].join('\n');
+    const rows = parseRiskSyncImportCsv(csv);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].content).toBe('内容1\n内容2');
+    expect(rows[0].cause).toBe('原因A\n原因B');
+    expect(rows[0].responsePolicy).toBe('方針X\n方針Y');
+    expect(rows[0].responseDetail).toBe('詳細1\n詳細2\n詳細3');
+    expect(rows[0].result).toBe('結果\n複数行');
+    expect(rows[0].lessonLearned).toBe('教訓\n2行');
+  });
 });
 
 const projectId = 'proj-1';

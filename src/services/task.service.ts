@@ -54,6 +54,8 @@ import type { z } from 'zod/v4';
 import type { createTaskSchema, updateTaskSchema } from '@/lib/validators/task';
 // PR #361 (2026-05-14): 日次工数プレビュー閾値定数
 import { classifyWorkloadLevel, type WorkloadLevel } from '@/config/workload';
+// fix/csv-import-multiline-text-data-loss: RFC 4180 準拠の multi-line cell 対応 CSV パーサ
+import { parse as parseCsvSync } from 'csv-parse/sync';
 
 type CreateTaskInput = z.infer<typeof createTaskSchema>;
 type UpdateTaskInput = z.infer<typeof updateTaskSchema>;
@@ -1522,7 +1524,15 @@ function escapeCsvField(value: string | null | undefined): string {
   return s;
 }
 
-/** CSV 行をパース（ダブルクォート対応） */
+/** CSV 行をパース（ダブルクォート対応）。
+ *
+ *  ⚠️ 本関数は **改行を含まない 1 物理行** 専用。クォート内に改行 (例: `"line1\nline2"`)
+ *  を含む multi-line cell は扱えない。CSV 全文を行ごとに先割りしてから本関数に渡すと、
+ *  クォート内改行が分断されて 2 行目以降が silent に欠落する (= 旧 sync-import 経路で
+ *  発生したデータロス事故、fix/csv-import-multiline-text-data-loss 参照)。
+ *
+ *  CSV 全文をパースする場合は必ず [[parseCsvText]] を使用すること。
+ */
 export function parseCsvLine(line: string): string[] {
   const fields: string[] = [];
   let current = '';
@@ -1552,6 +1562,30 @@ export function parseCsvLine(line: string): string[] {
   }
   fields.push(current);
   return fields;
+}
+
+/** RFC 4180 準拠 CSV テキストパーサ (multi-line cell 対応)。
+ *
+ *  [[parseCsvLine]] + `split(/\r?\n/)` 組み合わせの代替。クォート内改行
+ *  (例: `"line1\nline2"`) を含むセルを正しく 1 フィールドとして保持する。
+ *
+ *  挙動:
+ *    - UTF-8 BOM 自動除去
+ *    - 完全な空行スキップ
+ *    - 行ごとの列数違いを許容 (`relax_column_count: true`)
+ *    - 各セルの trim は呼出側で実施 (`trim: false`)
+ *
+ *  @returns 行 × フィールドの 2 次元配列。header 行も含む (呼出側で `slice(1)` する)
+ */
+export function parseCsvText(csvText: string): string[][] {
+  if (!csvText || csvText.length === 0) return [];
+  return parseCsvSync(csvText, {
+    columns: false,
+    skip_empty_lines: true,
+    bom: true,
+    relax_column_count: true,
+    trim: false,
+  }) as string[][];
 }
 
 /**

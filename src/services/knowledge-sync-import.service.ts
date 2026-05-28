@@ -17,7 +17,7 @@
  */
 
 import { prisma } from '@/lib/db';
-import { parseCsvLine } from './task.service';
+import { parseCsvText } from './task.service';
 
 // ============================================================
 // 型定義
@@ -108,15 +108,18 @@ function tagsEqual(a: string[], b: string[]): boolean {
 // ============================================================
 
 export function parseKnowledgeSyncImportCsv(csvText: string): KnowledgeSyncImportRow[] {
-  const cleanText = csvText.replace(/^﻿/, '');
-  const lines = cleanText.split(/\r?\n/).filter((l) => l.trim());
-  if (lines.length < 2) return [];
+  // fix/csv-import-multiline-text-data-loss: 旧実装は `split(/\r?\n/)` + 行ごとの
+  //   parseCsvLine だったため、`"line1\nline2"` のような quoted multi-line cell が分断され、
+  //   背景/内容/結果 (textarea 入力可) の 2 行目以降が silent に欠落していた。
+  //   RFC 4180 準拠の parseCsvText で全文を一括パースする。
+  const records = parseCsvText(csvText);
+  if (records.length < 2) return [];
 
   // fix/list-export-import-bugs (2026-05-26): header 行で列数を判定し新旧 layout を切替。
   //   - 7 列 (新): ID/タイトル/種別/背景/内容/結果/公開範囲
   //   - 14 列 (旧): + 結論/推奨/再利用性/開発方式/3 種タグ
   //   旧 layout は parser 経路では値を読み取るが、UI から削除済の項目のため新規 export では出ない。
-  const headerFields = parseCsvLine(lines[0]);
+  const headerFields = records[0];
   const isLegacyLayout = headerFields.length >= 14;
   const COL = isLegacyLayout
     ? {
@@ -130,11 +133,11 @@ export function parseKnowledgeSyncImportCsv(csvText: string): KnowledgeSyncImpor
         techTags: -1, processTags: -1, businessDomainTags: -1, visibility: 6,
       };
 
-  const dataLines = lines.slice(1);
+  const dataRecords = records.slice(1);
   const rows: KnowledgeSyncImportRow[] = [];
 
-  for (let i = 0; i < dataLines.length; i++) {
-    const fields = parseCsvLine(dataLines[i]);
+  for (let i = 0; i < dataRecords.length; i++) {
+    const fields = dataRecords[i];
     if (fields.length < 3) continue;
 
     const csvRowIndex = i + 2;

@@ -278,6 +278,8 @@
     "requestBodyUnreadable": "Failed to read the request body",
     "csvDataEmpty": "CSV data is empty",
     "csvDataEmptyAlt": "CSV data is empty",
+    "csvSizeExceeded": "CSV file size exceeds the limit ({maxMb} MB)",
+    "csvParseError": "CSV format is invalid: {detail}",
     "noImportableTasks": "No importable tasks. A header row plus one or more data rows is required",
     "templateLimit": "Template is limited to 500 rows",
     "internalError": "An internal error occurred",

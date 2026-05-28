@@ -10,7 +10,7 @@
  */
 
 import { prisma } from '@/lib/db';
-import { parseCsvLine } from './task.service';
+import { parseCsvText } from './task.service';
 
 // ============================================================
 // 型定義
@@ -63,15 +63,16 @@ const VALID_VISIBILITIES = new Set(['private', 'public']);
 // ============================================================
 
 export function parseMemoSyncImportCsv(csvText: string): MemoSyncImportRow[] {
-  const cleanText = csvText.replace(/^﻿/, '');
-  const lines = cleanText.split(/\r?\n/).filter((l) => l.trim());
-  if (lines.length < 2) return [];
+  // fix/csv-import-multiline-text-data-loss: multi-line cell 対応のため parseCsvText に統一。
+  //   `本文` は textarea 入力で改行を含むことが頻繁にあり、旧 split 方式は 2 行目以降を欠落。
+  const records = parseCsvText(csvText);
+  if (records.length < 2) return [];
 
-  const dataLines = lines.slice(1);
+  const dataRecords = records.slice(1);
   const rows: MemoSyncImportRow[] = [];
 
-  for (let i = 0; i < dataLines.length; i++) {
-    const fields = parseCsvLine(dataLines[i]);
+  for (let i = 0; i < dataRecords.length; i++) {
+    const fields = dataRecords[i];
     if (fields.length < 2) continue;
 
     const csvRowIndex = i + 2;

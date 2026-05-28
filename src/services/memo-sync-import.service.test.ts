@@ -63,6 +63,18 @@ describe('parseMemoSyncImportCsv (T-22 Phase 22d)', () => {
     const rows = parseMemoSyncImportCsv(csv);
     expect(rows).toHaveLength(1);
   });
+
+  // fix/csv-import-multiline-text-data-loss: 旧実装は本文 (textarea) の quoted multi-line
+  //   cell の 2 行目以降を silent に欠落させていた。エクスポート→Excel 編集→再インポートで再現。
+  it('★★ content の quoted multi-line cell が欠落しない', () => {
+    const csv = [
+      HEADER_4,
+      'm-1,日報,"今日の進捗:\n- A 完了\n- B 着手\n\n所感: 順調",public',
+    ].join('\n');
+    const rows = parseMemoSyncImportCsv(csv);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].content).toBe('今日の進捗:\n- A 完了\n- B 着手\n\n所感: 順調');
+  });
 });
 
 const userId = 'u-1';

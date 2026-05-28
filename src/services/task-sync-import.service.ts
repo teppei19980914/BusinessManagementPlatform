@@ -23,7 +23,7 @@
  */
 
 import { prisma } from '@/lib/db';
-import { parseCsvLine, recalculateAncestorsPublic } from './task.service';
+import { parseCsvText, recalculateAncestorsPublic } from './task.service';
 
 // ============================================================
 // 型定義
@@ -150,17 +150,18 @@ export type RemoveMode = 'keep' | 'warn' | 'delete';
  * @returns rows: 有効データ行 (header エラー時も部分的に返す), headerErrors: ヘッダー不正の説明文
  */
 export function parseSyncImportCsv(csvText: string): ParseSyncImportResult {
-  // BOM 除去
-  const cleanText = csvText.replace(/^﻿/, '');
-  const lines = cleanText.split(/\r?\n/).filter((l) => l.trim());
-  if (lines.length < 1) {
+  // fix/csv-import-multiline-text-data-loss: WBS の「名称」列にユーザが改行を含めても
+  //   silent に欠落しないよう、RFC 4180 準拠の parseCsvText に統一。
+  //   旧 split 方式は他 4 entity 同様にデータロスを起こす可能性があった。
+  const records = parseCsvText(csvText);
+  if (records.length < 1) {
     return { rows: [], headerErrors: ['CSV が空です'] };
   }
 
   // ============================================================
   // [A3] ヘッダー検証 (列順・列名)
   // ============================================================
-  const headerFields = parseCsvLine(lines[0]).map((s) => s.trim());
+  const headerFields = records[0].map((s) => s.trim());
   const headerErrors: string[] = [];
 
   // 列数チェック (最低 4 列, 推奨 7 列)
@@ -183,19 +184,19 @@ export function parseSyncImportCsv(csvText: string): ParseSyncImportResult {
     }
   }
 
-  if (lines.length < 2) {
+  if (records.length < 2) {
     return { rows: [], headerErrors };
   }
 
-  const dataLines = lines.slice(1);
+  const dataRecords = records.slice(1);
   const rows: SyncImportRow[] = [];
 
   // [A1] parentRowIndex を埋めるための level スタック
   // stack[level-1] = 該当 level の最新行の tempRowIndex
   const parentStack: number[] = [];
 
-  for (let i = 0; i < dataLines.length; i++) {
-    const fields = parseCsvLine(dataLines[i]);
+  for (let i = 0; i < dataRecords.length; i++) {
+    const fields = dataRecords[i];
     // ID + 種別 + 名称 + レベル (= 4 列) は最低限必要
     if (fields.length < 4) continue;
 

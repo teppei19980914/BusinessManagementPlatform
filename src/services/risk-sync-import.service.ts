@@ -39,7 +39,7 @@
  */
 
 import { prisma } from '@/lib/db';
-import { parseCsvLine } from './task.service';
+import { parseCsvText } from './task.service';
 import { computePriority } from './risk.service';
 
 // ============================================================
@@ -160,15 +160,17 @@ const VALID_NATURES = new Set(['threat', 'opportunity']);
  *   - 列数判定は **header 行のフィールド数** で行う (data 行は欠損があってもヘッダで確定)。
  */
 export function parseRiskSyncImportCsv(csvText: string): RiskSyncImportRow[] {
-  const cleanText = csvText.replace(/^﻿/, '');
-  const lines = cleanText.split(/\r?\n/).filter((l) => l.trim());
-  if (lines.length < 2) return [];
+  // fix/csv-import-multiline-text-data-loss: 発生事象/内容/原因/影響/対応方針/対応詳細/結果/教訓
+  //   は textarea 入力で改行を含むことが多く、旧 split 方式は 2 行目以降を欠落させていた。
+  //   RFC 4180 準拠の parseCsvText で全文を一括パースする。
+  const records = parseCsvText(csvText);
+  if (records.length < 2) return [];
 
   // fix/list-export-import-bugs (2026-05-26): header 行で列数を確定 (14 / 17 / 16)。
   //   - 14 列 (新): 対応詳細/結果/教訓を削除した編集 dialog 整合形式
   //   - 17 列 (PR #448 LEGACY_17): occurrence 含む旧形式
   //   - 16 列 (LEGACY_16): occurrence なしの旧形式
-  const headerFields = parseCsvLine(lines[0]);
+  const headerFields = records[0];
   const colCount = headerFields.length;
   type ColMap = {
     id: number; type: number; title: number; occurrence: number; content: number;
@@ -204,11 +206,11 @@ export function parseRiskSyncImportCsv(csvText: string): RiskSyncImportRow[] {
   }
   const minColumnsRequired = COL.impact;
 
-  const dataLines = lines.slice(1);
+  const dataRecords = records.slice(1);
   const rows: RiskSyncImportRow[] = [];
 
-  for (let i = 0; i < dataLines.length; i++) {
-    const fields = parseCsvLine(dataLines[i]);
+  for (let i = 0; i < dataRecords.length; i++) {
+    const fields = dataRecords[i];
     // ID + type + title + impact (= impact 列まで) は最低限必要
     if (fields.length < minColumnsRequired + 1) continue;
 

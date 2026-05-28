@@ -67,6 +67,36 @@ describe('parseKnowledgeSyncImportCsv (T-22 Phase 22c)', () => {
     expect(rows[0].devMethod).toBe(null);
     expect(rows[0].visibility).toBe('public');
   });
+
+  // fix/csv-import-multiline-text-data-loss: 旧実装は背景/内容/結果 (textarea 入力可) の
+  //   quoted multi-line cell の 2 行目以降を silent に欠落させていた。
+  //   主に「エクスポート→Excel 編集→再インポート」経路で再現する。
+  it('★★ background/content/result の quoted multi-line cell が欠落しない (7 列新形式)', () => {
+    const HEADER_7 = 'ID,タイトル,ナレッジ種別,背景,内容,結果,公開範囲';
+    const csv = [
+      HEADER_7,
+      'k-1,T1,best_practice,"背景1行目\n背景2行目","内容A\n内容B\n内容C","結果\n複数行",public',
+    ].join('\n');
+    const rows = parseKnowledgeSyncImportCsv(csv);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].background).toBe('背景1行目\n背景2行目');
+    expect(rows[0].content).toBe('内容A\n内容B\n内容C');
+    expect(rows[0].result).toBe('結果\n複数行');
+    expect(rows[0].visibility).toBe('public');
+  });
+
+  it('14 列旧形式でも multi-line cell が欠落しない', () => {
+    const csv = [
+      HEADER_14,
+      'k-1,T1,best_practice,"bg\n2","ct\n2","res\n2","結論\n2","推奨\n2",high,scratch,react,plan,WEB,public',
+    ].join('\n');
+    const rows = parseKnowledgeSyncImportCsv(csv);
+    expect(rows[0].background).toBe('bg\n2');
+    expect(rows[0].content).toBe('ct\n2');
+    expect(rows[0].result).toBe('res\n2');
+    expect(rows[0].conclusion).toBe('結論\n2');
+    expect(rows[0].recommendation).toBe('推奨\n2');
+  });
 });
 
 const projectId = 'proj-1';
