@@ -209,7 +209,7 @@ GitHub の **「Confirm squash and merge」** 画面で:
 
 ### 5.2 認可・テナント境界 (severity-1 リスク領域)
 
-旧 auth-reviewer agent の観点を統合。詳細は [ADR-0001](./docs/adr/0001-multitenant-foundation.md) / [ADR-0005](./docs/adr/0005-rbac-two-stage-tenant-authorization.md)。
+旧 auth-reviewer agent の観点を統合。詳細は [ADR-0001](./docs/adr/0001-multitenant-foundation.md) / [ADR-0005](./docs/adr/0005-rbac-two-stage-tenant-authorization.md) / [ADR-0024](./docs/adr/0024-explicit-tenant-id-no-db-default.md)。
 
 - [ ] **テナント越境防止**: 一覧系サービスに `viewerTenantId` を必須引数化し、`where.tenantId` フィルタを強制
 - [ ] **詳細系認可**: `getById(id, viewerTenantId)` 形式で where に `tenantId` を含める
@@ -217,6 +217,21 @@ GitHub の **「Confirm squash and merge」** 画面で:
 - [ ] **super_admin の例外パス**: テナント境界バイパス時は必ず監査ログを残す
 - [ ] **session 改ざんへの耐性**: ロールや tenantId をクライアント信用 (JWT claim だけで判定) していない
 - [ ] **監査ログ記録**: CREATE / UPDATE / DELETE / 認証イベント時に `recordAuditLog` / `recordAuthEvent`
+- [ ] **★create 時の tenantId 明示** (ADR-0024 / 2026-05-28 severity-1 fix 起因): `prisma.X.create({ data: { tenantId, ... } })` の `data` に **必ず tenantId を渡す**。schema 側は `@default(dbgenerated)` を持たない (= 未指定なら NOT NULL 違反で loud fail する設計)
+
+### 5.2.1 schema 変更 PR の検証範囲拡張 (5 軸網羅)
+
+`prisma/schema.prisma` の `tenantId` 関連 (NOT NULL / DEFAULT / 型) を変更する PR、特に **DB DEFAULT 撤去 / 追加 / 変更** を含む PR では、以下の **5 軸すべて** をフルスキャンする (ADR-0024 / KDD §5.X+170 で確立した観点):
+
+| 軸 | 対象 | grep パターン例 |
+|---|---|---|
+| 1. 本番コード | `src/` の Prisma 呼び出し | `prisma\.(user|customer|project|riskIssue|...)\.create\(` |
+| 2. seed | `prisma/seed*.ts` の Prisma 呼び出し | 同上 |
+| 3. 運用スクリプト | `scripts/*.ts` の Prisma / pg 呼び出し | `prisma\.X\.create` および `pool\.query.*INSERT` |
+| 4. **E2E fixture の raw SQL** | `e2e/fixtures/*.ts` / `e2e/specs/*.ts` | `INSERT INTO\s+(users|customers|projects|...)\s*\(` |
+| 5. migration 内 INSERT | `prisma/migrations/*/migration.sql` | `INSERT INTO` (主に INSERT SELECT 系 seed migration) |
+
+**重要**: 軸 4 (E2E fixture の raw SQL) は `prisma.X.create` grep に引っかからず、Round 1 の PR fix/tenant-id-default-removal で見逃して CI 全滅した実例あり ([post-mortem](./docs/operations/post-mortems/2026-05-28-tenant-id-default-silent-fallthrough.md))。**必ず軸 4 まで含めること**。
 
 ### 5.3 入力検証・SQL 安全性 (旧 injection-reviewer)
 

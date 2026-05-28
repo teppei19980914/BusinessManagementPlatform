@@ -111,10 +111,10 @@ tenantId String @default(dbgenerated("'00000000-0000-0000-0000-000000000001'::uu
 
 ### 補足改善 Action Item
 
-| # | アクション | 担当 | 期限 |
-|---|---|---|---|
-| R2-1 | schema 変更 PR の検証範囲を「src/ + scripts/ + prisma/seed*.ts + **e2e/fixtures/ の raw SQL** + migration SQL」5 軸に拡張する CONTRIBUTING ガイド更新 | teppei | 2026-06-01 |
-| R2-2 | 「ほぼ全 spec が 0ms で fail」= beforeAll setup 系の問題、というシグナル認識を INCIDENT_RESPONSE に追記 | teppei | 2026-06-01 |
+| # | アクション | 担当 | 期限 | 状態 |
+|---|---|---|---|---|
+| R2-1 | schema 変更 PR の検証範囲を「src/ + scripts/ + prisma/seed*.ts + **e2e/fixtures/ の raw SQL** + migration SQL」5 軸に拡張する CONTRIBUTING ガイド更新 | teppei | 2026-05-28 | ✅ 完了 ([CONTRIBUTING.md §5.2.1](../../CONTRIBUTING.md)) |
+| R2-2 | 「ほぼ全 spec が 0ms で fail」= beforeAll setup 系の問題、というシグナル認識を INCIDENT_RESPONSE に追記 | teppei | 2026-05-28 | ✅ 完了 ([INCIDENT_RESPONSE.md §0-4](../INCIDENT_RESPONSE.md)) |
 
 ### 補足の教訓
 
