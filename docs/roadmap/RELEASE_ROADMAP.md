@@ -141,8 +141,8 @@
 ### 2.4 公開ページ側の準備
 
 本体アプリは招待制なので「ログイン画面」が外部訪問者の最初の接点になる:
-- [ ] `/login` の **初見訪問者向け案内** を整備 (「このサービスは招待制です」の明示、問い合わせ導線)
-- [ ] 利用規約 / プライバシーポリシーの設置 (外部視認性、法的観点)
+- [x] `/login` の **初見訪問者向け案内** を整備 — 2026-05-28 / feat/login-setup-guide-link で初回ログイン手順ガイド (外部 LP `tasukiba-setup-guide`) への導線 + 公式マスコットロゴ配置に一本化。旧「招待制です」明示文言は撤去 (テナント管理者は招待時点で運用方針を理解しているため)
+- [x] 利用規約 / プライバシーポリシーの設置 — 外部 LP (HomePage / tasukiba-user.md) に集約 + サインアップ同意フォーム (TenantConsentLog 証跡) + `/settings/about` (認証後) で担保
 - [ ] favicon / OG 画像 (SNS 共有時の見栄え)
 - [ ] `robots.txt` / `sitemap.xml` (検索エンジンへの露出コントロール — プレリリース中は `noindex` を検討)
 
@@ -178,7 +178,7 @@
 - [ ] **GitHub Push Protection 有効化**: GitHub repo 設定 (UI 操作のため公開直前に手動有効化)
 - [x] **robots.txt 配置**: 招待制中の noindex 設定 (2026-05-19、`public/robots.txt`)
 - [x] **利用規約 / プライバシーポリシー**: 外部 LP (HomePage / tasukiba-user.md) の `#terms` / `#privacy` に集約完了 (2026-05-21 / feat/legal-pages-lp-integration)。サインアップ同意取得 + TenantConsentLog 証跡保存も実装済
-- [x] **`/login` 初見訪問者案内**: PUBLIC_LAUNCH_CHECKLIST.md §2.1 で完了報告済、フッタは LP の `#terms` / `#privacy` に遷移
+- [x] **`/login` 初見訪問者案内**: 2026-05-28 / feat/login-setup-guide-link で初回ログイン手順ガイド (外部 LP `tasukiba-setup-guide`) へ一本化 + 公式マスコット「たすきフクロウ」をサービス名左に配置。詳細: [PUBLIC_LAUNCH_CHECKLIST.md §2.1](../operations/PUBLIC_LAUNCH_CHECKLIST.md)
 - [ ] **OG 画像**: 詳細は [PUBLIC_LAUNCH_CHECKLIST.md §2.2](../operations/PUBLIC_LAUNCH_CHECKLIST.md)
 
 #### v1.x バージョンアップで段階的に追加

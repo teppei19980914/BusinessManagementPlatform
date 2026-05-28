@@ -1,6 +1,7 @@
 'use client';
 
 import { Suspense, useEffect, useState } from 'react';
+import Image from 'next/image';
 import { signIn } from 'next-auth/react';
 import { useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
@@ -162,8 +163,32 @@ function LoginForm() {
     <div className="flex flex-1 items-center justify-center bg-muted px-4 py-8">
       <Card className="w-full max-w-[min(90vw,28rem)]">
         <CardHeader className="text-center">
-          <CardTitle className="text-2xl" data-testid="auth-app-name-title">{t('appName')}</CardTitle>
-          <CardDescription>Knowledge Relay</CardDescription>
+          {/*
+           * 2026-05-28 (feat/login-setup-guide-link): 公式マスコット「たすきフクロウ」を
+           *   サービス名の左横に配置。AppHeader (src/components/app-header.tsx) と同パターン
+           *   (next/image + alt=appName + priority + rounded-sm) で世界観を統一する。
+           *   - サイズ 40px は CardTitle (text-2xl) の視覚的高さと釣り合うよう選択
+           *     (AppHeader の 28px はナビバー高さ制約に合わせた値で、login hero では一回り
+           *     大きくして「ようこそ」感を出す)
+           *   - flex items-center justify-center gap-3 で「アイコン + テキスト 2 行」を
+           *     横並びかつカード中央に配置 (CardHeader text-center だけでは横並び不可)
+           *   - MASCOT.md §使い方ガイド の「推奨される使い方」に明文追加済
+           */}
+          <div className="flex items-center justify-center gap-3">
+            <Image
+              src="/mascot-owl.png"
+              alt={t('appName')}
+              width={40}
+              height={40}
+              priority
+              className="rounded-sm"
+              data-testid="login-mascot-owl"
+            />
+            <div className="text-left">
+              <CardTitle className="text-2xl" data-testid="auth-app-name-title">{t('appName')}</CardTitle>
+              <CardDescription>Knowledge Relay</CardDescription>
+            </div>
+          </div>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
@@ -266,38 +291,30 @@ function LoginForm() {
       </Card>
 
       {/*
-       * 2026-05-19 (docs/2026-05-19-roadmap-archive): 初見訪問者向け案内 + フッタリンク。
-       *   外部ユーザがログイン画面に直接到達した場合の案内導線を提示。
-       * 2026-05-21 (feat/legal-pages-lp-integration): 利用規約・プラポリは外部 LP
-       *   (HomePage / tasukiba-user.md) に集約。本サービス内の /terms /privacy ページは廃止。
-       *   フッタリンクは LP の #terms / #privacy アンカーへ直接遷移する。
+       * 2026-05-28 (feat/login-setup-guide-link): 招待制案内文言 + 利用規約/プラポリリンクを
+       *   撤去し、外部 LP の「初回ログイン手順ガイド」(tasukiba-setup-guide) へ一本化。
+       *   - 招待制運用ではテナント管理者は signup を経由せず直接 login に到達するため、
+       *     初回接点であるこの位置にガイドリンクを置くのが UX 最適。
+       *   - 規約 / プラポリは /settings/about (認証後) と /signup 同意フォーム
+       *     (TenantConsentLog 証跡) で引き続き担保。
+       *   - data-testid='login-public-footer' は既存 e2e selector との互換性維持のため保持。
        */}
       <div
         data-testid="login-public-footer"
         className="mt-6 w-full max-w-[min(90vw,28rem)] text-center text-xs text-muted-foreground"
       >
-        <p className="mb-2">
-          本サービスは現在 <span className="font-semibold">招待制</span> です。
-          ご興味のある方はお問い合わせください。
-        </p>
         <p>
+          はじめての方は{' '}
           <a
-            href="https://teppei19980914.github.io/HomePage/ja/product/tasukiba-user/#terms"
+            href="https://teppei19980914.github.io/HomePage/ja/product/tasukiba-setup-guide/"
             target="_blank"
             rel="noopener noreferrer"
-            className="mx-2 hover:underline"
+            className="text-info hover:underline"
+            data-testid="login-setup-guide-link"
           >
-            利用規約
+            セットアップガイド
           </a>
-          <span aria-hidden="true">|</span>
-          <a
-            href="https://teppei19980914.github.io/HomePage/ja/product/tasukiba-user/#privacy"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="mx-2 hover:underline"
-          >
-            プライバシーポリシー
-          </a>
+          {' '}をご参照ください
         </p>
       </div>
     </div>

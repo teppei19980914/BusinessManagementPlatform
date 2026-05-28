@@ -56,6 +56,7 @@
 ### 推奨される使い方
 
 - **ヘッダ左上のロゴ** (`<AppHeader>`) — デスクトップは「アイコン + たすきば」併記、モバイルはアイコンのみ。`public/mascot-owl.png` を使用
+- **ログイン画面のサービス名横ロゴ** (`src/app/(auth)/login/page.tsx` CardHeader) — `public/mascot-owl.png` を 40×40 で「たすきば / Knowledge Relay」テキストの左に並べる。AppHeader と同じ `next/image` + `alt={t('appName')}` + `priority` + `rounded-sm` パターンを採用し、ロゴとしての視覚的一貫性を保つ。`data-testid="login-mascot-owl"`
 - **favicon / apple-touch-icon** — Next.js の `src/app/icon.png` / `src/app/apple-icon.png` 規約で自動配信
 - **OG 画像 (SNS シェア)** — `public/og-image.png`、左にロゴ + 右にサービス名・タグライン
 - **チャット意味検索の FAB** — 全画面右下の常時表示ボタン、`public/mascot-owl-chat.png` (チャットバージョン) を使用。aria-label は「たすきフクロウに相談する」固定

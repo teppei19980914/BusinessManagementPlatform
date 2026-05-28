@@ -28,6 +28,9 @@ test.describe('@feature:auth:login スモーク', () => {
     // CardTitle 側に data-testid を付け、テストを scoped locator に変更して回避。
     await page.waitForLoadState('networkidle');
     await expect(page.getByTestId('auth-app-name-title')).toBeVisible();
+    // 2026-05-28 (feat/login-setup-guide-link): CardHeader 左に たすきフクロウ画像を配置。
+    //   AppHeader と同じ /mascot-owl.png を使用し、サービス名と一体感のあるロゴ的扱い。
+    await expect(page.getByTestId('login-mascot-owl')).toBeVisible();
     // ADR-0016 (2026-05-20): 組織 ID 入力欄が必須化
     await expect(page.getByLabel('組織 ID')).toBeVisible();
     await expect(page.getByLabel('メールアドレス')).toBeVisible();
@@ -46,28 +49,27 @@ test.describe('@feature:auth:login スモーク', () => {
     ).toBeVisible();
   });
 
-  // 2026-05-21 (feat/legal-pages-lp-integration): 利用規約・プライバシーポリシーは
-  //   外部 LP (HomePage / tasukiba-user.md) に集約済み。フッタリンクは LP の
-  //   #terms / #privacy アンカーに直接遷移する。本テストでは href 値が LP の URL に
-  //   なっていることのみを検証 (実 LP の到達性は HomePage repo 側で担保)。
-  test('@feature:public ログイン画面に招待制案内と LP リンクが表示される', async ({ page }) => {
+  // 2026-05-28 (feat/login-setup-guide-link): 招待制案内文言 + 利用規約/プラポリリンクを撤去し、
+  //   外部 LP の「初回ログイン手順ガイド」(tasukiba-setup-guide) へ一本化。
+  //   サービスは引き続き招待制運用だが、ログイン画面に「招待制です」を明示する必要は
+  //   無くなった (テナント管理者は招待された時点で運用方針を理解しているため)。
+  //   利用規約 / プライバシーポリシー はサインアップ同意フォーム (TenantConsentLog 証跡) と
+  //   /settings/about (認証後) で引き続き担保するため、login footer からは外す。
+  //   本テストではセットアップガイドリンクの href + target + rel 属性を検証 (実 LP の到達性は
+  //   HomePage repo 側で担保)。
+  test('@feature:public ログイン画面にセットアップガイドリンクが表示される', async ({ page }) => {
     await page.goto('/login');
     await page.waitForLoadState('networkidle');
     const footer = page.getByTestId('login-public-footer');
     await expect(footer).toBeVisible();
-    await expect(footer).toContainText('招待制');
-    await expect(footer.getByRole('link', { name: '利用規約' })).toHaveAttribute(
+    const link = footer.getByTestId('login-setup-guide-link');
+    await expect(link).toBeVisible();
+    await expect(link).toHaveAttribute(
       'href',
-      'https://teppei19980914.github.io/HomePage/ja/product/tasukiba-user/#terms',
+      'https://teppei19980914.github.io/HomePage/ja/product/tasukiba-setup-guide/',
     );
-    await expect(footer.getByRole('link', { name: 'プライバシーポリシー' })).toHaveAttribute(
-      'href',
-      'https://teppei19980914.github.io/HomePage/ja/product/tasukiba-user/#privacy',
-    );
-    // 外部リンクは新タブで開く
-    for (const name of ['利用規約', 'プライバシーポリシー']) {
-      await expect(footer.getByRole('link', { name })).toHaveAttribute('target', '_blank');
-      await expect(footer.getByRole('link', { name })).toHaveAttribute('rel', 'noopener noreferrer');
-    }
+    // 外部リンクは新タブで開く + reverse-tabnabbing 対策
+    await expect(link).toHaveAttribute('target', '_blank');
+    await expect(link).toHaveAttribute('rel', 'noopener noreferrer');
   });
 });
