@@ -17081,3 +17081,53 @@ if (sizeError) return sizeError;  // 413 で early return
 - 残タスク (MEDIUM): external-import / ZIP import preview に「DB 容量影響事前計算 + L1/L2/L3 警告」を実装 (別 PR)
 - 関連 memory: [feedback_repeated_verification_request](../../memory/feedback_repeated_verification_request.md) — 3 巡目で "コメント vs 実装乖離" の検出
 - 関連 ADR: [0020-db-capacity-usage-based-billing.md](../adr/0020-db-capacity-usage-based-billing.md) — 全プラン共通の 50GB ハードキャップ仕様
+
+---
+
+## 5.X+173 ★severity-medium (drift リスク)★ 外部 LP の URL は「コード 1 箇所 + spec 1 箇所」の 2 篇所 literal 並列ハードコードは drift の温床 ─ src/config/community.ts に集約して import 一本化する (feat/login-setup-guide-link / 2026-05-28 2 巡目フルスキャンで発覚)
+
+### 罠の正体
+
+PR #460 1 巡目で `src/app/(auth)/login/page.tsx` のフッタに「セットアップガイド」リンクを追加し、それを検証する `e2e/specs/00-smoke.spec.ts` で href 値を assert する形にした。両方とも `'https://teppei19980914.github.io/HomePage/ja/product/tasukiba-setup-guide/'` という同じ literal を書いていた。
+
+1 巡目の quality gate (lint / test / build) はすべて PASS。CI も green になる予定。だが **2 巡目のフルスキャン検証** ([feedback_repeated_verification_request](../../memory/feedback_repeated_verification_request.md) ルーチン適用) で `src/config/community.ts` を見たところ既に `PRODUCT_LP_URL = 'https://teppei19980914.github.io/HomePage/ja/product/tasukiba/'` が定義されており、**同じ HomePage ドメインの URL を扱う「先行する集約パターン」が存在していた** ことが判明。
+
+LP の URL は将来:
+- ドメイン変更 (例: `tasukiba.com` への独自ドメイン移行)
+- パス変更 (例: `/product/tasukiba/` → `/products/tasukiba/` への正規化)
+- ロケール対応 (例: `/ja/product/...` → `/i18n/ja/product/...` への path 構造化)
+
+が起きうる。そのとき **コードと spec の片側だけ更新する事故** が起きると、ユーザは新 URL を踏むが E2E は旧 URL を期待して silent fail (= 「click は通る、しかし spec は old URL を見ている、= UI 上は壊れていないのに CI 上は乖離」) または **逆に spec だけ更新してコードが古い URL** で「セットアップガイド」リンクが 404 へ飛ぶ事故が起きる。
+
+### 適用ルール (再発防止)
+
+1. **外部 LP / SaaS / API の URL は `src/config/` 配下に集約**:
+   - `community.ts` — プロダクト LP / コミュニティ / ユーザガイド (= **本ケースで `SETUP_GUIDE_URL` を追加**)
+   - `legal-versions.ts` — 規約 / プラポリ LP
+   - `routes.ts` — 内部ルートパス (`PUBLIC_PATHS` 等)
+   - 新規追加時は **コード + spec が同 URL を 2 箇所書く前** に集約する (literal 化させない)
+
+2. **集約定数には必ず単体テストを追加**:
+   - 例: `community.test.ts` で `expect(SETUP_GUIDE_URL).toMatch(/^https:\/\//) + toContain('tasukiba-setup-guide')`
+   - **drift 検知**: ドメイン部 (`teppei19980914.github.io/`) も明示的に assert することで「別 host への移行」を test で 1 度叩いて気付ける
+   - 値そのものを assert すると test が brittle になるので **ドメイン + パス先頭の部分一致** に留める
+
+3. **e2e spec は config import を許可**:
+   - 既存例: `e2e/specs/01-admin-and-member-setup.spec.ts` で `@/config/routes` 系を import している
+   - 本ルートと同じく `import { SETUP_GUIDE_URL } from '@/config/community'` で参照すれば、定数 1 ファイル更新で全所参追従する
+
+4. **2 巡目フルスキャンの観点**:
+   - 「同じ literal が **コード本体 + spec** の 2 箇所に並んでいる」を grep する (`Grep` の files_with_matches でヒット数 ≥ 2 を確認)
+   - 既存 config に類似定数が無いかを確認 (`grep -nE '^export const [A-Z_]+_URL'` で URL 系定数を一覧)
+
+### 発覚経緯
+
+PR #460 1 巡目 → quality gate PASS → commit + push → CI 全 green 待ち。
+2 巡目フルスキャン (= ユーザの「再度セキュリティチェックの観点も含めフルスキャンし、横断的に抜けもれなく」依頼) で `Grep pattern: "tasukiba-setup-guide"` を実行 → `login/page.tsx` と `smoke spec` の 2 箇所が同 literal を持つことを発見。`src/config/community.ts` を見ると同じ HomePage ドメインの `PRODUCT_LP_URL` が既に集約済 → 同パターンに揃えるべきと判断。
+
+### 関連
+
+- 集約先: `src/config/community.ts` の `SETUP_GUIDE_URL` 定数
+- 影響ファイル: `src/app/(auth)/login/page.tsx` (literal → import に置換) / `e2e/specs/00-smoke.spec.ts` (literal → import に置換) / `src/config/community.test.ts` (新規 test 追加)
+- 関連 memory: [feedback_repeated_verification_request](../../memory/feedback_repeated_verification_request.md) — 同じ「フルスキャン検証」リクエストの繰り返しは「もっと深く見て」のシグナル
+- 関連 KDD: [§5.X+162](#5x162) (機能撤去 PR で UI ラベル文言を簡素化したら spec も同時更新) — 本件は「URL 文言の集約」だが「コード/spec の literal 並列」という同種パターン

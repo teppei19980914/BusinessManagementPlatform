@@ -6,6 +6,10 @@ import { signIn } from 'next-auth/react';
 import { useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { sanitizeCallbackUrl } from '@/lib/url-utils';
+// 2026-05-28 (feat/login-setup-guide-link / KDD §5.X+168): セットアップガイド URL は
+//   login/page.tsx + smoke spec の 2 箇所 literal だと URL 変更時の drift リスクがあるため
+//   src/config/community.ts に集約 (PRODUCT_LP_URL と同じパターン)。
+import { SETUP_GUIDE_URL } from '@/config/community';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -306,7 +310,7 @@ function LoginForm() {
         <p>
           はじめての方は{' '}
           <a
-            href="https://teppei19980914.github.io/HomePage/ja/product/tasukiba-setup-guide/"
+            href={SETUP_GUIDE_URL}
             target="_blank"
             rel="noopener noreferrer"
             className="text-info hover:underline"

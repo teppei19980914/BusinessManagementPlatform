@@ -9,6 +9,9 @@
  */
 
 import { test, expect } from '@playwright/test';
+// 2026-05-28 (feat/login-setup-guide-link / KDD §5.X+168): URL は src/config/community.ts
+//   から import し、login/page.tsx と smoke spec で同 literal が並列して書かれる drift を防ぐ。
+import { SETUP_GUIDE_URL } from '@/config/community';
 
 test.describe('@feature:auth:login スモーク', () => {
   test('ログイン画面が表示される', async ({ page }) => {
@@ -64,10 +67,7 @@ test.describe('@feature:auth:login スモーク', () => {
     await expect(footer).toBeVisible();
     const link = footer.getByTestId('login-setup-guide-link');
     await expect(link).toBeVisible();
-    await expect(link).toHaveAttribute(
-      'href',
-      'https://teppei19980914.github.io/HomePage/ja/product/tasukiba-setup-guide/',
-    );
+    await expect(link).toHaveAttribute('href', SETUP_GUIDE_URL);
     // 外部リンクは新タブで開く + reverse-tabnabbing 対策
     await expect(link).toHaveAttribute('target', '_blank');
     await expect(link).toHaveAttribute('rel', 'noopener noreferrer');
