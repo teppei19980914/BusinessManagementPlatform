@@ -18,6 +18,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getAuthenticatedUser, requireAdmin } from '@/lib/api-helpers';
 import { applyImport } from '@/services/external-data-import.service';
 import { recordAuditLog } from '@/services/audit.service';
+import { prisma } from '@/lib/db';
+import {
+  AVG_BYTES_PER_IMPORTED_ROW,
+  runImportStoragePrecheck,
+} from '@/services/import-storage-precheck.service';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -34,6 +39,34 @@ export async function POST(req: NextRequest) {
       { ok: false, error: { code: 'INVALID_FORMAT', message: 'previewId が必要です' } },
       { status: 400 },
     );
+  }
+
+  // 4 巡目フルスキャン (2026-05-28): apply 前に DB 容量事前判定 (Beginner block / L3 block)。
+  //   preview から parsed.knowledge / parsed.risksIssues の件数を取得して見積もる。
+  const previewInfo = await prisma.tenantImportPreview.findUnique({
+    where: { id: body.previewId },
+    select: { tenantId: true, parsedJson: true },
+  });
+  if (previewInfo && previewInfo.tenantId === user.tenantId) {
+    const parsed = previewInfo.parsedJson as unknown as {
+      knowledge?: unknown[];
+      risksIssues?: unknown[];
+    };
+    const estimatedAddedBytes =
+      (parsed.knowledge?.length ?? 0) * AVG_BYTES_PER_IMPORTED_ROW.knowledge +
+      (parsed.risksIssues?.length ?? 0) * AVG_BYTES_PER_IMPORTED_ROW.risksIssues;
+    const storage = await runImportStoragePrecheck({
+      tenantId: user.tenantId,
+      entity: 'knowledge', // placeholder (override 使用のため)
+      newRowCount: 0,
+      estimatedAddedBytesOverride: estimatedAddedBytes,
+    });
+    if (storage.isBlocker && storage.errorBody) {
+      return NextResponse.json(
+        { ok: false, error: storage.errorBody.error },
+        { status: 403 },
+      );
+    }
   }
 
   const result = await applyImport({

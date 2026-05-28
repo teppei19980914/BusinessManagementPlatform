@@ -1219,6 +1219,94 @@ function DataImportSection() {
           {' '}をご利用ください。CSV ファイル (UTF-8) をアップロード → カラムをマッピング → プレビュー → 取込 の 4 ステップでナレッジ + 過去課題を取り込めます。
           {' '}Excel をお使いの場合は Excel で「名前を付けて保存」→ ファイル種類で「CSV UTF-8 (コンマ区切り)」を選んで変換してください。
         </p>
+
+        {/* 2026-05-28: 取込操作直前に「形式・よくあるエラー・対処」へ即座に到達できるよう、
+            ウィザード入口バナー直下に FAQ アコーディオンを設置する。詳細手順は /help の
+            「外部データの取込・移行について」セクションを参照。 */}
+        <details className="mt-3 rounded border bg-background p-2">
+          <summary className="cursor-pointer text-xs font-semibold">
+            ❓ CSV インポートのよくあるご質問 (形式 / エラー対処)
+          </summary>
+          <div className="mt-2 space-y-3 text-xs text-muted-foreground">
+            <div>
+              <p className="font-semibold text-foreground">受付フォーマット</p>
+              <ul className="ml-4 list-disc">
+                <li>文字コード: <strong>UTF-8</strong> (Excel は「CSV UTF-8 (コンマ区切り)」で保存)</li>
+                <li>区切り: カンマ (タブ / セミコロン不可)、1 行目はヘッダ行</li>
+                <li>
+                  改行を含む長文セル (本文・背景・原因等) は{' '}
+                  <strong>必ず <code>&quot;...&quot;</code> で囲む</strong>
+                  {' '}(Excel でのセル内改行は Alt + Enter)
+                </li>
+                <li>日付: <code>YYYY-MM-DD</code> 形式 (<code>2026/12/31</code> 不可)</li>
+                <li>選択値は <strong>半角小文字</strong> (例: <code>high</code> / <code>low</code>)</li>
+                <li>ファイル上限: 50 MB</li>
+              </ul>
+            </div>
+            <div>
+              <p className="font-semibold text-foreground">取り込めるデータ種別 (Phase 1)</p>
+              <p>
+                <strong>ナレッジ + リスク / 課題</strong>{' '}
+                の 2 種類のみ。振り返り・メモ・WBS (タスク) は本ウィザードでは対象外で、各一覧画面の「インポート」ボタンから個別に CSV 取込する経路があります。
+              </p>
+            </div>
+            <div>
+              <p className="font-semibold text-foreground">プレビューでエラー行が出たら</p>
+              <ul className="ml-4 list-disc">
+                <li>取込前のため未反映。CSV を修正して再アップロードすれば OK</li>
+                <li>
+                  必須欄が空 / 値の制限違反 (
+                  <code>knowledgeType=failure/success/lesson/template/general</code>、
+                  <code>impact=low/medium/high</code> 等) / 日付形式 / 半角全角の取り違え が代表的
+                </li>
+                <li>
+                  取込後に本文の <strong>2 行目以降</strong> が消えている場合は、改行セルが{' '}
+                  <code>&quot;...&quot;</code> で囲まれていなかった可能性。
+                  メモ帳や VS Code で CSV を直接開いて確認してください
+                </li>
+              </ul>
+            </div>
+            <div>
+              <p className="font-semibold text-foreground">料金とプラン別の挙動 (2026-05-28 改修)</p>
+              <p>
+                CSV インポート操作自体は <strong>全プラン無料</strong> (embedding 生成費用も発生しません / ADR-0019)。
+              </p>
+              <p className="mt-1">
+                ただし取込により DB 容量が <strong>50 MB の無料枠</strong> を超えると、
+                <strong>プランごとに異なる挙動</strong> になります (ADR-0020 §11):
+              </p>
+              <ul className="ml-4 list-disc">
+                <li>
+                  <strong>Beginner プラン</strong>: 50 MB を超える取込は{' '}
+                  <strong className="text-destructive">取込前に自動でブロック</strong>{' '}
+                  (preview で警告表示 + 取込ボタン無効化)。意図せず課金が発生することはありません
+                </li>
+                <li>
+                  <strong>Expert / Pro プラン</strong>: 50 MB 超過分は{' '}
+                  <strong>¥50/GB tier の従量課金</strong>。preview で「取込後の予測使用量」と「予測月次課金額」が表示されます
+                </li>
+                <li>
+                  <strong>共通</strong>: 50 GB ハードキャップに到達した場合は全プランで書込み拒否 (読取り・エクスポートは可)
+                </li>
+              </ul>
+            </div>
+            <div>
+              <p className="font-semibold text-foreground">1 ファイルあたりの行数上限</p>
+              <ul className="ml-4 list-disc">
+                <li>本画面の外部データ移行ウィザード: <strong>合計 5,000 行</strong> (Knowledge + RiskIssue)</li>
+                <li>各エンティティ一覧画面のインポート (sync-import): <strong>500 行</strong></li>
+              </ul>
+              <p className="mt-1">超過すると 413 エラーで弾かれます。大量取込はウィザード経路をご利用ください。</p>
+            </div>
+            <p className="text-foreground">
+              より詳しい手順 (テンプレート活用 / カラムマッピング / 取込後確認) は{' '}
+              <a href="/help" className="text-info underline">
+                ヘルプ画面の「外部データの取込・移行について」セクション
+              </a>{' '}
+              を参照してください。
+            </p>
+          </div>
+        </details>
       </div>
 
       <form onSubmit={handleSubmit} className="mt-3 space-y-3">

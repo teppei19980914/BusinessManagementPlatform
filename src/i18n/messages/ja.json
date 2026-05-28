@@ -280,6 +280,7 @@
     "csvDataEmptyAlt": "CSV データが空です",
     "csvSizeExceeded": "CSV ファイルサイズが上限 ({maxMb} MB) を超えています",
     "csvParseError": "CSV のフォーマットが不正です: {detail}",
+    "csvRowCountExceeded": "CSV の行数が上限 ({maxRows} 行) を超えています。ファイルを分割してから再アップロードしてください",
     "noImportableTasks": "インポート可能なタスクがありません。ヘッダー行と1件以上のデータ行が必要です",
     "templateLimit": "テンプレートは500件までです",
     "internalError": "内部エラーが発生しました",

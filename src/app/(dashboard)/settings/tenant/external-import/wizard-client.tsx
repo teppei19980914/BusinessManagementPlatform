@@ -51,6 +51,33 @@ type CostEstimate = {
 
 type PreviewError = { entity: Entity; row: number; field?: string; reason: string };
 
+/**
+ * 4 巡目フルスキャン (2026-05-28): preview レスポンスに同梱される DB 容量事前判定。
+ * route layer の `runImportStoragePrecheck` から返される [`ImportStoragePrecheckResult`] と同型。
+ */
+type StoragePrecheck = {
+  currentBytes: number;
+  estimatedAddedBytes: number;
+  estimatedPostImportBytes: number;
+  freeQuotaBytes: number;
+  hardCapBytes: number;
+  level:
+    | 'none'
+    | 'beginner-block'
+    | 'l1-warning'
+    | 'l2-warning'
+    | 'l3-block';
+  isBlocker: boolean;
+  code:
+    | 'OK'
+    | 'BEGINNER_FREE_QUOTA_EXCEEDED'
+    | 'L1_WARNING'
+    | 'L2_WARNING'
+    | 'L3_HARD_CAP_EXCEEDED';
+  message: string;
+  expectedOverageJpy: number;
+};
+
 type PreviewResponse = {
   ok: true;
   previewId: string;
@@ -61,6 +88,8 @@ type PreviewResponse = {
   errors: PreviewError[];
   costEstimate: CostEstimate;
   expiresAt: string;
+  /** 4 巡目フルスキャン (2026-05-28): DB 容量事前判定 */
+  storagePrecheck?: StoragePrecheck | null;
 };
 
 const KNOWLEDGE_FIELDS: Array<{ value: string; label: string; required: boolean }> = [
@@ -619,8 +648,10 @@ function Step3Preview(props: {
   onApply: () => void;
   submitting: boolean;
 }) {
-  const { summary, costEstimate, errors } = props.preview;
+  const { summary, costEstimate, errors, storagePrecheck } = props.preview;
   const hasError = errors.length > 0;
+  // 4 巡目フルスキャン (2026-05-28): Beginner 50MB block / L3 50GB block の事前判定
+  const isStorageBlocker = storagePrecheck?.isBlocker === true;
 
   return (
     <div className="space-y-4">
@@ -671,6 +702,43 @@ function Step3Preview(props: {
           )}
         </div>
 
+        {/* 4 巡目フルスキャン (2026-05-28): DB 容量事前判定の警告/ブロック表示 */}
+        {storagePrecheck && storagePrecheck.level !== 'none' && (
+          <div
+            className={
+              isStorageBlocker
+                ? 'mt-4 rounded border border-destructive bg-destructive/10 p-3 text-sm'
+                : 'mt-4 rounded border border-warning bg-warning/10 p-3 text-sm'
+            }
+            data-testid="storage-precheck-panel"
+            data-level={storagePrecheck.level}
+          >
+            <p
+              className={
+                isStorageBlocker ? 'font-semibold text-destructive' : 'font-semibold'
+              }
+            >
+              {isStorageBlocker
+                ? '⛔ DB 容量の上限超過予測 (取込は実行できません)'
+                : '⚠ DB 容量の警告'}
+            </p>
+            <p className="mt-1">{storagePrecheck.message}</p>
+            <div className="mt-2 grid grid-cols-1 gap-1 text-xs text-muted-foreground sm:grid-cols-3">
+              <div>
+                現在の DB 使用量:{' '}
+                <strong>{formatBytesShort(storagePrecheck.currentBytes)}</strong>
+              </div>
+              <div>
+                取込後の予測値:{' '}
+                <strong>{formatBytesShort(storagePrecheck.estimatedPostImportBytes)}</strong>
+              </div>
+              <div>
+                無料枠: <strong>{formatBytesShort(storagePrecheck.freeQuotaBytes)}</strong>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* エラー一覧 */}
         {hasError && (
           <div className="mt-4">
@@ -701,6 +769,7 @@ function Step3Preview(props: {
           disabled={
             props.submitting ||
             costEstimate.warningCode != null ||
+            isStorageBlocker ||
             summary.knowledge.validRows + summary.risksIssues.validRows === 0
           }
         >
@@ -711,6 +780,14 @@ function Step3Preview(props: {
       </div>
     </div>
   );
+}
+
+/** 4 巡目フルスキャン (2026-05-28): byte 数の人間可読フォーマット */
+function formatBytesShort(bytes: number): string {
+  if (bytes >= 1_000_000_000) return (bytes / 1_000_000_000).toFixed(2) + ' GB';
+  if (bytes >= 1_000_000) return (bytes / 1_000_000).toFixed(1) + ' MB';
+  if (bytes >= 1_000) return (bytes / 1_000).toFixed(1) + ' KB';
+  return bytes + ' bytes';
 }
 
 // ================================================================

@@ -160,6 +160,62 @@ storage-guard の `pg_column_size` 計測が DB connection error 等で失敗し
 
 メール通知を使用量通知に使わない理由: メール枠制限 + spam リスク、テナント管理者は設定画面アクセス時に気づける。
 
+### 11. インポート時の事前判定 (R20、2026-05-28 4 巡目フルスキャンで追記)
+
+CSV / ZIP インポートで「取込後に L3 ハードキャップ超過 → 全件ロールバック」「Beginner で 50MB 無料枠を予測なく超過 → 想定外課金」の UX 破綻を防ぐため、**インポート系 API は preview / apply の両フェーズで事前判定する**:
+
+#### 11.1 事前判定の対象経路
+
+| 経路 | preview で表示 | apply で enforce |
+|---|---|---|
+| 経路 A: external-import wizard | ✅ Step 3 で警告/ブロック表示 | ✅ apply route で 403 拒否 |
+| 経路 B: sync-import (5 entity) | ✅ dialog preview で警告/ブロック表示 | ✅ route で 403 拒否 |
+| 経路 C: ZIP import | ❌ (preview なし) | ✅ route で 403 拒否 (file.size × 3 で推定) |
+
+#### 11.2 判定マトリクス (=「Beginner 50MB block」の本ADR追加仕様)
+
+| 取込後予測使用量 | Beginner | Expert / Pro |
+|---|---|---|
+| < 50MB (= 無料枠内) | OK | OK |
+| 50MB - 1GB | **取込ブロック** ⛔ | OK (¥0 ~ ¥50/月) |
+| 1GB - 10GB (L1) | **取込ブロック** ⛔ | **L1 警告** ⚠ (取込可、¥50 ~ ¥500/月) |
+| 10GB - 50GB (L2) | **取込ブロック** ⛔ | **L2 警告** ⚠ (取込可、¥500 ~ ¥2,500/月) |
+| ≥ 50GB (L3) | **取込ブロック** ⛔ | **取込ブロック** ⛔ |
+
+**設計判断**: Beginner プランは「90 日完全無料」訴求 (ADR-0019 / ADR-0022) との整合性のため、**50MB 無料枠を超える取込は事前にブロック** する。明示的にアップグレードしない限り課金が発生しないことを保証し、「無料試用と思って取り込んだら ¥50 請求された」事故を防ぐ。
+
+#### 11.3 行サイズ見積もり
+
+取込増分の概算は **エンティティ別の平均行サイズ** で行う ([src/services/import-storage-precheck.service.ts](../../src/services/import-storage-precheck.service.ts) `AVG_BYTES_PER_IMPORTED_ROW`):
+
+| エンティティ | 平均バイト数 (DB 行 + embedding) | 根拠 |
+|---|---|---|
+| Knowledge | 7 KB | title + 3 textarea + tags 3 種 + 1024 dim embedding |
+| RiskIssue | 6 KB | title + content + cause + responsePolicy + 1024 dim embedding |
+| Retrospective | 8 KB | KPT 4 セクション + 1024 dim embedding |
+| Memo | 5 KB | title + content + 1024 dim embedding (user-scoped) |
+| Task (WBS) | 1 KB | name + 期間 + 工数 + 階層 metadata、embedding なし |
+
+完璧な精度は不要 (post-check = `assertStorageLimitInTx` が真の防衛線)。`DB_DRIFT_WARNING_RATIO` (§8) と乖離が見えたら見直し。
+
+#### 11.4 post-check の必須化 (severity-1 修正)
+
+sync-import 5 経路 は本 PR (2026-05-28) 以前 **`assertStorageLimitInTx` が呼ばれておらず L3 50GB ハードキャップが完全バイパス** されていた (R3 「他テナント保護絶対不許容」原則違反)。本 PR で全 5 経路の route layer に apply 後の post-check を追加:
+
+```ts
+try {
+  await prisma.$transaction(
+    async (tx) => assertStorageLimitInTx(tx, user.tenantId),
+    { timeout: 10_000 },
+  );
+} catch (e) {
+  const mapped = mapStorageGuardErrorToResponse(e);
+  if (mapped) return NextResponse.json(mapped.body, { status: mapped.status });
+}
+```
+
+注: precheck で事前ブロックしているため到達確率は低いが、複数取込並列 / 他経路の同時書込み等のレースで超過する可能性に備えた最終境界。
+
 ### 10. 旧コード除去 (R19) — **2026-05-26 実施完了**
 
 以下を撤去完了 (chore/storage-addon-backend-removal、migration `20260531_remove_storage_addon`):

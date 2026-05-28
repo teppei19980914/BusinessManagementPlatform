@@ -16,7 +16,14 @@ import {
 } from '@/services/knowledge-sync-import.service';
 import { recordAuditLog } from '@/services/audit.service';
 import { logUnknownError } from '@/services/error-log.service';
-import { checkCsvSize, handleCsvParseError } from '@/lib/csv-import-helpers';
+import { checkCsvSize, checkCsvRowCount, handleCsvParseError } from '@/lib/csv-import-helpers';
+import { runImportStoragePrecheck } from '@/services/import-storage-precheck.service';
+import {
+  assertStorageLimitInTx,
+  StorageLimitExceededError,
+  mapStorageGuardErrorToResponse,
+} from '@/services/storage-guard.service';
+import { prisma } from '@/lib/db';
 
 export const runtime = 'nodejs';
 
@@ -82,13 +89,42 @@ export async function POST(
     if (parseErr) return parseErr;
     throw e;
   }
+  // 2026-05-28 フルスキャン 2 巡目: parse 後の行数を明示的に上限判定 (DoS 緩和 + UX)
+  const rowCountError = checkCsvRowCount(csvRows.length, t);
+  if (rowCountError) return rowCountError;
+
+  // 4 巡目フルスキャン (2026-05-28): DB 容量事前判定。Beginner 50MB 超なら apply ブロック、
+  //   Expert/Pro は L1/L2 警告。ID 無し行 (= 新規作成) のみで容量増分を見積もる。
+  const newRowCount = csvRows.filter((r) => !r.id).length;
+  const storage = await runImportStoragePrecheck({
+    tenantId: user.tenantId,
+    entity: 'knowledge',
+    newRowCount,
+  });
+  if (storage.isBlocker && storage.errorBody) {
+    return NextResponse.json(storage.errorBody, { status: 403 });
+  }
+
   if (isDryRun) {
     const diff = await computeKnowledgeSyncDiff(projectId, csvRows, user.tenantId);
-    return NextResponse.json({ data: diff });
+    // dry-run response に precheck 結果を同梱 (UI で警告表示)
+    return NextResponse.json({ data: { ...diff, storagePrecheck: storage.precheck } });
   }
 
   try {
     const result = await applyKnowledgeSyncImport(projectId, csvRows, removeMode, user.id, user.tenantId);
+    // 4 巡目: apply 後の post-check。50GB ハードキャップ超なら警告 (データは入った後で
+    //   原子性は崩れているが、precheck で既にブロック済みなので超過する可能性は極めて低い)。
+    try {
+      await prisma.$transaction(
+        async (tx) => assertStorageLimitInTx(tx, user.tenantId),
+        { timeout: 10_000 },
+      );
+    } catch (storageErr) {
+      const mapped = mapStorageGuardErrorToResponse(storageErr);
+      if (mapped) return NextResponse.json(mapped.body, { status: mapped.status });
+      if (storageErr instanceof StorageLimitExceededError) throw storageErr;
+    }
     await recordAuditLog({
       tenantId: user.tenantId,
       userId: user.id,

@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { CSV_MAX_BYTES, checkCsvSize, handleCsvParseError } from './csv-import-helpers';
+import {
+  CSV_MAX_BYTES,
+  CSV_MAX_ROWS,
+  checkCsvSize,
+  checkCsvRowCount,
+  handleCsvParseError,
+} from './csv-import-helpers';
 
 // テスト用の最低限 translator (key を返すだけの mock — 本物の next-intl 連動は不要)
 const t = (key: string, params?: Record<string, string | number | Date>) => {
@@ -41,6 +47,37 @@ describe('csv-import-helpers (fix/csv-import-multiline-text-data-loss 2 巡目)'
     it('境界値 (= 上限ちょうど) は通過する', () => {
       const exact = 'a'.repeat(CSV_MAX_BYTES);
       expect(checkCsvSize(exact, t)).toBeNull();
+    });
+  });
+
+  describe('CSV_MAX_ROWS / checkCsvRowCount (2026-05-28 フルスキャン 2 巡目で追加)', () => {
+    it('500 行に設定されている (CSV_MAX_BYTES コメントで参照されていた設計値)', () => {
+      expect(CSV_MAX_ROWS).toBe(500);
+    });
+
+    it('上限以下なら null を返す (= 通過)', () => {
+      expect(checkCsvRowCount(0, t)).toBeNull();
+      expect(checkCsvRowCount(1, t)).toBeNull();
+      expect(checkCsvRowCount(CSV_MAX_ROWS, t)).toBeNull();
+    });
+
+    it('上限超過なら 413 NextResponse を返す', async () => {
+      const res = checkCsvRowCount(CSV_MAX_ROWS + 1, t);
+      expect(res).not.toBeNull();
+      expect(res!.status).toBe(413);
+      const body = await res!.json();
+      expect(body.error.code).toBe('CSV_ROW_COUNT_EXCEEDED');
+      expect(body.error.message).toContain('csvRowCountExceeded');
+      expect(body.error.message).toContain(String(CSV_MAX_ROWS));
+    });
+
+    it('境界値 (= 上限ちょうど) は通過する', () => {
+      expect(checkCsvRowCount(CSV_MAX_ROWS, t)).toBeNull();
+    });
+
+    it('大量の行数 (10000) も適切に拒否する', () => {
+      const res = checkCsvRowCount(10_000, t);
+      expect(res!.status).toBe(413);
     });
   });
 

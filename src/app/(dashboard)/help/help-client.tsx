@@ -198,6 +198,210 @@ export function HelpClient({ isTenantAdmin }: Props) {
       {/* テナント管理者向け FAQ + 生成 AI 解説 */}
       {isTenantAdmin && (
         <>
+          {/* 2026-05-28: 「初回ログイン後に既存ナレッジを CSV で一括取込したい」というテナント
+              管理者特有の作業を支援。手順本体は /settings/tenant/external-import (ウィザード)
+              にあり、ここでは「どこから始めるか」「形式」「よくあるエラー」を抜粋で説明する。 */}
+          <FaqCategory
+            title="外部データの取込・移行について (CSV インポート、テナント管理者のみ)"
+            tone="admin"
+          >
+            <FaqItem
+              q="社内 wiki / Excel / 旧 PM ツールに蓄積した既存ナレッジ・課題を、初回ログイン後に一括取込したい"
+              a={
+                <div className="space-y-2">
+                  <p>
+                    <strong>テナント管理者のみ</strong>が利用できる「外部データ移行ウィザード」で、
+                    ナレッジと過去課題 (リスク / イシュー) を CSV で一括取込できます。
+                    料金は <strong>全プラン無料</strong> (embedding 生成費用も発生しません / ADR-0019)。
+                  </p>
+                  <ol className="list-decimal space-y-1 pl-5">
+                    <li>
+                      画面右上アカウントメニュー → <strong>設定</strong> →{' '}
+                      <Link href="/settings/tenant" className="text-primary underline">
+                        テナント設定
+                      </Link>{' '}
+                      を開く
+                    </li>
+                    <li>
+                      「データインポート」セクションの黄色い案内ボックスから{' '}
+                      <Link href="/settings/tenant/external-import" className="text-primary underline">
+                        外部データ移行ウィザード
+                      </Link>{' '}
+                      に進む
+                    </li>
+                    <li>
+                      ウィザード上部の <strong>テンプレート CSV</strong>{' '}
+                      (Knowledge / RiskIssue) をダウンロードし、Excel で編集 → 「名前を付けて保存」→{' '}
+                      <strong>「CSV UTF-8 (コンマ区切り)」</strong> で保存
+                    </li>
+                    <li>
+                      ウィザード 4 ステップ (ファイル選択 → マッピング → プレビュー → 取込) を進める。
+                      プレビューで件数・エラーを確認できるので、取込前に CSV を修正可能
+                    </li>
+                  </ol>
+                </div>
+              }
+            />
+            <FaqItem
+              q="どんな CSV フォーマットなら取込できますか?"
+              a={
+                <ul className="list-disc space-y-1 pl-5">
+                  <li>
+                    文字コード: <strong>UTF-8</strong> (Excel 既定の Shift_JIS では文字化け。
+                    保存時に必ず「CSV UTF-8 (コンマ区切り)」を選択)
+                  </li>
+                  <li>1 行目はヘッダ行 (列名)、区切りはカンマ (タブ・セミコロン不可)</li>
+                  <li>
+                    本文・背景・原因など <strong>改行を含む長文セル</strong> は{' '}
+                    <strong>必ずダブルクォート (<code>&quot;</code>) で囲む</strong>{' '}
+                    (Excel でセル内改行は Alt + Enter)
+                  </li>
+                  <li>
+                    日付は <strong><code>YYYY-MM-DD</code> 形式</strong> (例: <code>2026-12-31</code>。
+                    <code>2026/12/31</code> 不可)
+                  </li>
+                  <li>影響度・優先度等の選択値は <strong>半角小文字</strong> (例: <code>high</code>、<code>High</code> 不可)</li>
+                  <li>ファイルサイズ上限: <strong>50 MB</strong></li>
+                </ul>
+              }
+            />
+            <FaqItem
+              q="プレビューで「エラー N 行」と表示されたときの直し方"
+              a={
+                <>
+                  <p>取込実行前なのでデータは入っていません。代表的なエラー原因と対処:</p>
+                  <ul className="mt-2 list-disc space-y-1 pl-5">
+                    <li>
+                      <strong>必須フィールドが空</strong> (<code>title</code> /{' '}
+                      <code>content</code> 等) → Excel で該当行の値を入力
+                    </li>
+                    <li>
+                      <strong>値の制限違反</strong> (<code>knowledgeType</code>{' '}
+                      は <code>failure/success/lesson/template/general</code>、
+                      <code>impact</code> は <code>low/medium/high</code>) → 表のいずれかに半角小文字で修正
+                    </li>
+                    <li>
+                      <strong>日付形式</strong> (<code>deadline</code>) → スラッシュではなくハイフン区切り
+                      <code>YYYY-MM-DD</code>
+                    </li>
+                    <li>
+                      <strong>取込後に本文の 2 行目以降が消えている</strong> →{' '}
+                      改行を含むセルがダブルクォートで囲まれていなかった可能性。CSV をメモ帳 / VS Code で開き
+                      該当セルが <code>&quot;...&quot;</code> で囲まれているか確認 (Excel 保存時にクォートが外れる事故あり)
+                    </li>
+                  </ul>
+                </>
+              }
+            />
+            <FaqItem
+              q="本ウィザードで取り込めるのは何ですか? 振り返り・メモ・WBS も取り込めますか?"
+              a={
+                <>
+                  <p>
+                    本ウィザード (Phase 1) で取り込めるのは <strong>ナレッジ (Knowledge)</strong>{' '}
+                    と <strong>リスク・課題 (RiskIssue)</strong> の 2 種類です。
+                  </p>
+                  <p className="mt-2">
+                    振り返り・メモ・WBS (タスク) は本ウィザードの対象外で、それぞれの一覧画面の「インポート」ボタンから
+                    個別に CSV 取込する経路があります (エクスポート → 編集 → 再取込 する round-trip 型のため、
+                    外部システムからの初回投入には向きません)。
+                  </p>
+                </>
+              }
+            />
+            <FaqItem
+              q="プラン (Beginner / Expert / Pro) によって CSV 取込時の上限は変わりますか?"
+              a={
+                <>
+                  <p>
+                    <strong>ファイル容量・行数の上限は全プラン共通</strong> です:
+                  </p>
+                  <ul className="mt-2 list-disc space-y-1 pl-5">
+                    <li>
+                      <strong>外部データ移行ウィザード</strong>: ファイル 50 MB / 合計 5,000 行 / 全プラン無料 (ADR-0019)
+                    </li>
+                    <li>
+                      <strong>エンティティ別 sync-import</strong> (各一覧画面): ファイル 10 MB / 500 行
+                    </li>
+                  </ul>
+                  <p className="mt-2">
+                    一方、<strong>DB 容量超過時の挙動</strong> は <strong>プランごとに異なります</strong> (ADR-0020 §11、2026-05-28 改修):
+                  </p>
+                  <div className="mt-2 overflow-x-auto rounded-md border">
+                    <table className="w-full border-collapse text-xs">
+                      <thead className="bg-muted/40">
+                        <tr>
+                          <th className="border-b p-2 text-left">取込後の予測使用量</th>
+                          <th className="border-b p-2 text-left">Beginner</th>
+                          <th className="border-b p-2 text-left">Expert / Pro</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <td className="border-b p-2">&lt; 50 MB (無料枠内)</td>
+                          <td className="border-b p-2 text-emerald-700 dark:text-emerald-400">取込可</td>
+                          <td className="border-b p-2 text-emerald-700 dark:text-emerald-400">取込可</td>
+                        </tr>
+                        <tr>
+                          <td className="border-b p-2">50 MB - 1 GB</td>
+                          <td className="border-b p-2 text-destructive">⛔ 取込ブロック</td>
+                          <td className="border-b p-2">取込可 (¥0〜¥50/月)</td>
+                        </tr>
+                        <tr>
+                          <td className="border-b p-2">1 GB - 10 GB (L1)</td>
+                          <td className="border-b p-2 text-destructive">⛔ 取込ブロック</td>
+                          <td className="border-b p-2 text-amber-700 dark:text-amber-400">⚠ 警告 (取込可)</td>
+                        </tr>
+                        <tr>
+                          <td className="border-b p-2">10 GB - 50 GB (L2)</td>
+                          <td className="border-b p-2 text-destructive">⛔ 取込ブロック</td>
+                          <td className="border-b p-2 text-amber-700 dark:text-amber-400">⚠ 警告 (取込可)</td>
+                        </tr>
+                        <tr>
+                          <td className="p-2">≥ 50 GB (ハードキャップ)</td>
+                          <td className="p-2 text-destructive">⛔ 取込ブロック</td>
+                          <td className="p-2 text-destructive">⛔ 取込ブロック</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                  <p className="mt-2 text-muted-foreground">
+                    <strong>Beginner プランの方</strong>: 50 MB 無料枠を超える取込は preview で警告表示 + 取込ボタン無効化されます (= 意図せず課金が発生することはありません)。50 MB を超えるデータをまとめて取り込みたい場合は Expert / Pro プランへアップグレードしてください。
+                  </p>
+                  <p className="mt-2 text-muted-foreground">
+                    <strong>Expert / Pro プランの方</strong>: preview 画面で「取込後の予測使用量」と「予測月次課金額」が表示されます。内容を確認のうえ取込を実行してください。詳細は{' '}
+                    <Link href="/settings/tenant" className="text-primary underline">
+                      テナント設定
+                    </Link>{' '}
+                    →「使用量」タブで確認できます。
+                  </p>
+                </>
+              }
+            />
+            <FaqItem
+              q="取込後のデータの「公開範囲」はどうなりますか?"
+              a={
+                <ul className="list-disc space-y-1 pl-5">
+                  <li>
+                    Knowledge の <code>visibility</code> 既定値は <strong><code>company</code></strong>{' '}
+                    (テナント全員に公開、他プロジェクトの提案エンジン候補に並ぶ)
+                  </li>
+                  <li>
+                    RiskIssue の <code>visibility</code> 既定値は <strong><code>draft</code></strong>{' '}
+                    (自分のみ、提案エンジン非表示 / 課金対象外)
+                  </li>
+                  <li>
+                    CSV の <code>visibility</code> 列で行ごとに <code>draft</code> / <code>project</code> /{' '}
+                    <code>company</code> (RiskIssue は <code>draft</code> / <code>public</code>) を指定可能
+                  </li>
+                  <li>
+                    取込後に各データの編集画面から個別に公開範囲を変更することもできます
+                  </li>
+                </ul>
+              }
+            />
+          </FaqCategory>
+
           <FaqCategory
             title="テナント管理者向け (課金・プラン・席数)"
             tone="admin"

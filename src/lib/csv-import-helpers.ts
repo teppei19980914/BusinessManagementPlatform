@@ -22,6 +22,15 @@ import { NextResponse } from 'next/server';
  */
 export const CSV_MAX_BYTES = 10 * 1024 * 1024;
 
+/** sync-import 1 ファイルあたりの最大行数 (ヘッダ除く data 行)。
+ *  - 設計意図: CSV_MAX_BYTES のコメントで参照されてきた値だが、実装側 (5 sync-import service)
+ *    では実際の行数チェックが未実装で silent skip (`fields.length < 3`) のみだった。
+ *  - 2026-05-28 フルスキャン 2 巡目検証で発覚 → 明示的な 500 行制限を共通ヘルパに集約。
+ *  - 1 業務操作で 500 件超を一括取込する UX 想定は無く、Excel での編集効率も劣化するため
+ *    分割を促す。大量初回取込は経路 A (external-import) の 5000 行制限を使う。
+ */
+export const CSV_MAX_ROWS = 500;
+
 /**
  * CSV サイズチェック。上限超なら 413 Response を返し、route 側で早期 return できる。
  *
@@ -37,6 +46,36 @@ export function checkCsvSize(csvText: string, t: (k: string, p?: Record<string, 
         error: {
           code: 'CSV_SIZE_EXCEEDED',
           message: t('csvSizeExceeded', { maxMb: Math.floor(CSV_MAX_BYTES / 1024 / 1024) }),
+        },
+      },
+      { status: 413 },
+    );
+  }
+  return null;
+}
+
+/**
+ * sync-import 行数チェック。CSV_MAX_ROWS (500 行) 超なら 413 Response を返す。
+ *
+ * 設計判断: 「ファイル全文の Byte 数」と「parse 後の data 行数」は別軸で判定する必要がある。
+ *   - 10MB CSV でも 1 行が巨大な multi-line cell かもしれない (= 行数少)
+ *   - 500 行の textarea CSV でもサイズが 1MB 未満かもしれない (= サイズ少)
+ *   いずれも DoS / UX 観点で個別に上限を設けたい。
+ *
+ * 呼出位置: parseXxxSyncImportCsv の戻り値 length を渡す。
+ *
+ * @returns 上限超なら 413 NextResponse、問題なければ null
+ */
+export function checkCsvRowCount(
+  rowCount: number,
+  t: (k: string, p?: Record<string, string | number | Date>) => string,
+): NextResponse | null {
+  if (rowCount > CSV_MAX_ROWS) {
+    return NextResponse.json(
+      {
+        error: {
+          code: 'CSV_ROW_COUNT_EXCEEDED',
+          message: t('csvRowCountExceeded', { maxRows: CSV_MAX_ROWS }),
         },
       },
       { status: 413 },
