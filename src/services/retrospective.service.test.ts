@@ -249,6 +249,34 @@ describe('listAllRetrospectivesForViewer', () => {
 describe('createRetrospective', () => {
   beforeEach(() => vi.clearAllMocks());
 
+  // ★severity-1 regression (fix/tenant-id-default-removal, 2026-05-28, ADR-0024):
+  //   旧バグでは createRetrospective が tenantId を data に渡しておらず、schema の DB DEFAULT
+  //   ('00000000-...-001') で silent に Default テナントへ混入していた。
+  //   本テストは「指定された tenantId が data に明示的に含まれる」ことを保証する。
+  it('★severity-1 regression: tenantId が data に明示的に渡される (Default テナント silent 混入の防止)', async () => {
+    vi.mocked(prisma.retrospective.create).mockResolvedValue(retRow() as never);
+    const OTHER_TENANT_ID = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+    await createRetrospective(
+      'p-1',
+      {
+        conductedDate: '2026-04-01',
+        planSummary: '',
+        actualSummary: '',
+        goodPoints: '',
+        problems: '',
+        improvements: '',
+        knowledgeToShare: null,
+      } as never,
+      'u-1',
+      OTHER_TENANT_ID,
+    );
+    expect(prisma.retrospective.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ tenantId: OTHER_TENANT_ID }),
+      }),
+    );
+  });
+
   it('入力を Date に変換し visibility 既定 draft で保存', async () => {
     vi.mocked(prisma.retrospective.create).mockResolvedValue(retRow() as never);
 

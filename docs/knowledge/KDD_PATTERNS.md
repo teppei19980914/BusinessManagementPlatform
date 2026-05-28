@@ -16750,3 +16750,74 @@ function saveHistory(turns) { /* slice(-MAX_HISTORY_TURNS) で末尾 N 件のみ
 - 関連 PR: feat/chat-history-and-accordion (本 PR)
 - 関連 doc: [CHAT_SEMANTIC_SEARCH.md §2.7 + §4 (T-CS-13 / T-CS-14)](../specification/CHAT_SEMANTIC_SEARCH.md)
 - 関連 memory: [feedback_client_sessionstorage_user_isolation](../../memory/feedback_client_sessionstorage_user_isolation.md) (本 PR で新規作成、本 KDD のサマリ + 適用ルール) / [feedback_session_clearance_pattern](../../memory/feedback_session_clearance_pattern.md) (Cookie 削除に依存しない実質削除の思想 — Client storage clear も同パターン) / [feedback_repeated_verification_request](../../memory/feedback_repeated_verification_request.md) (2nd round 観点深掘りで T-CS-13/14 検出した実例)
+
+## 5.X+169 ★severity-1 (個人情報漏洩リスク)★ Prisma schema の `@default(dbgenerated tenantId)` は「コード側 tenantId 渡し忘れ」を **silent に Default テナント混入** させる罠 (ADR-0024 / fix/tenant-id-default-removal で発覚)
+
+### 結論
+
+`schema.prisma` のテナント所属カラムに DB DEFAULT を持たせるパターンは **severity-1 のセキュリティアンチパターン**。
+
+```prisma
+// ❌ NG: コードが tenantId を渡し忘れたら silent に Default テナントへ混入
+tenantId String @default(dbgenerated("'00000000-0000-0000-0000-000000000001'::uuid")) @map("tenant_id") @db.Uuid
+
+// ✓ OK: 未指定なら NOT NULL 違反で loud fail (再発防止保証)
+tenantId String @map("tenant_id") @db.Uuid
+```
+
+### 発覚経緯 (2026-05-28)
+
+1. test テナントの一般ユーザが「公開範囲: 自分のみ」で課題を起票
+2. API は 201 で成功表示するが、起票者本人の一覧に「課題がありません」と表示
+3. システム管理者ダッシュボードの test テナント統計でも「リスク/課題: 0」
+4. 全コードスキャンで `src/services/risk.service.ts:460 createRisk` と `retrospective.service.ts:304 createRetrospective` の `data` に `tenantId` が無いことを発見
+5. schema 側で `@default(dbgenerated tenantId)` が「未指定なら Default テナント」をしてくれていたため **silent に Default に混入** していた
+
+### なぜ TypeScript で防げないか
+
+Prisma の生成型は **「DB DEFAULT を持つカラムは create 時に optional」** と推論する。つまり:
+
+```typescript
+prisma.riskIssue.create({
+  data: {
+    // tenantId 省略可 (型は通る)
+    projectId,
+    type: 'issue',
+    // ...
+  },
+});
+```
+
+これは TypeScript 上は完全に valid なコードで、`pnpm tsc --noEmit` も通る。バグは **ランタイムまで一切検知されず**、しかも本番でも例外を投げず silent に挙動する。
+
+### 影響範囲 (本件で発覚した実害)
+
+| サービス関数 | tenantId 渡し忘れ | 影響 |
+|---|---|---|
+| `createRisk()` (`src/services/risk.service.ts:460`) | ❌ | 全テナントの課題が Default テナント混入 |
+| `createRetrospective()` (`src/services/retrospective.service.ts:304`) | ❌ | 全テナントの振り返りが Default テナント混入 |
+| `createUser()` (`src/services/user.service.ts:193`) | ⚠️ conditional spread | 現状のみ安全だが latent risk |
+| `recordError()` (`src/services/error-log.service.ts:76`) | ⚠️ conditional spread | pre-auth fallback の意図 |
+| 他 8 サービス | ✓ 明示 | 影響なし |
+
+### 対応 (3 段構え)
+
+1. **コード fix** — `createRisk` / `createRetrospective` に `tenantId` を data に追加 + `createUser` を必須化
+2. **schema cleanup** — 全 13 モデルから `@default(dbgenerated tenantId)` を撤去 + DB migration で `ALTER TABLE ... ALTER COLUMN tenant_id DROP DEFAULT`
+3. **データ修復** — `scripts/migrate-leaked-tenant-data.ts` で既存の混入レコードを起票者の本来テナントへ UPDATE
+
+唯一の正当例外として `SystemErrorLog.recordError()` は pre-auth エラー (login 試行失敗等) を記録する必要があるため、コード側で `input.tenantId ?? DEFAULT_TENANT_ID` の **明示的な fallback** を残す。
+
+### 適用ルール (再発防止)
+
+1. **新規テナント所属モデル追加時**: schema で `tenantId String @map("tenant_id") @db.Uuid` (DEFAULT なし) と明示する
+2. **新規 service 層の create() 実装時**: 関数引数で `tenantId: string` を必ず受け、`data: { tenantId, ... }` で **明示的に** 渡す
+3. **PR レビュー時のチェック項目**: `prisma.X.create({ data: { ... } })` を含む差分は **data 内に tenantId があるか必ず確認**
+4. **E2E regression test**: 「Tenant A admin が API 経由で作成 → A 自身の一覧で見える」を保証する (e2e/specs/11-tenant-isolation.spec.ts に組込済み)
+
+### 関連
+
+- 関連 PR: fix/tenant-id-default-removal-severity-1
+- 関連 ADR: [ADR-0024: tenant_id カラムから DB DEFAULT を撤去](../adr/0024-explicit-tenant-id-no-db-default.md)
+- 関連 memory: [feedback_db_default_tenant_silent_fallthrough](../../memory/feedback_db_default_tenant_silent_fallthrough.md) (本 KDD のサマリ + 適用ルール) / [feedback_tenant_isolation](../../memory/feedback_tenant_isolation.md) (severity-1 越境防止の上位原則)
+- 既知の類縁罠: [§5.X+163 Prisma XOR で excess property check が効かない罠](#5x163) — 本件と同じく「Prisma の型システムが silent 挙動を許す」共通パターン

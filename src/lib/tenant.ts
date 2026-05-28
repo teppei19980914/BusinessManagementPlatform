@@ -6,14 +6,16 @@
  * 単一の真実源 (single source of truth) となる。
  *
  * 設計判断:
- *   - v1 (2026-06-01) は default-tenant という単一テナントのみで稼働する。
- *   - schema.prisma 側で各エンティティの tenantId カラムに DB DEFAULT
- *     ('00000000-0000-0000-0000-000000000001'::uuid) を設定し、既存コードを
- *     書き換えずに単一テナント運用を継続できるようにしている。
- *   - 本定数 DEFAULT_TENANT_ID は migration 20260502_multi_tenant_base/migration.sql
- *     で挿入される default-tenant の固定 UUID と完全一致 (両者の同期が必須)。
- *   - v1.x のマルチテナント UI 提供時に DB DEFAULT を外し、本定数の参照箇所は
- *     リクエスト context (requestContext.tenantId) に置き換わる移行計画。
+ *   - 旧仕様 (v1 〜 2026-05-28 以前): schema.prisma の各 tenantId カラムに DB DEFAULT
+ *     ('00000000-0000-0000-0000-000000000001'::uuid) を設定していた。
+ *     → コードが tenantId を渡し忘れると **silent に Default テナントに混入** する
+ *        severity-1 セキュリティバグ (ADR-0024 / fix/tenant-id-default-removal で発覚)。
+ *   - 新仕様 (2026-05-28 以降, ADR-0024): DB DEFAULT を全 13 モデルから撤去。
+ *     未指定時は Prisma が NOT NULL 違反でエラーを投げる (loud fail 化)。
+ *   - 本定数 DEFAULT_TENANT_ID は引き続き存在するが、**用途は pre-auth エラーログ
+ *     (SystemErrorLog) や migration seed の明示的な紐付け先のみ** に限定する。
+ *     業務エンティティ (RiskIssue, Knowledge, Memo 等) の create 時は必ず
+ *     リクエスト context (user.tenantId) を渡すこと。
  */
 
 /**

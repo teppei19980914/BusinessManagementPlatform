@@ -413,6 +413,71 @@ test.describe('@feature:security:tenant-isolation テナント越境遮断 (Phas
   });
 
   // ==========================================================================
+  // ★severity-1 regression (fix/tenant-id-default-removal, 2026-05-28, ADR-0024)
+  //
+  // 旧バグ: schema の `tenantId @default(dbgenerated tenantId)` 撤去前は、
+  //   risk.service.ts:460 createRisk と retrospective.service.ts:304 createRetrospective が
+  //   tenantId を data に渡しておらず、DB DEFAULT で **silent に Default テナントに混入** していた。
+  //   → 起票者には「課題がありません」表示 + システム管理者ダッシュボードでも 0 件 + Default
+  //   テナントに他テナントのデータが混入する個人情報漏洩リスク。
+  //
+  // 本セクションでは「Tenant A admin が API 経由で起票したリスク/振り返りが、Tenant A
+  // 自身の一覧で参照可能」「Tenant B 一覧には混入しない」を E2E で保証する。
+  // 旧バグなら 1 つ目のアサーションが落ちる (起票者本人にすら見えない)。
+  // ==========================================================================
+
+  test('★severity-1 regression: A admin が起票した risk は A 自身の一覧で見える (Default 混入防止)', async () => {
+    // 1. Tenant A admin が risk を新規起票
+    const postRes = await adminARequest.post(`/api/projects/${tenantA.projectId}/risks`, {
+      data: {
+        type: 'issue',
+        title: `★severity-1 regression risk ${RUN_ID}`,
+        content: 'tenant-isolation regression check',
+        impact: 'high',
+        likelihood: 'medium',
+        responsePolicy: null,
+        responseDetail: null,
+        assigneeId: null,
+        deadline: null,
+        visibility: 'public', // 一覧に出やすくするため public
+        riskNature: null,
+      },
+    });
+    expect(postRes.status()).toBe(201);
+    const created = (await postRes.json()) as { data: { id: string } };
+
+    // 2. Tenant A admin の一覧に含まれること (= tenantA に保存された証拠)
+    const listRes = await adminARequest.get(`/api/projects/${tenantA.projectId}/risks`);
+    expect(listRes.status()).toBe(200);
+    const list = (await listRes.json()) as { data: Array<{ id: string }> };
+    const ids = list.data.map((r) => r.id);
+    expect(ids).toContain(created.data.id);
+  });
+
+  test('★severity-1 regression: A admin が起票した retrospective は A 自身の一覧で見える', async () => {
+    const postRes = await adminARequest.post(`/api/projects/${tenantA.projectId}/retrospectives`, {
+      data: {
+        conductedDate: '2026-05-01',
+        planSummary: 'plan',
+        actualSummary: 'actual',
+        goodPoints: 'good',
+        problems: 'problem',
+        improvements: 'improve',
+        knowledgeToShare: null,
+        visibility: 'public',
+      },
+    });
+    expect(postRes.status()).toBe(201);
+    const created = (await postRes.json()) as { data: { id: string } };
+
+    const listRes = await adminARequest.get(`/api/projects/${tenantA.projectId}/retrospectives`);
+    expect(listRes.status()).toBe(200);
+    const list = (await listRes.json()) as { data: Array<{ id: string }> };
+    const ids = list.data.map((r) => r.id);
+    expect(ids).toContain(created.data.id);
+  });
+
+  // ==========================================================================
   // sync-import 系 (Phase 2-8)
   // ==========================================================================
 

@@ -88,8 +88,12 @@ async function main() {
       }
 
       // ユーザ作成 + リカバリーコード保存
+      // ★severity-1 (fix/tenant-id-default-removal, 2026-05-28, ADR-0024):
+      //   schema の DB DEFAULT 撤去に伴い tenantId を data に明示。初期 admin は
+      //   DEFAULT_TENANT 所属。旧コードは DB DEFAULT に依存して silent 動作していた。
       const user = await prisma.user.create({
         data: {
+          tenantId: DEFAULT_TENANT_ID,
           name: '管理者',
           email,
           passwordHash,

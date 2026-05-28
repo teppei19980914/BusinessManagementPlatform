@@ -303,6 +303,10 @@ export async function createRetrospective(
   await assertAssigneeTenant(input.assigneeId, tenantId);
   const r = await prisma.retrospective.create({
     data: {
+      // ★severity-1 (fix/tenant-id-default-removal): tenantId を明示。schema の
+      //   `@default(dbgenerated("'00000000-...-001'::uuid"))` への暗黙依存を解消し、
+      //   未指定時は DB エラーで loud fail させる (= Default テナント silent 混入を遮断)。
+      tenantId,
       // PR feat/asset-multi-project-linking: projectId は **作成元** プロジェクト (audit)。
       //   検索はすべて retrospectiveProjects (M:N) 経由になるため、初期紐付けも作成する。
       projectId,

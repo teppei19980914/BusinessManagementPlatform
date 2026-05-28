@@ -28,6 +28,7 @@
  */
 
 import { prisma } from '@/lib/db';
+import { DEFAULT_TENANT_ID } from '@/lib/tenant';
 
 /** エラー重要度。info < warn < error < fatal。 */
 export type ErrorSeverity = 'info' | 'warn' | 'error' | 'fatal';
@@ -51,11 +52,15 @@ export type RecordErrorInput = {
   /** 認証済ユーザの ID。pre-auth や cron は undefined。 */
   userId?: string;
   /**
-   * Phase 2-10 (2026-05-10): エラーの所属テナント (省略時は schema の DB DEFAULT = default-tenant)。
+   * エラーの所属テナント。
    *   - 認証済 user の error は user.tenantId を渡す (= 自テナントのエラー監視で見えるように)
-   *   - cron / pre-auth は省略 → default-tenant に集約 (= super_admin 監視で見える)
-   *   旧仕様 (Phase 2-10 以前) は省略デフォルト依存だったため、本来テナント別エラーが
-   *   default-tenant に紛れ込み「default-tenant ばかりエラーが多い」誤認の温床だった。
+   *   - cron / pre-auth は省略可能 → 本サービス内で **明示的に DEFAULT_TENANT_ID** にフォールバック
+   *     (= super_admin が default-tenant の error 一覧で確認できる)
+   *
+   * ★severity-1 (fix/tenant-id-default-removal, 2026-05-28):
+   *   旧仕様は schema DB DEFAULT に依存して silent に default-tenant に落ちていたが、
+   *   ADR-0024 で DB DEFAULT を撤去。SystemErrorLog のみ pre-auth fallback の正当用途として
+   *   コード側で明示 fallback する設計を維持 (= 「未指定 → DB エラー」の原則の唯一の例外)。
    */
   tenantId?: string;
   /** trace 用の request id (middleware で header から払い出す想定)。 */
@@ -80,8 +85,10 @@ export async function recordError(input: RecordErrorInput): Promise<void> {
         message: input.message,
         stack: input.stack,
         userId: input.userId,
-        // Phase 2-10: tenantId 明示 (省略時は schema DB DEFAULT)。
-        ...(input.tenantId ? { tenantId: input.tenantId } : {}),
+        // ★severity-1 (fix/tenant-id-default-removal, 2026-05-28): schema DB DEFAULT 撤去に伴い
+        //   tenantId を必ず明示 (未指定なら DEFAULT_TENANT_ID へ explicit fallback)。
+        //   pre-auth エラー (login 試行失敗等) や cron で user context が無い場合の正当経路。
+        tenantId: input.tenantId ?? DEFAULT_TENANT_ID,
         requestId: input.requestId,
         context: input.context as object | undefined,
       },

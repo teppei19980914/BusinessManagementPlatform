@@ -36,22 +36,30 @@ describe('tenant constants', () => {
       expect(insertMatch?.[1]).toBe(DEFAULT_TENANT_ID);
     });
 
-    it('schema.prisma の DB DEFAULT も同 UUID を参照している', () => {
+    // ★severity-1 regression (ADR-0024 / fix/tenant-id-default-removal, 2026-05-28):
+    //   旧仕様 (~2026-05-28): schema の各 tenantId に `@default(dbgenerated tenantId)` を付与し
+    //     コードが渡し忘れたら DB DEFAULT で Default テナントに silent 配属していた。
+    //   → severity-1 セキュリティバグ (個人情報漏洩リスク) の温床だったため ADR-0024 で撤去。
+    //   新仕様: schema から DB DEFAULT を完全撤去。コードが必ず明示的に tenantId を渡し、
+    //     未指定なら NOT NULL 違反で loud fail させる設計。
+    //   本テストは「schema に dbgenerated UUID DEFAULT が **存在しない**」ことを保証し、
+    //     将来の不用意な再導入 (= severity-1 バグ再発) を防ぐガード。
+    it('★severity-1 regression: schema.prisma に dbgenerated UUID DEFAULT が存在しない (ADR-0024)', () => {
       const schemaPath = path.resolve(__dirname, '../../prisma/schema.prisma');
       const schema = readFileSync(schemaPath, 'utf-8');
 
-      // DEFAULT 句で参照される UUID リテラルをすべて抽出
-      const dbDefaultMatches = [...schema.matchAll(/'([0-9a-f-]{36})'::uuid/g)];
+      // `@default(dbgenerated("'00000000-...-001'::uuid"))` 形式の UUID DEFAULT を grep。
+      // gen_random_uuid() (id カラム用) は対象外。
+      const dbDefaultUuidMatches = [
+        ...schema.matchAll(/@default\(dbgenerated\("'([0-9a-f-]{36})'::uuid"\)\)/g),
+      ];
 
       expect(
-        dbDefaultMatches.length,
-        'schema.prisma に dbgenerated の UUID DEFAULT が存在する',
-      ).toBeGreaterThan(0);
-
-      // すべての DEFAULT が DEFAULT_TENANT_ID と一致する
-      for (const m of dbDefaultMatches) {
-        expect(m[1]).toBe(DEFAULT_TENANT_ID);
-      }
+        dbDefaultUuidMatches.length,
+        '★severity-1: schema.prisma に dbgenerated UUID DEFAULT が再導入されています。' +
+          'ADR-0024 の決定に反するため必ず撤去してください (Default テナント silent 混入の温床)。' +
+          `見つかった箇所: ${dbDefaultUuidMatches.map((m) => m[0]).join(', ')}`,
+      ).toBe(0);
     });
   });
 

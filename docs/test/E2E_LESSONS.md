@@ -3804,6 +3804,46 @@ Error: expect(page).toHaveScreenshot(expected) failed
 
 ---
 
+### 4.60 ★severity-1★ 生 SQL で fixture を作る E2E は「service 層のテナント越境バグ」を exercise できない罠 (fix/tenant-id-default-removal で遭遇、2026-05-28)
+
+#### 教訓
+
+`e2e/fixtures/multi-tenant.ts` の `createTenantWithFullDataset` は **`pg` の生 SQL で `INSERT INTO risks_issues (tenant_id, ...)` のように `tenant_id` を明示挿入** していた。
+このため、`src/services/risk.service.ts createRisk` が `prisma.X.create({ data })` の data に tenantId を**渡し忘れた重大バグ**を、6 週間 (PR #2 〜 PR fix/tenant-id-default-removal) にわたって E2E が 1 度も exercise しないまま見過ごしていた。
+
+具体的には:
+- 既存 E2E (`11-tenant-isolation.spec.ts`) は「fixture が作った Tenant B の risk を Tenant A が見られない」ことを検証していた
+- ❌ しかし「Tenant A admin が **API 経由で作成** した risk が、Tenant A 自身に見えるか」は検証していなかった
+- バグの本質である「サービス層 create の data に tenantId が無い」経路を一度も通っていなかった
+
+#### 教訓の一般化
+
+```
+E2E 通過 ≠ 「実装が正しい」
+E2E 通過 = 「fixture が作ったデータで動く」
+```
+
+fixture が **生 SQL** や **直接 ORM の create で tenantId を明示** してデータを作ると、サービス層 (= 実際のユーザ起票経路) の create 経路を全く通らない。サービス層に silent fall-through バグがあっても fixture 経路では現れない。
+
+#### 対応 (本 PR)
+
+1. `e2e/specs/11-tenant-isolation.spec.ts` に **「Tenant A admin が API 経由で作成 → A 自身の一覧で見える」** という regression test を追加 (severity-1 セクション)
+2. 旧バグなら 1 つ目のアサーション (`expect(ids).toContain(created.data.id)`) が落ちる
+3. 将来は fixture も「生 SQL ではなく実 API 経由でデータ作成する」モードを併設することを検討
+
+#### 関連 (本件と類似する罠)
+
+- §4.53 — fixture の生 SQL INSERT で schema NOT NULL カラム漏れ + afterAll 二重エラー → fixture と本番 ORM のズレ
+- §4.50 — list filter が「自己起票を見せない」設計アンチパターン → 「起票成功通知後の一覧反映」を E2E で確認する重要性
+
+#### 関連
+
+- ADR: [docs/adr/0024-explicit-tenant-id-no-db-default.md](../adr/0024-explicit-tenant-id-no-db-default.md)
+- KDD: [docs/knowledge/KDD_PATTERNS.md §5.X+169](../knowledge/KDD_PATTERNS.md)
+- post-mortem: [docs/operations/post-mortems/2026-05-28-tenant-id-default-silent-fallthrough.md](../operations/post-mortems/2026-05-28-tenant-id-default-silent-fallthrough.md)
+
+---
+
 ## 8. 未解決課題 (将来 PR 候補)
 
 | 項目 | 理由 |

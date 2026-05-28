@@ -272,6 +272,23 @@ LIMIT 20;
 
 - 一覧系サービスに `viewerTenantId` の必須引数化 (memory: feedback_tenant_isolation)
 - E2E spec で「別テナントのデータが見えない」テストを各画面で必ず追加
+- **schema レベル**: `tenantId String` カラムに DB DEFAULT を絶対に持たせない (ADR-0024 / 2026-05-28 silent fall-through バグ参照)
+- **service レベル**: `prisma.X.create({ data: { tenantId, ... } })` の data に tenantId を必ず明示
+- 詳細は [docs/design/SECURITY.md §26 テナント分離検証](../design/SECURITY.md)
+
+#### 実例: 2026-05-28 silent fall-through インシデント
+
+**症状**: testテナントの一般ユーザが起票した課題が「一覧に出ない」報告。システム管理者ダッシュボードでも 0 件表示。
+
+**直接原因**: `src/services/risk.service.ts:460 createRisk` と `retrospective.service.ts:304 createRetrospective` が `data` に `tenantId` を渡しておらず、schema の DB DEFAULT (Default テナント) に silent 混入していた。
+
+**対応**:
+1. コード fix (`data: { tenantId, ... }` 追加)
+2. schema cleanup (13 モデルから DB DEFAULT 撤去 + migration)
+3. データ修復 (`scripts/migrate-leaked-tenant-data.ts --apply` で Default テナント混入レコードを起票者の本来テナントに UPDATE)
+4. E2E regression test 追加
+
+詳細: [post-mortems/2026-05-28-tenant-id-default-silent-fallthrough.md](./post-mortems/2026-05-28-tenant-id-default-silent-fallthrough.md)
 
 ### 6.8 月初 cron バッチ失敗 (S-2)
 
