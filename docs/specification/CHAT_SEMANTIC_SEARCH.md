@@ -123,7 +123,7 @@
 | **タブを閉じたとき** | **消去** (sessionStorage の仕様による自動消去) |
 | **ログアウト時** | **消去** (`useSession().status === 'unauthenticated'` を検知して `clearHistory()` 呼出 + state リセット) |
 | **ユーザ切替時 (severity-1 防御)** | **消去** (`viewerUserId` の遷移検知で別ユーザログイン直後に必ず clear。詳細は §4 T-CS-13) |
-| **手動クリア** | チャットパネル ヘッダの 🗑️ ボタンで任意クリア可能 (`data-testid="chat-panel-clear-history"`) |
+| **手動クリア** | チャットパネル ヘッダの 🗑️ ボタンで任意クリア可能 (`data-testid="chat-panel-clear-history"`)。turns 配列のみを空にし、**初期挨拶 (フクロウの自己紹介) は常時表示なので残る** (= 初期表示と同じ状態に戻る) |
 | **SSR safety** | `typeof window === 'undefined'` でガード、サーバ側では空配列を返す |
 | **エラーハンドリング** | `try-catch` で parse 失敗 / quota 超過 / shape 不整合を全て graceful degradation (空配列フォールバック) |
 

@@ -378,11 +378,14 @@ export function ChatPanel({ onClose }: { onClose: () => void }) {
 
       <div className="flex-1 overflow-y-auto p-4 text-sm" data-testid="chat-panel-messages">
         {/*
-          会話履歴が空の場合のみフクロウの挨拶を表示。
-          初回 (mount 時) もここに該当する (loadHistory が [] を返した場合)。
+          フクロウの初期挨拶は turns の有無に関わらず常時表示する。
+          - 初期表示時: 唯一のメッセージとして表示
+          - 質問後: 会話履歴の最上部に残り、対話の起点として読める
+          - 🗑️ クリア時: turns が [] に戻るため、初期挨拶のみが残る状態 (= 初期表示と同じ)
+          data-testid="chat-initial-greeting" でテスト・UX 検証から参照可能。
         */}
-        {turns.length === 0 && (
-          <AssistantBubble>
+        <AssistantBubble>
+          <div data-testid="chat-initial-greeting">
             <p className="leading-relaxed">
               こんにちは、{CHAT_PERSONA.name}です。
             </p>
@@ -391,8 +394,8 @@ export function ChatPanel({ onClose }: { onClose: () => void }) {
               プロジェクト・ナレッジ・リスク・課題・振り返り・メモから、
               私が適切な情報を探してご提案します。
             </p>
-          </AssistantBubble>
-        )}
+          </div>
+        </AssistantBubble>
 
         {/*
           会話履歴を時系列順 (古い→新しい) で連続描画。

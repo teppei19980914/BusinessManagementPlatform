@@ -221,6 +221,14 @@ describe('ChatPanel フクロウの会話文言 invariant (人間味調整)', ()
     expect(source).toMatch(/気になることや知りたいことをチャットしてください/);
   });
 
+  it('初回挨拶は turns の有無に依存せず常時描画される (turns.length === 0 ガードが撤去されている)', () => {
+    // 旧挙動: 質問送信後に挨拶が消える → 新挙動: 挨拶は会話履歴の最上部に固定
+    // 🗑️ クリアで turns=[] に戻ったとき、挨拶のみが残る初期状態を再現できる。
+    expect(source).toMatch(/data-testid="chat-initial-greeting"/);
+    // turns.length === 0 で挨拶を出し分ける条件式が存在しないことを確認。
+    expect(source).not.toMatch(/turns\.length\s*===\s*0\s*&&\s*\(\s*<AssistantBubble>/);
+  });
+
   it('検索中の表示は「ちょっと待ってくださいね、過去資産から探しています」', () => {
     expect(source).toMatch(/ちょっと待ってくださいね/);
   });
