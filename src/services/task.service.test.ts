@@ -179,6 +179,16 @@ describe('parseCsvText (multi-line cell 対応)', () => {
       ['3', '4', '5', '6'],
     ]);
   });
+
+  // fix/csv-import-multiline-text-data-loss 2 巡目: csv-parse は malformed CSV で throw する。
+  //   呼出側 (API route) で catch → 400 化する責務を持たせる前提を保証するため。
+  it('閉じてないクォート (EOF) で CsvError throw する', () => {
+    expect(() => parseCsvText('id,body\n1,"unclosed')).toThrowError(/CSV_QUOTE_NOT_CLOSED|Quote Not Closed/i);
+  });
+
+  it('クォート閉じの直後に余計な文字があると CsvError throw する', () => {
+    expect(() => parseCsvText('id,body\n1,"a"x,trailing')).toThrowError(/CSV_INVALID_CLOSING_QUOTE|Invalid Closing Quote/i);
+  });
 });
 
 describe('aggregateWpFromChildren', () => {

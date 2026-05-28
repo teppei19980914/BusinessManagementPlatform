@@ -169,3 +169,49 @@ export function parseCsvText(csvText: string): string[][] {
 - 関連 KDD: [§5.18 WBS 上書きインポート (Sync by ID) 実装パターン](../../knowledge/KDD_PATTERNS.md) (5 entity 共通 sync-import 設計の起点)
 - 関連 KDD: [§5.32 複数 entity 横展開時の段階的汎用化パターン](../../knowledge/KDD_PATTERNS.md) (機械流用パターンの代償としての本バグ)
 - 関連 memory: [feedback_repeated_verification_request](../../../C:/Users/SF02512/.claude/projects/c--Users-SF02512-GitHub-Private-BusinessManagementPlatform/memory/feedback_repeated_verification_request.md) (full-scan 検証で重大バグ検出する実例)
+
+---
+
+## 2 巡目フルスキャンで検出した追加問題 (2026-05-28 同日)
+
+ユーザから「再度フルスキャンしてくれ」依頼を受け、メモリ `feedback_repeated_verification_request` パターン (「同じフルスキャン依頼の繰り返し = もっと深く見て」のシグナル) を発動して再調査した結果、**2 件の追加問題** を検出 → 同 PR 内で追加修正。
+
+### 追加問題 1: 🔥 critical — csv-parse の throw 挙動を route が catch していなかった
+
+旧自前 `parseCsvLine` は **どんな入力でも値を返す** (silent fail) だったが、移行先の `csv-parse@^6.2.1` は **malformed CSV で `CsvError` を throw する**:
+
+| code | 発生条件 |
+|---|---|
+| `CSV_QUOTE_NOT_CLOSED` | 閉じてないクォートで EOF |
+| `CSV_INVALID_CLOSING_QUOTE` | クォート閉じの直後が `,` `\n` でない |
+| `CSV_NON_TRIMABLE_CHAR_AFTER_CLOSING_QUOTE` | クォート閉じ後に空白以外 |
+
+1 巡目の修正 (parseCsvText 導入) では 5 route の `parseXxxSyncImportCsv()` 呼出が try-catch **外** に配置されており、ユーザが Excel コピペ等で malformed CSV を作ると **500 エラーで落ちる退行リスク** を持っていた。
+
+#### 修正
+
+`src/lib/csv-import-helpers.ts` (新規) に共有ヘルパ集約:
+- `handleCsvParseError(e, t)` — `e.name === 'CsvError'` または `e.code?.startsWith('CSV_')` で判定 → 400 `CSV_PARSE_ERROR` 返却
+- 5 route で `parseXxxSyncImportCsv()` を try-catch で包み、CsvError は 400 化、それ以外は上位 catch に委ねる
+
+### 追加問題 2: ⚠️ severity-medium — API route に CSV サイズ上限が無く DoS リスク
+
+`csvRows.length > 500` は parse 後の判定で、**parse 前の入力サイズ制限が無かった**。攻撃者が 100MB の CSV を投げると csv-parse が OOM する可能性 (Netlify Functions のメモリ 1GB 内では事前に他のエラーが出る可能性高いが明示制限が安全)。
+
+#### 修正
+
+同じ `csv-import-helpers.ts` に `checkCsvSize(csvText, t)` を追加:
+- 上限 10 MB (sync-import の 500 件 × 平均 1 行 2KB × 10 倍マージン)
+- `Buffer.byteLength(csvText, 'utf8')` で UTF-8 byte 長判定 (日本語が 3 倍程度のため string.length ではなく byte 長で評価)
+- 5 route で BOM 除去後に呼出 → 上限超過なら 413 で early return
+
+### 追加修正のテスト
+
+- `src/lib/csv-import-helpers.test.ts` (新規 10 件): CSV_MAX_BYTES / checkCsvSize (通過 / 413 / UTF-8 multi-byte / 境界値) / handleCsvParseError (CsvError 検出 / 別種 Error / 非 Error 値)
+- `src/services/task.service.test.ts` に追加 2 件: `parseCsvText` が `CSV_QUOTE_NOT_CLOSED` / `CSV_INVALID_CLOSING_QUOTE` で throw することを保証
+
+### 追加教訓 (本セクションの本質)
+
+1. **「自前 best-effort パーサ → library 移行」では throw 挙動差分を必ず吸収する**: 旧コードが silent fail → library は throw する典型。「parse する責務」を移行した瞬間「parse エラーをユーザに伝える責務」も追加で発生する
+2. **API 入力サイズ上限は parse 前に判定する**: parse 後の length チェックは OOM 後では遅い
+3. **2 巡目フルスキャンは "1 巡目修正が生んだ新たな表面リスク" を探す**: 修正は新たな責務を生む前提でレビュー範囲を設計する

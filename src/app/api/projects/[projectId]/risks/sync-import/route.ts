@@ -30,6 +30,7 @@ import {
 } from '@/services/risk-sync-import.service';
 import { recordAuditLog } from '@/services/audit.service';
 import { logUnknownError } from '@/services/error-log.service';
+import { checkCsvSize, handleCsvParseError } from '@/lib/csv-import-helpers';
 
 export const runtime = 'nodejs';
 
@@ -97,7 +98,18 @@ export async function POST(
     );
   }
 
-  const csvRows = parseRiskSyncImportCsv(csvText);
+  // fix/csv-import-multiline-text-data-loss 2 巡目: DoS 緩和 + csv-parse throw の 400 化
+  const sizeError = checkCsvSize(csvText, t);
+  if (sizeError) return sizeError;
+
+  let csvRows;
+  try {
+    csvRows = parseRiskSyncImportCsv(csvText);
+  } catch (e) {
+    const parseErr = handleCsvParseError(e, t);
+    if (parseErr) return parseErr;
+    throw e;
+  }
 
   if (isDryRun) {
     const diff = await computeRiskSyncDiff(projectId, csvRows, user.tenantId);

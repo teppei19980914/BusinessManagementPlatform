@@ -16,6 +16,7 @@ import {
 } from '@/services/knowledge-sync-import.service';
 import { recordAuditLog } from '@/services/audit.service';
 import { logUnknownError } from '@/services/error-log.service';
+import { checkCsvSize, handleCsvParseError } from '@/lib/csv-import-helpers';
 
 export const runtime = 'nodejs';
 
@@ -67,7 +68,20 @@ export async function POST(
     return NextResponse.json({ error: { code: 'VALIDATION_ERROR', message: t('csvDataEmptyAlt') } }, { status: 400 });
   }
 
-  const csvRows = parseKnowledgeSyncImportCsv(csvText);
+  // fix/csv-import-multiline-text-data-loss 2 巡目: DoS 緩和のためサイズ上限
+  const sizeError = checkCsvSize(csvText, t);
+  if (sizeError) return sizeError;
+
+  // fix/csv-import-multiline-text-data-loss 2 巡目: csv-parse は malformed CSV で throw する。
+  //   旧自前 parseCsvLine は throw しなかったため 500 → 400 退行を防ぐ。
+  let csvRows;
+  try {
+    csvRows = parseKnowledgeSyncImportCsv(csvText);
+  } catch (e) {
+    const parseErr = handleCsvParseError(e, t);
+    if (parseErr) return parseErr;
+    throw e;
+  }
   if (isDryRun) {
     const diff = await computeKnowledgeSyncDiff(projectId, csvRows, user.tenantId);
     return NextResponse.json({ data: diff });

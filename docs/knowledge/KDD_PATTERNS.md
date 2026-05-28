@@ -16960,3 +16960,65 @@ for (const line of lines.slice(1)) {
 - 関連 KDD: [§5.18 WBS 上書きインポート (Sync by ID) 実装パターン](#518-wbs-上書きインポート-sync-by-id-実装パターン-featwbs-overwrite-import) — 5 entity 共通の sync-import 設計の出発点
 - 関連 memory: [feedback_repeated_verification_request](../../memory/feedback_repeated_verification_request.md) — 2 回目検証で重大バグ検出する実例 (本件は full-scan 1 回目で発覚) / [feedback_3layer_sync_filter](../../memory/feedback_3layer_sync_filter.md) — 同型バグの 4 経路同期修正パターン
 - 既知の類縁罠: 同型コードの複製による多重バグ拡大 ([§5.X+170](#5x170) の e2e fixture と同じ「grep 範囲を絞った結果 同じ罠を 1 箇所しか潰せなかった」失敗形式)
+
+### 2 巡目フルスキャンでの追加発見 — 「自前パーサ→library 化」した際は throw 挙動の差分を route 側で必ず吸収する
+
+本 PR を 1 巡目フルスキャンでマージ寸前まで進めた後の「**再度フルスキャンしてくれ**」依頼 (memory `[[feedback_repeated_verification_request]]` パターン) で 2 件の追加問題を検出:
+
+#### 追加問題 1 (🔥 critical): csv-parse は malformed CSV で throw する → 5 route の API が 500 退行する
+
+旧自前 `parseCsvLine` は **どんな入力でも値を返す** 設計 (chars を walk するだけ) だったが、移行先の **`csv-parse@^6.2.1` は `CsvError` を throw する**。代表的な throw 条件:
+
+| code | 発生条件 | ユーザがやりがちな操作 |
+|---|---|---|
+| `CSV_QUOTE_NOT_CLOSED` | 閉じてないクォートで EOF | `"line1\n` で改行のあと終了 (Excel コピペで発生) |
+| `CSV_INVALID_CLOSING_QUOTE` | クォート閉じの直後が `,` `\n` でない | `"a"x,b` (手書き編集ミス) |
+| `CSV_NON_TRIMABLE_CHAR_AFTER_CLOSING_QUOTE` | クォート閉じ後に空白以外 | 同上の派生 |
+
+これらは「ユーザの編集ミス」起因なので **本来 400 (バリデーションエラー)** だが、1 巡目の修正では 5 route の `parseXxxSyncImportCsv(csvText)` 呼出が try-catch **外**だったため **500 で落ちる退行リスク**を持っていた。
+
+##### 修正
+
+`src/lib/csv-import-helpers.ts` に共有ヘルパ [`handleCsvParseError(e, t)`](../../src/lib/csv-import-helpers.ts) を新設し、5 route から呼ぶ:
+
+```typescript
+let csvRows;
+try {
+  csvRows = parseKnowledgeSyncImportCsv(csvText);
+} catch (e) {
+  const parseErr = handleCsvParseError(e, t);
+  if (parseErr) return parseErr;  // CsvError なら 400 で返す
+  throw e;                          // それ以外は上位 catch (logUnknownError → 500) に委ねる
+}
+```
+
+`handleCsvParseError` は `e.name === 'CsvError'` または `e.code?.startsWith('CSV_')` で判定し、`CSV_PARSE_ERROR` code + 詳細メッセージで 400 を返す。csv-parse 由来でない Error は null を返して上位 catch に委ねる (silent な誤吸収を防ぐ)。
+
+#### 追加問題 2 (⚠️ severity-medium): API route に CSV サイズ上限が無く DoS 脆弱性
+
+`csvRows.length > 500` の件数制限は **parse 後** の判定で、**parse 前の入力サイズ制限**が無かった。攻撃者が 100MB の CSV を投げると csv-parse が OOM する可能性 (Netlify Functions のメモリ 1GB 制約内では落ちる前にエラーする可能性が高いが、明示制限が安全)。
+
+Next.js の default body size 制限はあるが、`route handler` の `formData()` は内部 chunk 読み込みのため明示判定が必要。
+
+##### 修正
+
+同じ `csv-import-helpers.ts` に [`checkCsvSize(csvText, t)`](../../src/lib/csv-import-helpers.ts) を追加し、5 route で BOM 除去・trim 直後に呼ぶ:
+
+```typescript
+const sizeError = checkCsvSize(csvText, t);
+if (sizeError) return sizeError;  // 413 で early return
+```
+
+上限は **10 MB** (= sync-import の 500 件上限 × 平均 1 行 2KB × 10 倍マージン)。`Buffer.byteLength(csvText, 'utf8')` で UTF-8 byte 長判定 (日本語が 3 倍程度のため `.length` ではなく byte 長で評価)。
+
+#### 一般化教訓 (本セクションの本質)
+
+1. **「自前 best-effort パーサ → library 移行」は throw 挙動の差分を必ず確認する**: 旧コードが silent fail (= 何らかの値を返す) だった場合、library は throw する可能性が高い。「parse する責務」を移行した瞬間「parse エラーをユーザに伝える責務」も追加で発生する
+2. **5 route 個別実装は同型コード複製 (= 本 KDD の根本問題と同じ罠)**: 同じ try-catch + size check を 5 route に並べる代わりに **共有 helper に必ず集約**。これにより「6 番目の entity が将来追加された時の横展開漏れ」も予防 (本 PR では `csv-import-helpers.ts` で集約)
+3. **API 入力サイズ上限は parse 前に判定する**: parse 後の `length > N` チェックは OOM 後では遅い。Buffer.byteLength で multi-byte 文字も含めた実 byte 長を測る
+4. **2 巡目フルスキャンは "同型問題を別レイヤで探す"**: 1 巡目は「コアバグ修正」、2 巡目は「修正によって新たに生まれた表面化リスク」を探す。本件では 1 巡目で `parseCsvText` を導入した結果、2 巡目で「throw する parser を呼ぶ route の責務」が新たに浮上した。**修正は新たな責務を生む** ことを前提にレビュー範囲を設計する
+
+#### 関連 (2 巡目)
+
+- 修正ファイル追加: `src/lib/csv-import-helpers.ts` + `src/lib/csv-import-helpers.test.ts` + 5 route の try-catch / size guard
+- 関連 memory: [feedback_repeated_verification_request](../../memory/feedback_repeated_verification_request.md) — 「同じフルスキャン依頼の繰り返しは "もっと深く見て" のシグナル」の実例 (本件は 2 巡目で 2 件の追加問題検出)
