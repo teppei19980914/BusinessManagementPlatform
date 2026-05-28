@@ -140,23 +140,24 @@ export async function assertSeatAvailableForTenant(tenantId: string): Promise<vo
 export async function createUser(
   input: CreateUserInput,
   creatorId: string,
-  options?: { baseUrl?: string; tenantId?: string },
+  options: { baseUrl?: string; tenantId: string },
 ): Promise<{ user: UserDTO }> {
+  // ★severity-1 (fix/tenant-id-default-removal, 2026-05-28): tenantId 必須化。
+  //   旧 signature では `options?.tenantId` を optional として許容し、未指定時は
+  //   schema の DB DEFAULT (= Default テナント) に silent 混入していた (ADR-0024)。
+  //   現在は options.tenantId 必須 + schema の DB DEFAULT 撤去で「未指定 = DB エラー」化済。
+  //
   // P-2 (2026-05-08): Beginner プラン席数上限の API 層 enforce。
   //   背景: PR-X4 では tenant-self ダウングレード時のみ席数チェックを実装し、
   //         招待時 (= ユーザ作成時) の上限チェックが未実装。Beginner で 6 人目の招待が
   //         拒否されない構造的欠陥を補完する。
-  //   仕様: tenantId が渡され、当該テナントが Beginner プランの場合、
+  //   仕様: 当該テナントが Beginner プランの場合、
   //         activeUserCount + 1 <= beginnerMaxSeats でない限り SEAT_LIMIT_EXCEEDED を投げる。
-  //   tenantId 省略時 (= 旧シグネチャ互換): スキップ。テストや migration 経路の互換維持。
-  if (options?.tenantId) {
-    await assertSeatAvailableForTenant(options.tenantId);
-  }
+  await assertSeatAvailableForTenant(options.tenantId);
 
   // 2026-05-09 feedback Phase 2-6: 越境ユーザ作成を遮断するため、メール重複チェックは
   //   tenant 内で実施 (テナント間で同じメールアドレスは別ユーザとして許容する設計)。
-  //   ただし options.tenantId が無い旧シグネチャ互換経路では従来通り全テナント横断で検証。
-  const tenantScope = options?.tenantId ? { tenantId: options.tenantId } : {};
+  const tenantScope = { tenantId: options.tenantId };
   // メールアドレス重複チェック（有効なユーザ）
   const existingActive = await prisma.user.findFirst({
     where: { email: input.email, deletedAt: null, ...tenantScope },
@@ -188,11 +189,11 @@ export async function createUser(
   // パスワードなしで仮登録（ユーザ自身がパスワード設定画面で設定する）
   const placeholderHash = await hash(randomBytes(32).toString('hex'), BCRYPT_COST);
 
-  // 2026-05-09 feedback Phase 2-6: data.tenantId を明示し schema DB DEFAULT 暗黙依存を解消。
-  //   options.tenantId 必須 (route 層で必ず渡す)、互換経路 (旧シグネチャ) は schema DEFAULT に依存。
+  // ★severity-1 (fix/tenant-id-default-removal, 2026-05-28): tenantId を data に必須化。
+  //   schema の DB DEFAULT 撤去 (ADR-0024) に伴い、未指定だと NOT NULL 違反で loud fail。
   const user = await prisma.user.create({
     data: {
-      ...(options?.tenantId ? { tenantId: options.tenantId } : {}),
+      tenantId: options.tenantId,
       name: input.name,
       email: input.email,
       passwordHash: placeholderHash,

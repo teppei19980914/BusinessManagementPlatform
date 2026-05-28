@@ -42,6 +42,20 @@ HH:MM 結果: 通常動作確認 / 引き続き調査
 
 **判断に迷ったら 1 段階上に分類**。後から下げるのは安全だが、低く分類して放置すると事故になる。
 
+### Step 0-4: CI / E2E 大量失敗時のシグナル認識 (2026-05-28 fix/tenant-id-default-removal post-mortem 起因)
+
+PR を push して CI が落ちたとき、**「ほぼ全 spec が 0ms で fail」** のパターンが見えたら、個別 spec のロジック問題ではなく **beforeAll / global setup 系の失敗** を真っ先に疑う。
+
+| 症状パターン | 真因の傾向 | 確認すべきこと |
+|---|---|---|
+| **全 spec が 0ms で fail** (テスト本体が一度も実行されていない) | beforeAll / global setup が throw、または fixture が初期 admin 等を作れていない | seed.ts / e2e fixtures / migration の SQL を確認、特に `INSERT INTO` に **NOT NULL 列の渡し忘れ** が無いか |
+| **特定 spec のみ 0ms で fail** | その spec の beforeAll / fixture 固有の失敗 | 該当 spec の beforeAll を読む |
+| **大半 PASS で一部 fail** (実行時間あり) | 個別ロジックの問題 (本来の test failure) | 個別 spec ロジックを修正 |
+| **全 spec が timeout で fail** | webServer / DB / network 全体不通 | port 競合 / 環境変数 / DB 起動状態を確認 |
+| **CI のみ fail、ローカル PASS** | DB schema / 環境変数の差分、CI でのみ走る migration / fixture が壊れている | CI ログで `prisma migrate deploy` / fixture セットアップ ステップを確認 |
+
+**実例**: 2026-05-28 fix/tenant-id-default-removal で schema から DB DEFAULT を撤去した際、`e2e/fixtures/db.ts` の raw SQL が `tenant_id` を渡しておらず NOT NULL 違反 → 初期 admin 不在 → **204 spec 中 200+ が 0ms fail** という症状で表面化した。本パターンは [docs/knowledge/KDD_PATTERNS.md §5.X+170](../knowledge/KDD_PATTERNS.md) で詳述。
+
 ---
 
 ## §6. 障害対応
@@ -272,6 +286,23 @@ LIMIT 20;
 
 - 一覧系サービスに `viewerTenantId` の必須引数化 (memory: feedback_tenant_isolation)
 - E2E spec で「別テナントのデータが見えない」テストを各画面で必ず追加
+- **schema レベル**: `tenantId String` カラムに DB DEFAULT を絶対に持たせない (ADR-0024 / 2026-05-28 silent fall-through バグ参照)
+- **service レベル**: `prisma.X.create({ data: { tenantId, ... } })` の data に tenantId を必ず明示
+- 詳細は [docs/design/SECURITY.md §26 テナント分離検証](../design/SECURITY.md)
+
+#### 実例: 2026-05-28 silent fall-through インシデント
+
+**症状**: testテナントの一般ユーザが起票した課題が「一覧に出ない」報告。システム管理者ダッシュボードでも 0 件表示。
+
+**直接原因**: `src/services/risk.service.ts:460 createRisk` と `retrospective.service.ts:304 createRetrospective` が `data` に `tenantId` を渡しておらず、schema の DB DEFAULT (Default テナント) に silent 混入していた。
+
+**対応**:
+1. コード fix (`data: { tenantId, ... }` 追加)
+2. schema cleanup (13 モデルから DB DEFAULT 撤去 + migration)
+3. データ修復 (`scripts/migrate-leaked-tenant-data.ts --apply` で Default テナント混入レコードを起票者の本来テナントに UPDATE)
+4. E2E regression test 追加
+
+詳細: [post-mortems/2026-05-28-tenant-id-default-silent-fallthrough.md](./post-mortems/2026-05-28-tenant-id-default-silent-fallthrough.md)
 
 ### 6.8 月初 cron バッチ失敗 (S-2)
 

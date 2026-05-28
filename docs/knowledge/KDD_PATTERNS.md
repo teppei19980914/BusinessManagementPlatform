@@ -16750,3 +16750,140 @@ function saveHistory(turns) { /* slice(-MAX_HISTORY_TURNS) で末尾 N 件のみ
 - 関連 PR: feat/chat-history-and-accordion (本 PR)
 - 関連 doc: [CHAT_SEMANTIC_SEARCH.md §2.7 + §4 (T-CS-13 / T-CS-14)](../specification/CHAT_SEMANTIC_SEARCH.md)
 - 関連 memory: [feedback_client_sessionstorage_user_isolation](../../memory/feedback_client_sessionstorage_user_isolation.md) (本 PR で新規作成、本 KDD のサマリ + 適用ルール) / [feedback_session_clearance_pattern](../../memory/feedback_session_clearance_pattern.md) (Cookie 削除に依存しない実質削除の思想 — Client storage clear も同パターン) / [feedback_repeated_verification_request](../../memory/feedback_repeated_verification_request.md) (2nd round 観点深掘りで T-CS-13/14 検出した実例)
+
+## 5.X+169 ★severity-1 (個人情報漏洩リスク)★ Prisma schema の `@default(dbgenerated tenantId)` は「コード側 tenantId 渡し忘れ」を **silent に Default テナント混入** させる罠 (ADR-0024 / fix/tenant-id-default-removal で発覚)
+
+### 結論
+
+`schema.prisma` のテナント所属カラムに DB DEFAULT を持たせるパターンは **severity-1 のセキュリティアンチパターン**。
+
+```prisma
+// ❌ NG: コードが tenantId を渡し忘れたら silent に Default テナントへ混入
+tenantId String @default(dbgenerated("'00000000-0000-0000-0000-000000000001'::uuid")) @map("tenant_id") @db.Uuid
+
+// ✓ OK: 未指定なら NOT NULL 違反で loud fail (再発防止保証)
+tenantId String @map("tenant_id") @db.Uuid
+```
+
+### 発覚経緯 (2026-05-28)
+
+1. test テナントの一般ユーザが「公開範囲: 自分のみ」で課題を起票
+2. API は 201 で成功表示するが、起票者本人の一覧に「課題がありません」と表示
+3. システム管理者ダッシュボードの test テナント統計でも「リスク/課題: 0」
+4. 全コードスキャンで `src/services/risk.service.ts:460 createRisk` と `retrospective.service.ts:304 createRetrospective` の `data` に `tenantId` が無いことを発見
+5. schema 側で `@default(dbgenerated tenantId)` が「未指定なら Default テナント」をしてくれていたため **silent に Default に混入** していた
+
+### なぜ TypeScript で防げないか
+
+Prisma の生成型は **「DB DEFAULT を持つカラムは create 時に optional」** と推論する。つまり:
+
+```typescript
+prisma.riskIssue.create({
+  data: {
+    // tenantId 省略可 (型は通る)
+    projectId,
+    type: 'issue',
+    // ...
+  },
+});
+```
+
+これは TypeScript 上は完全に valid なコードで、`pnpm tsc --noEmit` も通る。バグは **ランタイムまで一切検知されず**、しかも本番でも例外を投げず silent に挙動する。
+
+### 影響範囲 (本件で発覚した実害)
+
+| サービス関数 | tenantId 渡し忘れ | 影響 |
+|---|---|---|
+| `createRisk()` (`src/services/risk.service.ts:460`) | ❌ | 全テナントの課題が Default テナント混入 |
+| `createRetrospective()` (`src/services/retrospective.service.ts:304`) | ❌ | 全テナントの振り返りが Default テナント混入 |
+| `createUser()` (`src/services/user.service.ts:193`) | ⚠️ conditional spread | 現状のみ安全だが latent risk |
+| `recordError()` (`src/services/error-log.service.ts:76`) | ⚠️ conditional spread | pre-auth fallback の意図 |
+| 他 8 サービス | ✓ 明示 | 影響なし |
+
+### 対応 (3 段構え)
+
+1. **コード fix** — `createRisk` / `createRetrospective` に `tenantId` を data に追加 + `createUser` を必須化
+2. **schema cleanup** — 全 13 モデルから `@default(dbgenerated tenantId)` を撤去 + DB migration で `ALTER TABLE ... ALTER COLUMN tenant_id DROP DEFAULT`
+3. **データ修復** — `scripts/migrate-leaked-tenant-data.ts` で既存の混入レコードを起票者の本来テナントへ UPDATE
+
+唯一の正当例外として `SystemErrorLog.recordError()` は pre-auth エラー (login 試行失敗等) を記録する必要があるため、コード側で `input.tenantId ?? DEFAULT_TENANT_ID` の **明示的な fallback** を残す。
+
+### 適用ルール (再発防止)
+
+1. **新規テナント所属モデル追加時**: schema で `tenantId String @map("tenant_id") @db.Uuid` (DEFAULT なし) と明示する
+2. **新規 service 層の create() 実装時**: 関数引数で `tenantId: string` を必ず受け、`data: { tenantId, ... }` で **明示的に** 渡す
+3. **PR レビュー時のチェック項目**: `prisma.X.create({ data: { ... } })` を含む差分は **data 内に tenantId があるか必ず確認**
+4. **E2E regression test**: 「Tenant A admin が API 経由で作成 → A 自身の一覧で見える」を保証する (e2e/specs/11-tenant-isolation.spec.ts に組込済み)
+
+### 関連
+
+- 関連 PR: fix/tenant-id-default-removal-severity-1
+- 関連 ADR: [ADR-0024: tenant_id カラムから DB DEFAULT を撤去](../adr/0024-explicit-tenant-id-no-db-default.md)
+- 関連 memory: [feedback_db_default_tenant_silent_fallthrough](../../memory/feedback_db_default_tenant_silent_fallthrough.md) (本 KDD のサマリ + 適用ルール) / [feedback_tenant_isolation](../../memory/feedback_tenant_isolation.md) (severity-1 越境防止の上位原則)
+- 既知の類縁罠: [§5.X+163 Prisma XOR で excess property check が効かない罠](#5x163) — 本件と同じく「Prisma の型システムが silent 挙動を許す」共通パターン
+
+## 5.X+170 ★severity-1 (CI 全滅)★ DB DEFAULT 撤去 PR は **e2e/fixtures/ の raw SQL も同時 fix 必須** ─ 本番コードだけ直すと E2E が「初期 admin 作成失敗」で全滅 (fix/tenant-id-default-removal の 2 回目検証で発覚)
+
+### 結論
+
+`schema.prisma` の `@default(dbgenerated tenantId)` を撤去する PR では、**本番コード (`src/`) だけでなく `e2e/fixtures/` 配下の raw SQL INSERT も同時に修正必須**。本番 service 層 (`prisma.X.create`) は 1 回目の検証で全部潰せても、生 SQL fixture は別レイヤなので grep が `src/` 限定だと取りこぼす。
+
+### 発覚経緯 (2026-05-28 round 2)
+
+1. PR fix/tenant-id-default-removal を 1 回目検証で本番コード fix + schema 撤去 + migration + tests + docs を完備して push
+2. CI の Playwright E2E が **204 件中ほぼ全 spec が 0ms で fail** する事態に
+3. CI ログを精査すると `[auth] login_failure { reason: 'tenant_not_found' }` と `Step 1: 初期 admin でログインしてパスワードを変更する (0ms)` が並んでおり、**初期 admin が作成できていないことが原因**
+4. `e2e/fixtures/db.ts` の `ensureInitialAdmin` の raw SQL を見ると:
+   ```sql
+   INSERT INTO users (name, email, password_hash, system_role, ...)  -- ★ tenant_id 列が無い
+   VALUES ($1, $2, $3, 'admin', ...)
+   ON CONFLICT (tenant_id, email) DO UPDATE ...
+   ```
+   と、**`tenant_id` を column list / VALUES どちらにも渡しておらず、schema の DB DEFAULT に暗黙依存** していた。コメントにも「tenant_id は INSERT 時に省略すると DB DEFAULT (= DEFAULT_TENANT_ID) が入る」と明記されていた (= 旧仕様の意図的依存)
+5. schema から DB DEFAULT を撤去した瞬間にこの fixture が NOT NULL 違反 → 初期 admin 不在 → 全 E2E spec が beforeAll で 0ms fail
+
+### なぜ 1 回目で見逃したか
+
+- 1 回目の Agent + Grep 検証は **`src/` 配下の `prisma.X.create`** に絞っていた
+- `e2e/fixtures/db.ts` は `pg` の `pool.query` で raw SQL を直書きしており、Prisma 経由ではないので **「prisma.X.create」grep に引っかからなかった**
+- 同じファイル内のコメントが「DB DEFAULT 暗黙依存」を明示していたが、それは fix 対象として認識されなかった (= 静的な型 / lint では検知不能)
+- `e2e/fixtures/multi-tenant.ts` / `super-admin.ts` 等は本番 service と同様に最初から tenant_id 明示していたため、すべての fixture が同じ状態だと **誤認** していた
+
+### 適用ルール (再発防止)
+
+1. **DB schema 変更 PR では検証範囲を拡張**:
+   - `src/` (本番コード)
+   - `prisma/seed*.ts` (seed)
+   - `scripts/*.ts` (運用スクリプト)
+   - **`e2e/fixtures/*.ts` の raw SQL** ← 1 回目で抜けた
+   - `prisma/migrations/*.sql` (INSERT SELECT 系の seed migration)
+2. **grep パターンを多軸化**:
+   - `prisma.X.create` だけでなく `INSERT INTO <table>` でも grep
+   - `pool.query` + `INSERT` も grep
+3. **検証ワークフロー**: 「コード fix + schema migration + tests + docs」の **4 軸** に「fixture + scripts + migrations の SQL」の **5 軸目** を追加
+4. **CI fail の原因切り分け**: 「ほぼ全 spec が 0ms で fail」は **beforeAll 系の setup failure シグナル**。個別 spec のロジック問題ではなく、fixture / seed / migration を疑う
+
+### 関連
+
+- 関連 PR: fix/tenant-id-default-removal-severity-1 (round 2 commit)
+- 関連 ADR: [ADR-0024](../adr/0024-explicit-tenant-id-no-db-default.md)
+- 関連 KDD: [§5.X+169 tenant_id DB DEFAULT silent fall-through](#5x169) (本件の root cause)
+- 関連 memory: [feedback_repeated_verification_request](../../memory/feedback_repeated_verification_request.md) (2 回目検証で重大バグ検出する実例、本件もまさにこのパターン)
+
+### 追加教訓 (round 3 fix, 2026-05-28 PM): 新規 E2E regression test を書く時はバリデータ仕様を必ず確認する
+
+本 PR で追加した E2E regression test (「Tenant A admin が起票した risk は A 自身の一覧で見える」) が、本番では問題ない `visibility='public'` をリクエスト body で送っていたが、**2026-05-26 feat/risk-issue-4-section で `public` 時に `occurrence` 必須化**された仕様変更を知らずに API 400 で落ちた。
+
+```typescript
+// ❌ NG: public だと occurrence 必須 (validator が 400)
+data: { type: 'issue', visibility: 'public', title: '...', ... }
+
+// ✓ OK: draft なら任意項目少 + admin は自分の draft を listRisks() で取得できる
+data: { type: 'issue', visibility: 'draft', title: '...', ... }
+```
+
+#### 教訓
+- **E2E test の HTTP リクエスト body を書く時は、対応する validator (`src/lib/validators/*.ts`) を必ず開いて superRefine の必須条件を確認する**
+- 「過去動いていたフィクスチャの body をコピペ」は危険 (仕様が後から強化されるケース)
+- regression test の目的が **「サーバが正常応答すること」** であれば、なるべく **default 値 / 必須条件の少ない visibility** を選んで「テストが検証したい本質」(今回は tenantId 保存) 以外の理由で落ちないようにする
+- API contract に依存する E2E は、API contract が変わったら同時更新する必要があるため `docs/test/E2E_LESSONS.md §4.60` に「fixture も 5 軸網羅対象」の派生として記録

@@ -86,6 +86,10 @@ const validInput = {
 const creatorId = 'creator-uuid';
 
 describe('createUser', () => {
+  // ★severity-1 (fix/tenant-id-default-removal, 2026-05-28): tenantId を必須引数化したため、
+  //   既定 tenantId を全テストに適用 (旧シグネチャ互換テストは削除)。
+  const DEFAULT_TEST_TENANT_ID = 'tenant-A';
+
   beforeEach(() => {
     vi.clearAllMocks();
 
@@ -117,7 +121,10 @@ describe('createUser', () => {
   });
 
   it('有効な入力でユーザを作成する（パスワードなし、リカバリーコードなし）', async () => {
-    const result = await createUser(validInput, creatorId, { baseUrl: 'https://example.com' });
+    const result = await createUser(validInput, creatorId, {
+      baseUrl: 'https://example.com',
+      tenantId: DEFAULT_TEST_TENANT_ID,
+    });
 
     expect(result.user.name).toBe(validInput.name);
     expect(result.user.email).toBe(validInput.email);
@@ -126,8 +133,27 @@ describe('createUser', () => {
     expect(prisma.roleChangeLog.create).toHaveBeenCalledOnce();
   });
 
+  // ★severity-1 regression (fix/tenant-id-default-removal, 2026-05-28):
+  //   schema の `@default(dbgenerated tenantId)` 撤去後、createUser が必ず指定 tenantId で
+  //   保存することを保証する。本テストが緑であることが「Default テナント silent 混入」
+  //   再発防止の最終ガード。
+  it('★severity-1 regression: 指定 tenantId が prisma.user.create に data として渡される', async () => {
+    await createUser(validInput, creatorId, {
+      baseUrl: 'https://example.com',
+      tenantId: 'tenant-X-uuid',
+    });
+    expect(prisma.user.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ tenantId: 'tenant-X-uuid' }),
+      }),
+    );
+  });
+
   it('招待メールを送信する', async () => {
-    await createUser(validInput, creatorId, { baseUrl: 'https://example.com' });
+    await createUser(validInput, creatorId, {
+      baseUrl: 'https://example.com',
+      tenantId: DEFAULT_TEST_TENANT_ID,
+    });
 
     expect(sendVerificationEmail).toHaveBeenCalledWith(
       'new-user-id',
@@ -143,7 +169,9 @@ describe('createUser', () => {
       deletedAt: null,
     } as never);
 
-    await expect(createUser(validInput, creatorId)).rejects.toThrow('DUPLICATE_EMAIL');
+    await expect(
+      createUser(validInput, creatorId, { tenantId: DEFAULT_TEST_TENANT_ID }),
+    ).rejects.toThrow('DUPLICATE_EMAIL');
     expect(prisma.user.create).not.toHaveBeenCalled();
   });
 
@@ -157,7 +185,10 @@ describe('createUser', () => {
         deletedAt: new Date(),
       } as never);
 
-    const result = await createUser(validInput, creatorId, { baseUrl: 'https://example.com' });
+    const result = await createUser(validInput, creatorId, {
+      baseUrl: 'https://example.com',
+      tenantId: DEFAULT_TEST_TENANT_ID,
+    });
 
     expect(prisma.$transaction).toHaveBeenCalled();
     expect(result.user.email).toBe(validInput.email);
@@ -169,14 +200,17 @@ describe('createUser', () => {
     );
 
     await expect(
-      createUser(validInput, creatorId, { baseUrl: 'https://example.com' }),
+      createUser(validInput, creatorId, {
+        baseUrl: 'https://example.com',
+        tenantId: DEFAULT_TEST_TENANT_ID,
+      }),
     ).rejects.toThrow('EMAIL_SEND_FAILED');
 
     expect(prisma.$transaction).toHaveBeenCalled();
   });
 
   it('baseUrl 未指定の場合はメール送信をスキップする', async () => {
-    await createUser(validInput, creatorId);
+    await createUser(validInput, creatorId, { tenantId: DEFAULT_TEST_TENANT_ID });
 
     expect(sendVerificationEmail).not.toHaveBeenCalled();
   });
@@ -184,13 +218,6 @@ describe('createUser', () => {
   // P-2 (2026-05-08): Beginner プラン席数上限の API 層 enforce
   describe('P-2: Beginner プラン席数上限 enforce', () => {
     const tenantId = 'tenant-uuid';
-
-    it('tenantId 未指定なら席数チェックをスキップする (旧シグネチャ互換)', async () => {
-      await createUser(validInput, creatorId, { baseUrl: 'https://example.com' });
-      // tenant.findUnique も user.count も呼ばれない
-      expect(prisma.tenant.findUnique).not.toHaveBeenCalled();
-      expect(prisma.user.count).not.toHaveBeenCalled();
-    });
 
     it('Beginner プランで席数に余裕があれば作成成功 (4 / 5 → 5 で OK)', async () => {
       vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({

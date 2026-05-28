@@ -363,9 +363,12 @@ model Tenant {
 
 model User {
   id                  String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  // PR #2 (T-03): マルチテナント基盤。v1 では DB DEFAULT で default-tenant に自動配属。
-  // v1.x で UI 由来のテナント割当が必要になったタイミングで DEFAULT を外す。
-  tenantId            String    @default(dbgenerated("'00000000-0000-0000-0000-000000000001'::uuid")) @map("tenant_id") @db.Uuid
+  // PR #2 (T-03): マルチテナント基盤。
+  // ★severity-1 (fix/tenant-id-default-removal, 2026-05-28, ADR-0024):
+  //   旧仕様は DB DEFAULT (`@default(dbgenerated("'00000000-...-001'::uuid"))`) を持ち、
+  //   コードが tenantId 未指定で create したら silent に Default テナントに混入していた
+  //   (severity-1 個人情報漏洩リスク)。DEFAULT を撤去し、NOT NULL + コード明示必須化。
+  tenantId            String    @map("tenant_id") @db.Uuid
   name                String    @db.VarChar(100)
   email               String    @db.VarChar(255)
   passwordHash        String    @map("password_hash") @db.VarChar(255)
@@ -550,8 +553,8 @@ model PasswordHistory {
 
 model Customer {
   id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  // PR #2: tenant 配属 (DEFAULT default-tenant)
-  tenantId      String   @default(dbgenerated("'00000000-0000-0000-0000-000000000001'::uuid")) @map("tenant_id") @db.Uuid
+  // PR #2: tenant 配属。ADR-0024 (2026-05-28) で DB DEFAULT 撤去 + コード明示必須化。
+  tenantId      String   @map("tenant_id") @db.Uuid
   name          String   @db.VarChar(100)
   department    String?  @db.VarChar(100)
   contactPerson String?  @map("contact_person") @db.VarChar(100)
@@ -576,8 +579,8 @@ model Customer {
 
 model Project {
   id                 String                       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  // PR #2: tenant 配属 (DEFAULT default-tenant)
-  tenantId           String                       @default(dbgenerated("'00000000-0000-0000-0000-000000000001'::uuid")) @map("tenant_id") @db.Uuid
+  // PR #2: tenant 配属。ADR-0024 (2026-05-28) で DB DEFAULT 撤去 + コード明示必須化。
+  tenantId           String                       @map("tenant_id") @db.Uuid
   name               String                       @db.VarChar(100)
   // PR #111-2: customer_name 列を廃止し Customer テーブルへの FK に完全移行。
   // ON DELETE SET NULL: Customer 物理削除時、論理削除済み Project (deletedAt != null) の
@@ -770,8 +773,8 @@ model TaskProgressLog {
 
 model RiskIssue {
   id               String                       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  // PR #2: tenant 配属 (DEFAULT default-tenant)
-  tenantId         String                       @default(dbgenerated("'00000000-0000-0000-0000-000000000001'::uuid")) @map("tenant_id") @db.Uuid
+  // PR #2: tenant 配属。ADR-0024 (2026-05-28) で DB DEFAULT 撤去 + コード明示必須化。
+  tenantId         String                       @map("tenant_id") @db.Uuid
   // PR feat/asset-multi-project-linking (2026-05-09):
   //   M:N 化に伴い「**作成元プロジェクト** (createdInProject)」の意味に変更。nullable + SET NULL。
   //   作成元 project が物理削除された後はこの値が NULL となり、資産は他リンクが残れば生存する。
@@ -859,8 +862,8 @@ model RiskIssueProject {
 
 model Stakeholder {
   id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  // PR #2: tenant 配属 (DEFAULT default-tenant)
-  tenantId          String    @default(dbgenerated("'00000000-0000-0000-0000-000000000001'::uuid")) @map("tenant_id") @db.Uuid
+  // PR #2: tenant 配属。ADR-0024 (2026-05-28) で DB DEFAULT 撤去 + コード明示必須化。
+  tenantId          String    @map("tenant_id") @db.Uuid
   projectId         String    @map("project_id") @db.Uuid
   // 内部メンバーとの紐付け (任意)。null なら外部関係者。
   // ON DELETE SET NULL: User 物理削除時にステークホルダー記録は残す (人物評・履歴の保全)。
@@ -912,10 +915,10 @@ model Stakeholder {
 
 model Knowledge {
   id                 String                       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  // PR #2: tenant 配属 (DEFAULT default-tenant)
+  // PR #2: tenant 配属。ADR-0024 (2026-05-28) で DB DEFAULT 撤去 + コード明示必須化。
   // テナント独立性を担保するため Knowledge はテナント間で重複コピー (default-tenant の
   // シードナレッジを新規テナントに seedTenant() で複製)。設計判断は SUGGESTION_ENGINE_PLAN.md PR #6 参照。
-  tenantId           String                       @default(dbgenerated("'00000000-0000-0000-0000-000000000001'::uuid")) @map("tenant_id") @db.Uuid
+  tenantId           String                       @map("tenant_id") @db.Uuid
   title              String                       @db.VarChar(150)
   knowledgeType      String                       @map("knowledge_type") @db.VarChar(30)
   background         String                       @db.Text
@@ -997,8 +1000,8 @@ model TaskKnowledge {
 
 model Retrospective {
   id                     String                       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  // PR #2: tenant 配属 (DEFAULT default-tenant)
-  tenantId               String                       @default(dbgenerated("'00000000-0000-0000-0000-000000000001'::uuid")) @map("tenant_id") @db.Uuid
+  // PR #2: tenant 配属。ADR-0024 (2026-05-28) で DB DEFAULT 撤去 + コード明示必須化。
+  tenantId               String                       @map("tenant_id") @db.Uuid
   // PR feat/asset-multi-project-linking (2026-05-09):
   //   作成元プロジェクト (createdInProject)。M:N 化で audit 用、SET NULL で orphan 許容。
   projectId              String?                      @map("project_id") @db.Uuid
@@ -1118,7 +1121,7 @@ model AuthEventLog {
 model SystemErrorLog {
   id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   // PR #2: tenant 配属 (DEFAULT default-tenant)。pre-auth エラーは default-tenant に集約。
-  tenantId  String   @default(dbgenerated("'00000000-0000-0000-0000-000000000001'::uuid")) @map("tenant_id") @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
   severity  String   @db.VarChar(10) // 'info' | 'warn' | 'error' | 'fatal'
   source    String   @db.VarChar(30) // 'server' | 'client' | 'cron' | 'mail' | etc.
   message   String   @db.Text
@@ -1215,7 +1218,7 @@ model RoleChangeLog {
 model Attachment {
   id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   // PR #2: tenant 配属 (DEFAULT default-tenant)。親エンティティの tenantId と整合性をサービス層で担保。
-  tenantId    String    @default(dbgenerated("'00000000-0000-0000-0000-000000000001'::uuid")) @map("tenant_id") @db.Uuid
+  tenantId    String    @map("tenant_id") @db.Uuid
   entityType  String    @map("entity_type") @db.VarChar(30)
   entityId    String    @map("entity_id") @db.Uuid
   slot        String    @default("general") @db.VarChar(30)
@@ -1290,7 +1293,7 @@ model Attachment {
 model Comment {
   id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   // PR #2: tenant 配属 (DEFAULT default-tenant)。親エンティティの tenantId と整合性をサービス層で担保。
-  tenantId   String    @default(dbgenerated("'00000000-0000-0000-0000-000000000001'::uuid")) @map("tenant_id") @db.Uuid
+  tenantId   String    @map("tenant_id") @db.Uuid
   entityType String    @map("entity_type") @db.VarChar(30)
   entityId   String    @map("entity_id") @db.Uuid
   userId     String    @map("user_id") @db.Uuid
@@ -1322,7 +1325,7 @@ model Comment {
 model Mention {
   id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   // PR #2: tenant 配属 (DEFAULT default-tenant)。親 Comment の tenantId と整合性をサービス層で担保。
-  tenantId     String   @default(dbgenerated("'00000000-0000-0000-0000-000000000001'::uuid")) @map("tenant_id") @db.Uuid
+  tenantId     String   @map("tenant_id") @db.Uuid
   commentId    String   @map("comment_id") @db.Uuid
   kind         String   @db.VarChar(40)
   targetUserId String?  @map("target_user_id") @db.Uuid
@@ -1354,7 +1357,7 @@ model Mention {
 model Notification {
   id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   // PR #2: tenant 配属 (DEFAULT default-tenant)。User の tenantId と整合性をサービス層で担保。
-  tenantId   String    @default(dbgenerated("'00000000-0000-0000-0000-000000000001'::uuid")) @map("tenant_id") @db.Uuid
+  tenantId   String    @map("tenant_id") @db.Uuid
   userId     String    @map("user_id") @db.Uuid
   type       String    @db.VarChar(40)
   entityType String    @map("entity_type") @db.VarChar(30)
@@ -1385,7 +1388,7 @@ model Notification {
 model Memo {
   id               String                       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   // PR #2: tenant 配属 (DEFAULT default-tenant)。User の tenantId と整合性をサービス層で担保。
-  tenantId         String                       @default(dbgenerated("'00000000-0000-0000-0000-000000000001'::uuid")) @map("tenant_id") @db.Uuid
+  tenantId         String                       @map("tenant_id") @db.Uuid
   userId           String                       @map("user_id") @db.Uuid
   title            String                       @db.VarChar(150)
   content          String                       @db.Text

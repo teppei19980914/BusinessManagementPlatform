@@ -316,6 +316,36 @@ describe('getRisk', () => {
 describe('createRisk', () => {
   beforeEach(() => vi.clearAllMocks());
 
+  // ★severity-1 regression (fix/tenant-id-default-removal, 2026-05-28, ADR-0024):
+  //   旧バグでは createRisk が tenantId を data に渡しておらず、schema の DB DEFAULT
+  //   ('00000000-...-001') で silent に Default テナントへ混入していた。
+  //   本テストは「指定された tenantId が data に明示的に含まれる」ことを保証する。
+  //   本テストが落ちた場合 = テナント越境セキュリティバグの再発を意味する。
+  it('★severity-1 regression: tenantId が data に明示的に渡される (Default テナント silent 混入の防止)', async () => {
+    vi.mocked(prisma.riskIssue.create).mockResolvedValue(rRow() as never);
+    const OTHER_TENANT_ID = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+    await createRisk(
+      'p-1',
+      {
+        type: 'issue',
+        title: 't',
+        content: 'c',
+        impact: 'high',
+        likelihood: 'medium',
+        assigneeId: null,
+        deadline: null,
+        visibility: 'draft',
+      } as never,
+      'u-1',
+      OTHER_TENANT_ID,
+    );
+    expect(prisma.riskIssue.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ tenantId: OTHER_TENANT_ID }),
+      }),
+    );
+  });
+
   it('risk 型は riskNature を保存する', async () => {
     vi.mocked(prisma.riskIssue.create).mockResolvedValue(rRow() as never);
     await createRisk(

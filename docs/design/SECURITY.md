@@ -1457,3 +1457,50 @@ users テーブルへのカラム追加:
 
 ---
 
+## §26. テナント分離検証 (ADR-0024 / 2026-05-28 severity-1 fix)
+
+### 26.1 背景
+
+PR #2 (T-03, 2026-04-15) で導入したマルチテナント基盤は、`schema.prisma` の各エンティティの `tenantId` カラムに DB DEFAULT (`@default(dbgenerated("'00000000-...-001'::uuid"))`) を設定していた。これは「単一テナント運用期 (v1) でコードが tenantId を渡し忘れても Default テナントに自動配属する」という暫定設計だった。
+
+2026-05-28 に **severity-1 のテナント越境バグ** が発覚:
+
+- `src/services/risk.service.ts createRisk()` と `retrospective.service.ts createRetrospective()` が `data` に `tenantId` を渡しておらず、すべての非 Default テナントの起票が **silent に Default テナントに混入** していた
+- 起票者本人の一覧から消える + Default テナント側に他テナントデータが露出する個人情報漏洩リスク
+
+ADR-0024 により schema の DB DEFAULT を撤去し、コード側で tenantId を必ず明示する設計に移行。
+
+### 26.2 テナント分離の三層防御
+
+| 層 | 場所 | 役割 | 違反時の挙動 |
+|---|---|---|---|
+| **層 1 (DB schema)** | `prisma/schema.prisma` | tenant_id NOT NULL (DEFAULT なし) | コードが渡さなければ Prisma が NOT NULL 違反でエラー |
+| **層 2 (service 層 create)** | `src/services/*.service.ts` の `prisma.X.create({ data: { tenantId, ... } })` | data に tenantId を明示記述 | 明示しないと層 1 でエラー化 |
+| **層 3 (service 層 query)** | `src/services/*.service.ts` の `prisma.X.findMany({ where: { tenantId: viewerTenantId } })` | 一覧/個別取得で必ず `where.tenantId` フィルタ | フィルタ漏れで越境表示 |
+
+### 26.3 SystemErrorLog の正当な例外
+
+`recordError()` (`src/services/error-log.service.ts`) は pre-auth エラー (login 失敗等) を記録するため `tenantId` 不明のケースが正当に発生する。本サービスのみ:
+
+```typescript
+tenantId: input.tenantId ?? DEFAULT_TENANT_ID,
+```
+
+の明示的な fallback を **コード側に書く**。これは「pre-auth エラーは Default テナントの super_admin 監視に集約する」という設計判断の明示記述であり、暗黙の DB DEFAULT に頼らない。
+
+### 26.4 再発防止チェック項目 (コードレビュー時)
+
+1. `prisma.X.create({ data: { ... } })` の差分が含まれる PR では **data 内に tenantId があるか** を必ず確認
+2. service 関数のシグネチャに `tenantId: string` が含まれているか確認
+3. 新規モデル追加時、schema で `tenantId String @map("tenant_id") @db.Uuid` (DEFAULT なし) で定義する
+4. `findMany` / `findFirst` 等の where 句に `tenantId: viewerTenantId` が含まれているか確認 (ADR-0001 / Phase 2-3 のテナント越境防御)
+
+### 26.5 関連
+
+- [ADR-0024: tenant_id カラムから DB DEFAULT を撤去](../adr/0024-explicit-tenant-id-no-db-default.md)
+- [docs/knowledge/KDD_PATTERNS.md §5.X+169](../knowledge/KDD_PATTERNS.md) — `tenant_id DB DEFAULT silent fallthrough` 罠
+- [docs/operations/INCIDENT_RESPONSE.md §2026-05-28](../operations/INCIDENT_RESPONSE.md)
+- e2e: `e2e/specs/11-tenant-isolation.spec.ts` (severity-1 regression セクション)
+
+---
+
