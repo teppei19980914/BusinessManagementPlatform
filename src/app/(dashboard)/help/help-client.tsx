@@ -310,6 +310,41 @@ export function HelpClient({ isTenantAdmin }: Props) {
               }
             />
             <FaqItem
+              q="プラン (Beginner / Expert / Pro) によって CSV 取込時の上限は変わりますか?"
+              a={
+                <>
+                  <p>
+                    <strong>取込本体の容量・行数上限は全プラン共通</strong> です。
+                    Beginner だから取り込めない、Expert/Pro だから無制限、という挙動はありません。
+                  </p>
+                  <ul className="mt-2 list-disc space-y-1 pl-5">
+                    <li>
+                      <strong>外部データ移行ウィザード</strong>: ファイル 50 MB / 合計 5,000 行 / 全プラン無料 (ADR-0019)
+                    </li>
+                    <li>
+                      <strong>エンティティ別 sync-import</strong> (各一覧画面): ファイル 10 MB / 500 行
+                    </li>
+                  </ul>
+                  <p className="mt-2">
+                    一方、<strong>DB 容量の従量課金</strong> (ADR-0020) も全プラン共通の仕組みで:
+                  </p>
+                  <ul className="mt-1 list-disc space-y-1 pl-5">
+                    <li><strong>50 MB まで</strong>: 無料 (全プラン)</li>
+                    <li><strong>超過分</strong>: ¥50/GB tier の従量課金 (Beginner プランでも発生)</li>
+                    <li><strong>50 GB</strong>: ハードキャップ (書込み拒否、読取り・エクスポートは可)</li>
+                  </ul>
+                  <p className="mt-2 text-muted-foreground">
+                    つまり「Beginner プランだから 50 MB 以上取り込めない」のではなく「50 MB 超過分は従量課金になる」が正しい仕様です。
+                    詳細は{' '}
+                    <Link href="/settings/tenant" className="text-primary underline">
+                      テナント設定
+                    </Link>{' '}
+                    →「使用量」タブ → DB 容量セクションでも確認できます。
+                  </p>
+                </>
+              }
+            />
+            <FaqItem
               q="取込後のデータの「公開範囲」はどうなりますか?"
               a={
                 <ul className="list-disc space-y-1 pl-5">

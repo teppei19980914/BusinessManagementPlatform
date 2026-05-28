@@ -17022,3 +17022,62 @@ if (sizeError) return sizeError;  // 413 で early return
 
 - 修正ファイル追加: `src/lib/csv-import-helpers.ts` + `src/lib/csv-import-helpers.test.ts` + 5 route の try-catch / size guard
 - 関連 memory: [feedback_repeated_verification_request](../../memory/feedback_repeated_verification_request.md) — 「同じフルスキャン依頼の繰り返しは "もっと深く見て" のシグナル」の実例 (本件は 2 巡目で 2 件の追加問題検出)
+
+---
+
+## 5.X+172 ★severity-high (DoS / 設計と実装の乖離)★ コメントで宣言した制限値が **実装と test で担保されていない** 罠 ─ sync-import の「csvRows.length > 500」が 5 route 中 0 route で実装されていなかった (docs/csv-import-guide-for-tenant-admin 3 巡目フルスキャン / 2026-05-28)
+
+### 結論
+
+`src/lib/csv-import-helpers.ts` の `CSV_MAX_BYTES` (10 MB) のコメントに **「sync-import の `csvRows.length > 500` 制限から逆算: 平均 1 行 2KB × 500 件 = ~1MB」** と書かれていたが、**実際の 5 sync-import route のいずれにも `csvRows.length > 500` チェックは存在しなかった**。silent skip (`fields.length < 3` で continue) のみで、明示的な行数上限エラーは返らない実装になっていた。
+
+### 発覚経緯
+
+3 巡目フルスキャン (= ユーザの「CSV インポート全経路、プラン別容量制御も含めて再検証」依頼) で `csv-import-helpers.ts:18` の設計意図コメントを起点に「実装の証跡」を grep したところ、`csvRows.length > 500` / `MAX_CSV_ROWS` / `CSV_MAX_ROWS` のいずれも 5 route ファイル / 5 service ファイルから検出されなかった。`fields.length < 3` の silent skip のみが各 parse 関数に存在。
+
+行数 N が膨大な CSV (例: 100 万行) を投げると:
+- ファイル容量自体は 10 MB 以下に収まる可能性あり (= `checkCsvSize` 通過)
+- 1 行が短ければ csv-parse 自体は完走する (= `handleCsvParseError` 通過)
+- N 行分の DB 書込み TX が走り、Netlify Function 30 秒タイムアウト or DB connection 枯渇に到達
+- ユーザは 504 / 503 を見るが原因不明 (= silent fail に近い UX)
+
+### 適用ルール (再発防止)
+
+1. **「コメントで宣言した制限値」は **必ず実装 + test で担保する** — 宣言と実装の乖離を 0 にする**:
+   - 本件のように **設計意図コメントを書く時点で実装責務を持っていた** が、5 route への展開時に「サイズ check だけで足りる」と勘違いされた可能性が高い
+   - 共有定数 (`CSV_MAX_ROWS = 500`) と共有 helper (`checkCsvRowCount(rowCount, t)`) を `csv-import-helpers.ts` に追加して、5 route で必ず呼び出す
+   - test は **constant 値 + 上限超過 + 境界値 + 境界以下** の 4 ケースを最低限担保
+
+2. **「サイズ上限」と「行数上限」は別軸で必要**:
+   - 10 MB CSV でも 1 行が巨大な multi-line cell なら行数は少なく済む (= サイズだけで防御不能)
+   - 500 行の textarea CSV でもサイズが 1 MB 未満ならサイズ check は通過する (= 行数だけで防御不能)
+   - 両軸の上限を **別の error code** で返す (`CSV_SIZE_EXCEEDED` / `CSV_ROW_COUNT_EXCEEDED`) → 原因切り分けが UI で可能
+
+3. **3 巡目フルスキャンは「1-2 巡目で書いた制限の "実装証跡" を grep する」**:
+   - 1 巡目: 表面化バグ修正 (multi-line cell)
+   - 2 巡目: 修正によって生まれた新リスク (csv-parse throw 化、サイズ上限)
+   - 3 巡目: **既存コメント / docs / ADR で宣言した値が実装に存在するか証跡確認**
+   - 「コメントに `> 500` と書いてあるが grep で見つからない」は重大な silent fail
+
+4. **ユーザ向け FAQ / docs にも「経路別上限」を明示する**:
+   - sync-import: 10 MB / 500 行
+   - external-import: 50 MB / 5,000 行
+   - 「経路によって異なる」を明記しないと UX 上の混乱が起きる
+
+### 同 PR で対応した周辺の誤解解消 (docs)
+
+ユーザから「Beginner プランでは PostgreSQL の上限が強制的に設けられているため、Beginner プランでのインポート時は上限未満でないとインポートできないように制御されている」という認識の指摘があったが、**ADR-0020 (DB 容量従量課金) の仕様は全プラン共通**:
+
+- 無料枠 50 MB / 超過 ¥50/GB tier / L3 50 GB ハードキャップ → **すべて Beginner / Expert / Pro 共通**
+- Beginner プランで別の上限が強制されているわけではなく、**Beginner プランでも超過分は ¥50/GB tier の従量課金対象**
+- 「Beginner = 無料試用」は **席数 5 名 + プロジェクト作成/更新 月 50 回まで無料** が対象で、DB 容量超過課金は別軸
+
+この誤解は **「インポート preview 時点での容量影響事前計算」が未実装** であることが UX 上の盲点を生んでいる。経路 A (external-import) と経路 C (ZIP import) の preview API レスポンスに **取込後の DB 容量予測 + L1/L2/L3 警告** を含めるべき (= **未対応の MEDIUM タスクとして残置**、別 PR 起票予定)。docs と FAQ では現状の仕様を正しく明示することで誤解を緩和。
+
+### 関連 (3 巡目)
+
+- 修正ファイル: `src/lib/csv-import-helpers.ts` (+ test) / `src/i18n/messages/{ja,en-US}.json` / 5 sync-import route
+- ドキュメント更新: `docs/public/csv-import-guide.md` (経路別行数上限 + プラン共通 50GB 仕様の明示) / `/help` FaqCategory / `/settings/tenant` FAQ アコーディオン
+- 残タスク (MEDIUM): external-import / ZIP import preview に「DB 容量影響事前計算 + L1/L2/L3 警告」を実装 (別 PR)
+- 関連 memory: [feedback_repeated_verification_request](../../memory/feedback_repeated_verification_request.md) — 3 巡目で "コメント vs 実装乖離" の検出
+- 関連 ADR: [0020-db-capacity-usage-based-billing.md](../adr/0020-db-capacity-usage-based-billing.md) — 全プラン共通の 50GB ハードキャップ仕様

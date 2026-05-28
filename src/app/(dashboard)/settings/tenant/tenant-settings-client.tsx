@@ -1269,9 +1269,22 @@ function DataImportSection() {
             <div>
               <p className="font-semibold text-foreground">料金</p>
               <p>
-                CSV インポートは <strong>全プラン無料</strong> (embedding 生成費用も発生しません / ADR-0019)。
-                取込量に応じた追加課金はかかりません。
+                CSV インポート操作自体は <strong>全プラン無料</strong> (embedding 生成費用も発生しません / ADR-0019)。
+                取込件数に応じた追加課金はかかりません。
               </p>
+              <p className="mt-1">
+                ただし取込結果として DB 容量が <strong>50 MB を超えた分</strong> は{' '}
+                <strong>¥50/GB tier の従量課金</strong> 対象になります (ADR-0020、全プラン共通)。
+                Beginner プランでも超過分は課金対象です。50 GB のハードキャップに到達した場合は書込みが拒否されます (読取り・エクスポートは可)。
+              </p>
+            </div>
+            <div>
+              <p className="font-semibold text-foreground">1 ファイルあたりの行数上限</p>
+              <ul className="ml-4 list-disc">
+                <li>本画面の外部データ移行ウィザード: <strong>合計 5,000 行</strong> (Knowledge + RiskIssue)</li>
+                <li>各エンティティ一覧画面のインポート (sync-import): <strong>500 行</strong></li>
+              </ul>
+              <p className="mt-1">超過すると 413 エラーで弾かれます。大量取込はウィザード経路をご利用ください。</p>
             </div>
             <p className="text-foreground">
               より詳しい手順 (テンプレート活用 / カラムマッピング / 取込後確認) は{' '}

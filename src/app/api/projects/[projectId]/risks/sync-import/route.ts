@@ -30,7 +30,7 @@ import {
 } from '@/services/risk-sync-import.service';
 import { recordAuditLog } from '@/services/audit.service';
 import { logUnknownError } from '@/services/error-log.service';
-import { checkCsvSize, handleCsvParseError } from '@/lib/csv-import-helpers';
+import { checkCsvSize, checkCsvRowCount, handleCsvParseError } from '@/lib/csv-import-helpers';
 
 export const runtime = 'nodejs';
 
@@ -110,6 +110,9 @@ export async function POST(
     if (parseErr) return parseErr;
     throw e;
   }
+  // 2026-05-28 フルスキャン 2 巡目: parse 後の行数を明示的に上限判定 (DoS 緩和 + UX)
+  const rowCountError = checkCsvRowCount(csvRows.length, t);
+  if (rowCountError) return rowCountError;
 
   if (isDryRun) {
     const diff = await computeRiskSyncDiff(projectId, csvRows, user.tenantId);
