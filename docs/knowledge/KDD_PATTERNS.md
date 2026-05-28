@@ -16887,3 +16887,76 @@ data: { type: 'issue', visibility: 'draft', title: '...', ... }
 - 「過去動いていたフィクスチャの body をコピペ」は危険 (仕様が後から強化されるケース)
 - regression test の目的が **「サーバが正常応答すること」** であれば、なるべく **default 値 / 必須条件の少ない visibility** を選んで「テストが検証したい本質」(今回は tenantId 保存) 以外の理由で落ちないようにする
 - API contract に依存する E2E は、API contract が変わったら同時更新する必要があるため `docs/test/E2E_LESSONS.md §4.60` に「fixture も 5 軸網羅対象」の派生として記録
+
+## 5.X+171 ★severity-high (silent data loss)★ CSV 全文を `split(/\r?\n/)` してから 1 行ずつパースすると quoted multi-line cell が分断され、textarea セルの 2 行目以降が silent に欠落する (fix/csv-import-multiline-text-data-loss / 2026-05-28)
+
+### 結論
+
+CSV の sync-import (export → Excel 編集 → 再 import) 経路で、`textarea` 入力が可能なセル (背景 / 内容 / 結果 / 本文 / 改善事項 など) の **2 行目以降が silent に欠落** していた。
+
+**根本原因**: 5 つの sync-import service (`knowledge` / `risk` / `retrospective` / `memo` / `task`) がいずれも以下の同型実装を共有していた。
+
+```typescript
+// ❌ NG: CSV 全文を改行で先割り → quoted multi-line cell が分断される
+const lines = csvText.split(/\r?\n/).filter((l) => l.trim());
+for (const line of lines.slice(1)) {
+  const fields = parseCsvLine(line);  // 1 物理行用パーサ。改行を含むセルを保持できない
+  ...
+}
+```
+
+`parseCsvLine` は同じ `task.service.ts` 内に実装された自前パーサで、ダブルクォート (`"..."`) を保持できるが **入力が 1 物理行であることを前提** にしていた。CSV 全文を `\n` で先割りすると、`"line1\nline2"` のような RFC 4180 quoted multi-line cell が物理行 A `..."line1` と物理行 B `line2"...` に分断され、A のクォートは行末で閉じられず B の `"` で初めて閉じる挙動になる。結果として:
+
+- 物理行 A は `field1, ..., 'line1'` の short row として保存される (= **1 行目のみ反映**)
+- 物理行 B は `[ 'line2, val, val2' ]` の 1 field 行となり、`fields.length < 3` 等の最低列数チェックで silent skip される (= **2 行目以降が消える**)
+
+エクスポート側 (`escapeCsv()`) は改行を含む値を `"..."` で正しく RFC 4180 準拠でクォートして書き出していたため、**export と import が round-trip しない非対称性** を持っていた。
+
+### 発覚経緯
+
+ユーザがナレッジ一覧から「エクスポート → Excel で 4 件追加 + 1 件更新 → 再インポート」を実行したところ、`text` フィールド (textarea 入力) の **最初の 1 行しか反映されなかった**。
+
+サブエージェント (Explore) で 5 サービスを横スキャンしたところ、`split(/\r?\n/).filter((l) => l.trim())` が **完全に同一パターンで 5 ファイル** に複製されていた (knowledge / risk / retrospective / memo / task の `parseXxxSyncImportCsv`)。共有ヘルパに切り出されておらず、同型バグが 5 倍に拡大していた。
+
+### 適用ルール (再発防止)
+
+1. **CSV 全文パースは絶対に `csv-parse/sync` (RFC 4180 準拠) を使う**:
+   - `task.service.ts` に [`parseCsvText(text): string[][]`](../../src/services/task.service.ts) を集約。5 sync-import service はすべてこれを呼び出す
+   - `parseCsvLine` (旧 1 行用パーサ) は残置するが docstring で「**改行を含まない 1 物理行専用**。CSV 全文には `parseCsvText` を使え」と明示
+   - `external-data-import.service.ts` は既に `csv-parse/sync` を使用しており被害なし。これが正解パターン
+2. **「export → 再 import」の round-trip テストを各 sync-import service の単体テストで担保**:
+   - 各 service の test に `★★ quoted multi-line cell が欠落しない` ケースを追加 (5 ファイル横展開)
+   - `parseCsvText` 自体にも CRLF / BOM / カンマ含み / `""` エスケープ × 改行同時の組合せテストを `task.service.test.ts` で追加
+3. **CSV パーサを自前実装しない**:
+   - 既存 dependency (`csv-parse@^6.2.1`) がある場合は必ずそれを使う
+   - 「`split('\n')` + 1 行パーサ」の組合せは **RFC 4180 非準拠** のサインとして lint / review で検出する
+4. **同型コードの複製を許さない**:
+   - 「5 ファイルに同じ 1 行が並んでいる」は共有ヘルパに切り出さなければならないシグナル
+   - 1 箇所のバグは 5 箇所の同型バグになる可能性が常にある (本件は 5/5 が同じバグ)
+
+### 補足: なぜ tsc / lint / test がすべて通っていたか
+
+- **TypeScript**: `parseCsvLine(string): string[]` は型エラーを出さない (入力が改行を含んでも型は string、ランタイム動作のみ壊れる)
+- **lint (ESLint)**: 自前パーサ呼び出しに警告ルールなし
+- **既存テスト**: 各 service の test はすべて **シングルライン CSV のみ** をテストしていた。`HEADER + ',R,risk,A,...,public'` のような 1 行 string を `.join('\n')` で連結する pattern で、**multi-line cell のテストケースが 5 サービス共通でゼロ件**
+- **E2E**: import 機能の E2E spec は import が「成功した」ことを確認するだけで、import 後の **DB 上の値が source CSV と一致する** ことを round-trip 検証していなかった
+
+→ **教訓**: round-trip 系の機能 (export ↔ import / serialize ↔ deserialize) は **対称性テスト** を最初から書く。「parser だけ」「formatter だけ」のテストは非対称性バグを必ず見落とす。
+
+### 影響範囲とユーザ影響
+
+| 影響 | 詳細 |
+|---|---|
+| 影響対象機能 | 5 entity の sync-import (knowledge / risk-issue / retrospective / memo / wbs-task) |
+| 影響対象データ | `background` `content` `result` `conclusion` `recommendation` `本文` `planSummary` `actualSummary` `goodPoints` `problems` `improvements` `knowledgeToShare` `cause` `responsePolicy` `responseDetail` `lessonLearned` 等の textarea 入力フィールド |
+| ユーザ影響 | **silent data loss** (UPDATE 経路で 2 行目以降が消失、復旧経路は rollback snapshot のみ。CREATE 経路は初回から短縮されたデータで作成) |
+| 再現性 | 100% (改行を含む CSV cell を import すれば必ず発生) |
+| 検知容易度 | 低 (エラー表示なし、件数カウントも正常値、CSV の `fields.length < 3` skip で silent) |
+
+### 関連
+
+- 関連 PR: fix/csv-import-multiline-text-data-loss (本 PR)
+- 関連 post-mortem: [2026-05-28-csv-import-multiline-data-loss.md](../operations/post-mortems/2026-05-28-csv-import-multiline-data-loss.md)
+- 関連 KDD: [§5.18 WBS 上書きインポート (Sync by ID) 実装パターン](#518-wbs-上書きインポート-sync-by-id-実装パターン-featwbs-overwrite-import) — 5 entity 共通の sync-import 設計の出発点
+- 関連 memory: [feedback_repeated_verification_request](../../memory/feedback_repeated_verification_request.md) — 2 回目検証で重大バグ検出する実例 (本件は full-scan 1 回目で発覚) / [feedback_3layer_sync_filter](../../memory/feedback_3layer_sync_filter.md) — 同型バグの 4 経路同期修正パターン
+- 既知の類縁罠: 同型コードの複製による多重バグ拡大 ([§5.X+170](#5x170) の e2e fixture と同じ「grep 範囲を絞った結果 同じ罠を 1 箇所しか潰せなかった」失敗形式)

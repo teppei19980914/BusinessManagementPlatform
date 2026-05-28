@@ -141,6 +141,23 @@ describe('parseSyncImportCsv (T-19)', () => {
     const r = parseSyncImportCsv(csv);
     expect(r.headerErrors.some((e) => e.includes('列数が不足'))).toBe(true);
   });
+
+  // fix/csv-import-multiline-text-data-loss: 「名称」は短文想定だが、ユーザが
+  //   改行を含む CSV を作成した場合に silent に欠落・行ずれ崩壊しないことを保証する。
+  it('★★ 名称に改行が含まれていても欠落・行ずれせず正しく扱う', () => {
+    const csv = [
+      HEADER_7,
+      ',WP,"設計\n(詳細)",1,,,0',
+      ',ACT,"要件\nヒアリング",2,2026-05-01,2026-05-10,5',
+    ].join('\n');
+    const { rows, headerErrors } = parseSyncImportCsv(csv);
+    expect(headerErrors).toEqual([]);
+    expect(rows).toHaveLength(2);
+    expect(rows[0].name).toBe('設計\n(詳細)');
+    expect(rows[1].name).toBe('要件\nヒアリング');
+    // multi-line を跨いでも level スタック (parentRowIndex) が崩れない
+    expect(rows[1].parentRowIndex).toBe(2);
+  });
 });
 
 // ============================================================

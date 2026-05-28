@@ -16,7 +16,7 @@
  */
 
 import { prisma } from '@/lib/db';
-import { parseCsvLine } from './task.service';
+import { parseCsvText } from './task.service';
 
 // ============================================================
 // 型定義
@@ -93,14 +93,16 @@ const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 // ============================================================
 
 export function parseRetrospectiveSyncImportCsv(csvText: string): RetrospectiveSyncImportRow[] {
-  const cleanText = csvText.replace(/^﻿/, '');
-  const lines = cleanText.split(/\r?\n/).filter((l) => l.trim());
-  if (lines.length < 2) return [];
+  // fix/csv-import-multiline-text-data-loss: 計画総括/実績総括/良かった点/課題/改善事項/共有ナレッジ
+  //   は textarea 入力で改行を含むことが多く、旧 split 方式は 2 行目以降を欠落させていた。
+  //   RFC 4180 準拠の parseCsvText で全文を一括パースする。
+  const records = parseCsvText(csvText);
+  if (records.length < 2) return [];
 
   // fix/list-export-import-bugs (2026-05-26): header 行で列数を判定し新旧 layout を切替。
   //   - 8 列 (新): ID/実施日/計画総括/実績総括/良かった点/課題/改善事項/公開範囲
   //   - 13 列 (旧): + 見積差異要因/スケジュール差異要因/品質課題/リスク対応評価/共有ナレッジ
-  const headerFields = parseCsvLine(lines[0]);
+  const headerFields = records[0];
   const isLegacyLayout = headerFields.length >= 13;
   const COL = isLegacyLayout
     ? {
@@ -114,11 +116,11 @@ export function parseRetrospectiveSyncImportCsv(csvText: string): RetrospectiveS
         improvements: 6, knowledgeToShare: -1, visibility: 7,
       };
 
-  const dataLines = lines.slice(1);
+  const dataRecords = records.slice(1);
   const rows: RetrospectiveSyncImportRow[] = [];
 
-  for (let i = 0; i < dataLines.length; i++) {
-    const fields = parseCsvLine(dataLines[i]);
+  for (let i = 0; i < dataRecords.length; i++) {
+    const fields = dataRecords[i];
     if (fields.length < 2) continue;
 
     const csvRowIndex = i + 2;

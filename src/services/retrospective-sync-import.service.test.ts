@@ -68,6 +68,23 @@ describe('parseRetrospectiveSyncImportCsv (T-22 Phase 22b)', () => {
     const rows = parseRetrospectiveSyncImportCsv(csv);
     expect(rows[0].visibility).toBe('public');
   });
+
+  // fix/csv-import-multiline-text-data-loss: 計画総括/実績総括/良かった点/課題/改善事項/共有ナレッジ
+  //   は textarea 入力で改行を含むことが多く、旧 split 方式は 2 行目以降を silent に欠落させていた。
+  it('★★ planSummary/actualSummary/improvements の quoted multi-line cell が欠落しない', () => {
+    const csv = [
+      HEADER_13,
+      'r-1,2026-04-15,"計画\n要約","実績\n要約","良点1\n良点2","課題1\n課題2","見積\n要因","スケ\n要因","品質\n課題","リスク\n対応","改善1\n改善2","ナレッジ\n複数行",public',
+    ].join('\n');
+    const rows = parseRetrospectiveSyncImportCsv(csv);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].planSummary).toBe('計画\n要約');
+    expect(rows[0].actualSummary).toBe('実績\n要約');
+    expect(rows[0].goodPoints).toBe('良点1\n良点2');
+    expect(rows[0].problems).toBe('課題1\n課題2');
+    expect(rows[0].improvements).toBe('改善1\n改善2');
+    expect(rows[0].knowledgeToShare).toBe('ナレッジ\n複数行');
+  });
 });
 
 const projectId = 'proj-1';

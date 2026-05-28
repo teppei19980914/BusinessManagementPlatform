@@ -12,6 +12,7 @@ vi.mock('@/lib/db', () => ({
 
 import {
   parseCsvLine,
+  parseCsvText,
   buildTree,
   aggregateWpFromChildren,
   normalizeActualDatesForStatus,
@@ -117,6 +118,66 @@ describe('parseCsvLine', () => {
 
   it('エスケープされたダブルクォートを処理できる', () => {
     expect(parseCsvLine('1,WP,"名前""付き",,,,,,,')).toEqual(['1', 'WP', '名前"付き', '', '', '', '', '', '', '']);
+  });
+});
+
+// fix/csv-import-multiline-text-data-loss: RFC 4180 準拠 multi-line cell パーサ。
+//   旧 split(/\r?\n/) + parseCsvLine 組み合わせの bug (2 行目以降欠落) 再発防止のため、
+//   round-trip テストで multi-line セルの保護を担保する。
+describe('parseCsvText (multi-line cell 対応)', () => {
+  it('header + data 1 行をパースできる', () => {
+    const csv = 'ID,タイトル,本文\nk-1,T1,C1';
+    expect(parseCsvText(csv)).toEqual([
+      ['ID', 'タイトル', '本文'],
+      ['k-1', 'T1', 'C1'],
+    ]);
+  });
+
+  it('CRLF (Windows 改行) も LF も等価に扱う', () => {
+    expect(parseCsvText('a,b\r\n1,2\r\n3,4')).toEqual([['a', 'b'], ['1', '2'], ['3', '4']]);
+    expect(parseCsvText('a,b\n1,2\n3,4')).toEqual([['a', 'b'], ['1', '2'], ['3', '4']]);
+  });
+
+  it('UTF-8 BOM を自動除去する', () => {
+    const csv = '﻿ID,本文\nk-1,内容';
+    expect(parseCsvText(csv)).toEqual([['ID', '本文'], ['k-1', '内容']]);
+  });
+
+  it('★★ quoted multi-line cell の 2 行目以降を欠落させない (本 PR の主目的)', () => {
+    const csv = 'ID,本文,メタ\nk-1,"line1\nline2\nline3",public';
+    const records = parseCsvText(csv);
+    expect(records).toHaveLength(2);
+    expect(records[1]).toEqual(['k-1', 'line1\nline2\nline3', 'public']);
+  });
+
+  it('quoted multi-line cell が CRLF を含んでも正しくパースできる', () => {
+    const csv = 'ID,本文\r\nk-1,"line1\r\nline2"\r\nk-2,single';
+    const records = parseCsvText(csv);
+    expect(records).toHaveLength(3);
+    expect(records[1][1]).toBe('line1\r\nline2');
+    expect(records[2]).toEqual(['k-2', 'single']);
+  });
+
+  it('カンマ含むセル + ダブルクォートエスケープ + 改行を同時に処理できる', () => {
+    const csv = 'ID,本文\nk-1,"a, b\nc ""quoted"" d"';
+    const records = parseCsvText(csv);
+    expect(records[1][1]).toBe('a, b\nc "quoted" d');
+  });
+
+  it('空 CSV は空配列を返す', () => {
+    expect(parseCsvText('')).toEqual([]);
+  });
+
+  it('完全な空行はスキップされる (CSV 末尾の trailing \\n 対応)', () => {
+    expect(parseCsvText('a,b\n1,2\n\n')).toEqual([['a', 'b'], ['1', '2']]);
+  });
+
+  it('列数が行ごとに異なっても許容する (relax_column_count)', () => {
+    expect(parseCsvText('a,b,c\n1,2\n3,4,5,6')).toEqual([
+      ['a', 'b', 'c'],
+      ['1', '2'],
+      ['3', '4', '5', '6'],
+    ]);
   });
 });
 
