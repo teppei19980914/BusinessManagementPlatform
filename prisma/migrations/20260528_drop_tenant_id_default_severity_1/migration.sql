@@ -28,6 +28,28 @@
 --   - docs/adr/0024-explicit-tenant-id-no-db-default.md
 --   - docs/knowledge/KDD_PATTERNS.md §"tenant_id DB DEFAULT silent fallthrough"
 --   - docs/operations/INCIDENT_RESPONSE.md §2026-05-28 セキュリティインシデント
+--
+-- ロールバック手順 (緊急時のみ):
+--   本 migration を revert したい場合、以下を順次実行する:
+--
+--   ALTER TABLE "users"             ALTER COLUMN "tenant_id" SET DEFAULT '00000000-0000-0000-0000-000000000001'::uuid;
+--   ALTER TABLE "customers"         ALTER COLUMN "tenant_id" SET DEFAULT '00000000-0000-0000-0000-000000000001'::uuid;
+--   ALTER TABLE "projects"          ALTER COLUMN "tenant_id" SET DEFAULT '00000000-0000-0000-0000-000000000001'::uuid;
+--   ALTER TABLE "risks_issues"      ALTER COLUMN "tenant_id" SET DEFAULT '00000000-0000-0000-0000-000000000001'::uuid;
+--   ALTER TABLE "stakeholders"      ALTER COLUMN "tenant_id" SET DEFAULT '00000000-0000-0000-0000-000000000001'::uuid;
+--   ALTER TABLE "knowledges"        ALTER COLUMN "tenant_id" SET DEFAULT '00000000-0000-0000-0000-000000000001'::uuid;
+--   ALTER TABLE "retrospectives"    ALTER COLUMN "tenant_id" SET DEFAULT '00000000-0000-0000-0000-000000000001'::uuid;
+--   ALTER TABLE "system_error_logs" ALTER COLUMN "tenant_id" SET DEFAULT '00000000-0000-0000-0000-000000000001'::uuid;
+--   ALTER TABLE "attachments"       ALTER COLUMN "tenant_id" SET DEFAULT '00000000-0000-0000-0000-000000000001'::uuid;
+--   ALTER TABLE "comments"          ALTER COLUMN "tenant_id" SET DEFAULT '00000000-0000-0000-0000-000000000001'::uuid;
+--   ALTER TABLE "mentions"          ALTER COLUMN "tenant_id" SET DEFAULT '00000000-0000-0000-0000-000000000001'::uuid;
+--   ALTER TABLE "notifications"     ALTER COLUMN "tenant_id" SET DEFAULT '00000000-0000-0000-0000-000000000001'::uuid;
+--   ALTER TABLE "memos"             ALTER COLUMN "tenant_id" SET DEFAULT '00000000-0000-0000-0000-000000000001'::uuid;
+--
+--   ロールバック実施時の注意:
+--     - schema.prisma も同時に旧仕様 (`@default(dbgenerated(...))`) に戻す必要あり
+--     - コード側で tenant_id を渡し忘れた create が再び silent fall-through する severity-1 リスクが復活
+--     - 必ず ADR-0024 を Deprecated 化し、新たな ADR で復元理由を記録すること
 -- ============================================================
 
 ALTER TABLE "users"          ALTER COLUMN "tenant_id" DROP DEFAULT;

@@ -16821,3 +16821,51 @@ prisma.riskIssue.create({
 - 関連 ADR: [ADR-0024: tenant_id カラムから DB DEFAULT を撤去](../adr/0024-explicit-tenant-id-no-db-default.md)
 - 関連 memory: [feedback_db_default_tenant_silent_fallthrough](../../memory/feedback_db_default_tenant_silent_fallthrough.md) (本 KDD のサマリ + 適用ルール) / [feedback_tenant_isolation](../../memory/feedback_tenant_isolation.md) (severity-1 越境防止の上位原則)
 - 既知の類縁罠: [§5.X+163 Prisma XOR で excess property check が効かない罠](#5x163) — 本件と同じく「Prisma の型システムが silent 挙動を許す」共通パターン
+
+## 5.X+170 ★severity-1 (CI 全滅)★ DB DEFAULT 撤去 PR は **e2e/fixtures/ の raw SQL も同時 fix 必須** ─ 本番コードだけ直すと E2E が「初期 admin 作成失敗」で全滅 (fix/tenant-id-default-removal の 2 回目検証で発覚)
+
+### 結論
+
+`schema.prisma` の `@default(dbgenerated tenantId)` を撤去する PR では、**本番コード (`src/`) だけでなく `e2e/fixtures/` 配下の raw SQL INSERT も同時に修正必須**。本番 service 層 (`prisma.X.create`) は 1 回目の検証で全部潰せても、生 SQL fixture は別レイヤなので grep が `src/` 限定だと取りこぼす。
+
+### 発覚経緯 (2026-05-28 round 2)
+
+1. PR fix/tenant-id-default-removal を 1 回目検証で本番コード fix + schema 撤去 + migration + tests + docs を完備して push
+2. CI の Playwright E2E が **204 件中ほぼ全 spec が 0ms で fail** する事態に
+3. CI ログを精査すると `[auth] login_failure { reason: 'tenant_not_found' }` と `Step 1: 初期 admin でログインしてパスワードを変更する (0ms)` が並んでおり、**初期 admin が作成できていないことが原因**
+4. `e2e/fixtures/db.ts` の `ensureInitialAdmin` の raw SQL を見ると:
+   ```sql
+   INSERT INTO users (name, email, password_hash, system_role, ...)  -- ★ tenant_id 列が無い
+   VALUES ($1, $2, $3, 'admin', ...)
+   ON CONFLICT (tenant_id, email) DO UPDATE ...
+   ```
+   と、**`tenant_id` を column list / VALUES どちらにも渡しておらず、schema の DB DEFAULT に暗黙依存** していた。コメントにも「tenant_id は INSERT 時に省略すると DB DEFAULT (= DEFAULT_TENANT_ID) が入る」と明記されていた (= 旧仕様の意図的依存)
+5. schema から DB DEFAULT を撤去した瞬間にこの fixture が NOT NULL 違反 → 初期 admin 不在 → 全 E2E spec が beforeAll で 0ms fail
+
+### なぜ 1 回目で見逃したか
+
+- 1 回目の Agent + Grep 検証は **`src/` 配下の `prisma.X.create`** に絞っていた
+- `e2e/fixtures/db.ts` は `pg` の `pool.query` で raw SQL を直書きしており、Prisma 経由ではないので **「prisma.X.create」grep に引っかからなかった**
+- 同じファイル内のコメントが「DB DEFAULT 暗黙依存」を明示していたが、それは fix 対象として認識されなかった (= 静的な型 / lint では検知不能)
+- `e2e/fixtures/multi-tenant.ts` / `super-admin.ts` 等は本番 service と同様に最初から tenant_id 明示していたため、すべての fixture が同じ状態だと **誤認** していた
+
+### 適用ルール (再発防止)
+
+1. **DB schema 変更 PR では検証範囲を拡張**:
+   - `src/` (本番コード)
+   - `prisma/seed*.ts` (seed)
+   - `scripts/*.ts` (運用スクリプト)
+   - **`e2e/fixtures/*.ts` の raw SQL** ← 1 回目で抜けた
+   - `prisma/migrations/*.sql` (INSERT SELECT 系の seed migration)
+2. **grep パターンを多軸化**:
+   - `prisma.X.create` だけでなく `INSERT INTO <table>` でも grep
+   - `pool.query` + `INSERT` も grep
+3. **検証ワークフロー**: 「コード fix + schema migration + tests + docs」の **4 軸** に「fixture + scripts + migrations の SQL」の **5 軸目** を追加
+4. **CI fail の原因切り分け**: 「ほぼ全 spec が 0ms で fail」は **beforeAll 系の setup failure シグナル**。個別 spec のロジック問題ではなく、fixture / seed / migration を疑う
+
+### 関連
+
+- 関連 PR: fix/tenant-id-default-removal-severity-1 (round 2 commit)
+- 関連 ADR: [ADR-0024](../adr/0024-explicit-tenant-id-no-db-default.md)
+- 関連 KDD: [§5.X+169 tenant_id DB DEFAULT silent fall-through](#5x169) (本件の root cause)
+- 関連 memory: [feedback_repeated_verification_request](../../memory/feedback_repeated_verification_request.md) (2 回目検証で重大バグ検出する実例、本件もまさにこのパターン)

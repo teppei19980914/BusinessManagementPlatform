@@ -19,6 +19,7 @@
 import { Pool } from 'pg';
 import { hash } from 'bcryptjs';
 import { BCRYPT_COST } from '../../src/config/security';
+import { DEFAULT_TENANT_ID } from '../../src/lib/tenant';
 
 let _pool: Pool | null = null;
 
@@ -69,15 +70,17 @@ export async function ensureInitialAdmin(
   // updated_at は Prisma @updatedAt でアプリ側更新する契約 (DB デフォルト無し)。
   // ADR-0016 (2026-05-20): User.email を tenant-scoped 一意化したことに伴い、
   //   ON CONFLICT は (tenant_id, email) 複合 index = idx_users_tenant_email を参照する。
-  //   tenant_id は INSERT 時に省略すると DB DEFAULT (= DEFAULT_TENANT_ID) が入る。
+  // ★severity-1 (fix/tenant-id-default-removal, 2026-05-28, ADR-0024):
+  //   旧仕様は schema DB DEFAULT に依存して tenant_id を省略していたが、ADR-0024 で
+  //   DEFAULT を撤去したため fixture でも明示必須化。初期 admin は DEFAULT_TENANT に所属。
   const res = await pool.query(
     `INSERT INTO users (
-       name, email, password_hash, system_role, is_active, force_password_change,
+       tenant_id, name, email, password_hash, system_role, is_active, force_password_change,
        mfa_enabled, mfa_secret_encrypted, mfa_enabled_at,
        failed_login_count, locked_until, permanent_lock,
        updated_at
      )
-     VALUES ($1, $2, $3, 'admin', true, $4, false, NULL, NULL, 0, NULL, false, NOW())
+     VALUES ($1, $2, $3, $4, 'admin', true, $5, false, NULL, NULL, 0, NULL, false, NOW())
      ON CONFLICT (tenant_id, email) DO UPDATE SET
        password_hash = EXCLUDED.password_hash,
        is_active = true,
@@ -90,7 +93,7 @@ export async function ensureInitialAdmin(
        permanent_lock = false,
        updated_at = NOW()
      RETURNING id`,
-    ['E2E 管理者', email, passwordHash, forcePasswordChange],
+    [DEFAULT_TENANT_ID, 'E2E 管理者', email, passwordHash, forcePasswordChange],
   );
   return res.rows[0].id as string;
 }
@@ -107,14 +110,16 @@ export async function ensureGeneralUser(
   const pool = getPool();
   const passwordHash = await hash(password, BCRYPT_COST);
   // ADR-0016 (2026-05-20): ON CONFLICT も (tenant_id, email) に変更
+  // ★severity-1 (fix/tenant-id-default-removal, 2026-05-28, ADR-0024):
+  //   ADR-0024 で schema DB DEFAULT 撤去。tenant_id を明示する必要あり。
   const res = await pool.query(
     `INSERT INTO users (
-       name, email, password_hash, system_role, is_active, force_password_change,
+       tenant_id, name, email, password_hash, system_role, is_active, force_password_change,
        mfa_enabled, mfa_secret_encrypted, mfa_enabled_at,
        failed_login_count, locked_until, permanent_lock,
        updated_at
      )
-     VALUES ($1, $2, $3, 'general', true, false, false, NULL, NULL, 0, NULL, false, NOW())
+     VALUES ($1, $2, $3, $4, 'general', true, false, false, NULL, NULL, 0, NULL, false, NOW())
      ON CONFLICT (tenant_id, email) DO UPDATE SET
        name = EXCLUDED.name,
        password_hash = EXCLUDED.password_hash,
@@ -125,7 +130,7 @@ export async function ensureGeneralUser(
        permanent_lock = false,
        updated_at = NOW()
      RETURNING id`,
-    [name, email, passwordHash],
+    [DEFAULT_TENANT_ID, name, email, passwordHash],
   );
   return res.rows[0].id as string;
 }
