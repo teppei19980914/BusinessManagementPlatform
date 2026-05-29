@@ -24,8 +24,15 @@
 | **Stripe 引落失敗 auto-suspend (PR-S6)** | cron-job.org | `POST /api/cron/stripe-auto-suspend` | 日次 04:00 UTC (= JST 13:00) | `Authorization: Bearer ${CRON_SECRET}` のみ |
 | **Stripe ↔ DB 状態照合 (PR-V7 #5)** | cron-job.org | `POST /api/cron/stripe-reconcile` | 月次 06:00 UTC (= JST 15:00、毎月 1 日) | `Authorization: Bearer ${CRON_SECRET}` のみ |
 | **日次使用量集計 + 異常検知 (PR #7 / T-03)** | cron-job.org | `POST /api/cron/daily-usage-aggregation` | 日次 02:00 UTC (= JST 11:00) | `Authorization: Bearer ${CRON_SECRET}` のみ |
+| **Invoice 月次集計 (PR-V7a)** | cron-job.org | `POST /api/cron/billing-monthly-aggregation` | **毎月 2 日 00:00 UTC (= JST 09:00)** | `Authorization: Bearer ${CRON_SECRET}` のみ |
+| **支払期日超過 alert (PR-V7a)** | cron-job.org | `POST /api/cron/billing-overdue-alert` | 日次 08:00 UTC (= JST 17:00) | `Authorization: Bearer ${CRON_SECRET}` のみ |
+| **Cron 失敗 alert (PR-V7a)** | cron-job.org | `POST /api/cron/cron-failure-alert` | 日次 09:00 UTC (= JST 18:00、他 cron 完走後) | `Authorization: Bearer ${CRON_SECRET}` のみ |
+| **診断ダッシュボード anomalies 日次 push (PR-V8.4)** | cron-job.org | `POST /api/cron/diagnostics-daily-alert` | 日次 02:30 UTC (= JST 11:30、朝の早期警告) | `Authorization: Bearer ${CRON_SECRET}` のみ |
+| **Attachment Embedding 背景処理 (ADR-0021)** | cron-job.org | `POST /api/cron/attachment-embedding` | **10 分間隔** (`*/10 * * * *`) | `Authorization: Bearer ${CRON_SECRET}` のみ |
 
 ※ `/api/cron/cleanup-accounts` は PR #115 で削除 (デッドコード)。`/api/admin/users/lock-inactive` に一本化した (旧名 `cleanup-inactive`、feat/account-lock で改名)。
+
+> 🆕 **2026-05-29 反映**: cron-job.org 設定実態と本一覧の照合により、5 件 (`billing-monthly-aggregation` / `billing-overdue-alert` / `cron-failure-alert` / `diagnostics-daily-alert` / `attachment-embedding`) が一覧未記載だった漏落を解消。`attachment-embedding` は PUBLIC_PATHS 未登録のため middleware が /login へ 302 redirect する production バグも同日修正済 ([src/config/routes.ts](../../src/config/routes.ts) + [routes.test.ts](../../src/config/routes.test.ts) で全 `/api/cron/*` route の網羅性ガード追加)。
 
 ### 「アプリ内通知」cron の挙動 (PR feat/notifications-mvp、2026-05-01)
 

@@ -455,13 +455,25 @@ Dashboard → **設定** → **Billing** → **サブスクリプションとメ
 2. `StripeWebhookEvent` テーブルに 1 行のみ (UNIQUE 違反で 2 回目はスキップ) を確認
 
 ### 10.5 cron 動作確認
-- `/api/cron/stripe-usage-flush` (= 日次、旧 Vercel Hobby 時代の cron 最小間隔制約の名残で日次運用継続中。Netlify + 外部 cron 構成では 1 分間隔まで設定可能)
-- `/api/cron/stripe-auto-suspend` (= 日次 05:00 UTC)
-- `/api/cron/stripe-reconcile` (= 月初 06:00 UTC、PR-V7 #5、Subscription + Amount 照合 PR-V7a B-2)
-- `/api/cron/billing-monthly-aggregation` (= 月初 2 日 00:00 UTC、PR-V7a B-1: invoice 月次集計)
-- `/api/cron/billing-overdue-alert` (= 日次 08:00 UTC、PR-V7a B-3: 期日超過督促)
-- `/api/cron/cron-failure-alert` (= 日次 09:00 UTC、PR-V7a B-4: cron 失敗集約通知)
-- cron-job.org で実行履歴を確認
+
+**Stripe / 請求関連 cron (本ガイドの主対象)**:
+- `/api/cron/stripe-usage-flush` (= 日次 05:00 UTC = JST 14:00、旧 Vercel Hobby 時代の cron 最小間隔制約の名残で日次運用継続中。Netlify + 外部 cron 構成では 1 分間隔まで設定可能)
+- `/api/cron/stripe-auto-suspend` (= 日次 04:00 UTC = JST 13:00、引落失敗テナント suspend)
+- `/api/cron/stripe-reconcile` (= 月初 06:00 UTC = JST 15:00、PR-V7 #5、Subscription + Amount 照合 PR-V7a B-2)
+- `/api/cron/billing-monthly-aggregation` (= 毎月 2 日 00:00 UTC = JST 09:00、PR-V7a B-1: invoice 月次集計)
+- `/api/cron/billing-overdue-alert` (= 日次 08:00 UTC = JST 17:00、PR-V7a B-3: 期日超過督促)
+- `/api/cron/cron-failure-alert` (= 日次 09:00 UTC = JST 18:00、PR-V7a B-4: cron 失敗集約通知、他 cron 完走後)
+
+**周辺 cron (運用全体を把握するため列挙、詳細は [CRON.md](./CRON.md))**:
+- `/api/cron/tenant-monthly-reset` (= 毎月 1 日 00:00 UTC = JST 09:00、月次カウンタリセット + 月初 embedding backfill)
+- `/api/cron/daily-usage-aggregation` (= 日次 02:00 UTC = JST 11:00、使用量集計 + Beginner 期限警告)
+- `/api/cron/daily-notifications` (= 日次 22:00 UTC = JST 翌日 07:00、ACT リマインダ + DB/Storage drift 検知)
+- `/api/cron/diagnostics-daily-alert` (= 日次 02:30 UTC = JST 11:30、診断ダッシュボード異常を朝に push)
+- `/api/cron/attachment-embedding` (= 10 分間隔、ADR-0021 ファイル添付の embedding queue 処理)
+
+cron-job.org で実行履歴を確認 (詳細手順は [CRON.md §8〜§9](./CRON.md) 参照)。
+
+> 🆕 **2026-05-29 反映**: 本一覧は cron-job.org 実態と完全照合済 (旧 `stripe-auto-suspend` の 05:00 UTC 誤記を 04:00 UTC に訂正、周辺 cron 5 件を補完)。
 
 ---
 

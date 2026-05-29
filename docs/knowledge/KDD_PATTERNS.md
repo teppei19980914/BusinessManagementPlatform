@@ -9825,9 +9825,42 @@ export async function autoSuspendDelinquentTenants(): Promise<AutoSuspendResult>
    pnpm tsx scripts/check-cron-public-paths.ts  # 未整備、TODO
    ```
 
+### ★追記★ 2026-05-29: 同パターンが再発した (= `attachment-embedding` route の PUBLIC_PATHS 登録漏れ)
+
+本 KDD §5.X+70 を 2026-05-18 に書いたにも関わらず、その 8 日後の ADR-0021 (2026-05-26) で
+新規追加された `/api/cron/attachment-embedding` route が **再び PUBLIC_PATHS 未登録のまま
+production マージ** された。結果として ADR-0021 のファイル添付の embedding 生成が
+3 日間完全停止 (2026-05-26〜2026-05-29) していた。
+
+**根本原因**: §5.X+70 で「Checklist」を書いたが、Checklist 実行は人間の意志に依存していた。
+ADR-0021 PR レビュー時に誰も §5.X+70 を参照しなかったため、Checklist 自体が動かなかった。
+
+**真の対策 (2026-05-29 実施)**: 「Checklist 文書」ではなく **機械的に強制する vitest テスト**
+([src/config/routes.test.ts](../../src/config/routes.test.ts)) を導入。`src/app/api/cron/` 配下の
+全ディレクトリが `PUBLIC_PATHS` に登録されていることを CI で自動検証する。
+
+```typescript
+// src/config/routes.test.ts (抜粋)
+const cronRouteNames = readdirSync(cronDir, { withFileTypes: true })
+  .filter((d) => d.isDirectory())
+  .map((d) => d.name);
+const missingPaths: string[] = [];
+for (const name of cronRouteNames) {
+  if (!PUBLIC_PATHS.includes(`/api/cron/${name}` as ...)) {
+    missingPaths.push(`/api/cron/${name}`);
+  }
+}
+expect(missingPaths).toEqual([]);
+```
+
+**普遍化された教訓**:
+- **「Checklist」は読まれない前提で設計する** — KDD に書いたから OK、ではなく test で強制する
+- **ガードを書くタイミング**: 同じ罠を 2 度踏んだら必ず CI ガード化する (1 度目はパターン認識、2 度目は機械化)
+- **「設定ファイル同期漏れ」は最も自動化しやすい** — 実装ディレクトリ vs config 配列の照合は readdirSync で完結
+
 ### 過去の関連 KDD
 
-- §5.X+58: 新規 route/page を追加した時の `pnpm e2e:coverage-check` ガード漏れ (= 同型の「設定ファイル同期漏れ」)
+- §5.X+58: 新規 route/page を追加した時の `pnpm e2e:coverage-check` ガード漏れ (= 同型の「設定ファイル同期漏れ」、これも機械的ガード)
 - §5.X+66: Netlify 移行で顕在化したクラスの罠 (本件もその一種)
 - §5.X+69: middleware matcher の除外漏れ (= 同じ routes 系設定の同期問題)
 
