@@ -34,7 +34,7 @@ function makeReq() {
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(isStripeEnabled).mockReturnValue(true);
-  vi.mocked(requireAdmin).mockReturnValue(undefined);
+  vi.mocked(requireAdmin).mockReturnValue(undefined as never);
   vi.mocked(getAuthenticatedUser).mockResolvedValue(ADMIN);
 });
 
@@ -61,7 +61,7 @@ describe('正常系・エラー変換', () => {
         status: 'valid',
         cardExpiresAt: { year: 2099, month: 12 },
       },
-    });
+    } as never);
 
     const res = await POST(makeReq());
 
@@ -78,7 +78,7 @@ describe('正常系・エラー変換', () => {
         failureReason: 'expired_card',
         cardExpiresAt: { year: 2020, month: 12 },
       },
-    });
+    } as never);
 
     const res = await POST(makeReq());
 
@@ -94,7 +94,7 @@ describe('正常系・エラー変換', () => {
       code: 'invalid_request',
       userMessage: 'カード未登録',
       detail: 'card_not_registered',
-    });
+    } as never);
 
     const res = await POST(makeReq());
 
@@ -107,7 +107,7 @@ describe('正常系・エラー変換', () => {
       ok: false,
       code: 'api_error',
       userMessage: 'Stripe error',
-    });
+    } as never);
 
     const res = await POST(makeReq());
 

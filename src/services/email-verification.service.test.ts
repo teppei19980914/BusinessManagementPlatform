@@ -43,7 +43,7 @@ vi.mock('./mfa.service', () => ({
   generateMfaSecret: vi.fn().mockResolvedValue({
     secret: 'MOCKSECRET',
     otpauthUri: 'otpauth://totp/test?secret=MOCKSECRET&issuer=tasukiba',
-  }),
+  } as never),
   verifyInitialTotpSecret: vi.fn(),
 }));
 
@@ -68,14 +68,14 @@ import { verifyInitialTotpSecret } from './mfa.service';
 describe('sendVerificationEmail', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(prisma.emailVerificationToken.updateMany).mockResolvedValue({ count: 0 });
+    vi.mocked(prisma.emailVerificationToken.updateMany).mockResolvedValue({ count: 0 } as never);
     vi.mocked(prisma.emailVerificationToken.create).mockResolvedValue({} as never);
     // ADR-0016 (2026-05-20): tenant slug 解決のための共通 mock
     vi.mocked(prisma.tenant.findUnique).mockResolvedValue({ slug: 'tenant-a' } as never);
   });
 
   it('メール送信成功時は正常に完了する', async () => {
-    mockSend.mockResolvedValue({ success: true, messageId: 'msg-123' });
+    mockSend.mockResolvedValue({ success: true, messageId: 'msg-123' } as never);
 
     await expect(
       sendVerificationEmail('user-id', 'tenant-A', 'test@example.com', 'https://example.com'),
@@ -93,7 +93,7 @@ describe('sendVerificationEmail', () => {
   });
 
   it('メール送信失敗時は EmailSendError をスローする', async () => {
-    mockSend.mockResolvedValue({ success: false, error: 'Resend 403 error' });
+    mockSend.mockResolvedValue({ success: false, error: 'Resend 403 error' } as never);
 
     await expect(
       sendVerificationEmail('user-id', 'tenant-A', 'test@example.com', 'https://example.com'),
@@ -101,7 +101,7 @@ describe('sendVerificationEmail', () => {
   });
 
   it('既存の未使用トークンを無効化してから新しいトークンを作成する', async () => {
-    mockSend.mockResolvedValue({ success: true, messageId: 'msg-456' });
+    mockSend.mockResolvedValue({ success: true, messageId: 'msg-456' } as never);
 
     await sendVerificationEmail('user-id', 'tenant-A', 'test@example.com', 'https://example.com');
 
@@ -126,7 +126,7 @@ describe('verifyEmail', () => {
       expiresAt: new Date(Date.now() + 3600000),
       usedAt: null,
       createdAt: new Date(),
-    });
+    } as never);
 
     const result = await verifyEmail('valid-token');
 
@@ -151,7 +151,7 @@ describe('verifyEmail', () => {
       expiresAt: new Date(Date.now() + 3600000),
       usedAt: new Date(),
       createdAt: new Date(),
-    });
+    } as never);
 
     const result = await verifyEmail('used-token');
 
@@ -167,7 +167,7 @@ describe('verifyEmail', () => {
       expiresAt: new Date(Date.now() - 1000),
       usedAt: null,
       createdAt: new Date(),
-    });
+    } as never);
 
     const result = await verifyEmail('expired-token');
 
@@ -203,7 +203,7 @@ describe('validateToken', () => {
       expiresAt: new Date(Date.now() + 60000),
       usedAt: new Date(),
       createdAt: new Date(),
-    });
+    } as never);
     const r = await validateToken('x');
     expect(r.valid).toBe(false);
     expect(r.error).toContain('使用');
@@ -217,7 +217,7 @@ describe('validateToken', () => {
       expiresAt: new Date(Date.now() - 60000),
       usedAt: null,
       createdAt: new Date(),
-    });
+    } as never);
     const r = await validateToken('x');
     expect(r.valid).toBe(false);
     expect(r.error).toContain('有効期限');
@@ -231,7 +231,7 @@ describe('validateToken', () => {
       expiresAt: new Date(Date.now() + 60000),
       usedAt: null,
       createdAt: new Date(),
-    });
+    } as never);
     expect((await validateToken('x')).valid).toBe(true);
   });
 });
@@ -253,7 +253,7 @@ describe('setupPassword', () => {
       expiresAt: new Date(Date.now() - 60000),
       usedAt: null,
       createdAt: new Date(),
-    });
+    } as never);
     const r = await setupPassword('x', 'hash');
     expect(r.success).toBe(false);
   });
@@ -266,7 +266,7 @@ describe('setupPassword', () => {
       expiresAt: new Date(Date.now() + 60000),
       usedAt: null,
       createdAt: new Date(),
-    });
+    } as never);
     vi.mocked(prisma.user.findUnique).mockResolvedValue({
       id: 'u-1',
       systemRole: 'general',
@@ -280,7 +280,7 @@ describe('setupPassword', () => {
     expect(r.recoveryCodes?.length).toBeGreaterThan(0);
     // $transaction 内で token.usedAt 設定 + user.isActive=true + recoveryCode.createMany
     expect(prisma.$transaction).toHaveBeenCalled();
-    const txCall = vi.mocked(prisma.$transaction).mock.calls[0][0] as unknown[];
+    const txCall = vi.mocked(prisma.$transaction).mock.calls[0][0] as unknown as unknown[];
     // 一般ユーザ用 transaction は 3 要素 (token update + user update + recoveryCode)
     expect(Array.isArray(txCall)).toBe(true);
     expect(txCall).toHaveLength(3);
@@ -295,7 +295,7 @@ describe('setupPassword', () => {
       expiresAt: new Date(Date.now() + 60000),
       usedAt: null,
       createdAt: new Date(),
-    });
+    } as never);
     vi.mocked(prisma.user.findUnique).mockResolvedValue({
       id: 'super-1',
       systemRole: 'super_admin',
@@ -312,7 +312,7 @@ describe('setupPassword', () => {
 
     // super_admin 用 transaction は 2 要素 (user update [isActive 設定しない] + recoveryCode)
     // token.usedAt は setupInitialMfa まで保持される
-    const txCall = vi.mocked(prisma.$transaction).mock.calls[0][0] as unknown[];
+    const txCall = vi.mocked(prisma.$transaction).mock.calls[0][0] as unknown as unknown[];
     expect(txCall).toHaveLength(2);
   });
 
@@ -325,7 +325,7 @@ describe('setupPassword', () => {
       expiresAt: new Date(Date.now() + 60000),
       usedAt: null,
       createdAt: new Date(),
-    });
+    } as never);
     vi.mocked(prisma.user.findUnique).mockResolvedValue({
       id: 'tenant-admin-1',
       systemRole: 'admin',
@@ -338,7 +338,7 @@ describe('setupPassword', () => {
     expect(r.mfa).toBeUndefined();
     expect(r.recoveryCodes?.length).toBeGreaterThan(0);
     // 一般ユーザと同じ 3 要素 transaction (token.usedAt + user 有効化 + recoveryCode)
-    const txCall = vi.mocked(prisma.$transaction).mock.calls[0][0] as unknown[];
+    const txCall = vi.mocked(prisma.$transaction).mock.calls[0][0] as unknown as unknown[];
     expect(txCall).toHaveLength(3);
   });
 
@@ -350,7 +350,7 @@ describe('setupPassword', () => {
       expiresAt: new Date(Date.now() + 60000),
       usedAt: new Date(),
       createdAt: new Date(),
-    });
+    } as never);
     const r = await setupPassword('x', 'hash');
     expect(r.success).toBe(false);
     expect(r.error).toContain('使用');
@@ -375,7 +375,7 @@ describe('setupInitialMfa (PR #91)', () => {
       expiresAt: new Date(Date.now() + 60000),
       usedAt: new Date(),
       createdAt: new Date(),
-    });
+    } as never);
     const r = await setupInitialMfa('x', '123456');
     expect(r.success).toBe(false);
     expect(r.error).toContain('使用');
@@ -389,7 +389,7 @@ describe('setupInitialMfa (PR #91)', () => {
       expiresAt: new Date(Date.now() - 60000),
       usedAt: null,
       createdAt: new Date(),
-    });
+    } as never);
     const r = await setupInitialMfa('x', '123456');
     expect(r.success).toBe(false);
     expect(r.error).toContain('有効期限');
@@ -403,7 +403,7 @@ describe('setupInitialMfa (PR #91)', () => {
       expiresAt: new Date(Date.now() + 60000),
       usedAt: null,
       createdAt: new Date(),
-    });
+    } as never);
     vi.mocked(prisma.user.findUnique).mockResolvedValue({
       id: 'admin-1',
       systemRole: 'admin',
@@ -423,7 +423,7 @@ describe('setupInitialMfa (PR #91)', () => {
       expiresAt: new Date(Date.now() + 60000),
       usedAt: null,
       createdAt: new Date(),
-    });
+    } as never);
     vi.mocked(prisma.user.findUnique).mockResolvedValue({
       id: 'admin-1',
       systemRole: 'admin',
@@ -444,7 +444,7 @@ describe('setupInitialMfa (PR #91)', () => {
       expiresAt: new Date(Date.now() + 60000),
       usedAt: null,
       createdAt: new Date(),
-    });
+    } as never);
     vi.mocked(prisma.user.findUnique).mockResolvedValue({
       id: 'admin-1',
       systemRole: 'admin',
@@ -456,7 +456,7 @@ describe('setupInitialMfa (PR #91)', () => {
 
     expect(r.success).toBe(true);
     expect(prisma.$transaction).toHaveBeenCalled();
-    const txCall = vi.mocked(prisma.$transaction).mock.calls[0][0] as unknown[];
+    const txCall = vi.mocked(prisma.$transaction).mock.calls[0][0] as unknown as unknown[];
     expect(txCall).toHaveLength(2); // token update + user update
   });
 });
@@ -469,7 +469,7 @@ describe('setupInitialMfa (PR #91)', () => {
 describe('resendVerificationEmail (Phase 1 / signup-email-resend-ux)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(prisma.emailVerificationToken.updateMany).mockResolvedValue({ count: 0 });
+    vi.mocked(prisma.emailVerificationToken.updateMany).mockResolvedValue({ count: 0 } as never);
     vi.mocked(prisma.emailVerificationToken.create).mockResolvedValue({} as never);
   });
 
@@ -480,7 +480,7 @@ describe('resendVerificationEmail (Phase 1 / signup-email-resend-ux)', () => {
       slug: 'customer-a',
     } as never);
     vi.mocked(prisma.user.findFirst).mockResolvedValue({ id: 'user-uuid' } as never);
-    mockSend.mockResolvedValue({ success: true, messageId: 'msg-resend-1' });
+    mockSend.mockResolvedValue({ success: true, messageId: 'msg-resend-1' } as never);
 
     const r = await resendVerificationEmail(
       'admin@customer-a.example',
@@ -570,7 +570,7 @@ describe('resendVerificationEmail (Phase 1 / signup-email-resend-ux)', () => {
       slug: 'customer-a',
     } as never);
     vi.mocked(prisma.user.findFirst).mockResolvedValue({ id: 'user-uuid' } as never);
-    mockSend.mockResolvedValue({ success: false, error: 'Brevo rejected' });
+    mockSend.mockResolvedValue({ success: false, error: 'Brevo rejected' } as never);
 
     const r = await resendVerificationEmail(
       'admin@customer-a.example',
@@ -592,7 +592,7 @@ describe('resendVerificationEmail (Phase 1 / signup-email-resend-ux)', () => {
       slug: 'customer-a',
     } as never);
     vi.mocked(prisma.user.findFirst).mockResolvedValue({ id: 'user-uuid' } as never);
-    mockSend.mockResolvedValue({ success: true });
+    mockSend.mockResolvedValue({ success: true } as never);
 
     await resendVerificationEmail(
       'admin@customer-a.example',

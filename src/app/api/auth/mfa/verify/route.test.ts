@@ -180,7 +180,7 @@ describe('POST /api/auth/mfa/verify', () => {
     vi.mocked(prisma.recoveryCode.findMany).mockResolvedValue([
       { id: 'rc1', codeHash: 'hashed' },
     ] as never);
-    vi.mocked(compare).mockResolvedValue(true);
+    vi.mocked(compare).mockResolvedValue(true as never);
 
     const res = await POST(
       makeReq({ userId: USER_ID, recoveryCode: 'TEST-RECOVERY-CODE' }),
@@ -198,7 +198,7 @@ describe('POST /api/auth/mfa/verify', () => {
     vi.mocked(prisma.recoveryCode.findMany).mockResolvedValue([
       { id: 'rc1', codeHash: 'hashed' },
     ] as never);
-    vi.mocked(compare).mockResolvedValue(false);
+    vi.mocked(compare).mockResolvedValue(false as never);
 
     const res = await POST(
       makeReq({ userId: USER_ID, recoveryCode: 'WRONG-CODE' }),
@@ -218,7 +218,7 @@ describe('POST /api/auth/mfa/verify', () => {
     vi.mocked(reissueAuthJwtOnResponse).mockResolvedValueOnce({
       ok: false,
       reason: 'decode_failed',
-    });
+    } as never);
     const res = await POST(makeReq({ userId: USER_ID, code: '123456' }));
     expect(res.status).toBe(500);
     const body = await res.json();

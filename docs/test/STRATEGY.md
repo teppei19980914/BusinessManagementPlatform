@@ -242,6 +242,83 @@ PR #89 で cold start 分析をしているが、定期的に再計測が必要�
 
 ---
 
+## 4.5. mock 型安全アクセサ (PR fix/test-tsc-strict-cleanup / 2026-05-29 で導入)
+
+### 4.5.1 導入経緯
+
+`pnpm tsc --noEmit` に test ファイル限定で 201 件の型エラーが蓄積していた。
+
+| 種別 | 件数 | 原因 |
+|---|---|---|
+| TS18048 | 92 | `vi.mocked(X).mock.calls[N][0]` が `T \| undefined` でフィールドアクセス不能 |
+| TS2345 | 62 | `mockImplementation((args: unknown) => ...)` が Prisma 汎用シグネチャ不整合 |
+| TS2554 | 23 | サービス引数 (`viewerTenantId` 等) 追加にテストが未追従 |
+| その他 | 24 | enum 不整合 / null→undefined / 型キャスト等 |
+
+これを「`as any` で潰す」のではなく「`as` を helper 内部に閉じ込め、ESLint `@typescript-eslint/no-explicit-any` rule と両立する」方針で全件解消した。
+
+### 4.5.2 ヘルパー: `src/lib/test-mock-helpers.ts`
+
+```typescript
+import { getMockCallArg } from '@/lib/test-mock-helpers';
+
+// Before (TS18048 で 2 件 error)
+const call = vi.mocked(prisma.knowledge.findMany).mock.calls[0][0];
+expect(call.where.AND).toEqual([{ deletedAt: null }, ...]);
+
+// After (型エラーなし)
+const call = getMockCallArg(vi.mocked(prisma.knowledge.findMany));
+expect(call.where.AND).toEqual([{ deletedAt: null }, ...]);
+```
+
+- `getMockCallArg<TArg>(mockFn, callIdx=0)`: index `callIdx` の mock 呼出第 0 引数を `NonNullable` で型付け返却。デフォルト型 `DeepLooseObject` で chain アクセスを許容。
+- 厳密な型が欲しい場合は `getMockCallArg<Prisma.KnowledgeCreateArgs>(...)` で type parameter 明示可。
+- 呼出履歴がなければ explicit throw (= silent undefined アクセスを防ぐ)。
+
+### 4.5.3 同セッションで適用した補助パターン
+
+`mockImplementation` / `mockResolvedValue` の値が Prisma の strict 型と不整合な場合:
+
+```typescript
+// 関数全体を as never でラップ (引数型のミスマッチ吸収)
+vi.mocked(prisma.task.findMany).mockImplementation(((async (args: unknown) => {
+  ...
+}) as never));
+
+// object literal も as never で吸収 (missing field を許容)
+vi.mocked(prisma.emailVerificationToken.findFirst).mockResolvedValue({
+  id: 'token-id', userId: 'user-id', ...
+} as never);
+```
+
+`call.where.X` 等を具体型でアサーションする場合は `as unknown as { X: T }` で二段キャスト。
+
+### 4.5.4 違反パターン (前セッションで実証済)
+
+- ❌ **`as any` 禁止** — ESLint `@typescript-eslint/no-explicit-any` で test ファイルでも 2190 errors 爆発の実績あり
+- ❌ **広域 sed で `});` 置換禁止** — 関係ない `});` 行を多数破壊した実績あり
+- ✅ **balanced-brace 対応 perl regex** で `mockImplementation` / `mockResolvedValue` の object/function literal を安全に wrap可
+
+### 4.5.5 未移行 test ファイル群 (将来の段階移行対象)
+
+PR fix/test-tsc-strict-cleanup は **tsc strict エラーが出ていた 27 ファイルのみ移行** した。下記の test ファイル群は main で tsc 通っていたためスコープ外だが、コードベース一貫性の観点で逐次 `getMockCallArg` 移行を推奨:
+
+- `src/app/api/attachments/batch/route.test.ts` (2 箇所)
+- `src/app/api/chat/search/route.test.ts` (6 箇所、`mockedRecordError`)
+- `src/app/api/mention-candidates/route.test.ts` (3 箇所)
+- `src/app/api/notifications/route.test.ts` (3 箇所)
+- `src/app/api/projects/[projectId]/available-users/route.test.ts` (1 箇所)
+- `src/app/api/webhooks/stripe/route.test.ts` (4 箇所)
+- `src/lib/cron-execution-log.test.ts` (1 箇所)
+- (他 10 ファイル程度に類似パターン残存)
+
+**移行方針**:
+- 機能追加 PR で当該 test ファイルを触る際に「ついでに」`getMockCallArg` へ置換
+- 一括移行 PR を切らない (本 PR でも検証コスト高で 1 PR に収まらなかった実績)
+- 新規 test を書く際は最初から `getMockCallArg` を使う
+
+---
+
 ## 5. モバイルビューポート E2E (PR #128 で追加)
 
 ### 5.1 設定

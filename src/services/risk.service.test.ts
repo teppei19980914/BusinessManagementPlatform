@@ -54,6 +54,7 @@ import {
   type RiskDTO,
 } from './risk.service';
 import { prisma } from '@/lib/db';
+import { getMockCallArg } from '@/lib/test-mock-helpers';
 import { generateAndPersistEntityEmbedding, generateAndPersistBatchEmbeddings } from './embedding.service';
 
 const TEST_TENANT_ID = '00000000-0000-0000-0000-000000000001';
@@ -105,14 +106,14 @@ describe('listRisks', () => {
         }),
       }),
     );
-    const call = vi.mocked(prisma.riskIssue.findMany).mock.calls[0][0];
+    const call = getMockCallArg(vi.mocked(prisma.riskIssue.findMany));
     expect(call.where).not.toHaveProperty('OR');
   });
 
   it('非 admin は public + 自分の draft (2026-05-01 仕様変更: 自分の draft は表示)', async () => {
     vi.mocked(prisma.riskIssue.findMany).mockResolvedValue([]);
     await listRisks('p-1', 'u-1', 'general', TEST_TENANT_ID);
-    const call = vi.mocked(prisma.riskIssue.findMany).mock.calls[0][0];
+    const call = getMockCallArg(vi.mocked(prisma.riskIssue.findMany));
     // visibility は OR で「public OR (draft AND reporterId=自分)」
     expect(call.where.OR).toEqual([
       { visibility: 'public' },
@@ -183,7 +184,7 @@ describe('listAllRisksForViewer', () => {
 
     // 非 admin
     await listAllRisksForViewer('u-1', 'general', 'tenant-A');
-    const generalCall = vi.mocked(prisma.riskIssue.findMany).mock.calls[0][0];
+    const generalCall = getMockCallArg(vi.mocked(prisma.riskIssue.findMany));
     expect(generalCall.where.visibility).toBe('public');
     expect(generalCall.where).not.toHaveProperty('OR');
 
@@ -194,7 +195,7 @@ describe('listAllRisksForViewer', () => {
     // admin (旧仕様: visibility 制約なし → 要件変更で admin も public 固定。
     // admin が draft を管理削除したい場合はプロジェクト個別画面から行う)
     await listAllRisksForViewer('admin-1', 'admin', 'tenant-A');
-    const adminCall = vi.mocked(prisma.riskIssue.findMany).mock.calls[0][0];
+    const adminCall = getMockCallArg(vi.mocked(prisma.riskIssue.findMany));
     expect(adminCall.where.visibility).toBe('public');
   });
 
@@ -398,7 +399,7 @@ describe('createRisk', () => {
       'u-1',
       TEST_TENANT_ID,
     );
-    const call = vi.mocked(prisma.riskIssue.create).mock.calls[0][0];
+    const call = getMockCallArg(vi.mocked(prisma.riskIssue.create));
     expect(call.data.riskNature).toBe(null);
   });
 
@@ -419,7 +420,7 @@ describe('createRisk', () => {
       'u-1',
       TEST_TENANT_ID,
     );
-    const call = vi.mocked(prisma.riskIssue.create).mock.calls[0][0];
+    const call = getMockCallArg(vi.mocked(prisma.riskIssue.create));
     expect(call.data.priority).toBe('low');
   });
 
@@ -429,7 +430,7 @@ describe('createRisk', () => {
       type: 'risk', title: 't', content: 'c', impact: 'high', likelihood: 'high',
       assigneeId: null, deadline: null, visibility: 'draft',
     } as never, 'u-1', TEST_TENANT_ID);
-    expect(vi.mocked(prisma.riskIssue.create).mock.calls[0][0].data.priority).toBe('high');
+    expect(getMockCallArg(vi.mocked(prisma.riskIssue.create)).data.priority).toBe('high');
   });
 
   it('PR-γ: risk 低/低 → minimal', async () => {
@@ -438,7 +439,7 @@ describe('createRisk', () => {
       type: 'risk', title: 't', content: 'c', impact: 'low', likelihood: 'low',
       assigneeId: null, deadline: null, visibility: 'draft',
     } as never, 'u-1', TEST_TENANT_ID);
-    expect(vi.mocked(prisma.riskIssue.create).mock.calls[0][0].data.priority).toBe('minimal');
+    expect(getMockCallArg(vi.mocked(prisma.riskIssue.create)).data.priority).toBe('minimal');
   });
 
   it('PR-γ: issue 重要度高/緊急度低 → medium (重要度重視)', async () => {
@@ -447,7 +448,7 @@ describe('createRisk', () => {
       type: 'issue', title: 't', content: 'c', impact: 'high', likelihood: 'low',
       assigneeId: null, deadline: null, visibility: 'draft',
     } as never, 'u-1', TEST_TENANT_ID);
-    expect(vi.mocked(prisma.riskIssue.create).mock.calls[0][0].data.priority).toBe('medium');
+    expect(getMockCallArg(vi.mocked(prisma.riskIssue.create)).data.priority).toBe('medium');
   });
 
   it('PR-γ: issue 重要度低/緊急度高 → low (重要度重視: risk と逆転)', async () => {
@@ -456,7 +457,7 @@ describe('createRisk', () => {
       type: 'issue', title: 't', content: 'c', impact: 'low', likelihood: 'high',
       assigneeId: null, deadline: null, visibility: 'draft',
     } as never, 'u-1', TEST_TENANT_ID);
-    expect(vi.mocked(prisma.riskIssue.create).mock.calls[0][0].data.priority).toBe('low');
+    expect(getMockCallArg(vi.mocked(prisma.riskIssue.create)).data.priority).toBe('low');
   });
 
   // PR #5-c (T-03 Phase 2): 本体 INSERT 後に embedding helper が呼ばれる (fail-safe)
@@ -476,7 +477,7 @@ describe('createRisk', () => {
     );
 
     expect(generateAndPersistEntityEmbedding).toHaveBeenCalledTimes(1);
-    const args = vi.mocked(generateAndPersistEntityEmbedding).mock.calls[0][0];
+    const args = getMockCallArg(vi.mocked(generateAndPersistEntityEmbedding));
     expect(args.table).toBe('risks_issues');
     expect(args.rowId).toBe('r-new');
     expect(args.tenantId).toBe(TEST_TENANT_ID);
@@ -551,7 +552,7 @@ describe('updateRisk', () => {
 
     await updateRisk('r-1', { title: 'new', state: 'resolved' }, 'u-assignee', TEST_TENANT_ID);
 
-    const call = vi.mocked(prisma.riskIssue.update).mock.calls[0][0];
+    const call = getMockCallArg(vi.mocked(prisma.riskIssue.update));
     expect(call.data.title).toBe('new');
     expect(call.data.updatedBy).toBe('u-assignee');
   });
@@ -572,7 +573,7 @@ describe('updateRisk', () => {
 
     await updateRisk('r-1', { title: 'new', state: 'resolved' }, 'u-1', TEST_TENANT_ID);
 
-    const call = vi.mocked(prisma.riskIssue.update).mock.calls[0][0];
+    const call = getMockCallArg(vi.mocked(prisma.riskIssue.update));
     expect(call.data.title).toBe('new');
     expect(call.data.state).toBe('resolved');
     expect(call.data.updatedBy).toBe('u-1');
@@ -585,7 +586,7 @@ describe('updateRisk', () => {
 
     await updateRisk('r-1', { deadline: '2026-06-01' }, 'u-1', TEST_TENANT_ID);
 
-    const call = vi.mocked(prisma.riskIssue.update).mock.calls[0][0];
+    const call = getMockCallArg(vi.mocked(prisma.riskIssue.update));
     expect(call.data.deadline).toBeInstanceOf(Date);
   });
 
@@ -602,7 +603,7 @@ describe('updateRisk', () => {
     await updateRisk('r-1', { title: 'new title' }, 'u-1', TEST_TENANT_ID);
 
     expect(generateAndPersistEntityEmbedding).toHaveBeenCalledTimes(1);
-    const args = vi.mocked(generateAndPersistEntityEmbedding).mock.calls[0][0];
+    const args = getMockCallArg(vi.mocked(generateAndPersistEntityEmbedding));
     expect(args.table).toBe('risks_issues');
     expect(args.rowId).toBe('r-1');
     expect(args.tenantId).toBe(TEST_TENANT_ID);
@@ -882,7 +883,7 @@ describe('bulkUpdateRisksVisibilityFromList', () => {
     expect(r.skippedNotOwned).toBe(1);
     expect(r.skippedNotFound).toBe(0);
 
-    const findCall = vi.mocked(prisma.riskIssue.findMany).mock.calls[0][0];
+    const findCall = getMockCallArg(vi.mocked(prisma.riskIssue.findMany));
     expect(findCall.where).toMatchObject({
       id: { in: ['r-1', 'r-2', 'r-3'] },
       deletedAt: null,
@@ -890,7 +891,7 @@ describe('bulkUpdateRisksVisibilityFromList', () => {
       riskIssueProjects: { some: { projectId: 'p-1' } },
     });
 
-    const updateCall = vi.mocked(prisma.riskIssue.updateMany).mock.calls[0][0];
+    const updateCall = getMockCallArg(vi.mocked(prisma.riskIssue.updateMany));
     // feat/asset-assignee-expansion (2026-05-26): where は OR で「作成者 OR 担当者」
     expect(updateCall.where).toMatchObject({
       id: { in: ['r-1', 'r-2'] },
@@ -931,7 +932,7 @@ describe('bulkUpdateRisksVisibilityFromList', () => {
     vi.mocked(prisma.riskIssue.updateMany).mockResolvedValue({ count: 1 } as never);
 
     await bulkUpdateRisksVisibilityFromList('p-1', ['r-1'], 'draft', 'u-1', TEST_TENANT_ID);
-    const data = vi.mocked(prisma.riskIssue.updateMany).mock.calls[0][0].data;
+    const data = getMockCallArg(vi.mocked(prisma.riskIssue.updateMany)).data;
     expect(data).toEqual({ visibility: 'draft', updatedBy: 'u-1' });
   });
 
@@ -1008,9 +1009,9 @@ describe('bulkUpdateRisksVisibilityFromList', () => {
 
       expect(r.embeddingsGenerated).toBe(2);
       expect(generateAndPersistBatchEmbeddings).toHaveBeenCalledTimes(1); // 1 ApiCallLog 集約
-      const args = vi.mocked(generateAndPersistBatchEmbeddings).mock.calls[0][0];
+      const args = getMockCallArg(vi.mocked(generateAndPersistBatchEmbeddings));
       expect(args.items).toHaveLength(2);
-      expect(args.items.map((i) => i.rowId)).toEqual(['r-1', 'r-2']);
+      expect((args.items as unknown as Array<{ rowId: string }>).map((i) => i.rowId)).toEqual(['r-1', 'r-2']);
       expect(args.featureUnit).toBe('risk-issue-embedding');
       expect(args.tenantId).toBe(TEST_TENANT_ID);
     });

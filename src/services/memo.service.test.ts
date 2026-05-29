@@ -39,6 +39,7 @@ import {
   bulkUpdateMemosVisibilityFromList,
 } from './memo.service';
 import { prisma } from '@/lib/db';
+import { getMockCallArg } from '@/lib/test-mock-helpers';
 import { generateAndPersistEntityEmbedding, generateAndPersistBatchEmbeddings } from './embedding.service';
 
 const now = new Date('2026-04-21T10:00:00Z');
@@ -83,8 +84,8 @@ describe('listMyMemos', () => {
   it('viewerTenantId 以外のメモは含めない (テナント越境防止)', async () => {
     vi.mocked(prisma.memo.findMany).mockResolvedValue([]);
     await listMyMemos('user-1', 'tenant-A');
-    const call = vi.mocked(prisma.memo.findMany).mock.calls[0][0];
-    expect((call.where as { tenantId: string }).tenantId).toBe('tenant-A');
+    const call = getMockCallArg(vi.mocked(prisma.memo.findMany));
+    expect((call.where as unknown as { tenantId: string }).tenantId).toBe('tenant-A');
   });
 });
 
@@ -111,8 +112,8 @@ describe('listPublicMemos', () => {
   it('viewerTenantId 以外の public メモは含めない (テナント越境防止)', async () => {
     vi.mocked(prisma.memo.findMany).mockResolvedValue([]);
     await listPublicMemos('user-1', 'tenant-A');
-    const call = vi.mocked(prisma.memo.findMany).mock.calls[0][0];
-    expect((call.where as { tenantId: string }).tenantId).toBe('tenant-A');
+    const call = getMockCallArg(vi.mocked(prisma.memo.findMany));
+    expect((call.where as unknown as { tenantId: string }).tenantId).toBe('tenant-A');
   });
 });
 
@@ -121,14 +122,14 @@ describe('getMemoForViewer', () => {
 
   it('存在しなければ null', async () => {
     vi.mocked(prisma.memo.findFirst).mockResolvedValue(null);
-    expect(await getMemoForViewer('x', 'user-1')).toBe(null);
+    expect(await getMemoForViewer('x', 'user-1', 'tenant-A')).toBe(null);
   });
 
   it('本人なら private でも取得可', async () => {
     vi.mocked(prisma.memo.findFirst).mockResolvedValue(
       memoRow({ userId: 'user-1', visibility: 'private' }) as never,
     );
-    const result = await getMemoForViewer('memo-1', 'user-1');
+    const result = await getMemoForViewer('memo-1', 'user-1', 'tenant-A');
     expect(result?.isMine).toBe(true);
   });
 
@@ -136,14 +137,14 @@ describe('getMemoForViewer', () => {
     vi.mocked(prisma.memo.findFirst).mockResolvedValue(
       memoRow({ userId: 'user-2', visibility: 'private' }) as never,
     );
-    expect(await getMemoForViewer('memo-1', 'user-1')).toBe(null);
+    expect(await getMemoForViewer('memo-1', 'user-1', 'tenant-A')).toBe(null);
   });
 
   it('他人の public は取得可 (isMine: false)', async () => {
     vi.mocked(prisma.memo.findFirst).mockResolvedValue(
       memoRow({ userId: 'user-2', visibility: 'public' }) as never,
     );
-    const result = await getMemoForViewer('memo-1', 'user-1');
+    const result = await getMemoForViewer('memo-1', 'user-1', 'tenant-A');
     expect(result?.isMine).toBe(false);
   });
 });
@@ -155,7 +156,7 @@ describe('createMemo', () => {
     vi.mocked(prisma.memo.create).mockResolvedValue(
       memoRow({ visibility: 'private' }) as never,
     );
-    await createMemo({ title: 't', content: 'c', visibility: 'private' }, 'user-1');
+    await createMemo({ title: 't', content: 'c', visibility: 'private' }, 'user-1', 'tenant-A');
     expect(prisma.memo.create).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ visibility: 'private' }) }),
     );
@@ -165,7 +166,7 @@ describe('createMemo', () => {
     vi.mocked(prisma.memo.create).mockResolvedValue(
       memoRow({ visibility: 'public' }) as never,
     );
-    await createMemo({ title: 't', content: 'c', visibility: 'public' }, 'user-1');
+    await createMemo({ title: 't', content: 'c', visibility: 'public' }, 'user-1', 'tenant-A');
     expect(prisma.memo.create).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ visibility: 'public' }) }),
     );
@@ -174,7 +175,7 @@ describe('createMemo', () => {
   // feat/asset-assignee-expansion (2026-05-26) severity-1: private memo に他人 assignee を拒否
   it('private memo + 他人 assignee 指定 (create) → PRIVATE_MEMO_ASSIGNEE_FORBIDDEN', async () => {
     await expect(
-      createMemo({ title: 't', content: 'c', visibility: 'private', assigneeId: 'user-other' }, 'user-1'),
+      createMemo({ title: 't', content: 'c', visibility: 'private', assigneeId: 'user-other' }, 'user-1', 'tenant-A'),
     ).rejects.toThrow('PRIVATE_MEMO_ASSIGNEE_FORBIDDEN');
     expect(prisma.memo.create).not.toHaveBeenCalled();
   });
@@ -183,7 +184,7 @@ describe('createMemo', () => {
     vi.mocked(prisma.memo.create).mockResolvedValue(
       memoRow({ visibility: 'public', assigneeId: 'user-other' }) as never,
     );
-    await createMemo({ title: 't', content: 'c', visibility: 'public', assigneeId: 'user-other' }, 'user-1');
+    await createMemo({ title: 't', content: 'c', visibility: 'public', assigneeId: 'user-other' }, 'user-1', 'tenant-A');
     expect(prisma.memo.create).toHaveBeenCalled();
   });
 });
@@ -193,7 +194,7 @@ describe('updateMemo', () => {
 
   it('存在しなければ null', async () => {
     vi.mocked(prisma.memo.findFirst).mockResolvedValue(null);
-    expect(await updateMemo('x', { title: 't2' }, 'user-1')).toBe(null);
+    expect(await updateMemo('x', { title: 't2' }, 'user-1', 'tenant-A')).toBe(null);
     expect(prisma.memo.update).not.toHaveBeenCalled();
   });
 
@@ -201,7 +202,7 @@ describe('updateMemo', () => {
     vi.mocked(prisma.memo.findFirst).mockResolvedValue(
       { userId: 'user-2', assigneeId: null } as never,
     );
-    expect(await updateMemo('memo-1', { title: 't2' }, 'user-1')).toBe(null);
+    expect(await updateMemo('memo-1', { title: 't2' }, 'user-1', 'tenant-A')).toBe(null);
     expect(prisma.memo.update).not.toHaveBeenCalled();
   });
 
@@ -211,7 +212,7 @@ describe('updateMemo', () => {
       memoRow({ title: 't2' }) as never,
     );
 
-    const result = await updateMemo('memo-1', { title: 't2' }, 'user-1');
+    const result = await updateMemo('memo-1', { title: 't2' }, 'user-1', 'tenant-A');
 
     expect(result?.title).toBe('t2');
     expect(prisma.memo.update).toHaveBeenCalled();
@@ -224,7 +225,7 @@ describe('updateMemo', () => {
     );
     vi.mocked(prisma.memo.update).mockResolvedValue(memoRow({ title: 't2' }) as never);
 
-    const result = await updateMemo('memo-1', { title: 't2' }, 'user-assignee');
+    const result = await updateMemo('memo-1', { title: 't2' }, 'user-assignee', 'tenant-A');
 
     expect(result?.title).toBe('t2');
     expect(prisma.memo.update).toHaveBeenCalled();
@@ -236,7 +237,7 @@ describe('updateMemo', () => {
       { userId: 'user-1', assigneeId: null, visibility: 'private', title: 't', content: 'c' } as never,
     );
     await expect(
-      updateMemo('memo-1', { assigneeId: 'user-other' }, 'user-1'),
+      updateMemo('memo-1', { assigneeId: 'user-other' }, 'user-1', 'tenant-A'),
     ).rejects.toThrow('PRIVATE_MEMO_ASSIGNEE_FORBIDDEN');
     expect(prisma.memo.update).not.toHaveBeenCalled();
   });
@@ -246,7 +247,7 @@ describe('updateMemo', () => {
       { userId: 'user-1', assigneeId: 'user-other', visibility: 'public', title: 't', content: 'c' } as never,
     );
     await expect(
-      updateMemo('memo-1', { visibility: 'private' }, 'user-1'),
+      updateMemo('memo-1', { visibility: 'private' }, 'user-1', 'tenant-A'),
     ).rejects.toThrow('PRIVATE_MEMO_ASSIGNEE_FORBIDDEN');
   });
 
@@ -255,7 +256,7 @@ describe('updateMemo', () => {
       { userId: 'user-1', assigneeId: null, visibility: 'private', title: 't', content: 'c' } as never,
     );
     vi.mocked(prisma.memo.update).mockResolvedValue(memoRow({ assigneeId: 'user-1' }) as never);
-    const result = await updateMemo('memo-1', { assigneeId: 'user-1' }, 'user-1');
+    const result = await updateMemo('memo-1', { assigneeId: 'user-1' }, 'user-1', 'tenant-A');
     expect(result).not.toBeNull();
   });
 });
@@ -353,7 +354,7 @@ describe('bulkUpdateMemosVisibilityFromList', () => {
     expect(r.updatedIds).toEqual(['memo-1']);
     expect(r.skippedNotOwned).toBe(1);
 
-    const call = vi.mocked(prisma.memo.updateMany).mock.calls[0][0];
+    const call = getMockCallArg(vi.mocked(prisma.memo.updateMany));
     expect(call.data).toEqual({ visibility: 'private' });
     // Memo は updatedBy 列を持たない (作成者本人のみ編集する設計、admin 特権なし)
     expect(call.data).not.toHaveProperty('updatedBy');
@@ -367,7 +368,7 @@ describe('bulkUpdateMemosVisibilityFromList', () => {
 
     const r = await bulkUpdateMemosVisibilityFromList(['memo-1'], 'public', 'u-1', 't-1');
     expect(r.updatedIds).toEqual(['memo-1']);
-    expect(vi.mocked(prisma.memo.updateMany).mock.calls[0][0].data).toEqual({ visibility: 'public' });
+    expect(getMockCallArg(vi.mocked(prisma.memo.updateMany)).data).toEqual({ visibility: 'public' });
   });
 
   // 2026-05-11: 「自分のみ」(private) で空タイトル保存されたメモを「全メンバー」(public) に
@@ -392,7 +393,7 @@ describe('bulkUpdateMemosVisibilityFromList', () => {
     expect(r.skippedEmptyTitle).toBe(2);
 
     // updateMany は memo-1 のみが対象
-    const call = vi.mocked(prisma.memo.updateMany).mock.calls[0][0];
+    const call = getMockCallArg(vi.mocked(prisma.memo.updateMany));
     expect(call.where.id.in).toEqual(['memo-1']);
   });
 
@@ -447,8 +448,8 @@ describe('bulkUpdateMemosVisibilityFromList', () => {
 
       expect(r.embeddingsGenerated).toBe(2);
       expect(generateAndPersistBatchEmbeddings).toHaveBeenCalledTimes(1);
-      const args = vi.mocked(generateAndPersistBatchEmbeddings).mock.calls[0][0];
-      expect(args.items.map((i) => i.rowId)).toEqual(['memo-1', 'memo-2']);
+      const args = getMockCallArg(vi.mocked(generateAndPersistBatchEmbeddings));
+      expect((args.items as unknown as Array<{ rowId: string }>).map((i) => i.rowId)).toEqual(['memo-1', 'memo-2']);
       expect(args.featureUnit).toBe('memo-embedding');
     });
   });
@@ -480,7 +481,7 @@ describe('Memo embedding (2026-05-15: visibility=public のみ生成)', () => {
       'tenant-A',
     );
     expect(generateAndPersistEntityEmbedding).toHaveBeenCalledOnce();
-    const arg = vi.mocked(generateAndPersistEntityEmbedding).mock.calls[0]![0];
+    const arg = getMockCallArg(vi.mocked(generateAndPersistEntityEmbedding));
     expect(arg.table).toBe('memos');
     expect(arg.rowId).toBe('m-pub');
     expect(arg.tenantId).toBe('tenant-A');
@@ -519,7 +520,7 @@ describe('Memo embedding (2026-05-15: visibility=public のみ生成)', () => {
     await updateMemo('memo-1', { visibility: 'public' }, 'user-1', 'tenant-A');
 
     expect(generateAndPersistEntityEmbedding).toHaveBeenCalledOnce();
-    expect(vi.mocked(generateAndPersistEntityEmbedding).mock.calls[0]![0].featureUnit).toBe(
+    expect(getMockCallArg(vi.mocked(generateAndPersistEntityEmbedding)).featureUnit).toBe(
       'memo-embedding',
     );
   });

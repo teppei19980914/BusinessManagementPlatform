@@ -87,7 +87,7 @@ describe('createComment', () => {
 
   it('userId を inject して comment を作る', async () => {
     vi.mocked(prisma.comment.create).mockResolvedValue(row() as never);
-    await createComment({ entityType: 'issue', entityId: 'r-1', content: 'hi' }, 'u-99');
+    await createComment({ entityType: 'issue', entityId: 'r-1', content: 'hi' }, 'u-99', 'tenant-A');
 
     const call = vi.mocked(prisma.comment.create).mock.calls[0][0]!;
     expect(call.data).toMatchObject({
@@ -239,7 +239,7 @@ describe('softDeleteCommentsForEntity (cascade 用)', () => {
 
   it('指定 entity に紐づく有効コメントを一括 soft-delete', async () => {
     vi.mocked(prisma.comment.updateMany).mockResolvedValue({ count: 2 } as never);
-    await softDeleteCommentsForEntity('issue', 'r-1');
+    await softDeleteCommentsForEntity('issue', 'r-1', 'tenant-A');
     const call = vi.mocked(prisma.comment.updateMany).mock.calls[0][0]!;
     expect(call.where).toMatchObject({ entityType: 'issue', entityId: 'r-1', deletedAt: null });
     expect(call.data.deletedAt).toBeInstanceOf(Date);

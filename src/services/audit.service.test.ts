@@ -11,6 +11,7 @@ vi.mock('@/lib/db', () => ({
 
 import { sanitizeForAudit, recordAuditLog, recordBulkAuditLogs } from './audit.service';
 import { prisma } from '@/lib/db';
+import { getMockCallArg } from '@/lib/test-mock-helpers';
 
 // PR-V8 (2026-05-19): UUID guard 追加に伴い、test 用 UUID を定数化
 const TENANT_A = '00000000-0000-0000-0000-00000000000a';
@@ -115,7 +116,7 @@ describe('recordAuditLog', () => {
       ipAddress: '10.0.0.1',
     });
 
-    const call = vi.mocked(prisma.auditLog.create).mock.calls[0][0];
+    const call = getMockCallArg(vi.mocked(prisma.auditLog.create));
     expect(call.data.beforeValue).toEqual({ name: 'old' });
     expect(call.data.afterValue).toEqual({ name: 'new' });
     expect(call.data.ipAddress).toBe('10.0.0.1');
@@ -138,7 +139,7 @@ describe('recordAuditLog', () => {
     });
 
     // data.tenantId が必ずセットされている (= DB DEFAULT 暗黙依存していない) ことの保証
-    const call = vi.mocked(prisma.auditLog.create).mock.calls[0][0];
+    const call = getMockCallArg(vi.mocked(prisma.auditLog.create));
     expect(call.data).toHaveProperty('tenantId', TENANT_X);
   });
 
@@ -154,7 +155,7 @@ describe('recordAuditLog', () => {
       entityId: TENANT_X,
     });
 
-    const call = vi.mocked(prisma.auditLog.create).mock.calls[0][0];
+    const call = getMockCallArg(vi.mocked(prisma.auditLog.create));
     expect(call.data.tenantId).toBe(TENANT_X);
     // → このログは customer-X の admin が監査ログ画面で見られる (target tenant 視点で記録されるため)
   });
@@ -259,7 +260,7 @@ describe('recordBulkAuditLogs', () => {
       afterValue: { bulk: true, batchSize: 3 },
     });
 
-    const call = vi.mocked(prisma.auditLog.createMany).mock.calls[0][0];
+    const call = getMockCallArg(vi.mocked(prisma.auditLog.createMany));
     expect(call.data).toHaveLength(3);
     expect(call.data[0].entityId).toBe(TASK_1);
     expect(call.data[2].entityId).toBe(TASK_3);
@@ -277,10 +278,10 @@ describe('recordBulkAuditLogs', () => {
       entityIds: [TASK_1, TASK_2, TASK_3],
     });
 
-    const call = vi.mocked(prisma.auditLog.createMany).mock.calls[0][0];
+    const call = getMockCallArg(vi.mocked(prisma.auditLog.createMany));
     expect(call.data).toHaveLength(3);
     // すべての行に tenantId が乗っていること
-    for (const row of call.data) {
+    for (const row of (call.data as unknown as Array<{ tenantId: string }>)) {
       expect(row.tenantId).toBe(TENANT_X);
     }
   });

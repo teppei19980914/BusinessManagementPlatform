@@ -45,7 +45,7 @@ describe('ConsoleMailProvider (PR #115: DB 記録に移行)', () => {
     await provider.send({ to: 'a@b.co', subject: 's', html: longHtml });
 
     const call = vi.mocked(prisma.systemErrorLog.create).mock.calls[0][0];
-    const context = (call.data as { context: { htmlPreview: string } }).context;
+    const context = (call.data as unknown as { context: { htmlPreview: string } }).context;
     expect(context.htmlPreview.length).toBeLessThanOrEqual(200);
     expect(context.htmlPreview).not.toContain('x'.repeat(500));
   });

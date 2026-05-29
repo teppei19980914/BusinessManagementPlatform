@@ -35,6 +35,7 @@ import {
 } from './customer.service';
 import { deleteProjectCascade } from './project.service';
 import { prisma } from '@/lib/db';
+import { getMockCallArg } from '@/lib/test-mock-helpers';
 
 const now = new Date('2026-04-23T10:00:00Z');
 
@@ -95,8 +96,8 @@ describe('getCustomer', () => {
   it('テナント越境フィルタで他テナントの顧客は取得不可 (where に tenantId 必須)', async () => {
     vi.mocked(prisma.customer.findFirst).mockResolvedValue(null);
     await getCustomer('c-1', 'tenant-A');
-    const call = vi.mocked(prisma.customer.findFirst).mock.calls[0][0];
-    expect((call.where as { tenantId: string }).tenantId).toBe('tenant-A');
+    const call = getMockCallArg(vi.mocked(prisma.customer.findFirst));
+    expect((call.where as unknown as { tenantId: string }).tenantId).toBe('tenant-A');
   });
 });
 
@@ -219,7 +220,7 @@ describe('updateCustomer', () => {
 
     await updateCustomer('c-1', { name: 'new-name' }, 'u-admin', 'tenant-A');
 
-    const callArg = vi.mocked(prisma.customer.update).mock.calls[0][0];
+    const callArg = getMockCallArg(vi.mocked(prisma.customer.update));
     const data = callArg.data as Record<string, unknown>;
     expect(data.name).toBe('new-name');
     // 明示的に undefined を渡したフィールドは data に含まれない想定
@@ -345,7 +346,7 @@ describe('deleteCustomerCascade (PR #111-2)', () => {
 
     await deleteCustomerCascade('c-1', 'tenant-A');
 
-    const call = vi.mocked(prisma.project.findMany).mock.calls[0][0];
+    const call = getMockCallArg(vi.mocked(prisma.project.findMany));
     expect(call.where).toEqual(expect.objectContaining({ deletedAt: null }));
   });
 });

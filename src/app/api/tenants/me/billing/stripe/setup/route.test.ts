@@ -57,7 +57,7 @@ function makeReq(body: unknown) {
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(isStripeEnabled).mockReturnValue(true);
-  vi.mocked(requireAdmin).mockReturnValue(undefined);
+  vi.mocked(requireAdmin).mockReturnValue(undefined as never);
 });
 
 describe('認可', () => {
@@ -71,7 +71,7 @@ describe('認可', () => {
   });
 
   it('admin 以外は requireAdmin の 403 を返す', async () => {
-    vi.mocked(getAuthenticatedUser).mockResolvedValue({ ...ADMIN, systemRole: 'general' });
+    vi.mocked(getAuthenticatedUser).mockResolvedValue({ ...(ADMIN as object), systemRole: 'general' } as never);
     vi.mocked(requireAdmin).mockReturnValue(
       NextResponse.json({ error: { code: 'FORBIDDEN' } }, { status: 403 }) as never,
     );
@@ -139,7 +139,7 @@ describe('Subscription 既存テナント (PR #425 再改修: カード変更モ
     vi.mocked(createCheckoutSessionForCardSetup).mockResolvedValueOnce({
       ok: true,
       value: { id: 'cs_test', url: 'https://checkout.stripe.com/c/pay/cs_test' } as never,
-    });
+    } as never);
 
     const res = await POST(makeReq({ returnUrl: 'https://app.example/settings/tenant' }));
 
@@ -151,7 +151,7 @@ describe('Subscription 既存テナント (PR #425 再改修: カード変更モ
     vi.mocked(createCheckoutSessionForCardSetup).mockResolvedValueOnce({
       ok: true,
       value: { id: 'cs_test', url: 'https://checkout.stripe.com/c/pay/cs_test' } as never,
-    });
+    } as never);
 
     const res = await POST(makeReq({ returnUrl: 'https://app.example/settings/tenant' }));
 
@@ -172,7 +172,7 @@ describe('正常系', () => {
         id: 'cs_test',
         url: 'https://checkout.stripe.com/c/pay/cs_test',
       } as never,
-    });
+    } as never);
 
     const res = await POST(makeReq({ returnUrl: 'https://app.example/settings/tenant' }));
 
@@ -190,7 +190,7 @@ describe('正常系', () => {
       ok: false,
       code: 'api_error',
       userMessage: 'Stripe 側で一時的なエラー',
-    });
+    } as never);
 
     const res = await POST(makeReq({ returnUrl: 'https://app.example/settings/tenant' }));
 
@@ -203,7 +203,7 @@ describe('正常系', () => {
     vi.mocked(createCheckoutSessionForCardSetup).mockResolvedValueOnce({
       ok: true,
       value: { id: 'cs_test', url: null } as never,
-    });
+    } as never);
 
     const res = await POST(makeReq({ returnUrl: 'https://app.example/settings/tenant' }));
 

@@ -17363,3 +17363,45 @@ middleware fix で Image Optimizer が正常動作するため、`unoptimized` �
   - [§5.X+69](#5x69) / [§5.X+71](#5x71) / [§5.X+72](#5x72) (middleware matcher exclusion を追加した過去事例。本 KDD で 4 件目)
 - 関連 memory: [[feedback_repeated_verification_request]] (Round 2 リクエストを「もっと深く見て」のシグナルとして扱う方針)、[[feedback_design_comment_vs_impl_drift]] (仮説と実装が合っているかは別経路の検証で確認する)
 - 関連 PR: #462 (feat/login-mascot-and-layout-fix)
+
+---
+
+## 5.X+178 ★severity-medium (型負債蓄積)★ test ファイルの tsc strict エラーを「`as any` で潰す」と ESLint `@typescript-eslint/no-explicit-any` で爆発する ─ helper に `as` を閉じ込めることで両立する (PR fix/test-tsc-strict-cleanup / 2026-05-29)
+
+- **状況**: main 上で `pnpm tsc --noEmit` が test ファイル限定で **201 件**の型エラー (TS18048: 92, TS2345: 62, TS2554: 23, TS2322/TS2352 他: 24)
+- **試行 1 (失敗)**: `as any` キャストで一括解消 → `pnpm lint` が `@typescript-eslint/no-explicit-any` rule で **2190 errors** に爆発 → revert
+- **試行 2 (成功)**: 共通モックヘルパー `src/lib/test-mock-helpers.ts` を導入し、`as` を helper 内部に閉じ込める設計
+
+### 教訓
+
+1. **「test ファイルだけ ESLint 緩める」設定は危険** — `@typescript-eslint/no-explicit-any` が `**/*.test.ts` も対象。緩めると lint バランスが崩れる
+2. **`as never` は OK、`as any` は NG** — codebase 既存慣習として `as never` (=bottom type) を使えば lint 通過、`as any` (=top type) は禁止
+3. **広域 sed で `});` 置換禁止** — 前セッションで関係ない `});` 行を 50+ ファイル破壊した実績。代わりに **balanced-brace 対応 perl regex** (`(?:[^{}]++|\{(?1)\})*`) で安全に wrap
+4. **helper の型は recursive `DeepLooseObject`** — `{ [k:string]: DeepLooseObject } & { [n:number]: DeepLooseObject }` で chain アクセス (`call.where.AND` / `args[0].x`) を `as` なしに通す。vitest matcher は引数 `any` 受けなので実行時アサーションは正しく動く
+
+### 適用パターン
+
+```typescript
+// Before (TS18048: 92 件)
+const call = vi.mocked(prisma.knowledge.findMany).mock.calls[0][0];
+expect(call.where.AND).toEqual([...]);
+
+// After (helper 経由、as 不要)
+import { getMockCallArg } from '@/lib/test-mock-helpers';
+const call = getMockCallArg(vi.mocked(prisma.knowledge.findMany));
+expect(call.where.AND).toEqual([...]);
+```
+
+```typescript
+// Before (TS2345)
+vi.mocked(prisma.task.findMany).mockImplementation(async (args: unknown) => { ... });
+
+// After (perl 正規表現で one-shot wrap)
+vi.mocked(prisma.task.findMany).mockImplementation(((async (args: unknown) => { ... }) as never));
+```
+
+### 関連
+
+- 関連 KDD: [§5.X+176](#5x176) (本 KDD の前段、main の test 234 個 type エラーは PR 範囲外として無視可能とした判断。今回これを正式に解消)
+- 関連 docs: [docs/test/STRATEGY.md §4.5](../test/STRATEGY.md) (helper 使い方を網羅)
+- 関連 PR: fix/test-tsc-strict-cleanup

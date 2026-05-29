@@ -39,7 +39,7 @@ describe('changePassword', () => {
       id: 'u1',
       passwordHash: 'hashed_real',
     } as never);
-    vi.mocked(compare).mockResolvedValueOnce(false); // 現行照合 false
+    vi.mocked(compare).mockResolvedValueOnce(false as never); // 現行照合 false
 
     const res = await changePassword('u1', 'wrong', 'new');
 
@@ -54,8 +54,8 @@ describe('changePassword', () => {
     } as never);
     // 現行照合 true, 履歴 1 件が再利用マッチ
     vi.mocked(compare)
-      .mockResolvedValueOnce(true) // 現在パスワード照合
-      .mockResolvedValueOnce(true); // 履歴 1 件目が一致
+      .mockResolvedValueOnce(true as never) // 現在パスワード照合
+      .mockResolvedValueOnce(true as never); // 履歴 1 件目が一致
     vi.mocked(prisma.passwordHistory.findMany).mockResolvedValue([
       { passwordHash: 'hashed_old' },
     ] as never);
@@ -73,9 +73,9 @@ describe('changePassword', () => {
       passwordHash: 'hashed_real',
     } as never);
     vi.mocked(compare)
-      .mockResolvedValueOnce(true) // 現在照合 ok
+      .mockResolvedValueOnce(true as never) // 現在照合 ok
       // 履歴は空
-      .mockResolvedValueOnce(true); // 新=現在 判定で一致
+      .mockResolvedValueOnce(true as never); // 新=現在 判定で一致
     vi.mocked(prisma.passwordHistory.findMany).mockResolvedValue([]);
 
     const res = await changePassword('u1', 'same', 'same');
@@ -90,8 +90,8 @@ describe('changePassword', () => {
       passwordHash: 'hashed_real',
     } as never);
     vi.mocked(compare)
-      .mockResolvedValueOnce(true) // 現行 ok
-      .mockResolvedValueOnce(false); // 新!=現行
+      .mockResolvedValueOnce(true as never) // 現行 ok
+      .mockResolvedValueOnce(false as never); // 新!=現行
     vi.mocked(prisma.passwordHistory.findMany).mockResolvedValue([]);
     vi.mocked(prisma.user.update).mockResolvedValue({} as never);
     vi.mocked(prisma.passwordHistory.create).mockResolvedValue({} as never);
@@ -118,8 +118,8 @@ describe('changePassword', () => {
       tenantId: 'tenant-A',
     } as never);
     vi.mocked(compare)
-      .mockResolvedValueOnce(true)
-      .mockResolvedValueOnce(false);
+      .mockResolvedValueOnce(true as never)
+      .mockResolvedValueOnce(false as never);
     vi.mocked(prisma.passwordHistory.findMany).mockResolvedValue([]);
     vi.mocked(prisma.user.update).mockResolvedValue({} as never);
     vi.mocked(prisma.passwordHistory.create).mockResolvedValue({} as never);

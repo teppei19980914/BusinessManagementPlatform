@@ -171,9 +171,9 @@ describe('checkProjectPermission', () => {
       isMember: false,
       projectRole: null,
       projectStatus: null,
-    });
+    } as never);
 
-    const res = await checkProjectPermission(generalUser, 'p1', 'edit_task');
+    const res = await checkProjectPermission(generalUser, 'p1', 'edit_task' as never);
 
     expect(res).toBeInstanceOf(Response);
     expect((res as Response).status).toBe(404);
@@ -184,10 +184,10 @@ describe('checkProjectPermission', () => {
       isMember: true,
       projectRole: 'member',
       projectStatus: 'active',
-    });
+    } as never);
     vi.mocked(checkPermission).mockReturnValue({ allowed: false, reason: 'ロール不足' });
 
-    const res = await checkProjectPermission(generalUser, 'p1', 'edit_task');
+    const res = await checkProjectPermission(generalUser, 'p1', 'edit_task' as never);
 
     expect(res).toBeInstanceOf(Response);
     expect((res as Response).status).toBe(403);
@@ -201,10 +201,10 @@ describe('checkProjectPermission', () => {
       isMember: true,
       projectRole: 'pm_tl',
       projectStatus: 'active',
-    });
+    } as never);
     vi.mocked(checkPermission).mockReturnValue({ allowed: true });
 
-    const res = await checkProjectPermission(generalUser, 'p1', 'edit_task');
+    const res = await checkProjectPermission(generalUser, 'p1', 'edit_task' as never);
 
     expect(res).toBe(null);
   });
@@ -214,10 +214,10 @@ describe('checkProjectPermission', () => {
       isMember: true,
       projectRole: 'member',
       projectStatus: 'active',
-    });
+    } as never);
     vi.mocked(checkPermission).mockReturnValue({ allowed: true });
 
-    await checkProjectPermission(generalUser, 'p1', 'edit_task', 'owner-xyz');
+    await checkProjectPermission(generalUser, 'p1', 'edit_task' as never, 'owner-xyz');
 
     expect(checkPermission).toHaveBeenCalledWith(
       'edit_task',
