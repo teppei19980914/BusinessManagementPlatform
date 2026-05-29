@@ -81,6 +81,14 @@ export function HelpClient({ isTenantAdmin }: Props) {
             </div>
           }
         />
+        <FaqItem
+          q="推奨ブラウザは何ですか？スマートフォンでも使えますか？"
+          a={
+            <p>
+              <strong>Chrome / Edge / Safari / Firefox</strong> の最新版を推奨します。スマートフォンのブラウザでも閲覧・操作可能 (レスポンシブ対応) ですが、CSV 取込やプロジェクト編集などの集中作業はパソコン推奨です。
+            </p>
+          }
+        />
       </FaqCategory>
 
       {/* 業務利用に関する FAQ */}
@@ -312,6 +320,22 @@ export function HelpClient({ isTenantAdmin }: Props) {
             </>
           }
         />
+        <FaqItem
+          q="通知が来ません"
+          a={
+            <p>
+              アプリ内通知は <strong>@メンションされた時のみ</strong> 画面右上のベルアイコンに表示されます。通知の ON/OFF 設定機能は現時点でありません (今後追加予定)。期待した通知が来ない場合は、コメント内で <code>@</code> を入力してメンバー名を選択することで明示的に相手に通知できます。
+            </p>
+          }
+        />
+        <FaqItem
+          q="メール通知はありますか？"
+          a={
+            <p>
+              現時点では <strong>招待メールと Beginner プラン期限警告 (60 日 / 75 日 / 90 日 / 150 日 / 170 日)</strong> のみメールで届きます。日々の操作 (コメント / 担当変更 / 期日リマインド) はアプリ内のベルアイコン通知のみです。
+            </p>
+          }
+        />
       </FaqCategory>
 
       {/* データ・プライバシー */}
@@ -426,6 +450,23 @@ export function HelpClient({ isTenantAdmin }: Props) {
           a={
             <p>
               メモには <strong>private (自分のみ) と public (全メンバーに公開) の 2 段階</strong> があります。private なメモ内で @メンションしても、相手は閲覧できません (通知も飛びません)。共有したい場合は <strong>public に変更してから</strong> @メンションしてください。
+            </p>
+          }
+        />
+        <FaqItem
+          q="利用規約・プライバシーポリシーはどこにありますか？"
+          a={
+            <p>
+              サインアップフォームの末尾と、{' '}
+              <a
+                href="https://teppei19980914.github.io/HomePage/ja/product/tasukiba-user/#terms"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-primary underline"
+              >
+                公式 LP のたすきば利用規約ページ
+              </a>
+              {' '}に掲載しています。改訂時は事前にメール通知します。
             </p>
           }
         />

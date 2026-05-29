@@ -18120,3 +18120,53 @@ return k;  // ユーザには即返却、embedding は response 後に裏で生�
 - 関連 feedback memory: [[feedback_billing_invariant]] / [[feedback_billing_4layer_classification]] / [[project_suggestion_engine_priority]]
 - 関連 source: [src/services/knowledge.service.ts](../../src/services/knowledge.service.ts) / [risk.service.ts](../../src/services/risk.service.ts) / [retrospective.service.ts](../../src/services/retrospective.service.ts) / [memo.service.ts](../../src/services/memo.service.ts) / [project.service.ts](../../src/services/project.service.ts)
 - 関連 backfill: [src/services/embedding-backfill.service.ts](../../src/services/embedding-backfill.service.ts)
+
+## §5.X+187 FAQ 文言と実装の drift 検知パターン (feat/faq-revamp PR1)
+
+**問題**: `src/app/(dashboard)/help/help-client.tsx` の FAQ 文言は、機能リリース時にコピペで作られたあと、実装側 (ADR / service / config) が改修されても **文言だけ古いまま放置** されるリスクが高い。実例として、PR1 着手時に「退会するとデータはどうなりますか？」の回答が **「30 日間の Grace 期間を経て物理削除」** と記述されていたが、実装は `beginner-expiry.service.ts` の **180 日ルール (試用 90 日 + 読み取り専用 90 日)** に置き換わって 6 ヶ月以上経過していた。ユーザに誤情報を提示し、運営側はサポート問合せで気づくまで検知できない。
+
+**結論**: FAQ 文言の drift を **再現性のある source-pattern test** で機械的に防ぐ。
+
+```ts
+// help-client.test.ts (vitest, environment: 'node')
+import { readFileSync } from 'node:fs';
+const source = readFileSync('src/app/(dashboard)/help/help-client.tsx', 'utf8');
+
+describe('退会 FAQ 実装一致 invariant', () => {
+  it('プラン別の正確な期間 (Beginner 180 日 / Expert・Pro セルフ解約) を含む', () => {
+    expect(source).toMatch(/q="退会するとデータはどうなりますか？"/);
+    expect(source).toMatch(/180 日/);
+    expect(source).toMatch(/セルフ解約/);
+    // 旧誤記の再混入防止
+    expect(source).not.toMatch(/30 日間の Grace/);
+  });
+});
+```
+
+**設計上の留意点 (4 点)**:
+
+1. **再混入防止 (`not.toMatch`) を必ず併用**: 「新しい正しい文言があるか」だけでなく「古い間違いが消えたか」を両方担保する。後者がないとリファクタ時に元に戻る (Git revert 後に test が pass してしまう)。
+2. **数値・期間は test で固定**: 90 日 / 180 日 / 25 日 / ¥15 など、ユーザに見える数値はすべて test の正規表現に明示する。実装の数値が変わった瞬間に test が落ち、FAQ 修正もれが検知できる。
+3. **FaqCategory タイトル + Q 文言は構造化アサーション**: 「請求と支払いについて」「権限とロールについて」など FaqCategory の存在自体と、その下にあるべき Q 件数を担保。カテゴリ削除や Q の見落としを防ぐ。
+4. **「使ったぶんだけ」「○○できません」など宣言的な業務ルール文言も担保**: 例えば「Pro/Expert → Beginner 戻せない」「日割り計算なし」など、後で実装が変わった場合に FAQ 更新が必要となる宣言は test に固定する。
+
+**何を避けるべきか**:
+
+- ❌ FAQ 文言を実装変更時に手動でレビューする運用 (1〜2 回は対応できるが体制崩壊で漏れる)
+- ❌ E2E spec で UI レンダリング後の文字列を assertion (Playwright wait 必要で遅い、source 直 grep の方が CI で早い)
+- ❌ 「ユーザが気づいたら直す」運用 (誤情報の期間中にサポート負荷が増え、信頼低下)
+- ❌ docs/public/*.md の手動同期だけ (FAQ コンテンツが実装変更で乖離する根本対策にならない)
+
+**横展開チェックリスト**:
+
+- [ ] 実装変更時に FAQ にも記述があるか grep (`grep -r "数値" src/app/\(dashboard\)/help/`)
+- [ ] 新規 FAQ 追加時に Q 文言 + 重要数値の assertion を test に追加したか
+- [ ] FAQ で参照している ADR/config が改訂された場合、文言更新と test 更新の両方が必要
+- [ ] docs/public/*.md にも同じ事実が書かれている場合は併せて同期 (4 軸 grep: 数値 / 表示文字列 / 自然文 / アサーション)
+
+### 関連
+
+- 関連 ADR: [ADR-0013](../adr/0013-beginner-downgrade-prohibition.md) (戻せない仕様) / [ADR-0019](../adr/0019-billable-feature-units-and-free-tier-expansion.md) (課金 featureUnit) / [ADR-0025](../adr/0025-beginner-write-guard.md) (Beginner write block) / [ADR-0026](../adr/0026-embedding-async-generation.md) (embedding 非同期 タイムラグ)
+- 関連 PR: feat/faq-pr1-urgent-billing-fix (40a919c0) / feat/faq-pr2-clarity-rewrite (b7b6bb02) / feat/faq-pr3-medium-priority (176e6e78) / feat/faq-pr4-low-priority-and-docs (本 PR)
+- 関連 feedback memory: [[feedback_design_comment_vs_impl_drift]] (3 巡目検証で同種事例を検出) / [[feedback_repeated_verification_request.md]] (深堀り検証の重要性)
+- 関連 source: [src/app/(dashboard)/help/help-client.tsx](../../src/app/(dashboard)/help/help-client.tsx) / [src/app/(dashboard)/help/help-client.test.ts](../../src/app/(dashboard)/help/help-client.test.ts) / [src/services/beginner-expiry.service.ts](../../src/services/beginner-expiry.service.ts)

@@ -255,3 +255,34 @@ describe('HelpClient PR3 新規 12 件 invariant', () => {
     expect(source).toMatch(/提案エンジン対象外/);
   });
 });
+
+/**
+ * PR4 (feat/faq-pr4-low-priority-and-docs 2026-05-29):
+ *   低優先 4 件 (通知 / メール通知範囲 / 推奨ブラウザ / 利用規約) + docs 同期 (account-setup-guide / E2E_COVERAGE / KDD §5.X+187)。
+ *   通知 ON/OFF 設定は未実装、メール通知は招待 + Beginner 期限警告のみ等、未実装の事実を正確に明示。
+ */
+describe('HelpClient PR4 低優先 4 件 invariant', () => {
+  it('「通知が来ません」FAQ が @メンション通知のみと未実装の事実を明示', () => {
+    expect(source).toMatch(/q="通知が来ません"/);
+    expect(source).toMatch(/@メンションされた時のみ/);
+    expect(source).toMatch(/通知の ON\/OFF 設定機能は現時点でありません/);
+  });
+
+  it('「メール通知はありますか？」FAQ が招待 + Beginner 期限警告のみと明示', () => {
+    expect(source).toMatch(/q="メール通知はありますか？"/);
+    expect(source).toMatch(/招待メールと Beginner プラン期限警告/);
+    // 全 5 マイルストーン (60/75/90/150/170) を含む
+    expect(source).toMatch(/60 日 \/ 75 日 \/ 90 日 \/ 150 日 \/ 170 日/);
+  });
+
+  it('「推奨ブラウザ / スマホ」FAQ が主要 4 ブラウザ + レスポンシブ対応を明示', () => {
+    expect(source).toMatch(/q="推奨ブラウザは何ですか？スマートフォンでも使えますか？"/);
+    expect(source).toMatch(/Chrome \/ Edge \/ Safari \/ Firefox/);
+    expect(source).toMatch(/レスポンシブ対応/);
+  });
+
+  it('「利用規約・プライバシーポリシー」FAQ が LP 公式 URL を明示', () => {
+    expect(source).toMatch(/q="利用規約・プライバシーポリシーはどこにありますか？"/);
+    expect(source).toMatch(/teppei19980914\.github\.io\/HomePage\/ja\/product\/tasukiba-user\/#terms/);
+  });
+});
