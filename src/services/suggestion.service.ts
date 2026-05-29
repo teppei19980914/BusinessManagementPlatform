@@ -46,6 +46,7 @@ import {
   SUGGESTION_EMBEDDING_WEIGHT_DEGRADED as EMBEDDING_WEIGHT_DEGRADED,
   SUGGESTION_SCORE_THRESHOLD as SCORE_THRESHOLD,
   SUGGESTION_DEFAULT_LIMIT as DEFAULT_LIMIT,
+  SUGGESTION_INLINE_MAX_RESULTS,
 } from '@/config';
 import {
   isSuggestionEngineDisabled,
@@ -987,8 +988,11 @@ export async function linkKnowledgeToProject(
  * suggestForProject と似た処理だが、以下の点で最適化:
  *   - 呼び出し側が Project コンテキストを渡さなくていい (ユーザ入力 text を直接受け取る)
  *   - Knowledge や Retrospective は返さない (起票中は「他に発生例はあるか」のみ必要)
- *   - 件数上限を 5 件に絞る (起票中は画面占有を最小化したい)
+ *   - 件数上限を `SUGGESTION_INLINE_MAX_RESULTS` (= 5 件) に絞る (起票中は画面占有を最小化したい)
  *   - 閾値を少し高く (0.08) して weak match を除く
+ *
+ * 2026-05-29 改修: 件数上限を hardcoded 5 → SUGGESTION_INLINE_MAX_RESULTS 定数化
+ * (KDD §5.X+181 / コメント vs 実装 drift 予防、UI 層の SUGGESTION_TIER_STRONG_INITIAL_VISIBLE と独立)
  */
 export async function suggestRelatedIssuesForText(
   inputText: string,
@@ -1051,5 +1055,5 @@ export async function suggestRelatedIssuesForText(
   return scored
     .filter((s) => s.score >= 0.08)
     .sort((a, b) => b.score - a.score)
-    .slice(0, 5);
+    .slice(0, SUGGESTION_INLINE_MAX_RESULTS);
 }

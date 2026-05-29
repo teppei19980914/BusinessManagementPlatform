@@ -185,9 +185,13 @@ describe('ChatPanel 会話履歴の永続化 invariant (H-1 / H-2)', () => {
 });
 
 describe('ChatPanel 結果表示のアコーディオン invariant (H-3 / H-4)', () => {
-  it('strong tier の初期表示件数を 5 件に制限する (STRONG_INITIAL_VISIBLE = 5)', () => {
-    expect(source).toMatch(/STRONG_INITIAL_VISIBLE\s*=\s*5/);
-    expect(source).toMatch(/strong\.slice\(0,\s*STRONG_INITIAL_VISIBLE\)/);
+  it('strong tier の初期表示件数は config の SUGGESTION_TIER_STRONG_INITIAL_VISIBLE を参照する (2026-05-29 DRY 化: suggestions-panel と共有)', () => {
+    // 旧: chat-panel.tsx 内に local const STRONG_INITIAL_VISIBLE = 5 を保持。
+    // 新: @/config/suggestion から共有定数を import (suggestions-panel と DRY)。
+    expect(source).toMatch(/import\s*\{[\s\S]*?SUGGESTION_TIER_STRONG_INITIAL_VISIBLE[\s\S]*?\}\s*from\s*'@\/config\/suggestion'/);
+    expect(source).toMatch(/strong\.slice\(0,\s*SUGGESTION_TIER_STRONG_INITIAL_VISIBLE\)/);
+    // local const は撤去されている。
+    expect(source).not.toMatch(/const\s+STRONG_INITIAL_VISIBLE\s*=/);
   });
 
   it('strong tier の 6 件目以降はアコーディオン (strongExpanded) で展開する', () => {

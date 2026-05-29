@@ -17507,3 +17507,324 @@ curl -IL https://tasukiba.com/ 2>&1 | grep callback-url
 - 関連 ADR: [ADR-0023](../adr/0023-netlify-starter-migration.md) (Netlify 移行決定、本 KDD で `tasukiba.com` 注記を追加)
 - 関連 feedback memory: [[feedback_repeated_verification_request]] (フルスキャン 2 観点で 0 件確認 = 設計品質の証拠) / [[feedback_branch_verification]] (main 同期確認) / [[feedback_design_comment_vs_impl_drift]] (コメント vs 実装の整合確認、本 PR では JSDoc も同時更新)
 - 関連 PR: PR #464 (`chore(domain): 本番 URL を tasukiba.com 独自ドメインに切替`)
+
+---
+
+## 5.X+180 **★UX 向上★ Tier UI の Top 5 + 中程度の関連 折りたたみ統一 ─ 姉妹機能 (chat-panel) で先行検証済みパターンを本丸 (suggestions-panel) に展開、共有定数で DRY 維持 (2026-05-29 / `feat/suggestion-tier-ux-improvement`)**
+
+### 事象
+
+提案機能の核心 UI ([suggestions-panel.tsx](../../src/app/(dashboard)/projects/[projectId]/suggestions/suggestions-panel.tsx)) は PR-X6 (2026-05-07) で段階表示 (strong / medium / weak) を導入したが、以下の課題が残っていた:
+
+1. **強く関連** が **件数制限なし** で全件初期表示 — N 件 (最大 50 件 × 4 カテゴリ = 200 件) のスクロールを強いる
+2. **「関連の可能性」** ラベルが「弱い関連性」との差分が伝わりにくい (2026-05-27 ユーザ実機確認フィードバック)
+3. **「関連の可能性」** がデフォルト展開で、初期の視覚密度が高すぎる
+
+一方で、姉妹機能であるチャット意味検索 ([chat-panel.tsx](../../src/components/chat-semantic-search/chat-panel.tsx)) は feat/chat-history-and-accordion (H-3, H-4 / 2026-05-28) で既に解決パターンを実装済み:
+- strong: 初期 5 件 + 6 件目以降アコーディオン (`STRONG_INITIAL_VISIBLE = 5` local const)
+- medium: デフォルト折りたたみ
+- ラベル「中程度の関連」改称
+- `docs/specification/CHAT_SEMANTIC_SEARCH.md` / `docs/public/chat-semantic-search-guide.md` にも仕様反映済
+
+### 真の根本原因 (横展開漏れ)
+
+`chat-panel` での UX 改善は **2026-05-28 リリース時点では chat-panel に閉じた改修** だった。同じ tier データ構造を使う **suggestions-panel への横展開がワンテンポ遅れた**。結果として:
+
+- ユーザは「提案機能」と「チャット意味検索」で **同じ tier ラベルなのに違う UI 挙動** を体験する不整合
+- `STRONG_INITIAL_VISIBLE = 5` の同値が **chat-panel local const として閉じ込められ**、suggestions-panel での再利用が不可能
+
+### 解決パターン (2026-05-29 横展開)
+
+#### Step 1: 共有定数の昇格 (`@/config/suggestion`)
+
+```ts
+// src/config/suggestion.ts
+/**
+ * 強く関連 (strong tier) の初期可視件数。これ以上は UI でアコーディオン折りたたみ。
+ * 2026-05-29 改定: chat-panel と suggestions-panel で共有する DRY 化。
+ */
+export const SUGGESTION_TIER_STRONG_INITIAL_VISIBLE = 5;
+```
+
+- `chat-panel.tsx` の `const STRONG_INITIAL_VISIBLE = 5` を削除して config import に置換
+- `suggestions-panel.tsx` も同じ import を追加
+- 1 つの真値が **両 UI で同じ意味を持つ** ことが型と命名で保証される
+
+[[feedback_client_service_boundary]] の「閾値定数は @/config/* に分離する」原則と整合 (Client Component → service の value import 禁止ルールの正攻法側)。
+
+#### Step 2: 同型 toggle helper による 3 tier 共通化
+
+```tsx
+// suggestions-panel.tsx
+type SuggestionCategory = 'knowledge' | 'issue' | 'risk' | 'retrospective';
+const [expandedStrong, setExpandedStrong] = useState<Set<SuggestionCategory>>(new Set());
+const [expandedMedium, setExpandedMedium] = useState<Set<SuggestionCategory>>(new Set());
+const [expandedWeak, setExpandedWeak] = useState<Set<SuggestionCategory>>(new Set());
+
+const makeToggle = (setter) => (category) => {
+  setter((prev) => {
+    const next = new Set(prev);
+    if (next.has(category)) next.delete(category); else next.add(category);
+    return next;
+  });
+};
+const toggleStrong = makeToggle(setExpandedStrong);
+const toggleMedium = makeToggle(setExpandedMedium);
+const toggleWeak = makeToggle(setExpandedWeak);
+```
+
+- 3 つの toggle 関数を 1 つの `makeToggle` factory で生成 → 旧 `toggleWeak` 単体実装の重複を解消
+- chat-panel と異なり suggestions-panel は **4 カテゴリ × 3 tier** の状態を持つため `Set<Category>` 構造で管理 (chat-panel は 1 ターン内で完結するため boolean × 3)
+
+#### Step 3: i18n キーの追加
+
+```json
+// ja.json
+"tierMediumLabel": "中程度の関連 ({count} 件)",        // 旧: 関連の可能性
+"tierMediumDescription": "強く関連ほどではありませんが、中程度の関連性がある候補です。…",
+"expandStrongRest": "▶ さらに {count} 件を表示",       // 新規
+"collapseStrongRest": "▼ さらに表示中 ({count} 件)",   // 新規
+"expandMediumSection": "中程度の関連も表示する",        // 新規
+"collapseMediumSection": "中程度の関連を折りたたむ"     // 新規
+```
+
+en-US.json も同時更新 (`Moderately related` / `Show {count} more` 等)。
+
+### 教訓 — 横展開の遅延を防ぐ運用ルール
+
+1. **姉妹機能の UX 改善は同 PR で横展開する** ─ 「先に chat-panel だけ直して、suggestions-panel は別 PR で」というアプローチは UX 整合性の deficit を生む。同 PR でカバレッジを揃えるべき。
+
+2. **データ構造を共有する UI は定数も共有する** ─ `tier` 型を共有していたのに `STRONG_INITIAL_VISIBLE` が local const なのは設計の matching mismatch。「両者で同じ値を使うべき定数」は config に export することを暗黙の制約として明文化する。
+
+3. **仕様書先行・実装後追いパターンの注意** ─ `docs/specification/CHAT_SEMANTIC_SEARCH.md` には 2026-05-28 改定時点で suggestions-panel パターンも記述したかったが、`SUGGESTION_FEATURE.md` 側を同時に更新するのは漏れていた。**「姉妹仕様書」の整合性も同 PR で確認すべき** ([[feedback_3layer_sync_filter]] の派生)。
+
+4. **UX 改善 PR は KDD §5.X+112 (一覧画面横展開) と同じ思想を継承** ─ 「ある画面で良い体験を作ったら、同じ概念を使う全画面に展開する」を機械的に運用する。
+
+### 効果 (定量)
+
+- 提案画面の **初期視覚密度**: 4 カテゴリ × (strong 全件 + medium 全件) → 4 カテゴリ × strong 上位 5 件のみ (medium/weak 折りたたみ)
+  - 最大ケース (各カテゴリ strong 50 件・medium 50 件・weak 50 件): 旧 600 行表示 → 新 20 行表示 (97% 削減)
+  - 典型ケース (各カテゴリ strong 8 件・medium 12 件・weak 30 件): 旧 200 行表示 → 新 20 行表示 (90% 削減)
+- **ラベル理解度**: 「関連の可能性 vs 弱い関連性」の差分が伝わらない問題を「強い ↔ 中程度 ↔ 弱い」のグラデーションで解消
+- **UX 一貫性**: chat-panel と suggestions-panel が同じ折りたたみ操作で同じ概念を扱う
+
+### 関連
+
+- 関連 KDD: [§5.X+112](#5x112) (一覧画面横展開思想 = 良い体験を機械的に全画面展開) / [§5.X+172](#5x172) (コメント vs 実装の drift)
+- 関連 docs: [docs/specification/SUGGESTION_FEATURE.md §3.6](../specification/SUGGESTION_FEATURE.md) (UI 段階表示と初期可視性) / [docs/design/SUGGESTION_ENGINE.md §B-4-1](../design/SUGGESTION_ENGINE.md) / [docs/specification/CHAT_SEMANTIC_SEARCH.md](../specification/CHAT_SEMANTIC_SEARCH.md) (姉妹実装) / [docs/public/about.md §3-2](../public/about.md) (「上位 5 件で判断できる」哲学)
+- 関連 feedback memory: [[feedback_client_service_boundary]] (config 分離原則) / [[feedback_3layer_sync_filter]] (同期修正の発想) / [[feedback_decide_dont_ask]] (細部判断は即実行)
+- 関連 PR: `feat/suggestion-tier-ux-improvement` (本 PR)
+
+---
+
+## 5.X+181 **★cron 運用 3 つの罠★ cron 409 は「失敗」ではなく advisory lock 防御 / 「未登録の cron」は本番必須機能の可能性大 / 新規 cron 追加時は CRON_JOBS metadata も同時追加必須 (2026-05-29 / `feat/suggestion-tier-ux-improvement` / PR #464 follow-up)**
+
+### 背景
+
+[KDD §5.X+179](#5x179) (独自ドメイン移行) のフォロースルーで cron-job.org の全 cron URL を `tasukiba.netlify.app` → `tasukiba.com` に更新中、3 つの「直感に反する罠」を確認:
+
+1. attachment-embedding が **HTTP 409 Failed** を散発的に出していた
+2. cron-job.org に **`billing-monthly-aggregation` が登録されている** が、`src/config/cron-jobs.ts` の `CRON_JOBS` Record に未登録 → super_admin の cron-history UI で「未登録の cron」表示 → 「不要なら削除可?」と user に誤質問させてしまった (実態は本番必須機能)
+3. 1 回目に cron 一覧を user に提示した際、`src/config/cron-jobs.ts` を確認せず記憶ベースで列挙したため **存在しない cron 名 3 件** (`stripe-dlq-retry` / `stripe-overage-snapshot` / `beginner-expiry-warning`) を提示し user 作業を二度手間化
+
+### 罠 1: cron 409 Conflict は「失敗」ではなく advisory lock 防御 (= 設計通り)
+
+**症状**: cron-job.org の History で `Failed (HTTP error) 409 Conflict` 表示。一見「エンドポイントが壊れた」「タイムアウト」と誤解する。
+
+**真因**: [src/lib/cron-execution-log.ts:66-85](../../src/lib/cron-execution-log.ts#L66-L85) の `withCronExecutionLogging` が **PostgreSQL advisory lock** で同名 cron の並列実行を non-blocking 判定で防いでいる:
+
+```ts
+const lockKey = hashCronNameToBigint(cronName);
+const lockAcquired = await tryAcquireAdvisoryLock(lockKey);
+if (!lockAcquired) {
+  // 既に同名 cron が走行中 → 本実行はスキップ
+  await safeCreateRunningLog(cronName, invokerIp, 'skipped_concurrent');
+  return NextResponse.json(
+    { error: { code: 'CRON_ALREADY_RUNNING', cronName } },
+    { status: 409 },
+  );
+}
+```
+
+これは PR feat/crud-permission-redesign (2026-05-20, 2 巡目検証 S1-G1) で導入された **二重実行による DB 重複書込防止** の正常動作。
+
+**発生条件**: cron 実行間隔 < 1 回の処理時間 となるケース。実例:
+- `attachment-embedding`: 間隔 10 分 / 処理 2-11 秒 (重い添付 = PDF 抽出 + Voyage embedding で 11 秒越え)
+- → 12:00 開始 (10.7 秒) → 12:10 開始時に前回がまだ DB transaction commit 直前で lock 保持中 → 409
+
+**判別方法**:
+- HTTP status 409 + body `{"error":{"code":"CRON_ALREADY_RUNNING"}}` → advisory lock 防御 (正常)
+- HTTP status 401 + body `{"error":{"code":"UNAUTHENTICATED"}}` → CRON_SECRET 不一致
+- HTTP status 500 + body `{"error":{"code":"CRON_EXECUTION_FAILED"}}` → 真の処理失敗
+- HTTP status timeout / 504 → Netlify Function 10s 超過
+
+**対応指針**: 散発的 409 は無視で OK (設計通り)。連続 3 回以上続く場合は cron 間隔を伸ばす or 処理を chunk 化 検討。
+
+### 罠 2: 「未登録の cron」表示は「削除可能」を意味しない (= 本番必須機能の metadata 漏れ)
+
+**症状**: cron-job.org に登録済の cron が super_admin `/cron-history` UI で「(未登録の cron: billing-monthly-aggregation)」と表示される ([src/config/cron-jobs.ts:164](../../src/config/cron-jobs.ts#L164) `getCronDescription` の fallback)。
+
+**直感**: 「未登録ならコードからも消えていて、削除しても問題ないのでは?」
+
+**実態**: ❌ **削除厳禁の本番必須機能** だった。fullscan で 10 ファイル参照を確認:
+- API route 本体実装: [src/app/api/cron/billing-monthly-aggregation/route.ts](../../src/app/api/cron/billing-monthly-aggregation/route.ts)
+- 集計サービス: [src/services/billing-aggregation.service.ts](../../src/services/billing-aggregation.service.ts) + テスト 10 件
+- **請求不整合修復経路**: [src/services/billing-integrity.service.ts:17](../../src/services/billing-integrity.service.ts#L17) で「修復は該当月の `billing-monthly-aggregation` 再実行」と明記
+- PUBLIC_PATHS 登録: [src/config/routes.ts:67](../../src/config/routes.ts#L67)
+- docs 3 ファイル: CRON.md / STRIPE_SETUP.md / E2E_COVERAGE.md
+- 監査 G1 (S 優先度): route.ts コメント明記
+
+**削除した場合の影響 (severity-1)**:
+- 🔴 invoice / bank_transfer 払いテナントの月次請求が自動集計されない
+- 🔴 BillingHistory に月次レコードが作られない → 請求書送付不能 → **収益喪失**
+- 🔴 監査要件違反
+
+**真の問題**: `src/config/cron-jobs.ts` の `CRON_JOBS` Record への追加漏れ。本 PR で修正:
+
+```ts
+// PR-V7a (2026-05-19): invoice 月次集計 (2026-05-29 metadata 追加)
+'billing-monthly-aggregation': {
+  description:
+    'invoice / bank_transfer 払いテナントの月次請求を集計し BillingHistory に upsert する。'
+    + ' credit_card は Stripe Webhook で自動同期されるため対象外。',
+  schedule: '月初 2 日 09:00 JST',
+  endpoint: '/api/cron/billing-monthly-aggregation',
+  expectedMaxGapHours: 35 * 24,
+},
+```
+
+### 罠 3: 「列挙系の事実」を記憶ベースで提示すると user 作業を二度手間化
+
+**症状**: PR #464 のドメイン移行時、user に「cron-job.org で更新すべき 8 件のリスト」として記憶ベースで提示。実際は 3 件が存在せず (`stripe-dlq-retry` / `stripe-overage-snapshot` / `beginner-expiry-warning`)、別の 8 件が正しい一覧だった。user が cron-job.org の実画面で照合した時点で齟齬発覚 → 再提示 → user から「情報は正確性を厳守してください」と明示的指摘あり。
+
+**原因**: cron 名のように「外部状態 (cron-job.org 設定) と内部 config (`CRON_JOBS` Record) が一致するべき」もので、記憶やパターン推測で代用してしまった。
+
+**対応**: [[feedback_verify_source_before_listing]] memory として確立。列挙系の事実は **必ず該当する source of truth (config file / route file / env example) を Read or Grep してから列挙する**。記憶では絶対に列挙しない。
+
+### 横展開の指針 (新規 cron 追加時)
+
+新しい cron route を追加する際は **必ず以下 5 セット同時更新**:
+
+1. API route 実装 ([src/app/api/cron/{name}/route.ts](../../src/app/api/cron/))
+2. `src/config/cron-jobs.ts` の **`CRON_JOBS` Record にメタデータ追加** ← 漏らすと watchdog 対象外 + UI で「未登録」表示
+3. `src/config/routes.ts` の `PUBLIC_PATHS` に追加 (CRON_SECRET 認可のため)
+4. `docs/operations/CRON.md` の cron 一覧表に追記
+5. (cron-job.org への登録は本番デプロイ後に手動で実施、KDD §5.X+179 参照)
+
+ESLint / TypeScript では 1-4 の整合性を機械的にチェックできない (= 文字列 key ベース) ため、**新規 cron 追加 PR では reviewer が grep で照合する** 運用が必要。将来的には [src/services/cron-health.service.ts](../../src/services/cron-health.service.ts) に「CRON_JOBS に登録があるのに cron_execution_logs に N ヶ月記録がない (= cron-job.org 登録漏れ)」「cron_execution_logs にあるが CRON_JOBS に登録なし (= metadata 漏れ)」の double-check ロジックを入れる選択肢あり。
+
+### 関連
+
+- 関連 KDD: [§5.X+72](#5x72) (cron-execution-log 設計) / [§5.X+86](#5x86) (advisory lock 関連) / [§5.X+179](#5x179) (本セッションの前段、ドメイン移行)
+- 関連 docs: [docs/operations/CRON.md](../operations/CRON.md) / [docs/operations/STRIPE_SETUP.md](../operations/STRIPE_SETUP.md)
+- 関連 feedback memory: [[feedback_verify_source_before_listing]] (新規確立、本セッション罠 3 起因) / [[feedback_cron_watchdog_pattern]] (cron 監視 2 段構え) / [[feedback_design_comment_vs_impl_drift]] (コメント vs 実装の乖離)
+- 関連 PR: `feat/suggestion-tier-ux-improvement` (本 PR、CRON_JOBS Record に `billing-monthly-aggregation` 追加 + KDD §5.X+179/+180/+181)
+
+---
+
+## 5.X+182 **★severity-high (UX 一貫性バグ)★ 姉妹 UI コンポーネントへのパターン横展開時、i18n placeholder の `{count}` セマンティクスをコピーし忘れた ─ フルスキャン検証 2 巡目で「同じラベルなのに片方は全件数・もう片方は折りたたみ件数」を検出 (2026-05-29 / PR #465 follow-up)**
+
+### 事象
+
+PR #465 で chat-panel.tsx の Top 5 + medium 折りたたみパターンを suggestions-panel.tsx に横展開した際、i18n キー `collapseStrongRest` に渡す `{count}` placeholder の値が **両 UI で意味的に異なる** バグが混入した。
+
+```tsx
+// chat-panel.tsx (原本、2026-05-28)
+`▼ さらに表示中 (${strongRest.length}件)`  // ← strongRest.length (折りたたまれていた件数)
+
+// suggestions-panel.tsx (横展開時、2026-05-29 初版で混入)
+t('collapseStrongRest', { count: grouped.strong.length })  // ← grouped.strong.length (全件数) ★バグ★
+```
+
+文言は両者とも「**▼ さらに表示中 ({count} 件)**」だが、表示される数字が:
+- chat-panel: 「(折りたたみで新たに見える 5 件)」
+- suggestions-panel: 「(strong tier 全体 13 件)」
+
+を意味する不整合。同じ tier ラベル下でユーザに混乱を与える severity-high な UX バグ。
+
+### 検出経緯 (フルスキャン検証 2 巡目)
+
+[[feedback_repeated_verification_request]] (同じフルスキャン依頼の繰り返し = 「もっと深く見て」のシグナル) に従い、2 巡目検証で chat-panel と suggestions-panel の **placeholder 値の意味比較** を実施。
+
+- 1 巡目: 「実装した」「品質ゲート PASS した」を確認し PR 作成
+- 2 巡目: ユーザ依頼で「セキュリティ + 横断的整合 + デグレ確認」を網羅実施 → **検出**
+
+### 真の根本原因
+
+「姉妹 UI コンポーネントへの横展開」では **コード構造 (state / handler / JSX) はコピーするが、placeholder 値の意味まで verify するチェックリストが無い**。
+
+- ✅ verify したこと: state 名、toggle 関数、JSX 構造、aria 属性
+- ❌ verify しなかったこと: **t() に渡す引数の値が原本と意味的に一致するか**
+
+i18n key 文字列だけ見ても「{count} がどこから来るか」は読み取れない。実装側でしか追えない。
+
+### 解決パターン
+
+#### 1. 即時 fix: count を strongRest.length に統一
+
+```tsx
+// suggestions-panel.tsx (修正後)
+t('collapseStrongRest', { count: strongRest.length })  // ← chat-panel と同じ意味
+```
+
+両 UI で `{count}` = 「折りたたみで新たに見える件数」 として統一。
+
+#### 2. 横展開時の verify チェックリスト (本 KDD で確立)
+
+姉妹 UI コンポーネントへのパターン横展開時は **以下 4 観点** を必ず diff で並べて検証する:
+
+| # | 観点 | 例 |
+|---|---|---|
+| 1 | 共有定数の参照一致 | 両 UI が同じ config 定数を import している |
+| 2 | state 構造の意味一致 | useState 初期値 + 型が一致、独立性が保たれている |
+| 3 | **i18n placeholder 値の意味一致** ← 本 KDD で追加 | `t(key, { count: X })` の X が両 UI で同じセマンティクスか |
+| 4 | a11y 属性の付与一致 | aria-expanded / aria-controls / role が両 UI で揃う |
+
+#### 3. テストレイヤでの担保
+
+`suggestions-panel.test.ts` (新規作成) に明示的な expectation を追加:
+
+```ts
+it('strong tier アコーディオンの count は両方向 (展開/折りたたみ) で strongRest.length に統一', () => {
+  expect(source).toMatch(/t\(['"]collapseStrongRest['"],\s*\{\s*count:\s*strongRest\.length\s*\}\)/);
+  expect(source).toMatch(/t\(['"]expandStrongRest['"],\s*\{\s*count:\s*strongRest\.length\s*\}\)/);
+  expect(source).not.toMatch(/t\(['"]collapseStrongRest['"],\s*\{\s*count:\s*grouped\.strong\.length\s*\}\)/);
+});
+```
+
+これにより、将来の re-introduction を CI で防御。
+
+### 同 PR で発見・対応した 2 件目: hardcoded `5` の意味重複
+
+`suggestRelatedIssuesForText` ([src/services/suggestion.service.ts:1054](../../src/services/suggestion.service.ts)) で `.slice(0, 5)` の hardcoded `5` を `SUGGESTION_INLINE_MAX_RESULTS` 定数化。
+
+- 数値は `SUGGESTION_TIER_STRONG_INITIAL_VISIBLE` と同値 (= 5) だが、**意味が異なる**:
+  - 前者: service 層で返却する候補総数 (起票ダイアログの画面占有最小化)
+  - 後者: UI 層で初期表示する strong tier の件数
+
+「たまたま同値の hardcoded」を放置すると、将来片方を tuning した時に **どちらも変えるべきか / 片方だけ変えるか** が判断できない。意味で分離するため別定数化。
+
+### 同 PR で発見・対応した 3 件目: a11y aria-controls 欠落
+
+WCAG 1.3.1 (Info and Relationships) で求められる **toggle button と展開コンテンツの関連付け** が欠落していた。3 つの toggle button すべてに `aria-controls` と対応する `id` 属性を付与:
+
+```tsx
+<button aria-controls={`suggestion-medium-content-${category}`} ... />
+{isMediumExpanded && <div id={`suggestion-medium-content-${category}`}>...</div>}
+```
+
+スクリーンリーダーで「展開ボタン」とコンテンツの関係が伝わるようになる。
+
+### 教訓
+
+1. **横展開時の verify は「コード構造」より「動作意味」を優先** ─ コピペできれいに見えても、コード生成 AI が引数値を誤って書き換える可能性は常にある。i18n placeholder のように「文言は同じだが値が違う」バグは静的解析・型システムをすり抜ける。
+2. **同値の hardcoded は意味で分離** ─ 数値が同じでも意味が異なるなら別定数。将来の tuning 時の判断材料になる ([[feedback_design_comment_vs_impl_drift]] の派生)。
+3. **フルスキャン検証は必ず複数回・観点を変えて実施** ─ 1 巡目で「実装した」「PASS した」を確認しても、UX 一貫性のバグは別観点でないと出てこない。本 KDD §5.X+182 のケースは [[feedback_repeated_verification_request]] が機能した好例。
+4. **source pattern test で UI 不変項を機械的に固定** ─ `chat-panel.test.ts` 同等の `suggestions-panel.test.ts` を作ることで、両 UI の構造的差分を CI で検知可能にした。
+
+### 関連
+
+- 関連 KDD: [§5.X+180](#5x180) (本セッション主 KDD、姉妹 UI パターンの横展開) / [§5.X+172](#5x172) (コメント vs 実装 drift / 同根原因) / [§5.X+162](#5x162) (UI ラベル変更時の grep 漏れ)
+- 関連 docs: [docs/specification/SUGGESTION_FEATURE.md §3.6](../specification/SUGGESTION_FEATURE.md) (UI 段階表示仕様) / [docs/specification/CHAT_SEMANTIC_SEARCH.md](../specification/CHAT_SEMANTIC_SEARCH.md) (姉妹実装)
+- 関連 feedback memory: [[feedback_repeated_verification_request]] (フルスキャン依頼の深掘りシグナル、本ケースで検出に寄与) / [[feedback_design_comment_vs_impl_drift]] (drift 予防原則) / [[feedback_sibling_ui_pattern_horizontal_rollout]] (新規確立、姉妹 UI 横展開時の 4 観点 verify ルール)
+- 関連 PR: PR #465 (`feat/suggestion-tier-ux-improvement` follow-up commit)

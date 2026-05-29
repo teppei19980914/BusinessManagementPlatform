@@ -39,6 +39,7 @@ import { cn } from '@/lib/utils';
 import {
   CHAT_SEARCH_INPUT_MAX_CHARS,
   CHAT_SEARCH_INPUT_WARN_THRESHOLD,
+  SUGGESTION_TIER_STRONG_INITIAL_VISIBLE,
 } from '@/config/suggestion';
 import { CHAT_PERSONA } from '@/config';
 import type {
@@ -80,9 +81,6 @@ type ChatTurn = {
  * 旧 key のデータは parse 失敗 → 空配列フォールバックで自動的に切り捨てられる。
  */
 const HISTORY_STORAGE_KEY = 'tasukiba_chat_history_v1';
-
-/** strong tier の初期表示件数。これを超えるとアコーディオン折りたたみ。 */
-const STRONG_INITIAL_VISIBLE = 5;
 
 /**
  * 保持する会話ターンの上限件数。
@@ -630,9 +628,9 @@ function ChatResults({
   const medium = allHits.filter((h) => h.tier === 'medium').sort((a, b) => b.score - a.score);
   const weak = allHits.filter((h) => h.tier === 'weak').sort((a, b) => b.score - a.score);
 
-  // H-3: strong tier の表示分割。初期は上位 STRONG_INITIAL_VISIBLE 件、それ以降は折りたたみ。
-  const strongInitial = strong.slice(0, STRONG_INITIAL_VISIBLE);
-  const strongRest = strong.slice(STRONG_INITIAL_VISIBLE);
+  // H-3: strong tier の表示分割。初期は上位 SUGGESTION_TIER_STRONG_INITIAL_VISIBLE 件、それ以降は折りたたみ。
+  const strongInitial = strong.slice(0, SUGGESTION_TIER_STRONG_INITIAL_VISIBLE);
+  const strongRest = strong.slice(SUGGESTION_TIER_STRONG_INITIAL_VISIBLE);
 
   // C-4: session 読み込み中は memo リンクを disable する判定関数。
   const isCardDisabled = (hit: ChatSearchHit): boolean =>

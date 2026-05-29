@@ -1,14 +1,20 @@
 'use client';
 
 /**
- * SuggestionsPanel (PR #65 核心機能 + PR-X6 段階表示):
+ * SuggestionsPanel (PR #65 核心機能 + PR-X6 段階表示 + 2026-05-29 UX 改修):
  *   プロジェクトに対するナレッジ / 過去課題 / 過去振り返りの提案リストを
- *   3 段階 (強く関連 / 関連の可能性 / 弱い関連性) で表示し、採用操作を行う。
+ *   3 段階 (強く関連 / 中程度の関連 / 弱い関連性) で表示し、採用操作を行う。
  *
  *   PR-X6 (2026-05-07) で段階表示 (Tiered Display) を導入。
- *   - 強く関連: 最初から表示、目立つ装飾
- *   - 関連の可能性: 通常表示
- *   - 弱い関連性: 折りたたみデフォルト (clicker で展開可能、情報過多回避)
+ *   2026-05-29 UX 改修 (chat-panel.tsx 2026-05-28 改定パターンの展開):
+ *     - 強く関連: 初期 SUGGESTION_TIER_STRONG_INITIAL_VISIBLE (= 5) 件のみ表示、
+ *       6 件目以降は「▶ さらに N 件を表示」アコーディオン (デフォルト閉じ)
+ *     - 中程度の関連 (旧「関連の可能性」): デフォルト折りたたみ。
+ *       「強く関連の上位 5 件で判断できる」サービス哲学を UI で強化するための判断
+ *     - 弱い関連性: デフォルト折りたたみ (PR-X6 から不変)
+ *
+ *   設計根拠: docs/specification/SUGGESTION_FEATURE.md §3.6
+ *   姉妹実装: src/components/chat-semantic-search/chat-panel.tsx (H-3, H-4)
  *
  *   「参考」タブ内と「新規作成後の提案モーダル」で共用する (DRY)。
  */
@@ -18,6 +24,7 @@ import { useTranslations } from 'next-intl';
 import Link from 'next/link';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { SUGGESTION_TIER_STRONG_INITIAL_VISIBLE } from '@/config/suggestion';
 import {
   Dialog,
   DialogContent,
@@ -127,11 +134,15 @@ export function SuggestionsPanel({
   const [error, setError] = useState('');
   // 採用済の ID を記録し UI を「採用済」表示に切り替える (再フェッチ不要化)
   const [adopted, setAdopted] = useState<Set<string>>(new Set());
-  // 各カテゴリの「弱い関連性」セクションの展開状態 (PR-X6: 折りたたみデフォルト)
+  // 各カテゴリの折りたたみセクションの展開状態。
+  // - expandedStrong: 強く関連の「6 件目以降」を表示するか (2026-05-29 改修、デフォルト閉じ)
+  // - expandedMedium: 中程度の関連 セクション全体を表示するか (2026-05-29 改修、デフォルト閉じ)
+  // - expandedWeak  : 弱い関連性 セクション全体を表示するか (PR-X6 から不変、デフォルト閉じ)
   // 2026-05-09 (PR D / #21): 'risk' カテゴリを追加
-  const [expandedWeak, setExpandedWeak] = useState<Set<'knowledge' | 'issue' | 'risk' | 'retrospective'>>(
-    new Set(),
-  );
+  type SuggestionCategory = 'knowledge' | 'issue' | 'risk' | 'retrospective';
+  const [expandedStrong, setExpandedStrong] = useState<Set<SuggestionCategory>>(new Set());
+  const [expandedMedium, setExpandedMedium] = useState<Set<SuggestionCategory>>(new Set());
+  const [expandedWeak, setExpandedWeak] = useState<Set<SuggestionCategory>>(new Set());
 
   // P-3 (2026-05-08): 説明文ダイアログの state
   // - explainTarget: 開いている候補の {kind, id, title}。null = ダイアログ閉
@@ -237,17 +248,25 @@ export function SuggestionsPanel({
     showSuccess(`${labelMap[kind]}を紐付けました`);
   }
 
-  const toggleWeak = (category: 'knowledge' | 'issue' | 'risk' | 'retrospective') => {
-    setExpandedWeak((prev) => {
-      const next = new Set(prev);
-      if (next.has(category)) {
-        next.delete(category);
-      } else {
-        next.add(category);
-      }
-      return next;
-    });
-  };
+  /**
+   * tier セクションの折りたたみ状態を toggle する共通 helper。
+   * strong (6 件目以降) / medium (セクション全体) / weak (セクション全体) で共用。
+   */
+  const makeToggle = (setter: React.Dispatch<React.SetStateAction<Set<SuggestionCategory>>>) =>
+    (category: SuggestionCategory) => {
+      setter((prev) => {
+        const next = new Set(prev);
+        if (next.has(category)) {
+          next.delete(category);
+        } else {
+          next.add(category);
+        }
+        return next;
+      });
+    };
+  const toggleStrong = makeToggle(setExpandedStrong);
+  const toggleMedium = makeToggle(setExpandedMedium);
+  const toggleWeak = makeToggle(setExpandedWeak);
 
   /**
    * P-3 (2026-05-08): 「なぜ?」ボタン押下 → 説明文ダイアログを開く + 取得開始。
@@ -578,14 +597,16 @@ export function SuggestionsPanel({
   };
 
   /**
-   * tier 別の表示ブロックを共通化。
-   * - strong: 緑のボーダー、最初から展開
-   * - medium: 黄色のボーダー、最初から展開
-   * - weak: 灰色のボーダー、折りたたみデフォルト
+   * tier 別の表示ブロックを共通化 (2026-05-29 改修)。
+   * - strong: 緑のボーダー、初期 SUGGESTION_TIER_STRONG_INITIAL_VISIBLE (= 5) 件を常時表示、
+   *           6 件目以降は「▶ さらに N 件を表示」アコーディオン (デフォルト閉じ)
+   * - medium: 黄色のボーダー、デフォルト折りたたみ
+   * - weak  : 灰色のボーダー、デフォルト折りたたみ
+   * chat-panel.tsx (2026-05-28 H-3/H-4) と統一した UX パターン。
    */
   const renderTieredSection = <T extends { id: string; tier: SuggestionTier }>(
     // 2026-05-09 (PR D / #21): 'risk' を追加
-    category: 'knowledge' | 'issue' | 'risk' | 'retrospective',
+    category: SuggestionCategory,
     grouped: { strong: T[]; medium: T[]; weak: T[] },
     renderItem: (item: T) => React.ReactNode,
     noMatchKey: 'knowledgeNoMatch' | 'pastIssuesNoMatch' | 'pastRisksNoMatch' | 'retrospectivesNoMatch',
@@ -594,11 +615,16 @@ export function SuggestionsPanel({
     if (totalCount === 0) {
       return <p className="text-sm text-muted-foreground">{t(noMatchKey)}</p>;
     }
+    const isStrongRestExpanded = expandedStrong.has(category);
+    const isMediumExpanded = expandedMedium.has(category);
     const isWeakExpanded = expandedWeak.has(category);
+    // strong tier の表示分割: 初期 5 件 + アコーディオンで 6 件目以降を表示
+    const strongInitial = grouped.strong.slice(0, SUGGESTION_TIER_STRONG_INITIAL_VISIBLE);
+    const strongRest = grouped.strong.slice(SUGGESTION_TIER_STRONG_INITIAL_VISIBLE);
 
     return (
       <div className="space-y-4">
-        {/* 強く関連 (strong tier) */}
+        {/* 強く関連 (strong tier) — 初期 5 件 + 6 件目以降アコーディオン */}
         {grouped.strong.length > 0 && (
           <div className="space-y-2">
             <div className="flex items-baseline gap-2 border-l-4 border-green-600 pl-3">
@@ -607,20 +633,58 @@ export function SuggestionsPanel({
               </h4>
             </div>
             <p className="ml-3 text-xs text-muted-foreground">{t('tierStrongDescription')}</p>
-            <ul className="ml-3 space-y-2">{grouped.strong.map(renderItem)}</ul>
+            <ul className="ml-3 space-y-2">{strongInitial.map(renderItem)}</ul>
+            {strongRest.length > 0 && (
+              <div className="ml-3">
+                <button
+                  type="button"
+                  className="text-xs font-medium text-muted-foreground hover:text-foreground hover:underline focus:outline-2 focus:outline-offset-2"
+                  onClick={() => toggleStrong(category)}
+                  aria-expanded={isStrongRestExpanded}
+                  aria-controls={`suggestion-strong-rest-content-${category}`}
+                  data-testid={`suggestion-toggle-strong-rest-${category}`}
+                >
+                  {isStrongRestExpanded
+                    ? t('collapseStrongRest', { count: strongRest.length })
+                    : t('expandStrongRest', { count: strongRest.length })}
+                </button>
+                {isStrongRestExpanded && (
+                  <ul
+                    id={`suggestion-strong-rest-content-${category}`}
+                    className="mt-2 space-y-2"
+                  >
+                    {strongRest.map(renderItem)}
+                  </ul>
+                )}
+              </div>
+            )}
           </div>
         )}
 
-        {/* 関連の可能性 (medium tier) */}
+        {/* 中程度の関連 (medium tier) — デフォルト折りたたみ (2026-05-29 改修) */}
         {grouped.medium.length > 0 && (
           <div className="space-y-2">
             <div className="flex items-baseline gap-2 border-l-4 border-amber-600 pl-3">
               <h4 className="font-semibold text-amber-700 dark:text-amber-400">
                 🟡 {t('tierMediumLabel', { count: grouped.medium.length })}
               </h4>
+              <button
+                type="button"
+                className="text-xs text-info hover:underline focus:outline-2 focus:outline-offset-2"
+                onClick={() => toggleMedium(category)}
+                aria-expanded={isMediumExpanded}
+                aria-controls={`suggestion-medium-content-${category}`}
+                data-testid={`suggestion-toggle-medium-${category}`}
+              >
+                {isMediumExpanded ? t('collapseMediumSection') : t('expandMediumSection')}
+              </button>
             </div>
-            <p className="ml-3 text-xs text-muted-foreground">{t('tierMediumDescription')}</p>
-            <ul className="ml-3 space-y-2">{grouped.medium.map(renderItem)}</ul>
+            {isMediumExpanded && (
+              <div id={`suggestion-medium-content-${category}`}>
+                <p className="ml-3 text-xs text-muted-foreground">{t('tierMediumDescription')}</p>
+                <ul className="ml-3 space-y-2">{grouped.medium.map(renderItem)}</ul>
+              </div>
+            )}
           </div>
         )}
 
@@ -633,17 +697,20 @@ export function SuggestionsPanel({
               </h4>
               <button
                 type="button"
-                className="text-xs text-info hover:underline"
+                className="text-xs text-info hover:underline focus:outline-2 focus:outline-offset-2"
                 onClick={() => toggleWeak(category)}
+                aria-expanded={isWeakExpanded}
+                aria-controls={`suggestion-weak-content-${category}`}
+                data-testid={`suggestion-toggle-weak-${category}`}
               >
                 {isWeakExpanded ? t('collapseWeakSection') : t('expandWeakSection')}
               </button>
             </div>
             {isWeakExpanded && (
-              <>
+              <div id={`suggestion-weak-content-${category}`}>
                 <p className="ml-3 text-xs text-muted-foreground">{t('tierWeakDescription')}</p>
                 <ul className="ml-3 space-y-2">{grouped.weak.map(renderItem)}</ul>
-              </>
+              </div>
             )}
           </div>
         )}
