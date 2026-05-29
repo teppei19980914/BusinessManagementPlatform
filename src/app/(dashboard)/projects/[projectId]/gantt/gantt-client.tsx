@@ -26,7 +26,7 @@
  *   - PR #68 (列幅ドラッグリサイズ)
  */
 
-import { useCallback, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useTranslations } from 'next-intl';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -39,6 +39,10 @@ import { useSessionState, useSessionStringSet } from '@/lib/use-session-state';
 import { MultiSelectFilter } from '@/components/multi-select-filter';
 // PR #125: 日本の祝日を Gantt ヘッダ / 背景に反映 (土日と同等の視覚扱い + 祝日名ツールチップ)
 import { getJapaneseHoliday } from '@/lib/jp-holidays';
+// feat/gantt-initial-scroll-and-locale: 月ヘッダの locale 表示用に Intl.DateTimeFormat を直接構築する
+//   (formatDate は dd を含むため、年月のみのヘッダ向けに専用フォーマッタを使う)
+// tooltip の予定/実績期間も WBS テーブルと表示形式を揃えるため formatDateOnly を使う
+import { useFormatters } from '@/lib/use-formatters';
 
 const ALL_STATUS_KEYS = Object.keys(TASK_STATUSES) as Array<keyof typeof TASK_STATUSES>;
 
@@ -50,22 +54,57 @@ type Props = {
   tasks: TaskDTO[];
   /** 担当者フィルタ候補（WBS と同仕様）*/
   members: MemberDTO[];
+  /**
+   * feat/gantt-initial-scroll-and-locale: server で算出した tenant TZ ベースの「今日」(YYYY-MM-DD)。
+   * client 側で `new Date()` を呼ばず、SSR/CSR 一致と UTC ズレ回避を担保する。
+   */
+  today: string;
+  /** Tenant TZ (IANA、ヘッダ表示や日付境界判定に使用) */
+  tenantTimeZone: string;
+  /** Tenant locale (BCP 47、月ヘッダの言語表記切替に使用) */
+  tenantLocale: string;
 };
 
+/**
+ * 'YYYY-MM-DD' を UTC midnight として解釈し、ミリ秒値に変換する。
+ *
+ * feat/gantt-initial-scroll-and-locale (2026-05-29): ガント内の日付計算は全て
+ * 「カレンダー日 (YYYY-MM-DD)」ベースで行う。
+ * `new Date('2026-04-15')` は brower TZ 影響でズレるため、明示的に UTC 0:00 として
+ * 解釈する `Date.parse(\`${iso}T00:00:00Z\`)` を使う。
+ */
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+function isoToUtcMs(iso: string): number {
+  return Date.parse(`${iso}T00:00:00Z`);
+}
+
 function daysBetween(start: string, end: string): number {
-  const s = new Date(start);
-  const e = new Date(end);
-  return Math.ceil((e.getTime() - s.getTime()) / (1000 * 60 * 60 * 24));
+  return Math.round((isoToUtcMs(end) - isoToUtcMs(start)) / MS_PER_DAY);
 }
 
 function dayOffset(base: string, date: string): number {
-  const b = new Date(base);
-  const d = new Date(date);
-  return Math.ceil((d.getTime() - b.getTime()) / (1000 * 60 * 60 * 24));
+  return Math.round((isoToUtcMs(date) - isoToUtcMs(base)) / MS_PER_DAY);
 }
 
-function formatDate(date: Date): string {
-  return date.toISOString().split('T')[0];
+/** 'YYYY-MM-DD' に N 日加算した 'YYYY-MM-DD' を返す (TZ 非依存) */
+function addDaysISO(base: string, days: number): string {
+  return new Date(isoToUtcMs(base) + days * MS_PER_DAY).toISOString().split('T')[0];
+}
+
+/** 'YYYY-MM-DD' の曜日 (0=Sun..6=Sat) を返す (UTC 解釈で TZ 非依存) */
+function dayOfWeekISO(iso: string): number {
+  return new Date(`${iso}T00:00:00Z`).getUTCDay();
+}
+
+/** 'YYYY-MM-DD' から day-of-month (1-31) を返す */
+function dayOfMonthISO(iso: string): number {
+  return Number(iso.slice(8, 10));
+}
+
+/** 'YYYY-MM' (年月) を抽出する */
+function yearMonthISO(iso: string): string {
+  return iso.slice(0, 7);
 }
 
 const DAY_LABEL_KEYS = [
@@ -125,19 +164,42 @@ function flattenForGantt(
 /**
  * 日付レンジ文字列（未設定は "-"）
  * unsetLabel は i18n 化された「(未)」相当のローカライズ済み文字列を渡す。
+ *
+ * feat/gantt-initial-scroll-and-locale (2026-05-29):
+ *   format は YYYY-MM-DD → locale 表示に変換する関数 (useFormatters の formatDateOnly)。
+ *   WBS テーブル ([tasks-client.tsx]) と表示形式を統一する。
  */
 function rangeText(
   start: string | null | undefined,
   end: string | null | undefined,
   unsetLabel: string,
+  format: (ymd: string) => string,
 ): string {
   if (!start && !end) return '-';
-  return `${start || unsetLabel} 〜 ${end || unsetLabel}`;
+  return `${format(start ?? '') || unsetLabel} 〜 ${format(end ?? '') || unsetLabel}`;
 }
 
-export function GanttClient({ projectId, tasks: tree, members }: Props) {
+export function GanttClient({
+  projectId,
+  tasks: tree,
+  members,
+  today,
+  tenantTimeZone,
+  tenantLocale,
+}: Props) {
   const t = useTranslations('gantt');
-  const today = useMemo(() => new Date().toISOString().split('T')[0], []);
+  // feat/gantt-initial-scroll-and-locale: 月ヘッダは Intl.DateTimeFormat で tenant locale 直接生成
+  //   (ja-JP → "2026年5月"、en-US → "May 2026")。旧 i18n key 'monthHeader' は素朴連結 ("{year}/{month}")
+  //   で locale 自然性が低かったため撤去。messages/{ja,en-US}.json からも monthHeader を削除済。
+  const monthHeaderFormatter = useMemo(
+    () =>
+      new Intl.DateTimeFormat(tenantLocale, {
+        timeZone: tenantTimeZone,
+        year: 'numeric',
+        month: 'long',
+      }),
+    [tenantLocale, tenantTimeZone],
+  );
 
   // PR #68: ガントのタスク名列幅をユーザが調整可能にする (sessionStorage 永続)。
   // チャート本体 (日付列) は固定 DAY_WIDTH で変更しない。
@@ -256,9 +318,14 @@ export function GanttClient({ projectId, tasks: tree, members }: Props) {
 
   const rows = useMemo(() => flattenForGantt(filteredTree, collapsed), [filteredTree, collapsed]);
 
-  // チャートの期間レンジ: 全タスク（WP 集計含む）の予定・実績から求める
+  // チャートの期間レンジ: 全タスク（WP 集計含む）の予定・実績 + today を含めて算出
+  // feat/gantt-initial-scroll-and-locale: 「今日」を必ず表示レンジ内に含めることで、
+  //   初期スクロール (scrollLeft = dayOffset(minDate, today) * DAY_WIDTH) が常に正の値となり、
+  //   today が viewport 左端から見えるようにする。
+  //   また「タスクが今日より遥か未来」「全タスクが今日より過去」のケースで today マーカーが
+  //   レンジ外に消えるのを防ぐ。
   const { minDate, totalDays } = useMemo(() => {
-    const allDates: string[] = [];
+    const allDates: string[] = [today];
     const walk = (nodes: TaskDTO[]) => {
       for (const t of nodes) {
         if (t.plannedStartDate) allDates.push(t.plannedStartDate);
@@ -269,33 +336,33 @@ export function GanttClient({ projectId, tasks: tree, members }: Props) {
       }
     };
     walk(tree);
-    if (allDates.length === 0) return { minDate: today, totalDays: 30 };
     const sorted = [...allDates].sort();
     const min = sorted[0];
     const max = sorted[sorted.length - 1];
-    return { minDate: min, totalDays: Math.max(daysBetween(min, max) + 1, 7) };
+    return { minDate: min, totalDays: Math.max(daysBetween(min, max) + 1, 30) };
   }, [tree, today]);
 
+  // feat/gantt-initial-scroll-and-locale: 月ヘッダは tenant locale の DateTimeFormat で生成
+  //   (ja-JP → "2026年5月"、en-US → "May 2026")。
+  //   旧来の i18n key 'monthHeader' は "{year}/{month}" の素朴連結だったため locale 自然性が低かった。
   const monthHeaders = useMemo(() => {
     const headers: { label: string; span: number }[] = [];
-    const start = new Date(minDate);
-    let currentMonth = -1;
-    let currentYear = -1;
+    let currentYearMonth = '';
     for (let i = 0; i < totalDays; i++) {
-      const d = new Date(start);
-      d.setDate(d.getDate() + i);
-      const m = d.getMonth();
-      const y = d.getFullYear();
-      if (m !== currentMonth || y !== currentYear) {
-        headers.push({ label: t('monthHeader', { year: y, month: m + 1 }), span: 1 });
-        currentMonth = m;
-        currentYear = y;
+      const iso = addDaysISO(minDate, i);
+      const ym = yearMonthISO(iso);
+      if (ym !== currentYearMonth) {
+        // iso = 'YYYY-MM-DD'。月初を表す Date を UTC noon で構築し、
+        // tenantTimeZone での解釈ズレ (日付境界跨ぎ) を回避する。
+        const monthStart = new Date(`${ym}-01T12:00:00Z`);
+        headers.push({ label: monthHeaderFormatter.format(monthStart), span: 1 });
+        currentYearMonth = ym;
       } else {
         headers[headers.length - 1].span++;
       }
     }
     return headers;
-  }, [minDate, totalDays, t]);
+  }, [minDate, totalDays, monthHeaderFormatter]);
 
   const dayHeaders = useMemo(() => {
     const headers: {
@@ -305,15 +372,13 @@ export function GanttClient({ projectId, tasks: tree, members }: Props) {
       // PR #125: 祝日なら名称、そうでなければ null
       holidayName: string | null;
     }[] = [];
-    const start = new Date(minDate);
     for (let i = 0; i < totalDays; i++) {
-      const d = new Date(start);
-      d.setDate(d.getDate() + i);
+      const iso = addDaysISO(minDate, i);
       headers.push({
-        date: formatDate(d),
-        day: d.getDate(),
-        dayOfWeek: d.getDay(),
-        holidayName: getJapaneseHoliday(d),
+        date: iso,
+        day: dayOfMonthISO(iso),
+        dayOfWeek: dayOfWeekISO(iso),
+        holidayName: getJapaneseHoliday(iso),
       });
     }
     return headers;
@@ -339,6 +404,22 @@ export function GanttClient({ projectId, tasks: tree, members }: Props) {
   const totalWidth = nameColWidth + chartWidth;
 
   const hasAnyTask = tree.length > 0;
+
+  // feat/gantt-initial-scroll-and-locale: 初期スクロール位置を「今日」列が左端になるよう揃える。
+  //   ユーザは画面を開いた瞬間に進行中タスクの状況を確認できる (毎回今日へスクロールし直す手間を撲滅)。
+  //   依存配列を [projectId, today] に限定: filter/折りたたみ変更時にユーザのスクロール操作を
+  //   上書きしないようにする。projectId 変更時 (別プロジェクト遷移) は再初期化。
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    const todayOffset = dayOffset(minDate, today);
+    if (todayOffset < 0) return; // today がレンジ外 (minDate に today を含めているので理論上発生しない)
+    // タスク名列 (sticky left) はチャートのスクロール座標上は不変なので除外。
+    // scrollLeft = 今日列の left = todayOffset * DAY_WIDTH。
+    el.scrollLeft = todayOffset * DAY_WIDTH;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, today]);
 
   return (
     <div className="space-y-4">
@@ -416,6 +497,7 @@ export function GanttClient({ projectId, tasks: tree, members }: Props) {
           - 内側要素に position: sticky を指定して top/left を与える
       */
       <div
+        ref={scrollContainerRef}
         className="rounded-lg border overflow-auto relative"
         style={{ maxHeight: CHART_MAX_HEIGHT }}
       >
@@ -568,6 +650,7 @@ function GanttRow({
   onToggleCollapsed,
 }: GanttRowProps) {
   const t = useTranslations('gantt');
+  const { formatDateOnly } = useFormatters();
   const unsetLabel = t('unsetShort');
   const isWP = task.type === 'work_package';
   const hasPlanned = !!task.plannedStartDate && !!task.plannedEndDate;
@@ -600,8 +683,8 @@ function GanttRow({
   const tooltipContent = (
     <div className="space-y-0.5">
       <div>{t('tooltipEffort', { value: task.plannedEffort > 0 ? `${task.plannedEffort}h` : '-' })}</div>
-      <div>{t('tooltipPlanned', { value: rangeText(task.plannedStartDate, task.plannedEndDate, unsetLabel) })}</div>
-      <div>{t('tooltipActual', { value: rangeText(task.actualStartDate, task.actualEndDate, unsetLabel) })}</div>
+      <div>{t('tooltipPlanned', { value: rangeText(task.plannedStartDate, task.plannedEndDate, unsetLabel, formatDateOnly) })}</div>
+      <div>{t('tooltipActual', { value: rangeText(task.actualStartDate, task.actualEndDate, unsetLabel, formatDateOnly) })}</div>
     </div>
   );
 

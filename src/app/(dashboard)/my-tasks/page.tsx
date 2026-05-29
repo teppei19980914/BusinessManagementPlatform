@@ -3,6 +3,8 @@ import { redirect } from 'next/navigation';
 import { LOGIN_ROUTE } from '@/config';
 import { listMyTaskProjects } from '@/services/task.service';
 import { recordError } from '@/services/error-log.service';
+import { getTenantTodayString } from '@/lib/tenant-time';
+import { resolveTimezone, resolveLocale } from '@/config/i18n';
 import { MyTasksClient } from './my-tasks-client';
 
 /**
@@ -46,7 +48,12 @@ export default async function MyTasksPage() {
   // サーバ側で算出した today (YYYY-MM-DD) を props 経由で渡し、クライアント描画で
   // new Date() を使った比較を行わないようにする (SSR⇔hydrate の時刻差に伴う
   // React error #418 ハイドレーションミスマッチ対策)。
-  const today = new Date().toISOString().split('T')[0];
+  // feat/gantt-initial-scroll-and-locale (2026-05-29): tenant TZ ベースで算出し、
+  //   UTC ズレで「未着手なのに遅延扱い / 完了なのに未来扱い」となる罠を撲滅する。
+  //   横断 Gantt にも tenant TZ/locale を伝搬し、初期スクロール + 月ヘッダの locale 化を有効にする。
+  const tenantTimeZone = resolveTimezone(session.user.timezone);
+  const tenantLocale = resolveLocale(session.user.locale);
+  const today = getTenantTodayString(new Date(), tenantTimeZone);
 
   // feat/gantt-tab-restructure (PR-C item 7): Gantt 表示で担当者フィルタの初期値に
   // 自分が選ばれている必要があるため、currentUserId と userName を Gantt 用に渡す。
@@ -54,6 +61,8 @@ export default async function MyTasksPage() {
     <MyTasksClient
       projectGroups={projectGroups}
       today={today}
+      tenantTimeZone={tenantTimeZone}
+      tenantLocale={tenantLocale}
       currentUserId={session.user.id}
       currentUserName={session.user.name ?? 'me'}
       dataLoadError={dataLoadError}

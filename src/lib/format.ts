@@ -92,11 +92,59 @@ export function formatDateTime(iso: string, opts: FormatOptions = {}): string {
  * ISO 日付/日時文字列を日付のみ (locale の日付形式) で整形する。
  *
  * 例: ja-JP なら `2026/04/24`、en-US なら `04/24/2026`。
+ *
+ * **入力が datetime (時刻成分あり) の場合のみ使用すること**。
+ * 'YYYY-MM-DD' のような date-only 文字列は TZ シフトで前日にずれる可能性があるため
+ * `formatDateOnly` を使う。
  */
 export function formatDate(iso: string, opts: FormatOptions = {}): string {
   const tz = resolveTimezone(opts.timeZone);
   const loc = resolveLocale(opts.locale);
   return getDateFormatter(loc, tz).format(new Date(iso));
+}
+
+/**
+ * 'YYYY-MM-DD' 形式の date-only 文字列を locale 形式で整形する (TZ シフトなし)。
+ *
+ * feat/gantt-initial-scroll-and-locale (2026-05-29):
+ *   `formatDate('2026-05-15')` だと負方向 TZ (例: America/New_York) で
+ *   「2026-05-15 00:00 UTC = 2026-05-14 19:00 EST」となり前日にずれてしまう。
+ *   date-only セマンティクスを保つには、Y/M/D を locale 表記に変換するだけで
+ *   TZ を適用してはならない。
+ *
+ * 例:
+ *   formatDateOnly('2026-05-15', { locale: 'ja-JP' }) // → '2026/05/15'
+ *   formatDateOnly('2026-05-15', { locale: 'en-US' }) // → '05/15/2026'
+ *
+ * @param ymd 'YYYY-MM-DD' 形式の文字列。形式不正時は空文字を返す。
+ */
+export function formatDateOnly(ymd: string, opts: FormatOptions = {}): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd);
+  if (!m) return '';
+  const y = Number(m[1]);
+  const mo = Number(m[2]);
+  const d = Number(m[3]);
+  // 月日の妥当性を厳密に検証 (例: '2026-13-99' や '2026-02-30' のような不正値を弾く)。
+  //   regex でフォーマット (2 桁の数値) は通すが、意味的に無効な日付は空文字を返す。
+  //   Date.UTC は繰り上げを許容してしまうため、構築後に Y/M/D の一致を確認する。
+  if (mo < 1 || mo > 12 || d < 1 || d > 31) return '';
+  const dt = new Date(Date.UTC(y, mo - 1, d));
+  if (
+    dt.getUTCFullYear() !== y ||
+    dt.getUTCMonth() !== mo - 1 ||
+    dt.getUTCDate() !== d
+  ) {
+    return '';
+  }
+  const loc = resolveLocale(opts.locale);
+  // UTC で Date を構築し、formatter にも timeZone: 'UTC' を渡すことで TZ シフトを完全に回避。
+  // 表示 Y/M/D は locale の好む順序 / 区切りに整形される (ja: 2026/05/15、en-US: 05/15/2026)。
+  return new Intl.DateTimeFormat(loc, {
+    timeZone: 'UTC',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(dt);
 }
 
 /**

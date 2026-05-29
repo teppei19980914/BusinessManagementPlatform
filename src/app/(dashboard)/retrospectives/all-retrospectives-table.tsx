@@ -75,7 +75,7 @@ export function AllRetrospectivesTable({
   const router = useRouter();
   const tRetro = useTranslations('retro');
   const tCommon = useTranslations('common');
-  const { formatDateTime } = useFormatters();
+  const { formatDateTime, formatDateOnly } = useFormatters();
   const [editingRetro, setEditingRetro] = useState<AllRetroDTO | null>(null);
 
   // PR-δ / 項目 12: 全振り返りに検索 (keyword) フィルタを追加。
@@ -185,7 +185,7 @@ export function AllRetrospectivesTable({
                   )}
                 </div>
               </TableCell>
-              <TableCell className="whitespace-nowrap font-medium">{r.conductedDate}</TableCell>
+              <TableCell className="whitespace-nowrap font-medium">{formatDateOnly(r.conductedDate)}</TableCell>
               <TableCell className="max-w-xs truncate text-sm">{r.planSummary || '-'}</TableCell>
               <TableCell className="max-w-xs truncate text-sm">{r.actualSummary || '-'}</TableCell>
               <TableCell className="max-w-xs truncate text-sm">{r.goodPoints || '-'}</TableCell>
@@ -207,7 +207,7 @@ export function AllRetrospectivesTable({
                       projectId fallback は不要 (orphan も削除可能になった) */}
                   <AdminRetrospectiveDeleteButton
                     retroId={r.id}
-                    label={r.conductedDate}
+                    label={formatDateOnly(r.conductedDate)}
                   />
                 </TableCell>
               )}

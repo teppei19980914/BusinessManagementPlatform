@@ -6,6 +6,8 @@ import { getProject } from '@/services/project.service';
 import { listCustomers } from '@/services/customer.service';
 import { checkMembership, getActualProjectRole } from '@/lib/permissions';
 import { recordError } from '@/services/error-log.service';
+import { getTenantTodayString } from '@/lib/tenant-time';
+import { resolveTimezone, resolveLocale } from '@/config/i18n';
 import { ProjectDetailClient } from './project-detail-client';
 
 type Props = {
@@ -104,6 +106,12 @@ export default async function ProjectDetailPage({ params }: Props) {
   //             admin でも実際の ProjectMember でないと作成不可。
   const canCreateOwnedList = actualRole === 'pm_tl' || actualRole === 'member';
 
+  // feat/gantt-initial-scroll-and-locale (2026-05-29):
+  //   ガントタブ・振り返りタブが lazy load 後に必要とする tenant TZ/locale/today を server で確定。
+  const tenantTimeZone = resolveTimezone(session.user.timezone);
+  const tenantLocale = resolveLocale(session.user.locale);
+  const today = getTenantTodayString(new Date(), tenantTimeZone);
+
   return (
     <ProjectDetailClient
       project={project}
@@ -116,6 +124,9 @@ export default async function ProjectDetailPage({ params }: Props) {
       customers={customers.map((c) => ({ id: c.id, name: c.name }))}
       // 2026-05-09 (#22): 「なぜ?」ボタンの可視性判定用 (Pro 限定機能)
       tenantPlan={session.user.tenantPlan}
+      today={today}
+      tenantTimeZone={tenantTimeZone}
+      tenantLocale={tenantLocale}
     />
   );
 }

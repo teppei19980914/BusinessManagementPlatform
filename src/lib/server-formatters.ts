@@ -21,6 +21,7 @@ import {
   formatDate as formatDateCore,
   formatDateTime as formatDateTimeCore,
   formatDateTimeFull as formatDateTimeFullCore,
+  formatDateOnly as formatDateOnlyCore,
 } from '@/lib/format';
 import type { Formatters } from './use-formatters';
 
@@ -33,5 +34,6 @@ export async function getServerFormatters(): Promise<Formatters> {
     formatDate: (iso) => formatDateCore(iso, { timeZone, locale }),
     formatDateTime: (iso) => formatDateTimeCore(iso, { timeZone, locale }),
     formatDateTimeFull: (iso) => formatDateTimeFullCore(iso, { timeZone, locale }),
+    formatDateOnly: (ymd) => formatDateOnlyCore(ymd, { locale }),
   };
 }
