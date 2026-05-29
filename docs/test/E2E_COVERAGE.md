@@ -162,6 +162,9 @@
 ### チャット意味検索 (PR #373 仕様 / 本機能で新設)
 - [ ] `/api/chat/search` (POST) — skip: PR feat/chat-semantic-search (2026-05-23) で新設。5 資産横断意味検索の API。認証・seedDataEnabled・縮退モード・visibility フィルタは単体テスト src/services/chat-search.service.test.ts + src/app/api/chat/search/route.test.ts で担保 (10 ケース)。E2E は FAB クリック → サイドパネル展開 → 検索結果 tier 表示の経路を後続 PR で追加検討 (UI 動作は src/components/chat-semantic-search/* で別途検証想定)
 
+### たすきフクロウ AI ヘルプチャット (ADR-0027 / 2026-05-29 PR5 で新設)
+- [ ] `/api/help/chat` (POST) — skip: feat/faq-pr5-ai-concierge-core で新設。FAQ + 使い方ガイドを Claude Haiku に同梱する learning-free 機能。権限フィルタ (一般メンバー / PM/PL / tenant_admin で開示 FAQ を厳密に分別) は src/config/faq-content.test.ts + src/config/guide-content.test.ts で担保 (21 ケース)。E2E は PR6 (UI 実装) で help-chat.spec.ts として追加予定。本 route は monthly cap (100 回/テナント) と LLM call の統合動作のため、PR7 で E2E に組み込む
+
 ### メモ
 - [x] `/api/memos` (GET/POST) — e2e/specs/04-personal-features.spec.ts (PR #94 / POST 作成 + GET は /memos と /all-memos の画面経由)
 - [x] `/api/memos/[id]` (PATCH/DELETE) — e2e/specs/04-personal-features.spec.ts (PR #94 / DELETE のみ UI 経由でカバー、PATCH は後続 PR)

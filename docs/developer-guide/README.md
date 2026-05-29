@@ -16,6 +16,7 @@
 | [SEED_DATA_MAINTENANCE.md](./SEED_DATA_MAINTENANCE.md) | シードデータの維持・更新ガイド | — |
 | [TODO_LIST.md](./TODO_LIST.md) | 後続 PR で対応予定のタスク一覧 | DEVELOPER_GUIDE.md §11 |
 | [REFERENCE.md](./REFERENCE.md) | 設計原則のリマインダ + よくある質問 | DEVELOPER_GUIDE.md 付録 A・B |
+| [FAQ_AND_OWL_CHAT_GUIDE.md](./FAQ_AND_OWL_CHAT_GUIDE.md) | FAQ コンテンツ + たすきフクロウ AI チャットの仕組み・追加時注意点・回答精度向上のコツ | feat/faq-pr5-ai-concierge-core (2026-05-29) |
 
 ## 読む順序の推奨
 

@@ -83,6 +83,14 @@ model Tenant {
   ///   billing-aggregation.service が invoice/bank_transfer テナントの請求書を作るときの源泉。
   ///   feedback_billing_invariant: ApiCallLog SUM (真値) = 本カラム = 画面表示 = CSV = 請求書 の整合性必須。
   currentMonthEmbeddingCostJpy         Int       @default(0) @map("current_month_embedding_cost_jpy")
+  /// ADR-0027 (2026-05-29): たすきフクロウ AI ヘルプチャット (LEARNING_FREE) の当月呼出回数。
+  ///   全プラン無料 (学習コストとして運営吸収)、テナント単位月 100 回上限
+  ///   (HELP_CHAT_MONTHLY_LIMIT_PER_TENANT)。/api/help/chat route が直接 increment、
+  ///   超過時は HTTP 429 + fallbackToAccordion フラグを返す。
+  ///   BILLABLE_FEATURE_UNITS / EMBEDDING_BILLABLE_FEATURE_UNITS いずれにも含まれない
+  ///   (= 課金集計対象外、ApiCallLog にのみ featureUnit='help-chat' で記録)。
+  ///   月次リセット (= 0) は tenant-monthly-reset.service.ts に PR6 で組み込む。
+  currentMonthHelpChatCount            Int       @default(0) @map("current_month_help_chat_count")
   /// ユーザ自己設定の月次予算上限 (円)。NULL = 無制限。withMeteredLLM が予測コスト超過チェックで参照。
   ///   ADR-0022: 判定対象は LLM_BILLABLE のみ (= Embedding はチャット検索/資産入力に必須のため予算上限とは独立)。
   monthlyBudgetCapJpy                  Int?      @map("monthly_budget_cap_jpy")
