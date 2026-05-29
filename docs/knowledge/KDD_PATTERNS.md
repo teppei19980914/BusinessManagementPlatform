@@ -9825,9 +9825,42 @@ export async function autoSuspendDelinquentTenants(): Promise<AutoSuspendResult>
    pnpm tsx scripts/check-cron-public-paths.ts  # 未整備、TODO
    ```
 
+### ★追記★ 2026-05-29: 同パターンが再発した (= `attachment-embedding` route の PUBLIC_PATHS 登録漏れ)
+
+本 KDD §5.X+70 を 2026-05-18 に書いたにも関わらず、その 8 日後の ADR-0021 (2026-05-26) で
+新規追加された `/api/cron/attachment-embedding` route が **再び PUBLIC_PATHS 未登録のまま
+production マージ** された。結果として ADR-0021 のファイル添付の embedding 生成が
+3 日間完全停止 (2026-05-26〜2026-05-29) していた。
+
+**根本原因**: §5.X+70 で「Checklist」を書いたが、Checklist 実行は人間の意志に依存していた。
+ADR-0021 PR レビュー時に誰も §5.X+70 を参照しなかったため、Checklist 自体が動かなかった。
+
+**真の対策 (2026-05-29 実施)**: 「Checklist 文書」ではなく **機械的に強制する vitest テスト**
+([src/config/routes.test.ts](../../src/config/routes.test.ts)) を導入。`src/app/api/cron/` 配下の
+全ディレクトリが `PUBLIC_PATHS` に登録されていることを CI で自動検証する。
+
+```typescript
+// src/config/routes.test.ts (抜粋)
+const cronRouteNames = readdirSync(cronDir, { withFileTypes: true })
+  .filter((d) => d.isDirectory())
+  .map((d) => d.name);
+const missingPaths: string[] = [];
+for (const name of cronRouteNames) {
+  if (!PUBLIC_PATHS.includes(`/api/cron/${name}` as ...)) {
+    missingPaths.push(`/api/cron/${name}`);
+  }
+}
+expect(missingPaths).toEqual([]);
+```
+
+**普遍化された教訓**:
+- **「Checklist」は読まれない前提で設計する** — KDD に書いたから OK、ではなく test で強制する
+- **ガードを書くタイミング**: 同じ罠を 2 度踏んだら必ず CI ガード化する (1 度目はパターン認識、2 度目は機械化)
+- **「設定ファイル同期漏れ」は最も自動化しやすい** — 実装ディレクトリ vs config 配列の照合は readdirSync で完結
+
 ### 過去の関連 KDD
 
-- §5.X+58: 新規 route/page を追加した時の `pnpm e2e:coverage-check` ガード漏れ (= 同型の「設定ファイル同期漏れ」)
+- §5.X+58: 新規 route/page を追加した時の `pnpm e2e:coverage-check` ガード漏れ (= 同型の「設定ファイル同期漏れ」、これも機械的ガード)
 - §5.X+66: Netlify 移行で顕在化したクラスの罠 (本件もその一種)
 - §5.X+69: middleware matcher の除外漏れ (= 同じ routes 系設定の同期問題)
 
@@ -17131,3 +17164,95 @@ PR #460 1 巡目 → quality gate PASS → commit + push → CI 全 green 待ち
 - 影響ファイル: `src/app/(auth)/login/page.tsx` (literal → import に置換) / `e2e/specs/00-smoke.spec.ts` (literal → import に置換) / `src/config/community.test.ts` (新規 test 追加)
 - 関連 memory: [feedback_repeated_verification_request](../../memory/feedback_repeated_verification_request.md) — 同じ「フルスキャン検証」リクエストの繰り返しは「もっと深く見て」のシグナル
 - 関連 KDD: [§5.X+162](#5x162) (機能撤去 PR で UI ラベル文言を簡素化したら spec も同時更新) — 本件は「URL 文言の集約」だが「コード/spec の literal 並列」という同種パターン
+
+---
+
+## 5.X+174 ★severity-1★ auditLog.entityId は @db.Uuid 型 ─ 文字列識別子 (requestId 等) を INSERT すると production の PostgreSQL 型バリデーションで rejection、transaction rollback ─ Mocked unit test では一切検知できない (ADR-0025 PR #461 2 巡目フルスキャンで発覚)
+
+### 罠の正体
+
+`prisma/schema.prisma:1073` で `AuditLog.entityId String @db.Uuid` と定義されている。テナント関連の業務エンティティ ID はすべて UUID のため通常運用では問題にならないが、「監査ログとして識別子文字列を入れたい」誘惑に駆られ、以下のような non-UUID 文字列を INSERT すると **production の PostgreSQL が `invalid input syntax for type uuid` で reject** し、enclosing transaction 全体が rollback する:
+
+- 例 1: `entityId: 'db-capacity-overage-{tenantId}-2026-06-previous-month'` (= ADR-0025 初版で書いてしまった)
+- 例 2: `entityId: 'beginner-skip-{tenantId}'` 等のスキップ証跡 ID
+
+### Mocked unit test では検知不可
+
+vitest の prisma mock は `auditLog.create` を `vi.fn()` で常に Promise.resolve に置換するため、**PostgreSQL の UUID 型バリデーションをすり抜ける**。本 PR #461 では 3551 件の単体テストが全て PASS していたにも関わらず、PRODUCTION で月初 cron が Beginner プラン超過テナントを処理しようとした瞬間に毎月 fail する状態だった。
+
+### 再発防止 (適用ルール)
+
+1. **auditLog.entityId には必ず UUID を入れる** (典型: tenantId, userId, log.id 等の DB 由来 UUID)
+2. **識別文字列は `afterValue.requestId` 等の JSON フィールドに格納する** (NOT entityId)
+3. **新規 entityId 値の追加時は `prisma/schema.prisma` でカラム型を確認** (= UUID? text? VarChar?)
+4. **「文字列 ID を UUID カラムに入れたい」誘惑を感じたら別 entityType を新設** (例: `entityType: 'api_call_log_skip'` + `entityId: tenantId`、識別は afterValue で)
+5. **integration test (実 PostgreSQL に対し INSERT 走らせる test) が必要なケースを認識する**: 「DB schema 型 vs 渡す値の型」の整合性チェックは mock では不可
+
+### 発覚経緯
+
+ADR-0025 PR #461 1 巡目 push 後、ユーザの「再度セキュリティチェックの観点も含めフルスキャン」依頼でフルスキャン Explore agent を実行 → §3.4 で `tenant-monthly-reset.service.ts:687, 940` の `entityId: requestId` (文字列) と schema の `entityId @db.Uuid` の型不整合を検出 → production cron が毎月失敗する重大欠陥と判明 → 2 巡目で `entityId: tenantId` に修正 + テストで `expect(entityId).toBe(TENANT_ID)` + `expect(afterValue.requestId).toContain('db-capacity-overage')` を追加。
+
+### 関連
+
+- 修正ファイル: `src/services/tenant-monthly-reset.service.ts` (DB capacity + File storage 両方の Beginner skip path)
+- テスト追加: `src/services/tenant-monthly-reset.service.test.ts` (entityId / requestId アサーション)
+- 関連 ADR: [ADR-0025 (Beginner write block)](../adr/0025-beginner-write-guard.md)
+- 関連 memory: [feedback_repeated_verification_request](../../memory/feedback_repeated_verification_request.md) — フルスキャン検証 2 巡目で severity-1 検出の典型実績
+- 関連 KDD: [§5.X+173](#5x173) — 同様に 2 巡目フルスキャンで検出
+
+---
+
+## 5.X+175 ★severity-1★ エラーマッパー wrapper は新規エラーコードを「握り潰す」ことが多い ─ 新規 error code 追加時は wrapper 経由の全 route を grep して同時修正必須 (ADR-0025 PR #461 2 巡目フルスキャンで発覚)
+
+### 罠の正体
+
+storage-guard 系のように「複数の write route から共通呼出される関数」は、エラーレスポンス整形を **wrapper helper に集約** しているケースが多い。例:
+- `src/lib/api-helpers.ts:requireStorageQuotaForWrite` — 32 単発 POST/PUT route が precheckStorageLimit を呼ぶ
+- `src/app/api/attachments/upload/route.ts` — Pre-signed URL 発行前の precheckFileStorageLimit
+
+これらの wrapper が `precheckStorageLimit` の戻り値 `{ ok: false, code, ... }` の `code` を **見ずに「50GB に達しました」ハードコードメッセージ** を返す古い実装になっていることが多く、**新規エラーコードを増やしても wrapper を通過した時点で「50GB」と誤メッセージが返る** 状態になる。
+
+### Mocked unit test では検知不可
+
+新規エラーコードを追加した service の単体テストは PASS する (mock で `code` を返す)。しかし wrapper 経由の route の挙動を testing するには、route と wrapper の両方を実行する integration test が必要。**ADR-0025 PR #461 では 3551 件の単体テスト PASS にも関わらず、32 route で誤メッセージが返る状態だった**。
+
+### 再発防止 (適用ルール)
+
+1. **新規エラーコード追加時、`grep -rn "<関数名>" src/lib src/app/api` で全 wrapper / route を列挙** し、各々が新規 code を扱うように修正
+2. **wrapper helper のエラー整形ロジックは「code を見て分岐」を必須化** (= ハードコードメッセージ禁止)
+3. **エラー型自体を増やすのではなく既存型を拡張する設計を優先** (= union 型を増やすことで TypeScript 型チェックで網羅性を強制可能)
+4. **追加した code が wrapper を通過するか確認する integration test を 1 件は追加**: 例 `requireStorageQuotaForWrite` の Beginner 分岐 test
+5. **ADR で「全 write 経路を自動カバー」と書く前に実態を確認**: 「呼出元 wrapper の挙動も含めてカバー」が要件
+
+### 発覚経緯
+
+ADR-0025 PR #461 1 巡目 push 後、フルスキャン Explore agent で `requireStorageQuotaForWrite` を読んだら **「結果の `code` を完全無視してハードコード "50GB" メッセージを返す」** ことを発見。同様のパターンが `/api/attachments/upload` でも見つかった。両方とも単体テストは PASS していたが、Beginner ユーザは「50MB なのに 50GB と表示される」混乱を必ず経験する状態。
+
+### 関連
+
+- 修正ファイル: `src/lib/api-helpers.ts` (`requireStorageQuotaForWrite` Beginner 分岐追加) / `src/app/api/attachments/upload/route.ts` (Beginner code 分岐追加)
+- テスト追加: `src/lib/api-helpers-storage-quota.test.ts` (Beginner/Expert/Pro 3 ケース)
+- 関連 KDD: [§5.X+174](#5x174) — 同じ ADR-0025 PR で同 2 巡目フルスキャンで発覚した severity-1 検出
+- 関連 memory: [feedback_design_comment_vs_impl_drift](../../memory/feedback_design_comment_vs_impl_drift.md) — ADR で約束した「全経路カバー」が実装と乖離する典型
+
+---
+
+## 5.X+176 main の test 234 個 type エラーは PR 範囲外として無視可能、ただし新規 test は型エラーゼロを徹底 (ADR-0025 PR #461 で確認)
+
+### 状況
+
+`pnpm tsc --noEmit` を実行すると、main ブランチ時点で既に **234 個の type エラーが test ファイルに残っている** (例: `recalculate/route.test.ts:115` の `ApiUsageReconcileResult` 型不整合、`audit.service.test.ts` の `'call' possibly undefined`、`email-verification.service.test.ts` の `tenantId missing` 等)。
+
+### 判定
+
+これらは PR 範囲外 (= 本 PR で導入したコードではない)。ただし以下を遵守:
+
+1. **新規 test ファイルは type エラーゼロで書く** (= 既存パターンに合わせない)
+2. **既存 test ファイルを編集する場合、その編集箇所が新たな type エラーを増やさないこと**
+3. **`pnpm tsc --noEmit` の exit code 非ゼロは無視せず、毎回 grep で「本実装ファイル由来」と「pre-existing」を分離** する習慣をつける
+4. **将来別 PR で test 全体の型エラーゼロ化を進める** (= 段階的、本 PR スコープ外)
+
+### 関連 KDD
+
+- 本 PR で実証: main 由来 234 件中、本実装ファイル (`src/services/*` / `src/app/api/*` / `src/config/*` / UI 等) 由来エラーは 0 件
+- 確認手順: `pnpm tsc --noEmit 2>&1 | grep -E "^src/(関連ファイルglob)" | grep -v "\.test\.ts\|\.spec\.ts"`

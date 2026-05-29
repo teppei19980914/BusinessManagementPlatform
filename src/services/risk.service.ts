@@ -916,6 +916,11 @@ export async function deleteRisk(
       data: { deletedAt: now },
     }),
   ]);
+
+  // ADR-0025 (2026-05-29): Beginner プラン超過状態からの DELETE で容量キャッシュを即時更新。
+  //   循環参照回避のため dynamic import。fail-safe で throw しない。
+  const { maybeRecalcAfterBeginnerDelete } = await import('@/services/tenant-storage.service');
+  await maybeRecalcAfterBeginnerDelete(viewerTenantId);
 }
 
 /**

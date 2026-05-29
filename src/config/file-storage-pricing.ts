@@ -49,6 +49,21 @@ export const SI_GB_BYTES = 1_000_000_000;
 /** 無料枠 = 100MB SI = 100,000,000 bytes */
 export const FILE_STORAGE_FREE_TIER_BYTES = 100 * SI_MB_BYTES;
 
+/**
+ * Beginner プラン write ブロック閾値 (ADR-0025、2026-05-29)。
+ *
+ * Beginner プランのテナントがファイルをアップロードする際、cached storageFileBytesUsed +
+ * 新ファイル size が本値を超えていたら BeginnerWriteGuardExceededError を throw する。
+ * 値自体は無料枠と同じ 100MB だが、「Beginner 専用ガードである」意図を呼出側で明示するため
+ * 別名定義する。
+ *
+ * 関連:
+ *   - ADR: docs/adr/0025-beginner-write-guard.md
+ *   - 仕様書: docs/specification/BEGINNER_PLAN.md §3
+ *   - 実装: src/services/storage-guard.service.ts (precheckFileStorageLimit / assertFileStorageLimitInTx)
+ */
+export const BEGINNER_STORAGE_FREE_TIER_BYTES = FILE_STORAGE_FREE_TIER_BYTES;
+
 /** 課金単価: 1 GB tier あたり ¥10 (税抜) */
 export const FILE_STORAGE_PRICE_JPY_PER_GB_TIER = 10;
 

@@ -590,3 +590,238 @@ describe('mapFileStorageGuardErrorToResponse', () => {
     expect(mapFileStorageGuardErrorToResponse(null)).toBeNull();
   });
 });
+
+// ================================================================
+// ADR-0025 (2026-05-29): Beginner プラン write ガード
+// ================================================================
+
+import {
+  BeginnerWriteGuardExceededError,
+  mapBeginnerWriteGuardErrorToResponse,
+} from './storage-guard.service';
+import {
+  BEGINNER_DB_FREE_TIER_BYTES,
+} from '@/config/db-capacity-pricing';
+import { BEGINNER_STORAGE_FREE_TIER_BYTES } from '@/config/file-storage-pricing';
+
+describe('ADR-0025: Beginner プラン DB write ガード — precheckStorageLimit', () => {
+  it('Beginner プラン × 50MB 直前 → ok=true (許可)', async () => {
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce({
+      plan: 'beginner',
+      storageBytesUsed: BigInt(BEGINNER_DB_FREE_TIER_BYTES - 1000),
+      storageGuardCircuitOpenedAt: null,
+    } as never);
+
+    const r = await precheckStorageLimit(TENANT_ID, 500);
+    expect(r.ok).toBe(true);
+  });
+
+  it('Beginner プラン × 50MB 超過 → ok=false (BEGINNER_DB_QUOTA_EXCEEDED)', async () => {
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce({
+      plan: 'beginner',
+      storageBytesUsed: BigInt(BEGINNER_DB_FREE_TIER_BYTES + 1000),
+      storageGuardCircuitOpenedAt: null,
+    } as never);
+
+    const r = await precheckStorageLimit(TENANT_ID, 0);
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.code).toBe('BEGINNER_DB_QUOTA_EXCEEDED');
+      expect(r.limitBytes).toBe(BEGINNER_DB_FREE_TIER_BYTES);
+    }
+  });
+
+  it('Expert プラン × 50MB 超過 → ok=true (Beginner ガード対象外、50GB ハードキャップまで許可)', async () => {
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce({
+      plan: 'expert',
+      storageBytesUsed: BigInt(BEGINNER_DB_FREE_TIER_BYTES + 1000),
+      storageGuardCircuitOpenedAt: null,
+    } as never);
+
+    const r = await precheckStorageLimit(TENANT_ID, 0);
+    expect(r.ok).toBe(true);
+  });
+
+  it('Pro プラン × 50MB 超過 → ok=true (Beginner ガード対象外)', async () => {
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce({
+      plan: 'pro',
+      storageBytesUsed: BigInt(BEGINNER_DB_FREE_TIER_BYTES + 1000),
+      storageGuardCircuitOpenedAt: null,
+    } as never);
+
+    const r = await precheckStorageLimit(TENANT_ID, 0);
+    expect(r.ok).toBe(true);
+  });
+});
+
+describe('ADR-0025: Beginner プラン DB write ガード — assertStorageLimitInTx', () => {
+  it('Beginner × 実測 > 50MB → BeginnerWriteGuardExceededError', async () => {
+    tx.tenant.findFirst.mockResolvedValueOnce({
+      id: TENANT_ID,
+      plan: 'beginner',
+      storageBytesPeakThisMonth: BigInt(0),
+      storageGuardCircuitFailCount: 0,
+      storageGuardCircuitOpenedAt: null,
+      dbCapacityWarningLevel: 'none',
+    });
+    vi.mocked(calculateTenantStorageBytesDynamic).mockResolvedValueOnce(
+      BigInt(BEGINNER_DB_FREE_TIER_BYTES + 1),
+    );
+
+    await expect(assertStorageLimitInTx(tx as never, TENANT_ID)).rejects.toBeInstanceOf(
+      BeginnerWriteGuardExceededError,
+    );
+  });
+
+  it('Beginner × 実測 = 50MB ちょうど → throw しない (境界値で許容)', async () => {
+    tx.tenant.findFirst.mockResolvedValueOnce({
+      id: TENANT_ID,
+      plan: 'beginner',
+      storageBytesPeakThisMonth: BigInt(0),
+      storageGuardCircuitFailCount: 0,
+      storageGuardCircuitOpenedAt: null,
+      dbCapacityWarningLevel: 'none',
+    });
+    vi.mocked(calculateTenantStorageBytesDynamic).mockResolvedValueOnce(
+      BigInt(BEGINNER_DB_FREE_TIER_BYTES),
+    );
+
+    await expect(assertStorageLimitInTx(tx as never, TENANT_ID)).resolves.not.toThrow();
+  });
+
+  it('Expert × 実測 5GB → throw しない (Beginner ガード対象外)', async () => {
+    tx.tenant.findFirst.mockResolvedValueOnce({
+      id: TENANT_ID,
+      plan: 'expert',
+      storageBytesPeakThisMonth: BigInt(0),
+      storageGuardCircuitFailCount: 0,
+      storageGuardCircuitOpenedAt: null,
+      dbCapacityWarningLevel: 'none',
+    });
+    vi.mocked(calculateTenantStorageBytesDynamic).mockResolvedValueOnce(
+      BigInt(5 * SI_GB_BYTES),
+    );
+
+    await expect(assertStorageLimitInTx(tx as never, TENANT_ID)).resolves.not.toThrow();
+  });
+});
+
+describe('ADR-0025: Beginner プラン File Storage write ガード — precheckFileStorageLimit', () => {
+  it('Beginner × 100MB 直前 → ok=true (許可)', async () => {
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce({
+      plan: 'beginner',
+      storageFileBytesUsed: BigInt(BEGINNER_STORAGE_FREE_TIER_BYTES - 1000),
+    } as never);
+
+    const r = await precheckFileStorageLimit(TENANT_ID, 500);
+    expect(r.ok).toBe(true);
+  });
+
+  it('Beginner × 100MB 超 (新ファイル size 含む) → ok=false (BEGINNER_STORAGE_QUOTA_EXCEEDED)', async () => {
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce({
+      plan: 'beginner',
+      storageFileBytesUsed: BigInt(BEGINNER_STORAGE_FREE_TIER_BYTES - 1000),
+    } as never);
+
+    const r = await precheckFileStorageLimit(TENANT_ID, 5000);
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.code).toBe('BEGINNER_STORAGE_QUOTA_EXCEEDED');
+      expect(r.limitBytes).toBe(BEGINNER_STORAGE_FREE_TIER_BYTES);
+    }
+  });
+
+  it('Expert × 100MB 超 → ok=true (Beginner ガード対象外)', async () => {
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce({
+      plan: 'expert',
+      storageFileBytesUsed: BigInt(BEGINNER_STORAGE_FREE_TIER_BYTES + 1000),
+    } as never);
+
+    const r = await precheckFileStorageLimit(TENANT_ID, 0);
+    expect(r.ok).toBe(true);
+  });
+});
+
+describe('ADR-0025: Beginner プラン File Storage write ガード — assertFileStorageLimitInTx', () => {
+  it('Beginner × アップロード後 > 100MB → BeginnerWriteGuardExceededError', async () => {
+    tx.tenant.findFirst.mockResolvedValueOnce({
+      id: TENANT_ID,
+      plan: 'beginner',
+      storageFileBytesUsed: BigInt(BEGINNER_STORAGE_FREE_TIER_BYTES - 1000),
+      storageFileBytesPeakThisMonth: BigInt(0),
+      fileStorageWarningLevel: 'none',
+    });
+
+    await expect(
+      assertFileStorageLimitInTx(tx as never, TENANT_ID, 5000),
+    ).rejects.toBeInstanceOf(BeginnerWriteGuardExceededError);
+  });
+
+  it('Beginner × ファイル削除 (addedBytes < 0) → 100MB 超でも許可 (DELETE は対象外)', async () => {
+    tx.tenant.findFirst.mockResolvedValueOnce({
+      id: TENANT_ID,
+      plan: 'beginner',
+      storageFileBytesUsed: BigInt(BEGINNER_STORAGE_FREE_TIER_BYTES + 10000),
+      storageFileBytesPeakThisMonth: BigInt(BEGINNER_STORAGE_FREE_TIER_BYTES + 10000),
+      fileStorageWarningLevel: 'none',
+    });
+
+    // -5000 = ファイル削除、Beginner ガードは addedBytes > 0 のみ対象
+    await expect(
+      assertFileStorageLimitInTx(tx as never, TENANT_ID, -5000),
+    ).resolves.not.toThrow();
+  });
+});
+
+describe('ADR-0025: mapBeginnerWriteGuardErrorToResponse', () => {
+  it('BEGINNER_DB_QUOTA_EXCEEDED → 403 + UX 文言 + upgradeUrl', () => {
+    const err = new BeginnerWriteGuardExceededError({
+      tenantId: TENANT_ID,
+      quotaType: 'db',
+      currentBytes: 60_000_000,
+      limitBytes: BEGINNER_DB_FREE_TIER_BYTES,
+    });
+    const res = mapBeginnerWriteGuardErrorToResponse(err);
+    expect(res).not.toBeNull();
+    if (res) {
+      expect(res.status).toBe(403);
+      expect(res.body.error.code).toBe('BEGINNER_DB_QUOTA_EXCEEDED');
+      expect(res.body.error.quotaType).toBe('db');
+      expect(res.body.error.message).toContain('Beginner プラン');
+      expect(res.body.error.message).toContain('Expert');
+      expect(res.body.error.upgradeUrl).toBe('/settings/tenant');
+      expect(res.body.error.currentBytes).toBe(60_000_000);
+      expect(res.body.error.limitBytes).toBe(BEGINNER_DB_FREE_TIER_BYTES);
+    }
+  });
+
+  it('BEGINNER_STORAGE_QUOTA_EXCEEDED → 403 + quotaType=storage', () => {
+    const err = new BeginnerWriteGuardExceededError({
+      tenantId: TENANT_ID,
+      quotaType: 'storage',
+      currentBytes: 110_000_000,
+      limitBytes: BEGINNER_STORAGE_FREE_TIER_BYTES,
+    });
+    const res = mapBeginnerWriteGuardErrorToResponse(err);
+    expect(res).not.toBeNull();
+    if (res) {
+      expect(res.status).toBe(403);
+      expect(res.body.error.code).toBe('BEGINNER_STORAGE_QUOTA_EXCEEDED');
+      expect(res.body.error.quotaType).toBe('storage');
+    }
+  });
+
+  it('他の Error は null を返す (= 既存マッパーへ委譲)', () => {
+    expect(mapBeginnerWriteGuardErrorToResponse(new Error('other'))).toBeNull();
+    expect(mapBeginnerWriteGuardErrorToResponse(null)).toBeNull();
+    expect(
+      mapBeginnerWriteGuardErrorToResponse(
+        new StorageLimitExceededError({
+          tenantId: TENANT_ID,
+          currentBytes: 51 * SI_GB_BYTES,
+          limitBytes: DB_CAPACITY_L3_HARD_CAP_BYTES,
+        }),
+      ),
+    ).toBeNull();
+  });
+});

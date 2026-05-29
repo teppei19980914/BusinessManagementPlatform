@@ -18,7 +18,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('@/lib/db', () => {
   const tx = {
-    tenant: { update: vi.fn(() => Promise.resolve({})) },
+    tenant: {
+      update: vi.fn(() => Promise.resolve({})),
+      // ADR-0025 (2026-05-29): Beginner plan 判定で必須。default は Expert で既存挙動維持
+      findFirst: vi.fn(() => Promise.resolve({ plan: 'expert' })),
+    },
     apiCallLog: { create: vi.fn() },
     stripeUsageRecordQueue: { create: vi.fn() },
     auditLog: { create: vi.fn() },
@@ -64,7 +68,10 @@ import { calculateOverageJpy, SI_MB_BYTES, SI_GB_BYTES } from '@/config/db-capac
 
 const TENANT_ID = '11111111-1111-1111-1111-111111111111';
 type MockedTx = {
-  tenant: { update: ReturnType<typeof vi.fn> };
+  tenant: {
+    update: ReturnType<typeof vi.fn>;
+    findFirst: ReturnType<typeof vi.fn>;
+  };
   apiCallLog: { create: ReturnType<typeof vi.fn> };
   stripeUsageRecordQueue: { create: ReturnType<typeof vi.fn> };
   auditLog: { create: ReturnType<typeof vi.fn> };
@@ -80,6 +87,8 @@ beforeEach(() => {
   txMock.stripeUsageRecordQueue.create.mockResolvedValue({ id: 'mock-queue' });
   txMock.auditLog.create.mockResolvedValue({});
   txMock.tenant.update.mockResolvedValue({});
+  // ADR-0025 (2026-05-29): Beginner plan 判定 mock (default Expert で既存挙動維持)
+  txMock.tenant.findFirst.mockResolvedValue({ plan: 'expert' });
 
   vi.mocked(prisma.$transaction).mockImplementation((async (fn: unknown) => {
     if (typeof fn === 'function') return await fn(txMock);

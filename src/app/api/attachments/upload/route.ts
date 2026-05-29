@@ -109,9 +109,26 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // 6. ストレージハードキャップ pre-check (50GB)
+  // 6. ストレージ pre-check (Beginner 100MB / 全プラン 50GB ハードキャップ)
   const cap = await precheckFileStorageLimit(user.tenantId, input.sizeBytes);
   if (!cap.ok) {
+    // ADR-0025 (2026-05-29): Beginner プラン専用 UX 文言 + アップグレード誘導
+    if (cap.code === 'BEGINNER_STORAGE_QUOTA_EXCEEDED') {
+      return NextResponse.json(
+        {
+          error: {
+            code: 'BEGINNER_STORAGE_QUOTA_EXCEEDED',
+            message:
+              'Beginner プランの無料枠 (DB 50MB / Storage 100MB) を超えました。不要なデータを削除する、または Expert プランへアップグレードしてください。',
+            quotaType: 'storage' as const,
+            currentBytes: cap.cachedUsedBytes,
+            limitBytes: cap.limitBytes,
+            upgradeUrl: '/settings/tenant',
+          },
+        },
+        { status: 403 },
+      );
+    }
     return NextResponse.json(
       {
         error: {

@@ -105,21 +105,29 @@ type PlanLabel = { value: 'beginner' | 'expert' | 'pro'; label: string; descript
 // ADR-0019 (2026-05-24): 課金対象を BILLABLE_FEATURE_UNITS (project-upsert /
 // suggestion-explanation) のみに限定し、資産入力・チャット検索・自動インポートを全プラン無料化。
 // Beginner 上限 100→50 (課金対象 call のみカウント)、Expert ¥5→¥10 / Pro ¥15 据置。
+// ADR-0025 (2026-05-29): Beginner プランは DB 50MB / Storage 100MB 無料枠超過で新規作成/更新を
+//   write ブロック (削除のみ可)。overage 課金は発生せず、削除後は自動再集計で再書込み可能。
 const PLAN_OPTIONS: PlanLabel[] = [
   {
     value: 'beginner',
     label: 'Beginner',
-    description: 'プロジェクト作成/更新 月 50 回まで無料・最大 5 席 (資産入力とチャット検索は無料・無制限)',
+    description:
+      'プロジェクト作成/更新 月 50 回まで無料・最大 5 席 (資産入力とチャット検索は無料・無制限)。' +
+      'DB 50MB / ファイル 100MB を超えると新規作成/更新が停止 (削除のみ可)、削除後は自動再集計で再書込み可能 (ADR-0025)',
   },
   {
     value: 'expert',
     label: 'Expert',
-    description: 'プロジェクト作成/更新 ¥10/call (資産入力とチャット検索は無料・無制限)',
+    description:
+      'プロジェクト作成/更新 ¥10/call (資産入力とチャット検索は無料・無制限)。' +
+      'DB 容量 ¥50/GB tier・ファイル容量 ¥10/GB tier の従量課金 (50GB ハードキャップ)',
   },
   {
     value: 'pro',
     label: 'Pro',
-    description: 'プロジェクト作成/更新 + なぜ機能 ¥15/call・Claude Sonnet (資産入力とチャット検索は無料)',
+    description:
+      'プロジェクト作成/更新 + なぜ機能 ¥15/call・Claude Sonnet (資産入力とチャット検索は無料)。' +
+      'DB 容量 ¥50/GB tier・ファイル容量 ¥10/GB tier の従量課金 (50GB ハードキャップ)',
   },
 ];
 

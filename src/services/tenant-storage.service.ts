@@ -31,11 +31,19 @@ import {
   calculateTenantStorageBytesDynamic,
   getDbInstanceSizeBytes,
 } from '@/services/tenant-storage-tables.service';
+// ADR-0025 (2026-05-29): DELETE 後の自動再集計で File Storage 側も同時更新するために import
+import { syncTenantFileStorageUsage } from '@/services/file-storage-bucket-usage.service';
 import {
   classifyDbCapacityLevel,
   DB_DRIFT_WARNING_RATIO,
   DB_DRIFT_CRITICAL_RATIO,
 } from '@/config/db-capacity-pricing';
+
+/**
+ * ADR-0025 (2026-05-29): DELETE 後自動再集計の debounce 閾値 (ミリ秒)。
+ * 直近 30 秒以内に再集計済なら skip し、連続削除による DB 負荷を防ぐ。
+ */
+export const BEGINNER_RECALC_DEBOUNCE_MS = 30 * 1000;
 
 // ================================================================
 // 公開関数: 使用量計算
@@ -102,6 +110,179 @@ export async function updateStorageBytesUsedForTenant(
     },
   });
   return bytes;
+}
+
+/**
+ * ADR-0025 (2026-05-29): DELETE 後の自動再集計 (debounce 30s 付き、fail-safe)。
+ *
+ * 役割:
+ *   Beginner プランのテナントが DB / File Storage 無料枠を超過した状態で、
+ *   ユーザが不要データを DELETE して容量を減らした際、cron 更新を待たずに
+ *   キャッシュ (`storageBytesUsed` / `storageFileBytesUsed`) を即時更新する。
+ *   これにより「DELETE 直後に新規作成可能」が UX として成立する。
+ *
+ * 動作:
+ *   1. tenant.storageBytesUsedAt をチェックし、直近 BEGINNER_RECALC_DEBOUNCE_MS (30s)
+ *      以内に更新されていれば skip (= 連続削除での DB 負荷防止)
+ *   2. updateStorageBytesUsedForTenant() で DB 使用量を再集計
+ *   3. syncTenantFileStorageUsage() で File Storage 使用量を再集計
+ *   4. 例外は内部で catch + recordError、外部に throw しない (= fail-safe)
+ *
+ * 設計判断:
+ *   - **fail-safe**: 本関数の失敗が DELETE のビジネストランザクションを巻き戻すと
+ *     ユーザは「削除したのに残っている」状態に陥る。再集計は次回 cron でも回復する
+ *     ため、失敗時はログ記録のみで継続。
+ *   - **plan チェック不要**: 呼出側 (各 DELETE service の post-commit hook) で
+ *     plan === 'beginner' を判定する。本関数は plan を見ず汎用化することで、
+ *     将来 Expert/Pro でも自動再集計したくなった場合に再利用可能。
+ *   - **DELETE トランザクション外で呼ぶ**: トランザクション完了 (commit) 後に
+ *     呼び出すこと。トランザクション内で呼ぶと、現在の tx で DELETE 済の行が
+ *     計測対象から除外されない (= isolation level 起因の race) ため、再集計値が
+ *     古い値で更新されてしまう。
+ *
+ * 関連:
+ *   - ADR: docs/adr/0025-beginner-write-guard.md §5
+ *   - 仕様書: docs/specification/BEGINNER_PLAN.md §3.5
+ *   - DB 再集計: updateStorageBytesUsedForTenant (本ファイル)
+ *   - File Storage 再集計: syncTenantFileStorageUsage (file-storage-bucket-usage.service.ts)
+ *
+ * @param tenantId 対象テナント (Beginner プランの判定は呼出側責任)
+ * @returns 実行結果サマリ (skipped / recalculated、failure 時も throw せず result で返却)
+ */
+export async function recalculateTenantStorageUsageWithDebounce(
+  tenantId: string,
+): Promise<{
+  status: 'recalculated' | 'skipped-debounce' | 'failed';
+  dbBytes?: bigint | null;
+  reason?: string;
+}> {
+  try {
+    // 1. debounce チェック
+    const tenant = await prisma.tenant.findFirst({
+      where: { id: tenantId, deletedAt: null },
+      select: { storageBytesUsedAt: true },
+    });
+    if (!tenant) {
+      // テナント不在 (削除直後の race 等) は skip 扱い (= fail-safe)
+      return { status: 'failed', reason: 'tenant-not-found' };
+    }
+    if (tenant.storageBytesUsedAt != null) {
+      const elapsedMs = Date.now() - tenant.storageBytesUsedAt.getTime();
+      if (elapsedMs >= 0 && elapsedMs < BEGINNER_RECALC_DEBOUNCE_MS) {
+        return { status: 'skipped-debounce' };
+      }
+    }
+
+    // 2-3. DB + File Storage 再集計 (並列実行で latency 短縮)
+    const [dbResult, fileResult] = await Promise.allSettled([
+      updateStorageBytesUsedForTenant(tenantId),
+      syncTenantFileStorageUsage(tenantId),
+    ]);
+
+    if (dbResult.status === 'rejected' || fileResult.status === 'rejected') {
+      // 部分失敗 → recordError、ただし throw しない (DELETE 本体は成功状態のまま継続)
+      const dbErr = dbResult.status === 'rejected' ? String(dbResult.reason) : null;
+      const fileErr = fileResult.status === 'rejected' ? String(fileResult.reason) : null;
+      await recordError({
+        severity: 'warn',
+        source: 'server',
+        message: `[beginner-recalc] partial failure for tenant ${tenantId}`,
+        context: {
+          kind: 'beginner_storage_recalc',
+          tenantId,
+          dbError: dbErr,
+          fileError: fileErr,
+          adr: 'ADR-0025',
+        },
+      });
+      return {
+        status: 'failed',
+        reason: `db=${dbErr ?? 'ok'}, file=${fileErr ?? 'ok'}`,
+      };
+    }
+
+    return {
+      status: 'recalculated',
+      dbBytes: dbResult.value,
+    };
+  } catch (e) {
+    // 想定外例外 (= prisma 接続断等) → recordError + 'failed' で返却 (throw しない)
+    try {
+      await recordError({
+        severity: 'warn',
+        source: 'server',
+        message: `[beginner-recalc] unexpected error for tenant ${tenantId}`,
+        stack: e instanceof Error ? e.stack : undefined,
+        context: {
+          kind: 'beginner_storage_recalc',
+          tenantId,
+          error: e instanceof Error ? e.message : String(e),
+          adr: 'ADR-0025',
+        },
+      });
+    } catch {
+      // recordError 自体が失敗してもサイレントに継続 (= fail-safe の最終境界)
+    }
+    return { status: 'failed', reason: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/**
+ * ADR-0025 (2026-05-29): DELETE 経路で呼ぶ Beginner 専用 wrapper。
+ *
+ * 各 DELETE service (deleteKnowledge / deleteProject / deleteRisk / deleteRetrospective /
+ * deleteMemo / deleteAttachment 等) の transaction commit 後に本関数を呼ぶ。
+ *
+ * 動作:
+ *   1. plan を 1 query で取得
+ *   2. plan === 'beginner' なら recalculateTenantStorageUsageWithDebounce() を呼出
+ *   3. それ以外 (Expert/Pro/未確認) は何もしない (= cron 任せ)
+ *
+ * 設計判断:
+ *   - **plan チェックを内包**: 呼出側で都度 fetch すると DELETE 経路ごとに記述漏れリスク。
+ *     本 wrapper に集約し、各 delete service は `await maybeRecalcAfterBeginnerDelete(tenantId)`
+ *     を呼ぶだけで良い設計とする (= 1 行追加で漏れなく統合)。
+ *   - **fail-safe**: 呼出元の transaction には影響しない (recalculate~ 関数自体が fail-safe)。
+ *   - **+1 query 許容**: Beginner プランは個人試用想定で DELETE 頻度が低く、+1 query の負荷は許容。
+ *     Expert/Pro 用に呼ばれた場合も plan fetch 1 回のみで早期 return。
+ *
+ * 関連:
+ *   - ADR: docs/adr/0025-beginner-write-guard.md §5
+ *   - 仕様書: docs/specification/BEGINNER_PLAN.md §3.5
+ *
+ * @param tenantId 対象テナント (どの plan でも安全に呼べる)
+ */
+export async function maybeRecalcAfterBeginnerDelete(tenantId: string): Promise<void> {
+  try {
+    const tenant = await prisma.tenant.findFirst({
+      where: { id: tenantId, deletedAt: null },
+      select: { plan: true },
+    });
+    if (tenant?.plan === 'beginner') {
+      await recalculateTenantStorageUsageWithDebounce(tenantId);
+    }
+  } catch (e) {
+    // ADR-0025 (2026-05-29 修正): plan 取得失敗時も silent return するが、Beginner ユーザの場合
+    //   「DELETE しても 24h 待たないと write 復活しない」UX 問題に繋がるため、可観測性を確保する
+    //   ため recordError で warn ログを残す (= 検証指摘 §3.5)。
+    //   fail-safe 性は維持 (= 呼出元 (DELETE) には throw しない)。
+    try {
+      await recordError({
+        severity: 'warn',
+        source: 'server',
+        message: `[beginner-recalc] plan fetch failed in maybeRecalcAfterBeginnerDelete for tenant ${tenantId}`,
+        stack: e instanceof Error ? e.stack : undefined,
+        context: {
+          kind: 'beginner_recalc_plan_fetch_failed',
+          tenantId,
+          error: e instanceof Error ? e.message : String(e),
+          adr: 'ADR-0025',
+        },
+      });
+    } catch {
+      // recordError も失敗した最終フォールバック: silent
+    }
+  }
 }
 
 /**

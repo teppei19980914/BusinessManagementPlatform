@@ -43,6 +43,20 @@ export const SI_GB_BYTES = 1_000_000_000;
 export const DB_CAPACITY_FREE_TIER_BYTES = 50 * SI_MB_BYTES;
 
 /**
+ * Beginner プラン write ブロック閾値 (ADR-0025、2026-05-29)。
+ *
+ * Beginner プランのテナントが INSERT/UPDATE を実行する際、cached storageBytesUsed が
+ * 本値を超えていたら BeginnerWriteGuardExceededError を throw する。値自体は無料枠と
+ * 同じ 50MB だが、「Beginner 専用ガードである」意図を呼出側で明示するため別名定義する。
+ *
+ * 関連:
+ *   - ADR: docs/adr/0025-beginner-write-guard.md
+ *   - 仕様書: docs/specification/BEGINNER_PLAN.md §3
+ *   - 実装: src/services/storage-guard.service.ts (precheckStorageLimit / assertStorageLimitInTx)
+ */
+export const BEGINNER_DB_FREE_TIER_BYTES = DB_CAPACITY_FREE_TIER_BYTES;
+
+/**
  * 課金単価: 1 GB tier あたり ¥50 (階段関数)。
  *
  * **税仕様** (F-1 3 回目検証で明文化):

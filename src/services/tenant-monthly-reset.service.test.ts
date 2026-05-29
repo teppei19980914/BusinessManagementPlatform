@@ -56,6 +56,8 @@ import {
   runTenantMonthlyReset,
   saveMonthlyUsageSnapshots,
   billOneTenantDbCapacityOverage,
+  // ADR-0025 (2026-05-29 3 巡目): File Storage 側 Beginner skip テスト追加用
+  billOneTenantFileStorageOverage,
 } from './tenant-monthly-reset.service';
 import { prisma } from '@/lib/db';
 import { recordError } from '@/services/error-log.service';
@@ -586,7 +588,11 @@ describe('billOneTenantDbCapacityOverage (ADR-0020 / 2026-05-25)', () => {
     vi.mocked(prisma.$transaction).mockImplementation((async (fn: unknown) => {
       if (typeof fn === 'function') {
         return await fn({
-          tenant: { update: vi.fn(() => Promise.resolve({})) },
+          tenant: {
+            update: vi.fn(() => Promise.resolve({})),
+            // ADR-0025 (2026-05-29): Beginner plan 判定で必須。default は Expert で既存挙動維持
+            findFirst: vi.fn(() => Promise.resolve({ plan: 'expert' })),
+          },
           apiCallLog: { create: vi.fn(() => Promise.resolve({ id: 'mock-log-id' })) },
           stripeUsageRecordQueue: { create: vi.fn(() => Promise.resolve({ id: 'mock-q' })) },
           auditLog: { create: vi.fn(() => Promise.resolve({})) },
@@ -652,7 +658,10 @@ describe('billOneTenantDbCapacityOverage (ADR-0020 / 2026-05-25)', () => {
     vi.mocked(prisma.$transaction).mockImplementation((async (fn: unknown) => {
       if (typeof fn === 'function') {
         return await fn({
-          tenant: { update: vi.fn(() => Promise.resolve({})) },
+          tenant: {
+            update: vi.fn(() => Promise.resolve({})),
+            findFirst: vi.fn(() => Promise.resolve({ plan: 'expert' })),
+          },
           apiCallLog: {
             create: vi.fn((args: { data: { createdAt: Date } }) => {
               capturedCreatedAt = args.data.createdAt;
@@ -685,7 +694,10 @@ describe('billOneTenantDbCapacityOverage (ADR-0020 / 2026-05-25)', () => {
     vi.mocked(prisma.$transaction).mockImplementation((async (fn: unknown) => {
       if (typeof fn === 'function') {
         return await fn({
-          tenant: { update: vi.fn(() => Promise.resolve({})) },
+          tenant: {
+            update: vi.fn(() => Promise.resolve({})),
+            findFirst: vi.fn(() => Promise.resolve({ plan: 'expert' })),
+          },
           apiCallLog: {
             create: vi.fn((args: { data: { createdAt: Date; requestId: string } }) => {
               capturedCreatedAt = args.data.createdAt;
@@ -718,7 +730,10 @@ describe('billOneTenantDbCapacityOverage (ADR-0020 / 2026-05-25)', () => {
     vi.mocked(prisma.$transaction).mockImplementation((async (fn: unknown) => {
       if (typeof fn === 'function') {
         return await fn({
-          tenant: { update: vi.fn(() => Promise.resolve({})) },
+          tenant: {
+            update: vi.fn(() => Promise.resolve({})),
+            findFirst: vi.fn(() => Promise.resolve({ plan: 'expert' })),
+          },
           apiCallLog: {
             create: vi.fn((args: { data: { costJpy: number } }) => {
               capturedLogCost = args.data.costJpy;
@@ -750,5 +765,297 @@ describe('billOneTenantDbCapacityOverage (ADR-0020 / 2026-05-25)', () => {
     expect(capturedLogCost).toBe(100);
     expect(capturedQueueQty).toBe(100);
     expect(capturedLogCost).toBe(capturedQueueQty);
+  });
+});
+
+// ================================================================
+// ADR-0025 (2026-05-29): Beginner プラン overage 課金 skip
+// ================================================================
+
+describe('ADR-0025: Beginner プラン overage skip — billOneTenantDbCapacityOverage', () => {
+  const TENANT_ID = '11111111-1111-1111-1111-111111111111';
+  const NOW = new Date('2026-06-01T00:00:00Z');
+
+  let apiCallLogCreateMock: ReturnType<typeof vi.fn>;
+  let tenantUpdateMock: ReturnType<typeof vi.fn>;
+  let stripeQueueCreateMock: ReturnType<typeof vi.fn>;
+  let auditLogCreateMock: ReturnType<typeof vi.fn>;
+
+  function setupMockWithPlan(plan: 'beginner' | 'expert' | 'pro') {
+    apiCallLogCreateMock = vi.fn(() => Promise.resolve({ id: 'mock-log-id' }));
+    tenantUpdateMock = vi.fn(() => Promise.resolve({}));
+    stripeQueueCreateMock = vi.fn(() => Promise.resolve({ id: 'mock-q' }));
+    auditLogCreateMock = vi.fn(() => Promise.resolve({}));
+    vi.mocked(prisma.$transaction).mockImplementation((async (fn: unknown) => {
+      if (typeof fn === 'function') {
+        return await fn({
+          tenant: {
+            update: tenantUpdateMock,
+            findFirst: vi.fn(() => Promise.resolve({ plan })),
+          },
+          apiCallLog: { create: apiCallLogCreateMock },
+          stripeUsageRecordQueue: { create: stripeQueueCreateMock },
+          auditLog: { create: auditLogCreateMock },
+          user: { findFirst: vi.fn(() => Promise.resolve({ id: 'system-user' })) },
+        });
+      }
+      return fn;
+    }) as never);
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('Beginner × 51MB 超 → ApiCallLog 未 INSERT (billedJpy=0)', async () => {
+    setupMockWithPlan('beginner');
+    const result = await billOneTenantDbCapacityOverage({
+      tenantId: TENANT_ID,
+      timezone: 'Asia/Tokyo',
+      storageBytesUsed: BigInt(51 * SI_MB_BYTES),
+      storageBytesPeakThisMonth: BigInt(51 * SI_MB_BYTES),
+      billingScope: 'previous-month',
+      now: NOW,
+    });
+    expect(result.billedJpy).toBe(0);
+    expect(result.apiCallLogId).toBeNull();
+    expect(apiCallLogCreateMock).not.toHaveBeenCalled();
+    expect(stripeQueueCreateMock).not.toHaveBeenCalled();
+  });
+
+  it('Beginner × 51MB 超 → audit_log で skip 証跡を残す (entityType=api_call_log_skip)', async () => {
+    setupMockWithPlan('beginner');
+    await billOneTenantDbCapacityOverage({
+      tenantId: TENANT_ID,
+      timezone: 'Asia/Tokyo',
+      storageBytesUsed: BigInt(2 * SI_GB_BYTES),
+      storageBytesPeakThisMonth: BigInt(2 * SI_GB_BYTES),
+      billingScope: 'previous-month',
+      now: NOW,
+    });
+    expect(auditLogCreateMock).toHaveBeenCalledTimes(1);
+    const auditCall = auditLogCreateMock.mock.calls[0]?.[0] as {
+      data: {
+        entityType: string;
+        entityId: string;
+        afterValue: {
+          adr: string;
+          skipReason: string;
+          costJpy: number;
+          calculatedCostJpyIfBilled: number;
+          requestId: string;
+        };
+      };
+    };
+    expect(auditCall.data.entityType).toBe('api_call_log_skip');
+    // ADR-0025 (2026-05-29 修正): entityId は @db.Uuid 型のため tenantId を入れる
+    //   (旧実装の requestId='db-capacity-overage-{tenantId}-{ym}-{scope}' は UUID 型違反で
+    //    production の PostgreSQL で reject されていた)
+    expect(auditCall.data.entityId).toBe(TENANT_ID);
+    // requestId は afterValue 経由で識別子として保持
+    expect(auditCall.data.afterValue.requestId).toContain('db-capacity-overage');
+    expect(auditCall.data.afterValue.requestId).toContain(TENANT_ID);
+    expect(auditCall.data.afterValue.adr).toBe('ADR-0025');
+    expect(auditCall.data.afterValue.skipReason).toContain('beginner');
+    expect(auditCall.data.afterValue.costJpy).toBe(0);
+    expect(auditCall.data.afterValue.calculatedCostJpyIfBilled).toBe(100); // 2GB tier = ¥100
+  });
+
+  it('Expert × 51MB 超 → 既存通り課金 (billedJpy=50)', async () => {
+    setupMockWithPlan('expert');
+    const result = await billOneTenantDbCapacityOverage({
+      tenantId: TENANT_ID,
+      timezone: 'Asia/Tokyo',
+      storageBytesUsed: BigInt(51 * SI_MB_BYTES),
+      storageBytesPeakThisMonth: BigInt(51 * SI_MB_BYTES),
+      billingScope: 'previous-month',
+      now: NOW,
+    });
+    expect(result.billedJpy).toBe(50);
+    expect(result.apiCallLogId).toBe('mock-log-id');
+    expect(apiCallLogCreateMock).toHaveBeenCalledTimes(1);
+    expect(stripeQueueCreateMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('Pro × 51MB 超 → 既存通り課金 (billedJpy=50)', async () => {
+    setupMockWithPlan('pro');
+    const result = await billOneTenantDbCapacityOverage({
+      tenantId: TENANT_ID,
+      timezone: 'Asia/Tokyo',
+      storageBytesUsed: BigInt(51 * SI_MB_BYTES),
+      storageBytesPeakThisMonth: BigInt(51 * SI_MB_BYTES),
+      billingScope: 'previous-month',
+      now: NOW,
+    });
+    expect(result.billedJpy).toBe(50);
+    expect(apiCallLogCreateMock).toHaveBeenCalled();
+  });
+
+  it('Beginner × 無料枠内 (10MB) → audit_log なし (= costJpy=0 で if 条件未通過)', async () => {
+    setupMockWithPlan('beginner');
+    const result = await billOneTenantDbCapacityOverage({
+      tenantId: TENANT_ID,
+      timezone: 'Asia/Tokyo',
+      storageBytesUsed: BigInt(10 * SI_MB_BYTES),
+      storageBytesPeakThisMonth: BigInt(10 * SI_MB_BYTES),
+      billingScope: 'previous-month',
+      now: NOW,
+    });
+    expect(result.billedJpy).toBe(0);
+    expect(auditLogCreateMock).not.toHaveBeenCalled();
+  });
+});
+
+// ================================================================
+// ADR-0025 (2026-05-29 3 巡目): File Storage 側 Beginner skip テスト
+// = DB capacity と対称、片肺テスト解消 (3 巡目検証 §E.1)
+// ================================================================
+
+describe('ADR-0025: Beginner プラン overage skip — billOneTenantFileStorageOverage', () => {
+  const TENANT_ID = '11111111-1111-1111-1111-111111111111';
+  const NOW = new Date('2026-06-01T00:00:00Z');
+
+  let apiCallLogCreateMock: ReturnType<typeof vi.fn>;
+  let tenantUpdateMock: ReturnType<typeof vi.fn>;
+  let stripeQueueCreateMock: ReturnType<typeof vi.fn>;
+  let auditLogCreateMock: ReturnType<typeof vi.fn>;
+
+  function setupMockWithPlan(plan: 'beginner' | 'expert' | 'pro') {
+    apiCallLogCreateMock = vi.fn(() => Promise.resolve({ id: 'mock-log-id' }));
+    tenantUpdateMock = vi.fn(() => Promise.resolve({}));
+    stripeQueueCreateMock = vi.fn(() => Promise.resolve({ id: 'mock-q' }));
+    auditLogCreateMock = vi.fn(() => Promise.resolve({}));
+    vi.mocked(prisma.$transaction).mockImplementation((async (fn: unknown) => {
+      if (typeof fn === 'function') {
+        return await fn({
+          tenant: {
+            update: tenantUpdateMock,
+            findFirst: vi.fn(() => Promise.resolve({ plan })),
+          },
+          apiCallLog: { create: apiCallLogCreateMock },
+          stripeUsageRecordQueue: { create: stripeQueueCreateMock },
+          auditLog: { create: auditLogCreateMock },
+          user: { findFirst: vi.fn(() => Promise.resolve({ id: 'system-user' })) },
+        });
+      }
+      return fn;
+    }) as never);
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('Beginner × 101MB 超 → ApiCallLog 未 INSERT (billedJpy=0)', async () => {
+    setupMockWithPlan('beginner');
+    const result = await billOneTenantFileStorageOverage({
+      tenantId: TENANT_ID,
+      timezone: 'Asia/Tokyo',
+      storageFileBytesUsed: BigInt(101 * SI_MB_BYTES),
+      storageFileBytesPeakThisMonth: BigInt(101 * SI_MB_BYTES),
+      billingScope: 'previous-month',
+      now: NOW,
+    });
+    expect(result.billedJpy).toBe(0);
+    expect(result.apiCallLogId).toBeNull();
+    expect(apiCallLogCreateMock).not.toHaveBeenCalled();
+    expect(stripeQueueCreateMock).not.toHaveBeenCalled();
+  });
+
+  it('Beginner × 2GB 超 → audit_log で skip 証跡 (entityId=tenantId UUID、ADR-0025 修正点)', async () => {
+    setupMockWithPlan('beginner');
+    await billOneTenantFileStorageOverage({
+      tenantId: TENANT_ID,
+      timezone: 'Asia/Tokyo',
+      storageFileBytesUsed: BigInt(2 * SI_GB_BYTES),
+      storageFileBytesPeakThisMonth: BigInt(2 * SI_GB_BYTES),
+      billingScope: 'previous-month',
+      now: NOW,
+    });
+    expect(auditLogCreateMock).toHaveBeenCalledTimes(1);
+    const auditCall = auditLogCreateMock.mock.calls[0]?.[0] as {
+      data: {
+        entityType: string;
+        entityId: string;
+        afterValue: {
+          featureUnit: string;
+          adr: string;
+          skipReason: string;
+          costJpy: number;
+          calculatedCostJpyIfBilled: number;
+          requestId: string;
+        };
+      };
+    };
+    expect(auditCall.data.entityType).toBe('api_call_log_skip');
+    // ADR-0025 (2026-05-29 修正): entityId は UUID 型のため tenantId
+    expect(auditCall.data.entityId).toBe(TENANT_ID);
+    expect(auditCall.data.afterValue.featureUnit).toBe('storage-file-overage');
+    expect(auditCall.data.afterValue.adr).toBe('ADR-0025');
+    expect(auditCall.data.afterValue.skipReason).toContain('beginner');
+    expect(auditCall.data.afterValue.costJpy).toBe(0);
+    expect(auditCall.data.afterValue.calculatedCostJpyIfBilled).toBe(20); // 2GB tier × ¥10 = ¥20
+    expect(auditCall.data.afterValue.requestId).toContain('storage-file-overage');
+    expect(auditCall.data.afterValue.requestId).toContain(TENANT_ID);
+  });
+
+  it('Expert × 101MB 超 → 既存通り課金 (billedJpy=10)', async () => {
+    setupMockWithPlan('expert');
+    const result = await billOneTenantFileStorageOverage({
+      tenantId: TENANT_ID,
+      timezone: 'Asia/Tokyo',
+      storageFileBytesUsed: BigInt(101 * SI_MB_BYTES),
+      storageFileBytesPeakThisMonth: BigInt(101 * SI_MB_BYTES),
+      billingScope: 'previous-month',
+      now: NOW,
+    });
+    expect(result.billedJpy).toBe(10);
+    expect(result.apiCallLogId).toBe('mock-log-id');
+    expect(apiCallLogCreateMock).toHaveBeenCalledTimes(1);
+    expect(stripeQueueCreateMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('Pro × 101MB 超 → 既存通り課金 (billedJpy=10)', async () => {
+    setupMockWithPlan('pro');
+    const result = await billOneTenantFileStorageOverage({
+      tenantId: TENANT_ID,
+      timezone: 'Asia/Tokyo',
+      storageFileBytesUsed: BigInt(101 * SI_MB_BYTES),
+      storageFileBytesPeakThisMonth: BigInt(101 * SI_MB_BYTES),
+      billingScope: 'previous-month',
+      now: NOW,
+    });
+    expect(result.billedJpy).toBe(10);
+    expect(apiCallLogCreateMock).toHaveBeenCalled();
+  });
+
+  it('Beginner × 無料枠内 (50MB) → audit_log なし (costJpy=0 で skip path 未通過)', async () => {
+    setupMockWithPlan('beginner');
+    const result = await billOneTenantFileStorageOverage({
+      tenantId: TENANT_ID,
+      timezone: 'Asia/Tokyo',
+      storageFileBytesUsed: BigInt(50 * SI_MB_BYTES),
+      storageFileBytesPeakThisMonth: BigInt(50 * SI_MB_BYTES),
+      billingScope: 'previous-month',
+      now: NOW,
+    });
+    expect(result.billedJpy).toBe(0);
+    expect(auditLogCreateMock).not.toHaveBeenCalled();
+  });
+
+  it('Beginner × 退会時即時請求 (current-month-on-withdrawal) でも skip', async () => {
+    setupMockWithPlan('beginner');
+    const result = await billOneTenantFileStorageOverage({
+      tenantId: TENANT_ID,
+      timezone: 'Asia/Tokyo',
+      storageFileBytesUsed: BigInt(500 * SI_MB_BYTES),
+      storageFileBytesPeakThisMonth: BigInt(500 * SI_MB_BYTES),
+      billingScope: 'current-month-on-withdrawal',
+      now: NOW,
+    });
+    // ADR-0025: 退会時も Beginner は課金 skip (= 解約時の最後の課金が発生しない)
+    expect(result.billedJpy).toBe(0);
+    expect(apiCallLogCreateMock).not.toHaveBeenCalled();
+    expect(stripeQueueCreateMock).not.toHaveBeenCalled();
   });
 });

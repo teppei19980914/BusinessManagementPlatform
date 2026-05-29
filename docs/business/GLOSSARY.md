@@ -311,3 +311,21 @@ Supabase 固有機能 (RLS / Realtime / Edge Functions) は AWS 移行を視野�
 - **省略形・略語** (例: QCD, MFA, RBAC, KDD)
 
 不要にならない範囲で簡潔に書く。詳細は別ドキュメントへリンクする。
+
+---
+
+## ADR-0025 関連用語 (2026-05-29 追加)
+
+### Beginner write guard
+
+Beginner プランのテナントが DB 50MB / File Storage 100MB の無料枠を超過した際に新規作成・更新を拒否する仕組み。削除のみ許可、overage 課金は発生しない。実装は `src/services/storage-guard.service.ts` の `precheckStorageLimit` / `assertStorageLimitInTx` / `precheckFileStorageLimit` / `assertFileStorageLimitInTx` の 4 関数に統合。詳細: [ADR-0025](../adr/0025-beginner-write-guard.md)
+
+### Beginner 無料枠 (Free tier)
+
+- DB: `BEGINNER_DB_FREE_TIER_BYTES = 50MB` ([src/config/db-capacity-pricing.ts](../../src/config/db-capacity-pricing.ts))
+- File Storage: `BEGINNER_STORAGE_FREE_TIER_BYTES = 100MB` ([src/config/file-storage-pricing.ts](../../src/config/file-storage-pricing.ts))
+- 値自体は ADR-0020/0021 の全プラン共通無料枠と同じだが、Beginner 専用ガードの意図を明示するため別名定数で定義
+
+### DELETE 後の自動再集計 (debounce 30s)
+
+Beginner プランで超過状態から DELETE で容量を減らした際、cron 更新を待たずに `tenant.storageBytesUsed` / `storageFileBytesUsed` キャッシュを即時更新する仕組み。debounce 30 秒で連続削除時の負荷を防止。実装は `recalculateTenantStorageUsageWithDebounce()` / `maybeRecalcAfterBeginnerDelete()` ([src/services/tenant-storage.service.ts](../../src/services/tenant-storage.service.ts))。fail-safe で DELETE 本体トランザクションは巻き戻さない。

@@ -322,6 +322,11 @@ GROUP BY 1;
   PAYMENT_TERMS.md §1.1 / PAYMENT_DELINQUENCY_SOP.md §0 と整合化。
 - **2026-05-14 (2nd)**: 「当月分 CSV (現在値) における前月解約テナントの数値誤読リスク」を明文化。
   解約日列のフィルタを必須運用に追加し、推奨パス (過去月 CSV) を明示。
+- **2026-05-29 (ADR-0025)**: Beginner プラン overage 課金 skip
+  - `billOneTenantDbCapacityOverage()` / `billOneTenantFileStorageOverage()` で `tenant.plan === 'beginner'` の場合は ApiCallLog INSERT / Stripe queue / counter update をすべて skip
+  - skip 証跡として `auditLog` に `entityType='api_call_log_skip'` + `afterValue.adr='ADR-0025'` 記録 (= 後から請求漏れ疑義に対する反証)
+  - 月初 cron + 退会精算 (`tenant-withdrawal-billing.service.ts`) の両経路で適用
+  - **確認手順**: 月初 cron 実行後、Beginner テナントの `apiCallLog` で `featureUnit IN ('db-capacity-overage','storage-file-overage')` が 0 件であること + `auditLog` で `entityType='api_call_log_skip'` の対応行があること
 - **2026-05-14 (1st)**: 月途中解約の請求漏れ防止改修
   - `deleteTenant()` に `tenantMonthlyUsageHistory.upsert` を追加 (解約時スナップショット)
   - `listAllTenants()` に `includeDeleted` オプション追加

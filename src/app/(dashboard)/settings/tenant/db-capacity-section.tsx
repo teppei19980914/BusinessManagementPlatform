@@ -21,6 +21,7 @@
 
 import { prisma } from '@/lib/db';
 import {
+  BEGINNER_DB_FREE_TIER_BYTES,
   DB_CAPACITY_FREE_TIER_BYTES,
   DB_CAPACITY_L1_USER_WARNING_BYTES,
   DB_CAPACITY_L2_ADMIN_ALERT_BYTES,
@@ -33,6 +34,8 @@ import {
 } from '@/config/db-capacity-pricing';
 
 type DbCapacityData = {
+  // ADR-0025 (2026-05-29): Beginner プラン判定のため plan を追加 select
+  plan: string;
   storageBytesUsed: bigint;
   storageBytesPeakThisMonth: bigint;
   storageBytesUsedAt: Date | null;
@@ -69,6 +72,8 @@ export async function DbCapacitySection({ tenantId }: { tenantId: string }) {
   const data = await prisma.tenant.findFirst({
     where: { id: tenantId, deletedAt: null },
     select: {
+      // ADR-0025 (2026-05-29): Beginner プラン判定のため plan を追加 select
+      plan: true,
       storageBytesUsed: true,
       storageBytesPeakThisMonth: true,
       storageBytesUsedAt: true,
@@ -80,36 +85,91 @@ export async function DbCapacitySection({ tenantId }: { tenantId: string }) {
 
   const typed = data as DbCapacityData;
 
-  // 課金額算出 (= 月末確定額の見通し)
-  const estimatedJpy = calculateOverageJpy(typed.storageBytesPeakThisMonth);
-  // 現在値で classify (= 表示用の現状ステータス)
+  // ADR-0025 (2026-05-29): Beginner プラン判定。
+  //   - Beginner: 50MB 無料枠、超過で write ブロック (overage 課金なし)、削除のみ可
+  //   - Expert / Pro: 従来通り 50GB ハードキャップ + 従量課金
+  const isBeginner = typed.plan === 'beginner';
+  const usedBytesNum = Number(typed.storageBytesUsed);
+  const beginnerOverFreeTier = isBeginner && usedBytesNum > BEGINNER_DB_FREE_TIER_BYTES;
+  const beginnerNearFreeTier =
+    isBeginner && usedBytesNum >= BEGINNER_DB_FREE_TIER_BYTES * 0.8;
+
+  // 課金額算出: Beginner は常に ¥0 (ADR-0025、overage 課金なし)
+  const estimatedJpy = isBeginner ? 0 : calculateOverageJpy(typed.storageBytesPeakThisMonth);
+  // 現在値で classify (= 表示用の現状ステータス、Expert/Pro 用)
   const currentLevel = classifyDbCapacityLevel(typed.storageBytesPeakThisMonth);
   const safeLevel: DbCapacityWarningLevel =
     currentLevel in LEVEL_BADGES ? currentLevel : 'none';
   const badge = LEVEL_BADGES[safeLevel];
 
-  // 進捗率 (50GB ハードキャップに対する使用率)
+  // 進捗率: Beginner は 50MB 基準、Expert/Pro は 50GB 基準
+  const capBytes = isBeginner ? BEGINNER_DB_FREE_TIER_BYTES : DB_CAPACITY_L3_HARD_CAP_BYTES;
   const usagePercent = Math.min(
     100,
-    (Number(typed.storageBytesPeakThisMonth) / DB_CAPACITY_L3_HARD_CAP_BYTES) * 100,
+    (Number(typed.storageBytesPeakThisMonth) / capBytes) * 100,
   );
 
   return (
     <section
       className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm"
       aria-labelledby="db-capacity-section-title"
+      data-testid="db-capacity-section"
+      data-plan={typed.plan}
+      data-beginner-over-free-tier={beginnerOverFreeTier ? 'true' : 'false'}
     >
       <div className="mb-4 flex items-center justify-between">
         <h2
           id="db-capacity-section-title"
           className="text-lg font-semibold text-gray-900"
         >
-          DB 容量 (従量課金)
+          DB 容量{isBeginner ? ' (Beginner プラン 無料枠 50MB)' : ' (従量課金)'}
         </h2>
-        <span className={`rounded-full px-3 py-1 text-xs font-medium ${badge.color}`}>
-          {badge.label}
-        </span>
+        {!isBeginner && (
+          <span className={`rounded-full px-3 py-1 text-xs font-medium ${badge.color}`}>
+            {badge.label}
+          </span>
+        )}
+        {isBeginner && beginnerOverFreeTier && (
+          <span
+            className="rounded-full bg-red-100 px-3 py-1 text-xs font-medium text-red-800"
+            data-testid="beginner-db-quota-exceeded-badge"
+          >
+            無料枠超過 (write ブロック中)
+          </span>
+        )}
+        {isBeginner && !beginnerOverFreeTier && beginnerNearFreeTier && (
+          <span className="rounded-full bg-yellow-100 px-3 py-1 text-xs font-medium text-yellow-800">
+            無料枠の 80% に到達
+          </span>
+        )}
+        {isBeginner && !beginnerNearFreeTier && (
+          <span className="rounded-full bg-green-100 px-3 py-1 text-xs font-medium text-green-800">
+            無料枠内
+          </span>
+        )}
       </div>
+
+      {/* ADR-0025: Beginner 超過時の write ブロック説明バナー */}
+      {isBeginner && beginnerOverFreeTier && (
+        <div
+          className="mb-4 rounded-md border border-red-300 bg-red-50 p-4 text-sm text-red-900"
+          role="alert"
+          data-testid="beginner-db-block-banner"
+        >
+          <p className="font-semibold">⚠ Beginner プランの DB 無料枠 (50MB) を超えました</p>
+          <p className="mt-1">
+            新規作成 / 更新は停止しています (削除のみ可)。不要なデータを削除すると自動的に再集計され、再び書込み可能になります。反映されない場合は画面上部の{' '}
+            <strong>[DB 容量 / API 利用量を再集計]</strong> ボタンをご利用ください。
+          </p>
+          <p className="mt-1 text-xs">
+            または{' '}
+            <a href="?tab=overview" className="font-semibold underline">
+              Expert プランへアップグレード
+            </a>{' '}
+            すれば 50GB まで継続利用できます (¥50/GB tier、超過時のみ従量課金)。
+          </p>
+        </div>
+      )}
 
       {/* 主要数値 */}
       <dl className="grid grid-cols-1 gap-4 sm:grid-cols-3">
@@ -142,22 +202,33 @@ export async function DbCapacitySection({ tenantId }: { tenantId: string }) {
         </div>
       </dl>
 
-      {/* 進捗バー (50GB ハードキャップに対する使用率) */}
+      {/* 進捗バー (Beginner: 50MB 基準 / Expert・Pro: 50GB 基準) */}
       <div className="mt-6">
         <div className="mb-1 flex items-center justify-between text-xs text-gray-600">
           <span>0</span>
-          <span>50GB ハードキャップ ({usagePercent.toFixed(1)}%)</span>
+          <span>
+            {isBeginner
+              ? `Beginner 無料枠 ${BEGINNER_DB_FREE_TIER_BYTES / SI_MB_BYTES}MB`
+              : '50GB ハードキャップ'}{' '}
+            ({usagePercent.toFixed(1)}%)
+          </span>
         </div>
         <div className="h-2 w-full overflow-hidden rounded-full bg-gray-200">
           <div
             className={`h-full transition-all ${
-              safeLevel === 'l3'
-                ? 'bg-red-500'
-                : safeLevel === 'l2'
-                  ? 'bg-yellow-500'
-                  : safeLevel === 'l1'
-                    ? 'bg-blue-500'
+              isBeginner
+                ? beginnerOverFreeTier
+                  ? 'bg-red-500'
+                  : beginnerNearFreeTier
+                    ? 'bg-yellow-500'
                     : 'bg-green-500'
+                : safeLevel === 'l3'
+                  ? 'bg-red-500'
+                  : safeLevel === 'l2'
+                    ? 'bg-yellow-500'
+                    : safeLevel === 'l1'
+                      ? 'bg-blue-500'
+                      : 'bg-green-500'
             }`}
             style={{ width: `${usagePercent}%` }}
             aria-label={`使用率 ${usagePercent.toFixed(1)}%`}
@@ -168,25 +239,48 @@ export async function DbCapacitySection({ tenantId }: { tenantId: string }) {
       {/* 料金体系の説明 */}
       <details className="mt-6 rounded border border-gray-200 bg-gray-50 p-4">
         <summary className="cursor-pointer text-sm font-medium text-gray-700">
-          料金体系を表示
+          {isBeginner ? 'Beginner プランの容量ルールを表示' : '料金体系を表示'}
         </summary>
         <div className="mt-3 space-y-2 text-sm text-gray-600">
-          <p>
-            <strong>無料枠:</strong> {DB_CAPACITY_FREE_TIER_BYTES / SI_MB_BYTES}MB まで
-          </p>
-          <p>
-            <strong>超過料金:</strong> 1GB ごとに ¥50 (税抜、1MB 未満は繰上)
-          </p>
-          <p className="text-xs text-gray-500">
-            例: 100MB → ¥50 / 1GB → ¥50 / 1.5GB → ¥100 /{' '}
-            {DB_CAPACITY_L1_USER_WARNING_BYTES / SI_GB_BYTES}GB → 月通知あり (Level 1) /{' '}
-            {DB_CAPACITY_L2_ADMIN_ALERT_BYTES / SI_GB_BYTES}GB → 管理者通知 (Level 2) /{' '}
-            {DB_CAPACITY_L3_HARD_CAP_BYTES / SI_GB_BYTES}GB → 書込停止 (Level 3
-            ハードキャップ)
-          </p>
-          <p className="text-xs text-gray-500">
-            ハードキャップ到達時もデータの読み取り・エクスポートは継続可能です。
-          </p>
+          {isBeginner ? (
+            <>
+              <p>
+                <strong>無料枠:</strong> {BEGINNER_DB_FREE_TIER_BYTES / SI_MB_BYTES}MB
+                (Beginner プラン)
+              </p>
+              <p>
+                <strong>超過時の挙動:</strong> 新規作成 / 更新が停止 (削除のみ可)、overage
+                課金は<strong>発生しません</strong> (ADR-0025)
+              </p>
+              <p>
+                <strong>削除後:</strong> 容量キャッシュが自動的に再集計され (debounce 30
+                秒)、再び書込み可能になります
+              </p>
+              <p className="text-xs text-gray-500">
+                Expert / Pro プランへアップグレードすると 50GB まで継続利用可能 (¥50/GB
+                tier、超過時のみ従量課金)。
+              </p>
+            </>
+          ) : (
+            <>
+              <p>
+                <strong>無料枠:</strong> {DB_CAPACITY_FREE_TIER_BYTES / SI_MB_BYTES}MB まで
+              </p>
+              <p>
+                <strong>超過料金:</strong> 1GB ごとに ¥50 (税抜、1MB 未満は繰上)
+              </p>
+              <p className="text-xs text-gray-500">
+                例: 100MB → ¥50 / 1GB → ¥50 / 1.5GB → ¥100 /{' '}
+                {DB_CAPACITY_L1_USER_WARNING_BYTES / SI_GB_BYTES}GB → 月通知あり (Level 1) /{' '}
+                {DB_CAPACITY_L2_ADMIN_ALERT_BYTES / SI_GB_BYTES}GB → 管理者通知 (Level 2) /{' '}
+                {DB_CAPACITY_L3_HARD_CAP_BYTES / SI_GB_BYTES}GB → 書込停止 (Level 3
+                ハードキャップ)
+              </p>
+              <p className="text-xs text-gray-500">
+                ハードキャップ到達時もデータの読み取り・エクスポートは継続可能です。
+              </p>
+            </>
+          )}
         </div>
       </details>
     </section>

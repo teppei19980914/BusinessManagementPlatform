@@ -307,6 +307,7 @@ try {
 - 詳細設計: [docs/business/TENANT_AND_BILLING.md](../business/TENANT_AND_BILLING.md) (本 ADR 反映時に改訂)
 - Stripe 連動: [docs/business/STRIPE_BILLING.md](../business/STRIPE_BILLING.md) / [docs/design/STRIPE_TECHNICAL_DESIGN.md](../design/STRIPE_TECHNICAL_DESIGN.md) / [ADR-0006](./0006-stripe-metered-billing-integration.md)
 - ADR-0019: [課金対象 featureUnit の明示化](./0019-billable-feature-units-and-free-tier-expansion.md) (= 本 ADR は同原則を DB 容量に適用)
+- **ADR-0025**: [Beginner プラン write ブロック](./0025-beginner-write-guard.md) (= Beginner プランの DB 50MB 超過時の挙動を本 ADR §11 をベースに全 write 経路へ拡張、overage 課金は skip)
 - 縮退モード: [ADR-0008](./0008-graceful-degradation-mode.md)
 - Memory: [feedback_billing_invariant.md](../../memory/) / [feedback_3layer_sync_filter.md](../../memory/) / [feedback_drift_detection_design.md](../../memory/) / [feedback_tenant_isolation.md](../../memory/)
 - 公式ソース: [Supabase Pricing](https://supabase.com/pricing) / [Supabase Disk Size docs](https://supabase.com/docs/guides/platform/manage-your-usage/disk-size) / [PostgreSQL Resource Consumption](https://www.postgresql.org/docs/current/runtime-config-resource.html)

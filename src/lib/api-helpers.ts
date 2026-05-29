@@ -228,6 +228,26 @@ export async function requireStorageQuotaForWrite(
 ): Promise<NextResponse | null> {
   const result = await precheckStorageLimit(tenantId, estimatedBytes);
   if (!result.ok) {
+    // ADR-0025 (2026-05-29): Beginner プラン超過時は専用 UX 文言 + アップグレード誘導を返す。
+    //   precheckStorageLimit が code='BEGINNER_DB_QUOTA_EXCEEDED' を返した場合、
+    //   ハードキャップエラーとは別レスポンス形式で 403 を返す (= mapBeginnerWriteGuardErrorToResponse
+    //   と同じ body 形式)。これにより全 write route で UX 文言が統一される (ADR-0025 §4)。
+    if (result.code === 'BEGINNER_DB_QUOTA_EXCEEDED') {
+      return NextResponse.json(
+        {
+          error: {
+            code: 'BEGINNER_DB_QUOTA_EXCEEDED',
+            message:
+              'Beginner プランの無料枠 (DB 50MB / Storage 100MB) を超えました。不要なデータを削除する、または Expert プランへアップグレードしてください。',
+            quotaType: 'db' as const,
+            currentBytes: result.cachedUsedBytes,
+            limitBytes: result.limitBytes,
+            upgradeUrl: '/settings/tenant',
+          },
+        },
+        { status: 403 },
+      );
+    }
     // ADR-0020 (2026-05-25): 50GB ハードキャップ。4 段階プランは廃止。
     return NextResponse.json(
       {

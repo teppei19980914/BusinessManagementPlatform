@@ -1,7 +1,13 @@
 # Stripe Metered Billing 連携仕様 (v1.x)
 
-最終更新: 2026-06-01 (ADR-0022 Embedding 課金反映)
-ステータス: **仕様確定 + 実装済 (PR #425 で UAT 検出問題群を反映、PR #441 で ADR-0019 価格改定反映、ADR-0022 で Embedding 課金導入)**
+最終更新: 2026-05-29 (ADR-0025 Beginner write block 反映)
+ステータス: **仕様確定 + 実装済 (PR #425 で UAT 検出問題群を反映、PR #441 で ADR-0019 価格改定反映、ADR-0022 で Embedding 課金導入、ADR-0025 で Beginner write block 導入)**
+
+> 🆕 **ADR-0025 (2026-05-29) Beginner write block 反映済**:
+> - **Beginner プランへの Stripe queue 投入は 0 件**: DB 50MB / Storage 100MB 超過時は ApiCallLog `db-capacity-overage` / `storage-file-overage` の INSERT 自体を skip (audit_log で skip 証跡のみ記録、entityType=`api_call_log_skip`)
+> - **Stripe 請求書に Beginner overage 行が現れない**: monthly cron / 退会精算の両経路で skip ロジック適用
+> - **billing-invariant 維持**: ApiCallLog SUM = 表示 = 請求 の不変条件は崩れず、Beginner は SUM=0 で構造的に整合
+> - 詳細: [ADR-0025](../adr/0025-beginner-write-guard.md)
 
 > 🆕 **ADR-0022 (2026-06-01) Embedding 課金導入反映済**:
 > - **Beginner プラン**: Embedding 系 (資産入力・チャット検索・CSV インポート・添付ファイル本文 embedding) は **¥0 維持** (= 「90 日完全無料」訴求保全)

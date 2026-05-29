@@ -514,6 +514,7 @@ USING (
 
 - [ADR-0020](./0020-db-capacity-usage-based-billing.md): DB 容量従量課金 (本 ADR のパターン元)
 - [ADR-0019](./0019-billable-feature-units-and-free-tier-expansion.md): 課金 featureUnit の中央定義原則
+- **[ADR-0025](./0025-beginner-write-guard.md)**: Beginner プラン write ブロック (= File Storage 100MB 超過時にアップロード拒否、overage 課金 skip)
 - 詳細仕様: [docs/business/FILE_STORAGE_BILLING.md](../business/FILE_STORAGE_BILLING.md)
 - 利用者ガイド: [docs/public/file-storage-billing-guide.md](../public/file-storage-billing-guide.md)
 - 関連 memory: [feedback_billing_invariant.md](../../memory/), [feedback_drift_detection_design.md](../../memory/), [feedback_3layer_sync_filter.md](../../memory/)

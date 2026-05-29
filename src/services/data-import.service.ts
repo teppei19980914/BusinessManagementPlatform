@@ -48,6 +48,8 @@ import type { Prisma } from '@/generated/prisma/client';
 import {
   assertStorageLimitInTx,
   StorageLimitExceededError,
+  // ADR-0025 (2026-05-29): Beginner プラン超過時の専用エラー型
+  BeginnerWriteGuardExceededError,
 } from '@/services/storage-guard.service';
 
 const IMPORT_LOCK_STALE_MINUTES = 30;
@@ -74,7 +76,9 @@ export type ImportErrorCode =
   | 'BEGINNER_SEAT_LIMIT' // Beginner 5 席超過
   | 'DECOMPRESSED_TOO_LARGE' // D-1: ZIP 解凍後サイズが上限超過 (= ZIP bomb 二重防御)
   // PR-3 (2026-05-15): 取込後の容量が Storage プラン上限超過 → 全件ロールバック
-  | 'STORAGE_LIMIT_EXCEEDED';
+  | 'STORAGE_LIMIT_EXCEEDED'
+  // ADR-0025 (2026-05-29): Beginner プラン 50MB / 100MB 超過 → ZIP 取込ロールバック
+  | 'BEGINNER_QUOTA_EXCEEDED';
 
 export type DataImportResult =
   | { ok: true; summary: ImportSummary }
@@ -186,6 +190,18 @@ export async function importTenantData(
     );
     return { ok: true, summary };
   } catch (error) {
+    // ADR-0025 (2026-05-29): Beginner プラン超過時の専用文言を返す。
+    //   pre-check (runImportStoragePrecheck) で取り逃した実バイト超過 (= ZIP 解凍後のサイズ
+    //   推定誤差) を post-check (assertStorageLimitInTx) が捕捉した場合に到達する。
+    //   catch 漏れだと 500 Internal Server Error になりユーザに UX 文言が届かない (検証指摘の§1.4)。
+    if (error instanceof BeginnerWriteGuardExceededError) {
+      return {
+        ok: false,
+        error: 'BEGINNER_QUOTA_EXCEEDED',
+        message:
+          'Beginner プランの無料枠 (DB 50MB / Storage 100MB) を超えました。不要なデータを削除する、または Expert プランへアップグレードしてください。',
+      };
+    }
     if (error instanceof StorageLimitExceededError) {
       return {
         ok: false,
