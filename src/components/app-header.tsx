@@ -687,6 +687,12 @@ export function AppHeader({ user }: AppHeaderProps) {
                   - モバイル (sm 未満): アイコンのみ (画面幅節約 + nav へ譲る)
                   - alt は appName 文言を再利用しテキスト非表示時のアクセシビリティを担保
                 priority 指定で LCP 候補要素として優先ロードさせる。
+
+                feat/login-mascot-and-layout-fix (2026-05-29): Image Optimizer 経由配信が
+                  本番 (Netlify) で安定しない事象 (alt テキスト縦書きフォールバック表示) が
+                  報告されたため `unoptimized` で raw PNG 直接配信に切替。28×28 表示 +
+                  ソース 512×512 RGB / 376KB と小さく Optimizer メリットが薄いため
+                  デメリットは事実上ない。詳細: docs/knowledge/KDD_PATTERNS.md §5.X+177
               */}
               <Image
                 src="/mascot-owl.png"
@@ -694,6 +700,7 @@ export function AppHeader({ user }: AppHeaderProps) {
                 width={28}
                 height={28}
                 priority
+                unoptimized
                 className="rounded-sm"
                 data-testid="app-header-logo"
               />

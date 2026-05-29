@@ -39,4 +39,9 @@ describe('HelpClient のマスコット FAQ invariant (feat/mascot-owl 2026-05-2
     expect(source).toMatch(/from\s+'next\/image'/);
     expect(source).toMatch(/src="\/mascot-owl\.png"/);
   });
+
+  it('Image に unoptimized を付与し本番 (Netlify) Image Optimizer 経由配信を回避する', () => {
+    // KDD §5.X+177: ヘッダ / ログイン画面と同方針で raw PNG 直接配信に統一。
+    expect(source).toMatch(/unoptimized\b/);
+  });
 });

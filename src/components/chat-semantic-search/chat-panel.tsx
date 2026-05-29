@@ -326,12 +326,17 @@ export function ChatPanel({ onClose }: { onClose: () => void }) {
             priority を付けると未使用 preload で WAS bandwidth を浪費する (KDD §5.X+166)。
             FAB 側で同じ /mascot-owl-chat.png を priority 表示しており、その時点で
             HTTP cache に乗っているため遅延描画は事実上ない。
+
+            2026-05-29 (feat/login-mascot-and-layout-fix): Image Optimizer 経由配信が
+              本番 (Netlify) で安定しない事象 (KDD §5.X+177) に合わせ `unoptimized` で
+              raw PNG 直接配信に切替。FAB / アシスタント吹き出しと方針を統一する。
           */}
           <Image
             src={CHAT_PERSONA.avatarSrc}
             alt={CHAT_PERSONA.avatarAlt}
             width={36}
             height={36}
+            unoptimized
             className="h-9 w-9 rounded-full object-cover"
             data-testid="chat-panel-persona-avatar"
           />
@@ -560,12 +565,14 @@ function AssistantBubble({ children }: { children: React.ReactNode }) {
       {/*
         装飾用アバター: alt="" のみで AT は無視するため aria-hidden は不要 (冗長指定の回避)。
         object-cover でバッジ自体が全面を占めるよう確実にトリミング (KDD §5.X+165)。
+        2026-05-29 (feat/login-mascot-and-layout-fix): KDD §5.X+177 に合わせ `unoptimized` 適用。
       */}
       <Image
         src={CHAT_PERSONA.avatarSrc}
         alt=""
         width={32}
         height={32}
+        unoptimized
         className="mt-1 h-8 w-8 shrink-0 rounded-full object-cover"
       />
       <div className="min-w-0 flex-1 rounded-2xl rounded-tl-sm bg-muted px-3 py-2 text-sm">

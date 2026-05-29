@@ -54,11 +54,17 @@ export function HelpClient({ isTenantAdmin }: Props) {
           a={
             <div className="space-y-3">
               <div className="flex flex-col items-center gap-2 sm:flex-row sm:items-start sm:gap-4">
+                {/*
+                 * 2026-05-29 (feat/login-mascot-and-layout-fix): Image Optimizer 経由配信が
+                 *   本番 (Netlify) で安定しない事象 (KDD §5.X+177) に合わせ `unoptimized` で
+                 *   raw PNG 直接配信に切替。ヘッダ / ログイン画面と同方針で統一する。
+                 */}
                 <Image
                   src="/mascot-owl.png"
                   alt="たすきフクロウ"
                   width={120}
                   height={120}
+                  unoptimized
                   className="shrink-0 rounded-lg"
                 />
                 <div className="space-y-2 text-sm">

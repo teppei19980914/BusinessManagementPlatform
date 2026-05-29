@@ -17256,3 +17256,73 @@ ADR-0025 PR #461 1 巡目 push 後、フルスキャン Explore agent で `requi
 
 - 本 PR で実証: main 由来 234 件中、本実装ファイル (`src/services/*` / `src/app/api/*` / `src/config/*` / UI 等) 由来エラーは 0 件
 - 確認手順: `pnpm tsc --noEmit 2>&1 | grep -E "^src/(関連ファイルglob)" | grep -v "\.test\.ts\|\.spec\.ts"`
+
+---
+
+## 5.X+177 ★severity-high (本番 UI 全壊)★ 小さな静的 PNG (マスコット / ロゴ) は `unoptimized` で raw 配信に切替えて Image Optimizer 経由配信の不安定さを回避する (feat/login-mascot-and-layout-fix / 2026-05-29)
+
+### 発覚契機
+
+ユーザから「ログイン画面のマスコットアイコンが表示されない / ヘッダ左上に『たすきば』が縦書きで重複表示されている」と報告。スクリーンショットを精査すると、両症状は同一根本原因:
+
+```
+<Image src="/mascot-owl.png" width={28} height={28} alt="たすきば">
+```
+
+の `<Image>` がロード失敗 → ブラウザが alt テキストを 28px 幅 box 内で縦書きフォールバック表示していた (= 「た / す / き / ば」が 4 行に並ぶ)。ログインカード側も同じ broken-image 症状。
+
+### 経緯
+
+- ローカル `public/mascot-owl.png` は **RGB 512×512 / 376KB** で正しい (`file` コマンド確認済、§5.X+160 の palette PNG 罠は既に修正済)
+- コード側の `<Image>` 参照も `src="/mascot-owl.png"` で正しい
+- にもかかわらず本番 (Netlify) で broken-image 表示
+- 推定原因は **Next.js Image Optimizer Lambda (`/_next/image?url=...`) の失敗**:
+  - Netlify Functions の CPU/メモリ制限、cold start タイムアウト、CDN cache pollution の複合
+  - §5.X+160 の palette PNG 起因は解消済だが、Optimizer 自体の不安定さは別問題として継続
+- KDD §5.X+160 では「palette でも本番では unoptimized fallback で配信される」と記録したが、Netlify では fallback が機能せず broken-image になる事象を新たに確認
+
+### 教訓と防御
+
+1. **小さな静的 PNG (マスコット / ロゴ / favicon 系) は `unoptimized` を明示**:
+   - Optimizer の WebP/AVIF 変換メリットは 376KB → ~200KB 程度 (= 通常 1 回 download)
+   - 一方 Optimizer 失敗時の UI 崩壊コストは「ブランド要素が全て消える + 重複テキスト表示でユーザ困惑」と非対称
+   - 代償が小さく defensive 価値が高い場合は `unoptimized` で raw 配信に倒す
+2. **`<Image>` 採用判断は「optimizer 経由前提」ではなく「Optimizer なくても破綻しない構成か」を考える**:
+   - 大画像 (写真 / ヒーロー画像) → Optimizer 経由 (WebP/AVIF メリット大)
+   - 小アイコン (28×28 〜 120×120 のロゴ / マスコット) → `unoptimized` で raw 配信
+3. **broken-image の alt テキスト縦書き表示は production-only の典型症状**:
+   - ローカル `pnpm dev` では Optimizer が同 process 内で動くため失敗しにくい
+   - 本番 (Netlify Functions) のみで再現する → ローカル動作テストだけでは検知不能
+   - PR で `<Image>` を新規追加するときは「本番で Optimizer 失敗しても UI 崩壊しないか」を考える
+
+### 採用した修正
+
+```diff
+ <Image
+   src="/mascot-owl.png"
+   alt={t('appName')}
+   width={40}
+   height={40}
+   priority
++  unoptimized
+   className="rounded-sm"
+ />
+```
+
+横展開対象 (5 箇所):
+
+| # | ファイル | 用途 |
+|---|---|---|
+| 1 | `src/app/(auth)/login/page.tsx` | ログイン Card 左ロゴ (40×40) |
+| 2 | `src/components/app-header.tsx` | 全画面ヘッダ左ロゴ (28×28) |
+| 3 | `src/app/(dashboard)/help/help-client.tsx` | マスコット FAQ 紹介画像 (120×120) |
+| 4 | `src/components/chat-semantic-search/chat-fab.tsx` | チャット FAB (64×64) |
+| 5 | `src/components/chat-semantic-search/chat-panel.tsx` | チャットヘッダ avatar (36×36) + AssistantBubble 装飾 avatar (32×32) |
+
+全ファイルに source-pattern 回帰テストで `unoptimized` 付与を invariant 化済 (`app-header.test.tsx` / `help-client.test.ts` / `chat-fab.test.ts` / `chat-panel.test.ts`)。
+
+### 関連
+
+- 関連 KDD: [§5.X+160](#5x160) (palette PNG → 本症状の前史。fix 後でも残った Optimizer 不安定さに対する 2 次防御として本 KDD)
+- 関連 PR: #462 (feat/login-mascot-and-layout-fix)
+- 関連 memory: なし (初出 — `feedback_image_unoptimized_for_small_static` 等として将来 memory 化候補)

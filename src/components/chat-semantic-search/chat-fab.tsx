@@ -52,12 +52,20 @@ export function ChatSemanticSearchFab() {
             'focus:outline-none focus:ring-2 focus:ring-ring',
           )}
         >
+          {/*
+            2026-05-29 (feat/login-mascot-and-layout-fix): Image Optimizer 経由配信が
+              本番 (Netlify) で安定しない事象 (KDD §5.X+177) に合わせ `unoptimized` で
+              raw PNG 直接配信に切替。FAB はマスコット画像が UI 全面を占めるため、
+              画像が壊れると FAB 自体が機能不全になる致命箇所。Optimizer 依存を外して
+              defensive に守る。256×256 ソースで FAB サイズ 64px、Optimizer メリットも薄い。
+          */}
           <Image
             src={CHAT_PERSONA.avatarSrc}
             alt={CHAT_PERSONA.avatarAlt}
             width={FAB_SIZE_PX}
             height={FAB_SIZE_PX}
             priority
+            unoptimized
             className="h-full w-full object-cover"
           />
         </button>

@@ -51,8 +51,8 @@
 
 招待制のため、外部からアクセスした未認証ユーザに対する案内が必要:
 
-- [x] **初回ログイン手順ガイドへの導線**(2026-05-28 更新 / feat/login-setup-guide-link、`src/app/(auth)/login/page.tsx` のフッタブロックに `data-testid="login-setup-guide-link"` で外部 LP `tasukiba-setup-guide` への `target="_blank"` リンクを配置)。テナント管理者は招待された時点で運用方針を理解しているため、旧「このサービスは招待制です」の明示文言は撤去(2026-05-28、KDD §5.X+167 参照)。利用規約 / プライバシーポリシーは サインアップ同意フォーム (TenantConsentLog 証跡) + `/settings/about` (認証後) で引き続き担保するため、login フッタからは外している
-- [x] **公式マスコット「たすきフクロウ」のロゴ配置**(2026-05-28 / feat/login-setup-guide-link、`src/app/(auth)/login/page.tsx` の CardHeader 左横に `public/mascot-owl.png` を 40×40 で配置。AppHeader と同パターン)
+- [x] **初回ログイン手順ガイドへの導線**(2026-05-28 更新 / feat/login-setup-guide-link、`src/app/(auth)/login/page.tsx` のフッタブロックに `data-testid="login-setup-guide-link"` で外部 LP `tasukiba-setup-guide` への `target="_blank"` リンクを配置)。テナント管理者は招待された時点で運用方針を理解しているため、旧「このサービスは招待制です」の明示文言は撤去(2026-05-28、KDD §5.X+167 参照)。利用規約 / プライバシーポリシーは サインアップ同意フォーム (TenantConsentLog 証跡) + `/settings/about` (認証後) で引き続き担保するため、login フッタからは外している。**2026-05-29 更新 (feat/login-mascot-and-layout-fix)**: 外側 flex container を `flex-col` 化し、setup-guide footer を Card 横ではなく **Card 下** に縦並びで配置。毎日利用するユーザにとっての視覚ノイズを最小化しつつ初見ユーザ向け案内は維持
+- [x] **公式マスコット「たすきフクロウ」のロゴ配置**(2026-05-28 / feat/login-setup-guide-link、`src/app/(auth)/login/page.tsx` の CardHeader 左横に `public/mascot-owl.png` を 40×40 で配置。AppHeader と同パターン)。**2026-05-29 更新 (feat/login-mascot-and-layout-fix / KDD §5.X+177)**: 本番 (Netlify) で Image Optimizer 経由配信が不安定で broken-image (alt 縦書きフォールバック) 事象が発生したため、マスコット 5 用途すべて (ヘッダ / ログイン / help FAQ / チャット FAB / チャット avatar) に `unoptimized` を付与し raw PNG 直接配信に切替。各箇所 source-pattern 回帰テストで invariant 化済
 - [x] **招待メール配送失敗時の UX サポート**(2026-05-23 / Phase 1 / feat/signup-email-resend-ux): サインアップ成功画面に「入力メールアドレス表示 + トラブルシュートチェックリスト + 再送ボタン + LP お問い合わせ動線」を実装。`POST /api/auth/resend-verification` (Rate Limit 多軸 + enumeration 防止) で再送を制御。Gmail Freemail 由来の配送 fail シナリオへの暫定対応 (= 独自ドメイン取得まで)。SOP 影響: 顧客からの「メールが届かない」問合せが LP `/contact/` 経由で流入する可能性 → CUSTOMER_FEEDBACK_TRIAGE.md に「お問い合わせ種別: たすきば」の分類処理ルートを将来追加
 - [ ] **問い合わせ導線**(`support@<domain>` または問合せフォーム)— 連絡先確定後に追記
 - [ ] **「サービス概要を見る」リンク** → `/about` (公開ページ、必要なら追加)

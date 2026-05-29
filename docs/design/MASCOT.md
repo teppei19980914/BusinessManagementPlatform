@@ -56,11 +56,21 @@
 ### 推奨される使い方
 
 - **ヘッダ左上のロゴ** (`<AppHeader>`) — デスクトップは「アイコン + たすきば」併記、モバイルはアイコンのみ。`public/mascot-owl.png` を使用
-- **ログイン画面のサービス名横ロゴ** (`src/app/(auth)/login/page.tsx` CardHeader) — `public/mascot-owl.png` を 40×40 で「たすきば / Knowledge Relay」テキストの左に並べる。AppHeader と同じ `next/image` + `alt={t('appName')}` + `priority` + `rounded-sm` パターンを採用し、ロゴとしての視覚的一貫性を保つ。`data-testid="login-mascot-owl"`
+- **ログイン画面のサービス名横ロゴ** (`src/app/(auth)/login/page.tsx` CardHeader) — `public/mascot-owl.png` を 40×40 で「たすきば / Knowledge Relay」テキストの左に並べる。AppHeader と同じ `next/image` + `alt={t('appName')}` + `priority` + `rounded-sm` パターンを採用し、ロゴとしての視覚的一貫性を保つ。`data-testid="login-mascot-owl"`。**setup-guide footer は Card 内ではなく Card 下に縦並びで配置** (毎日利用するユーザにとっての視覚ノイズ最小化、`flex-col` レイアウト)
 - **favicon / apple-touch-icon** — Next.js の `src/app/icon.png` / `src/app/apple-icon.png` 規約で自動配信
 - **OG 画像 (SNS シェア)** — `public/og-image.png`、左にロゴ + 右にサービス名・タグライン
 - **チャット意味検索の FAB** — 全画面右下の常時表示ボタン、`public/mascot-owl-chat.png` (チャットバージョン) を使用。aria-label は「たすきフクロウに相談する」固定
 - **チャット意味検索のアシスタント・アバター** — チャットパネル内のヘッダ + 各返答吹き出しの左に同画像を表示し「フクロウが応答している」体験を作る ([CHAT_SEMANTIC_SEARCH.md](../specification/CHAT_SEMANTIC_SEARCH.md))
+
+#### `<Image>` 配信方針: `unoptimized` 必須 (KDD §5.X+177)
+
+マスコット画像 5 用途 (ヘッダ / ログイン / help FAQ / チャット FAB / チャット avatar) はすべて `<Image>` に **`unoptimized` を明示**する。理由:
+
+- 本番 (Netlify) の Image Optimizer Lambda (`/_next/image?url=...`) が小さな PNG で不安定に失敗し、broken-image (alt テキスト縦書きフォールバック) を起こす事故が発生したため (詳細: [KDD §5.X+177](../knowledge/KDD_PATTERNS.md))
+- 28×28 〜 120×120 の小アイコンで WebP/AVIF 圧縮メリットは数十 KB 程度。一方 Optimizer 失敗時の UI 崩壊コストは「ブランド要素全消失 + ユーザ困惑」と非対称
+- raw PNG 直接配信 (`unoptimized`) でブラウザ HTTP cache に乗り、CDN level での再配信効率は同等
+
+全 5 ファイルに source-pattern 回帰テストで `unoptimized` 付与を invariant 化済 (`app-header.test.tsx` / `help-client.test.ts` / `chat-fab.test.ts` / `chat-panel.test.ts`)。
 - **SNS 公式アカウントのプロフィール画像** — X / LinkedIn / Facebook の会社公式アカウントに人間が手動アップロード。マスター画像は `docs/design/assets/mascot-owl-sns-source.png` (リポジトリ参照のみ、コード参照なし)
 - **ランディングページ (HomePage)** — Header のサービス名横に小さく配置
 - **オンボーディング画面 / 空状態イラスト** — 親しみやすさを補強するために配置可

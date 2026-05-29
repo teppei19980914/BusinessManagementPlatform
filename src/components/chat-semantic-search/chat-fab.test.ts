@@ -81,6 +81,13 @@ describe('ChatSemanticSearchFab のマスコット統合 invariant', () => {
     expect(source).toMatch(/priority/);
   });
 
+  it('unoptimized を付与し本番 (Netlify) Image Optimizer 経由配信を回避する (KDD §5.X+177)', () => {
+    // FAB はマスコット画像が UI 全面を占めるため、画像が壊れると FAB 自体が機能不全になる
+    // 致命箇所。raw PNG 直接配信で defensive に守る。256×256 ソースで FAB サイズ 64px、
+    // Optimizer メリットも薄いため `unoptimized` のデメリットは事実上ない。
+    expect(source).toMatch(/unoptimized\b/);
+  });
+
   it('iOS safe-area-inset-bottom を加味した bottom 位置を持つ (KDD §5.X+166)', () => {
     // home indicator (portrait 34px / landscape 21px) と重ならないよう
     // env(safe-area-inset-bottom) を加算する。通常ブラウザでは 0 のため互換性 OK。

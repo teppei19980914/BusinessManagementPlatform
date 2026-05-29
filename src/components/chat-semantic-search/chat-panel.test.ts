@@ -90,6 +90,13 @@ describe('ChatPanel のマスコット統合 invariant', () => {
     const matches = source.match(/object-cover/g);
     expect(matches?.length ?? 0).toBeGreaterThanOrEqual(2);
   });
+
+  it('全アバターに unoptimized を付与し本番 (Netlify) Image Optimizer 経由配信を回避する (KDD §5.X+177)', () => {
+    // ヘッダ avatar + AssistantBubble 装飾 avatar の 2 箇所両方に unoptimized が
+    // 付いていることを担保する。FAB / login / app-header と方針統一。
+    const matches = source.match(/unoptimized\b/g);
+    expect(matches?.length ?? 0).toBeGreaterThanOrEqual(2);
+  });
 });
 
 describe('ChatPanel 会話履歴の永続化 invariant (H-1 / H-2)', () => {

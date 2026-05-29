@@ -174,6 +174,14 @@ describe('AppHeader の公式マスコット表示 invariant (feat/mascot-owl)',
     expect(source).toMatch(/priority\b/);
   });
 
+  it('Image に unoptimized を付与し本番 (Netlify) Image Optimizer 経由配信を回避する', () => {
+    // KDD §5.X+177: Image Optimizer 経由配信が本番で安定せず alt 縦書きフォールバック表示
+    //   になる事象が報告された。`unoptimized` で raw PNG 直接配信に切替えて回避する。
+    //   28×28 表示 + ソース 512×512 RGB / 376KB と小さく Optimizer メリットが薄いため
+    //   `unoptimized` のデメリットは事実上ない。
+    expect(source).toMatch(/unoptimized\b/);
+  });
+
   it('サービス名テキストは sm: 以上で表示し、モバイル (sm 未満) ではアイコンのみに縮退する', () => {
     // hidden sm:inline でテキストを sm+ 限定表示。デザイン仕様「モバイルはアイコンのみ」を担保。
     expect(source).toMatch(/data-testid="app-header-app-name"/);

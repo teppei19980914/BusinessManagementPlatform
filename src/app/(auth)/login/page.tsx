@@ -164,7 +164,13 @@ function LoginForm() {
   }
 
   return (
-    <div className="flex flex-1 items-center justify-center bg-muted px-4 py-8">
+    // 2026-05-29 (feat/login-mascot-and-layout-fix): setup-guide footer を Card の
+    //   横ではなく **下** に配置するため flex-col を追加。
+    //   旧構成 (flex-row + items-center) では Card と footer が横並びで、毎日利用するユーザにとって
+    //   常時表示される「セットアップガイド」リンクが視覚ノイズになっていた。flex-col で縦並びにし、
+    //   Card 下に控えめに表示することで「初見ユーザ向け案内 + 既存ユーザ向け視覚ノイズ最小化」の
+    //   両立を実現する。
+    <div className="flex flex-1 flex-col items-center justify-center bg-muted px-4 py-8">
       <Card className="w-full max-w-[min(90vw,28rem)]">
         <CardHeader className="text-center">
           {/*
@@ -179,12 +185,21 @@ function LoginForm() {
            *   - MASCOT.md §使い方ガイド の「推奨される使い方」に明文追加済
            */}
           <div className="flex items-center justify-center gap-3">
+            {/*
+             * 2026-05-29 (feat/login-mascot-and-layout-fix): Image Optimizer 経由配信が
+             *   本番 (Netlify) で安定しない事象 (alt テキスト縦書きフォールバック表示) が
+             *   報告されたため `unoptimized` で raw PNG 直接配信に切替。
+             *   サイズは 40×40 表示 + ソース 512×512 RGB / 376KB と小さく、Optimizer 経由の
+             *   WebP/AVIF 圧縮メリットが薄いため `unoptimized` のデメリットは事実上ない。
+             *   詳細: docs/knowledge/KDD_PATTERNS.md §5.X+177
+             */}
             <Image
               src="/mascot-owl.png"
               alt={t('appName')}
               width={40}
               height={40}
               priority
+              unoptimized
               className="rounded-sm"
               data-testid="login-mascot-owl"
             />
