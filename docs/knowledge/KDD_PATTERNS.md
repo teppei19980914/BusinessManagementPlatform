@@ -18170,3 +18170,103 @@ describe('退会 FAQ 実装一致 invariant', () => {
 - 関連 PR: feat/faq-pr1-urgent-billing-fix (40a919c0) / feat/faq-pr2-clarity-rewrite (b7b6bb02) / feat/faq-pr3-medium-priority (176e6e78) / feat/faq-pr4-low-priority-and-docs (本 PR)
 - 関連 feedback memory: [[feedback_design_comment_vs_impl_drift]] (3 巡目検証で同種事例を検出) / [[feedback_repeated_verification_request.md]] (深堀り検証の重要性)
 - 関連 source: [src/app/(dashboard)/help/help-client.tsx](../../src/app/(dashboard)/help/help-client.tsx) / [src/app/(dashboard)/help/help-client.test.ts](../../src/app/(dashboard)/help/help-client.test.ts) / [src/services/beginner-expiry.service.ts](../../src/services/beginner-expiry.service.ts)
+
+## §5.X+188 FAQ AI チャット ハルシネーション対策 5 点セット (feat/faq-revamp PR5-7 / ADR-0027)
+
+**問題**: たすきフクロウ AI ヘルプチャット (`/api/help/chat`) で Claude Haiku に自然文質問を投げる際、何の対策もしないと AI が以下のハルシネーションを起こすリスクがある:
+
+1. **存在しない機能の説明** (例: 「メール送信機能があります」と返すが実装なし)
+2. **数値の創作** (例: 「請求は毎月 1 日です」と返すが実装は 25 日)
+3. **権限外情報の漏洩** (例: 一般メンバーに料金体系を回答してしまう)
+4. **業務データへの推論** (例: 「あなたのプロジェクトは順調です」と意味のない断定)
+5. **不存在 API へのリンク誘導** (例: 「`/settings/billing-export` から DL できます」と返すがそのパスはない)
+
+これらは ユーザの誤操作 / 誤った期待値 / セキュリティ事故 に直結する。FAQ AI チャットの「**何でも知っているが正確に答える**」設計思想 ([[project_faq_drives_ai_accuracy]] / [[project_mascot_owl]]) を維持するには、AI に任せきりにせず構造的な制約を入れる必要がある。
+
+**結論**: 5 点セットの組み合わせで構造的にハルシネーションを抑制する。
+
+### 5 点対策
+
+#### 1. 知識源を FAQ/ガイド全文に限定 (system prompt 同梱)
+
+```ts
+const systemPrompt = `あなたは...「下記の許可された FAQ と使い方ガイドに含まれる情報のみを根拠に回答し、それ以外の推測は禁止です」
+
+【許可された FAQ】
+${buildFaqPromptSection(viewer)}
+
+【許可された使い方ガイド】
+${buildGuidePromptSection(viewer)}
+`;
+```
+
+RAG ではなく **全文同梱** にする理由: FAQ 50 件規模では Voyage embedding 検索でカバーすべき内容を取り逃すリスクがあり、全文同梱の方が確実 (~10K tokens / Haiku 200K window の 5%)。
+
+#### 2. 出典 ID を JSON 出力で必須化
+
+```ts
+const HelpChatOutputSchema = z.object({
+  answer: z.string().min(1).max(2000),
+  answerType: z.enum(['faq', 'guide-walkthrough', 'out-of-scope', 'permission-denied']),
+  sourceFaqIds: z.array(z.string()).max(10),       // ← 出典 FAQ id (必須)
+  sourceGuideStepIds: z.array(z.string()).max(5),  // ← 出典ガイド step id (必須)
+  suggestSemanticSearch: z.boolean(),
+});
+```
+
+AI が「どの FAQ から答えたか」を明示する義務を負うことで、根拠なしの推測を抑制する。UI 側で「📖 FAQ: billing-cycle」リンクを表示し、ユーザが原文を確認できる経路も提供する。
+
+#### 3. FAQ/ガイドにない内容は固定文で誘導 (推測禁止)
+
+system prompt で明示:
+> 該当する内容が許可された FAQ/ガイドにない場合は:
+> - answerType="out-of-scope"
+> - answer="うーん、その内容は FAQ や使い方ガイドにまだありません…画面右上のアカウントメニューから Discord にアクセスして開発者にお尋ねください。"
+
+「分からない時はそう言う」が AI には難しいため、出力スキーマと固定文で強制する。
+
+#### 4. 業務データ質問は chat-semantic-search へ誘導
+
+system prompt で明示:
+> 業務データの質問 (「プロジェクト X の進捗は?」など特定プロジェクト/ナレッジの中身) は:
+> - answerType="out-of-scope" + suggestSemanticSearch=true
+> - answer="📊 そのご質問は『過去資産の意味検索』機能の方が得意です。画面右下のチャットアイコンから検索してみてください。"
+
+ヘルプチャットと業務データチャットは別機能 (前者は静的 FAQ ベース、後者は動的データ検索) なので、誤って業務データを推論しないよう明示的に誘導する。
+
+#### 5. ★severity-1★ サーバ側で sourceFaqIds の権限再検証 (defense-in-depth)
+
+```ts
+// AI 出力後、サーバ側で再フィルタ (AI hallucination で許可外 id が返っても安全)
+const allowedFaqIds = new Set(getFaqEntriesForRole(viewer).map((e) => e.id));
+const sourceFaqIds = output.sourceFaqIds.filter((id) => allowedFaqIds.has(id));
+```
+
+system prompt で権限制限を伝えても、AI は確率的に許可外の id を返す可能性がある。サーバ側で必ず viewer の権限スコープ内にあるかを再検証する (defense-in-depth)。これが「フクロウ = 情報流出を防ぐ鍵」コンセプトの実装核 ([[project_mascot_owl]])。
+
+### 何を避けるべきか
+
+- ❌ system prompt の指示だけに頼る (確率的モデルは指示違反する。出力スキーマ + サーバ側検証の二段構えが必須)
+- ❌ FAQ にない質問に AI が独自に推論で答えるのを許容 (誤情報の温床)
+- ❌ ユーザの自然文質問に「業務データ取得」「コマンド実行」を AI から指示させる (権限境界が崩れる)
+- ❌ 出典 ID 表示なし (ユーザが原文を確認できず、信頼性が低下する)
+- ❌ 権限フィルタを UI 表示にだけ依存する (API 直叩きで漏洩する)
+
+### 横展開チェックリスト
+
+- [ ] 新規 AI チャット機能を作る時、知識源を明示的に system prompt に含めているか
+- [ ] 出力スキーマで出典 (sourceXXXIds) を必須化しているか
+- [ ] 「知らない時の固定文」を system prompt で強制しているか
+- [ ] AI の知識源外質問に対する誘導先 (Discord / 別機能) を明示しているか
+- [ ] サーバ側で AI 出力の権限再検証 (defense-in-depth) を実装しているか
+- [ ] 上記すべてを test で機械的に担保しているか (snapshot test / 権限フィルタ test)
+
+### 関連
+
+- 関連 ADR: [ADR-0027](../adr/0027-help-ai-concierge.md) (本決定の根拠)
+- 関連 PR: feat/faq-pr5-ai-concierge-core (`251bf7fb` AI コア + 権限制御) / feat/faq-pr6-ai-ui-minimal (`405f3aef` HelpChatInput 統合)
+- 関連 feedback memory: [[feedback_unjust_billing_risk_cron]] / [[project_faq_drives_ai_accuracy]] / [[project_mascot_owl]]
+- 関連 source: [src/app/api/help/chat/route.ts](../../src/app/api/help/chat/route.ts) / [src/config/faq-content.ts](../../src/config/faq-content.ts) / [src/config/guide-content.ts](../../src/config/guide-content.ts)
+- 関連 test: [src/config/faq-content.test.ts](../../src/config/faq-content.test.ts) (権限フィルタ 14 ケース) / [src/config/guide-content.test.ts](../../src/config/guide-content.test.ts) (横展開 7 ケース)
+- 開発者ガイド: [FAQ_AND_OWL_CHAT_GUIDE.md](../developer-guide/FAQ_AND_OWL_CHAT_GUIDE.md) §6
+- 仕様書: [HELP_CHAT.md](../specification/HELP_CHAT.md) §5
