@@ -117,6 +117,18 @@ export const CRON_JOBS: Record<string, CronJobMetadata> = {
     endpoint: '/api/cron/stripe-reconcile',
     expectedMaxGapHours: 35 * 24,
   },
+  // PR-V7a (2026-05-19): invoice / bank_transfer 月次集計 (2026-05-29 metadata 追加、KDD §5.X+181)
+  //   credit_card は Stripe Webhook で自動同期されるため対象外。
+  'billing-monthly-aggregation': {
+    description:
+      'invoice / bank_transfer 払いテナントの月次請求を集計し BillingHistory に upsert する。'
+      + ' credit_card は Stripe Webhook で自動同期されるため対象外。'
+      + ' 失敗テナントは per-tenant try/catch で errors[] に蓄積、cron 全体は止めない。',
+    schedule: '月初 2 日 09:00 JST',
+    endpoint: '/api/cron/billing-monthly-aggregation',
+    // 月 1 回 → 35 日以内に動いていなければ異常。月末解約・cron 失敗等で 1 ヶ月飛んでも次月で復旧できる猶予。
+    expectedMaxGapHours: 35 * 24,
+  },
   // PR-V7a (2026-05-19): 期日超過 alert / cron 失敗 alert
   'billing-overdue-alert': {
     description:
