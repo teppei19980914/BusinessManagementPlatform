@@ -72,6 +72,7 @@ import {
   assertSeatAvailableForTenant,
 } from './user.service';
 import { prisma } from '@/lib/db';
+import { getMockCallArg } from '@/lib/test-mock-helpers';
 import {
   sendVerificationEmail,
   EmailSendError,
@@ -440,7 +441,7 @@ describe('listUsers', () => {
   it('テナント越境フィルタで他テナント user は返さない (severity-1 防御)', async () => {
     vi.mocked(prisma.user.findMany).mockResolvedValue([]);
     await listUsers('tenant-A');
-    const call = vi.mocked(prisma.user.findMany).mock.calls[0][0];
+    const call = getMockCallArg(vi.mocked(prisma.user.findMany));
     expect((call.where as { tenantId: string }).tenantId).toBe('tenant-A');
   });
 });
@@ -741,7 +742,7 @@ describe('lockInactiveUsers (PR #89 + feat/account-lock 改修)', () => {
     expect(r.lockedUserIds).toEqual(['u-stale-1', 'u-stale-2']);
 
     // where: admin を除外 + lastLoginAt < 閾値 OR (lastLoginAt null && createdAt < 閾値)
-    const findCall = vi.mocked(prisma.user.findMany).mock.calls[0][0];
+    const findCall = getMockCallArg(vi.mocked(prisma.user.findMany));
     expect(findCall?.where?.systemRole).toEqual({ not: 'admin' });
     expect(findCall?.where?.isActive).toBe(true);
     expect(findCall?.where?.deletedAt).toBe(null);
@@ -749,7 +750,7 @@ describe('lockInactiveUsers (PR #89 + feat/account-lock 改修)', () => {
     // user.update が isActive:false で 2 回呼ばれる (論理削除では deletedAt をセットするが
     // ロックは isActive のみ。deletedAt 設定 / projectMember 物理削除は行わない)
     expect(prisma.user.update).toHaveBeenCalledTimes(2);
-    const firstUpdate = vi.mocked(prisma.user.update).mock.calls[0][0];
+    const firstUpdate = getMockCallArg(vi.mocked(prisma.user.update));
     expect(firstUpdate.data).toMatchObject({ isActive: false });
     expect(firstUpdate.data).not.toHaveProperty('deletedAt');
     expect(prisma.projectMember.deleteMany).not.toHaveBeenCalled();
@@ -778,7 +779,7 @@ describe('lockInactiveUsers (PR #89 + feat/account-lock 改修)', () => {
 
       await lockInactiveUsers('cron-trigger');
 
-      const findCall = vi.mocked(prisma.user.findMany).mock.calls[0][0];
+      const findCall = getMockCallArg(vi.mocked(prisma.user.findMany));
       // 全テナント横断 = where に tenantId プロパティが存在しない
       expect((findCall?.where as Record<string, unknown> | undefined)?.tenantId).toBeUndefined();
     });
@@ -788,7 +789,7 @@ describe('lockInactiveUsers (PR #89 + feat/account-lock 改修)', () => {
 
       await lockInactiveUsers('admin-from-tenant-A', 'tenant-A-id');
 
-      const findCall = vi.mocked(prisma.user.findMany).mock.calls[0][0];
+      const findCall = getMockCallArg(vi.mocked(prisma.user.findMany));
       // 自テナント内のみ = where.tenantId が指定されている
       expect((findCall?.where as Record<string, unknown>)?.tenantId).toBe('tenant-A-id');
     });
@@ -803,7 +804,7 @@ describe('lockInactiveUsers (PR #89 + feat/account-lock 改修)', () => {
       const r = await lockInactiveUsers('admin-from-tenant-A', 'tenant-A-id');
 
       // findMany の where に tenantId='tenant-A-id' が必ず含まれる → tenant-B 越境不可
-      const findCall = vi.mocked(prisma.user.findMany).mock.calls[0][0];
+      const findCall = getMockCallArg(vi.mocked(prisma.user.findMany));
       expect((findCall?.where as Record<string, unknown>)?.tenantId).toBe('tenant-A-id');
       // 1 件のみ抽出された
       expect(r.lockedUserIds).toEqual(['u-tenant-a-stale']);

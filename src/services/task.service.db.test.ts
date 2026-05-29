@@ -49,6 +49,7 @@ import {
   bulkUpdateTasks,
 } from './task.service';
 import { prisma } from '@/lib/db';
+import { getMockCallArg } from '@/lib/test-mock-helpers';
 
 const now = new Date('2026-04-21T10:00:00Z');
 const rowTask = (o: Record<string, unknown> = {}) => ({
@@ -190,7 +191,7 @@ describe('createTask', () => {
       'tenant-A',
     );
 
-    const call = vi.mocked(prisma.task.create).mock.calls[0][0];
+    const call = getMockCallArg(vi.mocked(prisma.task.create));
     expect(call.data.type).toBe('activity');
     expect(call.data.assigneeId).toBe('u-1');
     expect(call.data.plannedStartDate).toBeInstanceOf(Date);
@@ -222,7 +223,7 @@ describe('createTask', () => {
       'tenant-A',
     );
 
-    const call = vi.mocked(prisma.task.create).mock.calls[0][0];
+    const call = getMockCallArg(vi.mocked(prisma.task.create));
     expect(call.data.type).toBe('work_package');
     expect(call.data.assigneeId).toBe(null);
     expect(call.data.plannedStartDate).toBe(null);
@@ -372,7 +373,7 @@ describe('exportWbs (T-19, 7 列)', () => {
     vi.mocked(prisma.task.findMany).mockResolvedValue([]);
     await exportWbs('p-1', 'tenant-A', ['t-a', 't-b']);
 
-    const call = vi.mocked(prisma.task.findMany).mock.calls[0]?.[0];
+    const call = getMockCallArg(vi.mocked(prisma.task.findMany));
     expect(call?.where?.id).toEqual({ in: ['t-a', 't-b'] });
   });
 });
@@ -390,7 +391,7 @@ describe('updateTask (主要分岐)', () => {
 
     await updateTask('t-1', { name: 'renamed' } as never, 'u-1', 'tenant-A');
 
-    const call = vi.mocked(prisma.task.update).mock.calls[0][0];
+    const call = getMockCallArg(vi.mocked(prisma.task.update));
     expect(call.data.name).toBe('renamed');
   });
 
@@ -407,7 +408,7 @@ describe('updateTask (主要分岐)', () => {
 
     await updateTask('t-1', { status: 'completed' } as never, 'u-1', 'tenant-A');
 
-    const updateCall = vi.mocked(prisma.task.update).mock.calls[0][0];
+    const updateCall = getMockCallArg(vi.mocked(prisma.task.update));
     expect(updateCall.data.progressRate).toBe(100);
     expect(updateCall.data.status).toBe('completed');
   });
@@ -425,7 +426,7 @@ describe('updateTask (主要分岐)', () => {
 
     await updateTask('t-1', { progressRate: 100 } as never, 'u-1', 'tenant-A');
 
-    const updateCall = vi.mocked(prisma.task.update).mock.calls[0][0];
+    const updateCall = getMockCallArg(vi.mocked(prisma.task.update));
     expect(updateCall.data.status).toBe('completed');
     expect(updateCall.data.progressRate).toBe(100);
   });
@@ -443,7 +444,7 @@ describe('updateTask (主要分岐)', () => {
 
     await updateTask('t-1', { status: 'not_started' } as never, 'u-1', 'tenant-A');
 
-    const updateCall = vi.mocked(prisma.task.update).mock.calls[0][0];
+    const updateCall = getMockCallArg(vi.mocked(prisma.task.update));
     expect(updateCall.data.actualStartDate).toBe(null);
     expect(updateCall.data.actualEndDate).toBe(null);
   });
@@ -499,7 +500,7 @@ describe('updateTask (主要分岐)', () => {
 
     await updateTask('t-1', { status: 'on_hold' } as never, 'u-1', 'tenant-A');
 
-    const updateCall = vi.mocked(prisma.task.update).mock.calls[0][0];
+    const updateCall = getMockCallArg(vi.mocked(prisma.task.update));
     expect(updateCall.data.actualStartDate).toEqual(new Date('2026-04-01'));
     expect(updateCall.data.actualEndDate).toBe(null);
   });
@@ -520,7 +521,7 @@ describe('updateTask (主要分岐)', () => {
       updateTask('t-1', { name: 'x' } as never, 'u-1', 'tenant-A'),
     ).rejects.toThrow('NOT_FOUND');
     // findFirst の where に project: { tenantId } が入っていることを検証
-    const call = vi.mocked(prisma.task.findFirst).mock.calls[0][0];
+    const call = getMockCallArg(vi.mocked(prisma.task.findFirst));
     expect((call.where as { project: { tenantId: string } }).project.tenantId).toBe('tenant-A');
   });
 });
@@ -553,7 +554,7 @@ describe('updateTaskProgress', () => {
       'tenant-A',
     );
 
-    const updateCall = vi.mocked(prisma.task.update).mock.calls[0][0];
+    const updateCall = getMockCallArg(vi.mocked(prisma.task.update));
     expect(updateCall.data.status).toBe('completed');
     expect(updateCall.data.progressRate).toBe(100);
   });
@@ -583,7 +584,7 @@ describe('updateTaskProgress', () => {
       'tenant-A',
     );
 
-    const updateCall = vi.mocked(prisma.task.update).mock.calls[0][0];
+    const updateCall = getMockCallArg(vi.mocked(prisma.task.update));
     expect(updateCall.data.progressRate).toBe(50);
     expect(updateCall.data.status).toBe('in_progress');
   });
@@ -616,7 +617,7 @@ describe('bulkUpdateTasks', () => {
     );
 
     expect(r).toBe(3);
-    const call = vi.mocked(prisma.task.updateMany).mock.calls[0][0];
+    const call = getMockCallArg(vi.mocked(prisma.task.updateMany));
     expect(call.where.type).toBe('activity');
     expect(call.where.projectId).toBe('p-1');
   });

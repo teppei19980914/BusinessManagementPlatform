@@ -45,6 +45,7 @@ import {
 } from './knowledge.service';
 import { prisma } from '@/lib/db';
 import { generateAndPersistEntityEmbedding, generateAndPersistBatchEmbeddings } from './embedding.service';
+import { getMockCallArg } from '@/lib/test-mock-helpers';
 
 const TEST_TENANT_ID = '00000000-0000-0000-0000-000000000001';
 
@@ -85,7 +86,7 @@ describe('listKnowledge', () => {
 
     await listKnowledge({}, 'admin-1', 'admin', 'tenant-A');
 
-    const call = vi.mocked(prisma.knowledge.findMany).mock.calls[0][0];
+    const call = getMockCallArg(vi.mocked(prisma.knowledge.findMany));
     // 2026-05-08: super_admin 以外は isSampleData=false でシードナレッジを除外
     // 2026-05-09 Phase 2-4: tenantId フィルタ必須化
     expect(call.where.AND).toEqual([
@@ -101,7 +102,7 @@ describe('listKnowledge', () => {
 
     await listKnowledge({}, 'super-1', 'super_admin', 'tenant-A');
 
-    const call = vi.mocked(prisma.knowledge.findMany).mock.calls[0][0];
+    const call = getMockCallArg(vi.mocked(prisma.knowledge.findMany));
     // super_admin は isSampleData フィルタ無し + visibility 制限も無し
     // ただし tenantId フィルタは必須 (Phase 2-4)
     expect(call.where.AND).toEqual([{ deletedAt: null }, { tenantId: 'tenant-A' }]);
@@ -113,7 +114,7 @@ describe('listKnowledge', () => {
 
     await listKnowledge({}, 'u-1', 'general', 'tenant-A');
 
-    const call = vi.mocked(prisma.knowledge.findMany).mock.calls[0][0];
+    const call = getMockCallArg(vi.mocked(prisma.knowledge.findMany));
     expect(call.where.AND).toContainEqual({ deletedAt: null });
     expect(call.where.AND).toContainEqual({ isSampleData: false });
     expect(call.where.AND).toContainEqual({
@@ -130,9 +131,9 @@ describe('listKnowledge', () => {
 
     await listKnowledge({ keyword: 'bug' }, 'u-1', 'general', 'tenant-A');
 
-    const call = vi.mocked(prisma.knowledge.findMany).mock.calls[0][0];
+    const call = getMockCallArg(vi.mocked(prisma.knowledge.findMany));
     // 権限 OR と keyword OR の 2 つが AND の中に並ぶ
-    const andClauses = call.where.AND as Array<{ OR?: unknown[] }>;
+    const andClauses = call.where.AND as unknown as Array<{ OR?: unknown[] }>;
     const ors = andClauses.filter((c) => Array.isArray(c.OR));
     expect(ors).toHaveLength(2);
     // keyword OR は title/content (権限 OR は visibility のみで title を含まない)
@@ -150,7 +151,7 @@ describe('listKnowledge', () => {
       'admin',
       'tenant-A',
     );
-    const call = vi.mocked(prisma.knowledge.findMany).mock.calls[0][0];
+    const call = getMockCallArg(vi.mocked(prisma.knowledge.findMany));
     expect(call.where.AND).toContainEqual({ knowledgeType: 'pattern' });
     expect(call.where.AND).toContainEqual({ visibility: 'public' });
   });
@@ -160,7 +161,7 @@ describe('listKnowledge', () => {
     vi.mocked(prisma.knowledge.count).mockResolvedValue(0);
 
     await listKnowledge({ limit: 999, page: 2 }, 'admin-1', 'admin', 'tenant-A');
-    const call = vi.mocked(prisma.knowledge.findMany).mock.calls[0][0];
+    const call = getMockCallArg(vi.mocked(prisma.knowledge.findMany));
     expect(call.take).toBe(100);
     expect(call.skip).toBe(100);
   });
@@ -222,7 +223,7 @@ describe('listAllKnowledgeForViewer', () => {
 
     // 非 admin
     await listAllKnowledgeForViewer('u-1', 'general', 'tenant-A');
-    const generalCall = vi.mocked(prisma.knowledge.findMany).mock.calls[0][0];
+    const generalCall = getMockCallArg(vi.mocked(prisma.knowledge.findMany));
     expect(generalCall.where.visibility).toBe('public');
     expect(generalCall.where).not.toHaveProperty('OR');
 
@@ -231,7 +232,7 @@ describe('listAllKnowledgeForViewer', () => {
 
     // admin (旧仕様では visibility 制約なしだったが、要件変更で admin も public 固定)
     await listAllKnowledgeForViewer('admin-1', 'admin', 'tenant-A');
-    const adminCall = vi.mocked(prisma.knowledge.findMany).mock.calls[0][0];
+    const adminCall = getMockCallArg(vi.mocked(prisma.knowledge.findMany));
     expect(adminCall.where.visibility).toBe('public');
   });
 });
@@ -242,7 +243,7 @@ describe('listKnowledgeByProject / getKnowledge', () => {
   it('listKnowledgeByProject: knowledgeProjects.some.projectId でフィルタ', async () => {
     vi.mocked(prisma.knowledge.findMany).mockResolvedValue([]);
     await listKnowledgeByProject('p-1', 't-1');
-    const call = vi.mocked(prisma.knowledge.findMany).mock.calls[0][0];
+    const call = getMockCallArg(vi.mocked(prisma.knowledge.findMany));
     expect(call.where.knowledgeProjects.some.projectId).toBe('p-1');
   });
 
@@ -251,7 +252,7 @@ describe('listKnowledgeByProject / getKnowledge', () => {
   it('listKnowledgeByProject: 非 admin は public + 自分の draft のみ (他人の draft は除外)', async () => {
     vi.mocked(prisma.knowledge.findMany).mockResolvedValue([]);
     await listKnowledgeByProject('p-1', 't-1', 'u-self', 'general');
-    const call = vi.mocked(prisma.knowledge.findMany).mock.calls[0][0];
+    const call = getMockCallArg(vi.mocked(prisma.knowledge.findMany));
     expect(call.where.OR).toEqual([
       { visibility: 'public' },
       { visibility: 'draft', createdBy: 'u-self' },
@@ -261,7 +262,7 @@ describe('listKnowledgeByProject / getKnowledge', () => {
   it('listKnowledgeByProject: admin は draft も含めて全件閲覧可', async () => {
     vi.mocked(prisma.knowledge.findMany).mockResolvedValue([]);
     await listKnowledgeByProject('p-1', 't-1', 'u-admin', 'admin');
-    const call = vi.mocked(prisma.knowledge.findMany).mock.calls[0][0];
+    const call = getMockCallArg(vi.mocked(prisma.knowledge.findMany));
     // admin の場合は visibility フィルタなし (OR が undefined)
     expect(call.where.OR).toBeUndefined();
   });
@@ -269,14 +270,14 @@ describe('listKnowledgeByProject / getKnowledge', () => {
   it('listKnowledgeByProject: super_admin も全件閲覧可', async () => {
     vi.mocked(prisma.knowledge.findMany).mockResolvedValue([]);
     await listKnowledgeByProject('p-1', 't-1', 'u-super', 'super_admin');
-    const call = vi.mocked(prisma.knowledge.findMany).mock.calls[0][0];
+    const call = getMockCallArg(vi.mocked(prisma.knowledge.findMany));
     expect(call.where.OR).toBeUndefined();
   });
 
   it('listKnowledgeByProject: viewerUserId 省略 (内部呼び出し) は全件返却 (cascade 削除等の運用)', async () => {
     vi.mocked(prisma.knowledge.findMany).mockResolvedValue([]);
     await listKnowledgeByProject('p-1', 't-1');
-    const call = vi.mocked(prisma.knowledge.findMany).mock.calls[0][0];
+    const call = getMockCallArg(vi.mocked(prisma.knowledge.findMany));
     expect(call.where.OR).toBeUndefined();
   });
 
@@ -336,7 +337,7 @@ describe('createKnowledge', () => {
       TEST_TENANT_ID,
     );
 
-    const call = vi.mocked(prisma.knowledge.create).mock.calls[0][0];
+    const call = getMockCallArg(vi.mocked(prisma.knowledge.create));
     expect(call.data.knowledgeProjects).toBeUndefined();
   });
 
@@ -359,7 +360,7 @@ describe('createKnowledge', () => {
       TEST_TENANT_ID,
     );
 
-    const call = vi.mocked(prisma.knowledge.create).mock.calls[0][0];
+    const call = getMockCallArg(vi.mocked(prisma.knowledge.create));
     expect(call.data.knowledgeProjects.create).toHaveLength(2);
   });
 
@@ -383,7 +384,7 @@ describe('createKnowledge', () => {
     );
 
     expect(generateAndPersistEntityEmbedding).toHaveBeenCalledTimes(1);
-    const args = vi.mocked(generateAndPersistEntityEmbedding).mock.calls[0][0];
+    const args = getMockCallArg(vi.mocked(generateAndPersistEntityEmbedding));
     expect(args.table).toBe('knowledges');
     expect(args.rowId).toBe('k-new');
     expect(args.tenantId).toBe(TEST_TENANT_ID);
@@ -448,7 +449,7 @@ describe('updateKnowledge / deleteKnowledge', () => {
     vi.mocked(prisma.knowledge.update).mockResolvedValue(kRow() as never);
     await updateKnowledge('k-1', { title: 'updated' }, 'u-assignee', TEST_TENANT_ID);
 
-    const call = vi.mocked(prisma.knowledge.update).mock.calls[0][0];
+    const call = getMockCallArg(vi.mocked(prisma.knowledge.update));
     expect(call.data.title).toBe('updated');
   });
 
@@ -457,7 +458,7 @@ describe('updateKnowledge / deleteKnowledge', () => {
     vi.mocked(prisma.knowledge.update).mockResolvedValue(kRow() as never);
     await updateKnowledge('k-1', { title: 'new' }, 'u-1', TEST_TENANT_ID);
 
-    const call = vi.mocked(prisma.knowledge.update).mock.calls[0][0];
+    const call = getMockCallArg(vi.mocked(prisma.knowledge.update));
     expect(call.data.title).toBe('new');
     expect(call.data.content).toBeUndefined();
   });
@@ -473,7 +474,7 @@ describe('updateKnowledge / deleteKnowledge', () => {
     await updateKnowledge('k-1', { title: 'new title' }, 'u-1', TEST_TENANT_ID);
 
     expect(generateAndPersistEntityEmbedding).toHaveBeenCalledTimes(1);
-    const args = vi.mocked(generateAndPersistEntityEmbedding).mock.calls[0][0];
+    const args = getMockCallArg(vi.mocked(generateAndPersistEntityEmbedding));
     expect(args.table).toBe('knowledges');
     expect(args.rowId).toBe('k-1');
     expect(args.tenantId).toBe(TEST_TENANT_ID);
@@ -691,7 +692,7 @@ describe('bulkUpdateKnowledgeVisibilityFromList', () => {
     expect(r.skippedNotOwned).toBe(1);
 
     // PR #165: findMany の where に knowledgeProjects.some.projectId が含まれることを確認 (多対多)
-    const findCall = vi.mocked(prisma.knowledge.findMany).mock.calls[0][0];
+    const findCall = getMockCallArg(vi.mocked(prisma.knowledge.findMany));
     expect(findCall.where).toMatchObject({
       id: { in: ['k-1', 'k-2'] },
       deletedAt: null,
@@ -699,7 +700,7 @@ describe('bulkUpdateKnowledgeVisibilityFromList', () => {
       knowledgeProjects: { some: { projectId: 'p-1' } },
     });
 
-    const call = vi.mocked(prisma.knowledge.updateMany).mock.calls[0][0];
+    const call = getMockCallArg(vi.mocked(prisma.knowledge.updateMany));
     // updateMany は scalar updatedBy のみ受理する (relation connect 構文不可)
     expect(call.data).toEqual({ visibility: 'draft', updatedBy: 'u-1' });
   });
@@ -780,9 +781,9 @@ describe('bulkUpdateKnowledgeVisibilityFromList', () => {
 
       expect(r.embeddingsGenerated).toBe(2);
       expect(generateAndPersistBatchEmbeddings).toHaveBeenCalledTimes(1);
-      const args = vi.mocked(generateAndPersistBatchEmbeddings).mock.calls[0][0];
+      const args = getMockCallArg(vi.mocked(generateAndPersistBatchEmbeddings));
       expect(args.items).toHaveLength(2);
-      expect(args.items.map((i) => i.rowId)).toEqual(['k-1', 'k-2']);
+      expect((args.items as unknown as Array<{ rowId: string }>).map((i) => i.rowId)).toEqual(['k-1', 'k-2']);
       expect(args.featureUnit).toBe('knowledge-embedding');
     });
   });

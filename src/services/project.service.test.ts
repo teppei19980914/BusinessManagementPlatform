@@ -116,6 +116,7 @@ import {
   deleteProjectCascade,
 } from './project.service';
 import { prisma } from '@/lib/db';
+import { getMockCallArg } from '@/lib/test-mock-helpers';
 import { canTransition } from './state-machine';
 import { callAnthropicForAutoTagsInner } from './auto-tag.service';
 import { persistEmbedding } from './embedding.service';
@@ -194,7 +195,7 @@ describe('listProjects', () => {
 
     await listProjects({}, 'admin-1', 'admin', 'tenant-A');
 
-    const call = vi.mocked(prisma.project.findMany).mock.calls[0][0];
+    const call = getMockCallArg(vi.mocked(prisma.project.findMany));
     expect(call.where).not.toHaveProperty('members');
     expect(call.where.tenantId).toBe('tenant-A');
   });
@@ -205,7 +206,7 @@ describe('listProjects', () => {
 
     await listProjects({}, 'u-1', 'general', 'tenant-A');
 
-    const call = vi.mocked(prisma.project.findMany).mock.calls[0][0];
+    const call = getMockCallArg(vi.mocked(prisma.project.findMany));
     expect(call.where.members).toEqual({ some: { userId: 'u-1' } });
     expect(call.where.tenantId).toBe('tenant-A');
   });
@@ -216,7 +217,7 @@ describe('listProjects', () => {
 
     await listProjects({ keyword: 'searchword' }, 'admin-1', 'admin', 'tenant-A');
 
-    const call = vi.mocked(prisma.project.findMany).mock.calls[0][0];
+    const call = getMockCallArg(vi.mocked(prisma.project.findMany));
     expect(call.where.OR).toHaveLength(3);
     // PR #111-2: customerName 列削除後は customer relation 経由でキーワード検索
     expect(call.where.OR).toEqual(
@@ -232,7 +233,7 @@ describe('listProjects', () => {
 
     await listProjects({ limit: 999, page: 3 }, 'admin-1', 'admin', 'tenant-A');
 
-    const call = vi.mocked(prisma.project.findMany).mock.calls[0][0];
+    const call = getMockCallArg(vi.mocked(prisma.project.findMany));
     expect(call.take).toBe(100);
     expect(call.skip).toBe(200);
   });
@@ -243,7 +244,7 @@ describe('listProjects', () => {
 
     await listProjects({ customerName: 'ACME' }, 'admin-1', 'admin', 'tenant-A');
 
-    const call = vi.mocked(prisma.project.findMany).mock.calls[0][0];
+    const call = getMockCallArg(vi.mocked(prisma.project.findMany));
     expect(call.where.customer).toEqual({
       name: { contains: 'ACME', mode: 'insensitive' },
     });
@@ -255,7 +256,7 @@ describe('listProjects', () => {
 
     const result = await listProjects({}, 'admin-1', 'admin', 'tenant-A');
 
-    const call = vi.mocked(prisma.project.findMany).mock.calls[0][0];
+    const call = getMockCallArg(vi.mocked(prisma.project.findMany));
     expect(call.include).toEqual({ customer: { select: { name: true } } });
     expect(result.data[0].customerId).toBe('cust-1');
     expect(result.data[0].customerName).toBe('Cust');
@@ -283,7 +284,7 @@ describe('createProject / getProject / updateProject / deleteProject', () => {
       TEST_TENANT_ID,
     );
 
-    const call = vi.mocked(prisma.project.create).mock.calls[0][0];
+    const call = getMockCallArg(vi.mocked(prisma.project.create));
     expect(call.data.status).toBe('planning');
     expect(call.data.plannedStartDate).toBeInstanceOf(Date);
     // PR #111-2: customerId を direct FK として保存
@@ -303,7 +304,7 @@ describe('createProject / getProject / updateProject / deleteProject', () => {
     } as never);
     vi.mocked(prisma.project.update).mockResolvedValue(pRow() as never);
     await updateProject('p-1', { customerId: 'cust-new' }, 'u-1', TEST_TENANT_ID);
-    const call = vi.mocked(prisma.project.update).mock.calls[0][0];
+    const call = getMockCallArg(vi.mocked(prisma.project.update));
     expect(call.data.customer).toEqual({ connect: { id: 'cust-new' } });
     expect(call.include).toEqual({ customer: { select: { name: true } } });
   });
@@ -325,7 +326,7 @@ describe('createProject / getProject / updateProject / deleteProject', () => {
     vi.mocked(prisma.project.update).mockResolvedValue(pRow() as never);
     await updateProject('p-1', { name: 'new' }, 'u-1', TEST_TENANT_ID);
 
-    const call = vi.mocked(prisma.project.update).mock.calls[0][0];
+    const call = getMockCallArg(vi.mocked(prisma.project.update));
     expect(call.data.name).toBe('new');
     expect(call.data.purpose).toBeUndefined();
   });
@@ -365,7 +366,7 @@ describe('createProject / getProject / updateProject / deleteProject', () => {
       TEST_TENANT_ID,
     );
 
-    const call = vi.mocked(prisma.project.create).mock.calls[0][0];
+    const call = getMockCallArg(vi.mocked(prisma.project.create));
     // user の "EC" + auto の "EC" は重複除去で 1 件
     expect(call.data.businessDomainTags).toEqual(['EC', '小売', '物流']);
     // user の React + auto の Next.js は両方残る
@@ -394,7 +395,7 @@ describe('createProject / getProject / updateProject / deleteProject', () => {
       TEST_TENANT_ID,
     );
 
-    const call = vi.mocked(prisma.project.create).mock.calls[0][0];
+    const call = getMockCallArg(vi.mocked(prisma.project.create));
     expect(call.data.businessDomainTags).toEqual(['EC']);
     expect(call.data.techStackTags).toEqual([]);
     expect(call.data.processTags).toEqual([]);
@@ -432,9 +433,9 @@ describe('createProject / getProject / updateProject / deleteProject', () => {
     });
     // (2026-05-15) auto-tag + embedding を 1 業務操作 = 1 withMeteredLLM ラップに集約
     expect(withMeteredLLM).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(withMeteredLLM).mock.calls[0]![0].featureUnit).toBe('project-upsert');
-    expect(vi.mocked(withMeteredLLM).mock.calls[0]![0].tenantId).toBe(TEST_TENANT_ID);
-    expect(vi.mocked(withMeteredLLM).mock.calls[0]![0].userId).toBe('u-1');
+    expect(getMockCallArg(vi.mocked(withMeteredLLM)).featureUnit).toBe('project-upsert');
+    expect(getMockCallArg(vi.mocked(withMeteredLLM)).tenantId).toBe(TEST_TENANT_ID);
+    expect(getMockCallArg(vi.mocked(withMeteredLLM)).userId).toBe('u-1');
   });
 
   it('updateProject: text フィールドが更新対象でなければ LLM 呼出なし (LLM 課金回避)', async () => {
@@ -512,7 +513,7 @@ describe('createProject / getProject / updateProject / deleteProject', () => {
     });
 
     // 既存タグ + 新 auto タグの union が保存される
-    const call = vi.mocked(prisma.project.update).mock.calls[0][0];
+    const call = getMockCallArg(vi.mocked(prisma.project.update));
     expect(call.data.businessDomainTags).toEqual(['old-bd', 'NEW-BD']);
     expect(call.data.techStackTags).toEqual(['old-ts', 'NEW-TS']);
     expect(call.data.processTags).toEqual(['old-pr', 'NEW-PR']);
@@ -549,7 +550,7 @@ describe('createProject / getProject / updateProject / deleteProject', () => {
       TEST_TENANT_ID,
     );
 
-    const call = vi.mocked(prisma.project.update).mock.calls[0][0];
+    const call = getMockCallArg(vi.mocked(prisma.project.update));
     // user 提供軸: ['USER-BD'] + auto ['AUTO-BD'] = 重複除去 union
     expect(call.data.businessDomainTags).toEqual(['USER-BD', 'AUTO-BD']);
     // user 非提供軸: 現行値 + auto (auto が空なので現行値のみ)
@@ -581,7 +582,7 @@ describe('createProject / getProject / updateProject / deleteProject', () => {
       TEST_TENANT_ID,
     );
 
-    const call = vi.mocked(prisma.project.update).mock.calls[0][0];
+    const call = getMockCallArg(vi.mocked(prisma.project.update));
     expect(call.data.businessDomainTags).toEqual(['EC']);
     // text フィールドは更新される (これは独立した path)
     expect(call.data.purpose).toBe('NEW');
@@ -642,7 +643,7 @@ describe('createProject / getProject / updateProject / deleteProject', () => {
     expect(withMeteredLLM).toHaveBeenCalledTimes(1);
     // voyageEmbed は purpose/background/scope を改行結合した text で呼ばれる
     expect(voyageEmbed).toHaveBeenCalledTimes(1);
-    const voyageCall = vi.mocked(voyageEmbed).mock.calls[0]![0];
+    const voyageCall = getMockCallArg(vi.mocked(voyageEmbed));
     expect(voyageCall.texts[0]).toContain('EC サイト構築');
     expect(voyageCall.texts[0]).toContain('既存システムの刷新');
     expect(voyageCall.texts[0]).toContain('フロント + 管理画面');
@@ -859,7 +860,7 @@ describe('createProject / getProject / updateProject / deleteProject', () => {
 
     // voyageEmbed に新しい purpose + 現行 background/scope が渡される
     expect(voyageEmbed).toHaveBeenCalled();
-    const voyageCall = vi.mocked(voyageEmbed).mock.calls[0]![0];
+    const voyageCall = getMockCallArg(vi.mocked(voyageEmbed));
     expect(voyageCall.texts[0]).toContain('NEW PURPOSE');
     expect(voyageCall.texts[0]).toContain('old bg');
     expect(voyageCall.texts[0]).toContain('old sc');
@@ -1039,7 +1040,7 @@ describe('deleteProjectCascade (PR #89: 細粒度フラグ対応)', () => {
 
     expect(r.risks).toBe(2);
     // findMany は projectId + type='risk' で絞り込み
-    const findCall = vi.mocked(prisma.riskIssueProject.findMany).mock.calls[0][0];
+    const findCall = getMockCallArg(vi.mocked(prisma.riskIssueProject.findMany));
     expect(findCall.where).toEqual({ projectId: 'p-1', riskIssue: { type: 'risk' } });
     // 本体 delete が 2 件分呼ばれる
     expect(prisma.riskIssue.delete).toHaveBeenCalledTimes(2);
@@ -1075,7 +1076,7 @@ describe('deleteProjectCascade (PR #89: 細粒度フラグ対応)', () => {
 
     expect(r.issues).toBe(1);
     expect(r.risks).toBe(0);
-    const findCall = vi.mocked(prisma.riskIssueProject.findMany).mock.calls[0][0];
+    const findCall = getMockCallArg(vi.mocked(prisma.riskIssueProject.findMany));
     expect(findCall.where).toEqual({ projectId: 'p-1', riskIssue: { type: 'issue' } });
   });
 
