@@ -32,6 +32,7 @@ import {
   getDiscordInviteUrl,
 } from '@/config';
 import type { GuideRole } from '@/services/guide-role.service';
+import { HelpChatInput } from '@/components/help-chat/help-chat-input';
 
 type Props = {
   /** 解決済の表示ロール (= guide-role.service.ts で systemRole + projectRole から判定) */
@@ -72,6 +73,13 @@ export function GuideClient({ role, systemRole, userName }: Props) {
           <strong>{displayRoleLabel}</strong>
         </p>
       </header>
+
+      {/* ADR-0027 (2026-05-29 PR6): たすきフクロウ AI チャット入力。
+          ガイド本文を読み下す前に「何から始めればよい?」を直接フクロウに聞ける動線を提供。 */}
+      <HelpChatInput
+        variant="page"
+        greeting={`こんにちは、たすきフクロウです。\nあなたのロールでできることや、最初にやるべきことなどを聞いてみてください。`}
+      />
 
       {/* 1. サービスの全体像 (視覚化) */}
       <section id="overview" className="space-y-4">

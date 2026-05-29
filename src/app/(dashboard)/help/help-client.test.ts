@@ -286,3 +286,22 @@ describe('HelpClient PR4 低優先 4 件 invariant', () => {
     expect(source).toMatch(/teppei19980914\.github\.io\/HomePage\/ja\/product\/tasukiba-user\/#terms/);
   });
 });
+
+/**
+ * PR6 (feat/faq-pr6-ai-ui-minimal 2026-05-29):
+ *   /help ページ上部にたすきフクロウ AI チャット (HelpChatInput) を統合。
+ *   ヘッダ直後に <HelpChatInput variant="page" /> が描画されることを担保。
+ */
+describe('HelpClient PR6 たすきフクロウチャット統合 invariant', () => {
+  it('HelpChatInput を @/components/help-chat/help-chat-input から import', () => {
+    expect(source).toMatch(/from\s+'@\/components\/help-chat\/help-chat-input'/);
+  });
+
+  it('JSX 内に <HelpChatInput variant="page" /> が含まれる (ヘッダ直後の配置)', () => {
+    expect(source).toMatch(/<HelpChatInput\s+variant="page"\s*\/>/);
+  });
+
+  it('ヘッダ説明文に「下のフクロウチャット」誘導が含まれる', () => {
+    expect(source).toMatch(/下のフクロウチャットでも質問できます/);
+  });
+});

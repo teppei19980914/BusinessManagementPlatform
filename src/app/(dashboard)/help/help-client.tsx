@@ -22,6 +22,7 @@ import {
   GUIDE_ROUTE,
   getFeatureRequestUrl,
 } from '@/config';
+import { HelpChatInput } from '@/components/help-chat/help-chat-input';
 
 type Props = {
   isTenantAdmin: boolean;
@@ -30,6 +31,8 @@ type Props = {
 export function HelpClient({ isTenantAdmin }: Props) {
   // 2026-05-11: Discord / LP は AccountMenu (画面右上) に集約したため当画面の末尾 CTA から削除。
   //   機能要望リンクのみ /help 末尾に残す (= 機能改善依頼は FAQ 文脈で発生しやすいため)。
+  // ADR-0027 (2026-05-29 PR6): ページ上部にたすきフクロウ AI チャット入力を追加。
+  //   下部の FAQ アコーディオンは継続表示し、「チャットで聞く / 一覧から探す」の 2 経路を並列提供。
   const tNav = useTranslations('nav');
   const featureRequest = getFeatureRequestUrl();
 
@@ -43,9 +46,12 @@ export function HelpClient({ isTenantAdmin }: Props) {
           <Link href={GUIDE_ROUTE} className="text-primary underline">
             使い方ガイド
           </Link>{' '}
-          を先に読むのがおすすめです。ここでは個別の「困った」に答えます。
+          を先に読むのがおすすめです。下のフクロウチャットでも質問できますし、一覧から個別の「困った」も探せます。
         </p>
       </header>
+
+      {/* たすきフクロウ AI ヘルプチャット (ADR-0027) */}
+      <HelpChatInput variant="page" />
 
       {/* サービスについて (マスコット紹介) */}
       <FaqCategory title="サービスについて">
