@@ -71,3 +71,55 @@ describe('buildGuidePromptSection', () => {
     expect(prompt).toContain('参考タブ');
   });
 });
+
+/**
+ * PR9 (2026-05-29): 業務手順ガイドを 9 件追加した invariant 検証。
+ *   ユーザ指示: 「特にシステム管理者が初回ログインしたとき、データインポート手順を
+ *   具体的にフクロウが返答 = 離脱防止」
+ */
+describe('PR9 業務手順ガイド invariant', () => {
+  it('GUIDE_STEPS は 17 件以上 (PR9 で 8 → 17+)', () => {
+    expect(GUIDE_STEPS.length).toBeGreaterThanOrEqual(17);
+  });
+
+  it('テナント管理者の初日 + 外部データ移行ウィザード + ZIP 取込 が tenant_admin 限定で含まれる', () => {
+    const expectedAdminSteps = [
+      'tenant-admin-first-day', // 初日 4 ステップ
+      'external-import-wizard-full-walkthrough', // 6 ステップ詳細
+      'zip-tenant-import-walkthrough', // ZIP 一括取込
+      'invite-member-walkthrough',
+      'plan-upgrade-walkthrough',
+      'budget-cap-walkthrough',
+      'self-cancellation-walkthrough',
+      'csv-edit-cheatsheet',
+    ];
+    for (const id of expectedAdminSteps) {
+      const step = GUIDE_STEPS.find((s) => s.id === id);
+      expect(step, `step '${id}' should exist`).toBeDefined();
+      expect(step?.visibleTo, `step '${id}' should be tenant_admin`).toBe('tenant_admin');
+    }
+  });
+
+  it('MFA セットアップガイドは all (一般メンバーも有効化可能)', () => {
+    const mfa = GUIDE_STEPS.find((s) => s.id === 'mfa-setup-walkthrough');
+    expect(mfa).toBeDefined();
+    expect(mfa?.visibleTo).toBe('all');
+  });
+
+  it('一般メンバーには CSV / インポート / 課金関連ガイドが漏れない (severity-1)', () => {
+    const general = getGuideStepsForRole(VIEWER_GENERAL);
+    const leakedAdminSteps = general.filter((s) =>
+      s.id.includes('import') ||
+      s.id.includes('plan') ||
+      s.id.includes('budget') ||
+      s.id.includes('self-cancellation') ||
+      s.id.includes('csv-edit'),
+    );
+    expect(leakedAdminSteps).toEqual([]);
+  });
+
+  it('テナント管理者には主要 17 step がすべて開示', () => {
+    const admin = getGuideStepsForRole(VIEWER_ADMIN);
+    expect(admin.length).toBe(GUIDE_STEPS.length);
+  });
+});

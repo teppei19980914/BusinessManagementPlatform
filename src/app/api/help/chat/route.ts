@@ -52,6 +52,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { getAuthenticatedUser } from '@/lib/api-helpers';
+import { applyRateLimit } from '@/lib/rate-limit';
 import { prisma } from '@/lib/db';
 import { getAnthropicClient } from '@/lib/llm/anthropic-client';
 import { recordError } from '@/services/error-log.service';
@@ -157,6 +158,15 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   const authResult = await getAuthenticatedUser();
   if (authResult instanceof NextResponse) return authResult;
   const user = authResult;
+
+  // ★severity-1★ IP/user rate limit (PR9 / 2026-05-29 追加):
+  //   テナント月 100 回上限のみだと、1 bot が 1 秒で枯渇させ得る (運営調査で指摘)。
+  //   chat-semantic-search route と同じパターンで「key: 'help-chat'、1 分 10 回」制限を入れる。
+  //   1 日 1440 回・1 月 ~40K 回が個人ユーザ理論最大なので、通常利用には十分余裕。
+  //   bot 攻撃で 1 分 10 回ペース送信なら 1 日 14,400 回、1 ヶ月で ~432K 回 だが、その前に
+  //   テナント月 100 回上限に到達するため、月 100 件の節約ガードとして機能する。
+  const limited = applyRateLimit(req, { key: 'help-chat', max: 10, windowMs: 60_000 });
+  if (limited) return limited;
 
   // 2. 入力 parse
   let input: z.infer<typeof InputSchema>;

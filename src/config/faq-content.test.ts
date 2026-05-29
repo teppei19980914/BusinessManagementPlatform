@@ -53,9 +53,13 @@ describe('getFaqEntriesForRole 権限フィルタ (★severity-1★)', () => {
     // admin カテゴリ (= ダウングレード不可) も含まれていない
     const adminFaqs = result.filter((e) => e.category === 'admin');
     expect(adminFaqs.length).toBe(0);
-    // import (CSV 取込) も tenant_admin 限定
-    const importFaqs = result.filter((e) => e.category === 'import');
-    expect(importFaqs.length).toBe(0);
+    // import カテゴリの tenant_admin 限定 FAQ は含まれていないこと。
+    // ただし PR9 追加の 'import-sync-import-where' (= エンティティ別 sync-import) は
+    // 一般メンバーも使える機能のため visibleTo='all' で開示される (許容)。
+    const importAdminFaqs = result.filter(
+      (e) => e.category === 'import' && e.id !== 'import-sync-import-where',
+    );
+    expect(importAdminFaqs.length).toBe(0);
   });
 
   it('一般メンバーは visibleTo=all の FAQ のみを受け取る (個別 entry 検証)', () => {
@@ -141,5 +145,109 @@ describe('getFaqEntryById (deep link 解決用)', () => {
   it('存在しない id で undefined を返す', () => {
     const entry = getFaqEntryById('non-existent-id');
     expect(entry).toBeUndefined();
+  });
+});
+
+/**
+ * PR9 (2026-05-29): 業務操作の詳細手順 FAQ を 22 件追加した invariant 検証。
+ *   ユーザ指示: 「テナント管理者の初回ログイン時、CSV インポートの具体的手順を
+ *   フクロウが返答できないと離脱防止が成り立たない」
+ */
+describe('PR9 業務操作の詳細手順 FAQ invariant', () => {
+  it('FAQ 件数は 40 件以上 (PR9 で 20 → 42+)', () => {
+    expect(FAQ_ENTRIES.length).toBeGreaterThanOrEqual(40);
+  });
+
+  it('CSV インポート関連 (3 種類のインポート機能) の id がすべて含まれる', () => {
+    const expectedIds = [
+      'import-features-overview', // 3 種類の整理
+      'import-zip-tenant', // ZIP 一括取込
+      'import-external-wizard-where-to-start', // 外部データ移行ウィザード起点
+      'import-external-wizard-4steps-detail', // 4 ステップ詳細
+      'import-sync-import-where', // エンティティ別 sync-import
+    ];
+    for (const id of expectedIds) {
+      expect(FAQ_ENTRIES.find((e) => e.id === id)).toBeDefined();
+    }
+  });
+
+  it('CSV カラム仕様 FAQ (visibility / knowledgeType / impact / 日付 / 改行 / 文字コード) がすべて含まれる', () => {
+    const expectedIds = [
+      'csv-knowledge-required-fields',
+      'csv-knowledge-type-values',
+      'csv-knowledge-visibility-mapping', // ★ユーザ指示: 「自分のみにしたい場合は draft」
+      'csv-riskissue-required-fields',
+      'csv-riskissue-type-values',
+      'csv-riskissue-visibility-mapping',
+      'csv-impact-priority-likelihood-values',
+      'csv-date-format',
+      'csv-multiline-cells',
+      'csv-encoding',
+      'csv-tags-syntax',
+      'csv-row-and-file-limits',
+      'csv-error-recovery',
+    ];
+    for (const id of expectedIds) {
+      expect(FAQ_ENTRIES.find((e) => e.id === id)).toBeDefined();
+    }
+  });
+
+  it('★ユーザ指示★ visibility=draft (自分のみ) の設定方法を一般メンバーから隠す (tenant_admin 限定 = CSV 編集権限と一致)', () => {
+    // CSV インポート系は全て tenant_admin 限定 (一般メンバーには CSV インポート権限がない)
+    const csvFaqs = FAQ_ENTRIES.filter((e) => e.id.startsWith('csv-') || e.id.startsWith('import-'));
+    const sharedToAll = csvFaqs.filter((e) => e.visibleTo === 'all');
+    // sync-import (エンティティ別) は一般メンバーも使えるため visibility='all' 1 件のみ許容
+    expect(sharedToAll.map((e) => e.id)).toEqual(['import-sync-import-where']);
+  });
+
+  it('MFA / パスワード要件 FAQ は全員に開示 (all)', () => {
+    // MFA は一般メンバーも有効化できるため visibleTo='all'
+    expect(FAQ_ENTRIES.find((e) => e.id === 'mfa-setup')?.visibleTo).toBe('all');
+    expect(FAQ_ENTRIES.find((e) => e.id === 'mfa-recovery-code-lost')?.visibleTo).toBe('all');
+    expect(FAQ_ENTRIES.find((e) => e.id === 'password-strength-requirement')?.visibleTo).toBe('all');
+  });
+
+  it('プラン変更・予算上限・90 日タイムライン・招待 FAQ は tenant_admin 限定 (料金漏洩防止)', () => {
+    expect(FAQ_ENTRIES.find((e) => e.id === 'plan-upgrade-procedure')?.visibleTo).toBe('tenant_admin');
+    expect(FAQ_ENTRIES.find((e) => e.id === 'budget-cap-setting')?.visibleTo).toBe('tenant_admin');
+    expect(FAQ_ENTRIES.find((e) => e.id === 'beginner-90day-timeline')?.visibleTo).toBe('tenant_admin');
+    expect(FAQ_ENTRIES.find((e) => e.id === 'invite-member-procedure')?.visibleTo).toBe('tenant_admin');
+  });
+
+  it('一般メンバーには CSV インポート詳細手順が漏れない (severity-1 情報漏洩防止)', () => {
+    const general = getFaqEntriesForRole({
+      isTenantAdmin: false,
+      hasAnyProjectPmRole: false,
+    });
+    // tenant_admin 限定の CSV / インポート FAQ が一切含まれていないこと
+    const csvAdminFaqs = general.filter(
+      (e) => (e.id.startsWith('csv-') || e.id.startsWith('import-')) && e.id !== 'import-sync-import-where',
+    );
+    expect(csvAdminFaqs).toEqual([]);
+  });
+});
+
+/**
+ * PR9 (2026-05-29): buildRoleGuardancePromptSection の fail-open 防御強化。
+ *   AI hallucination で「全権限ユーザだから何でも答えていい」と誤認させない invariant。
+ */
+describe('PR9 buildRoleGuardancePromptSection fail-open 防御', () => {
+  it('全権限ユーザ向けでも「許可された FAQ/ガイドのみ」と中立的に伝える (制限なし宣言を回避)', () => {
+    const guidance = buildRoleGuardancePromptSection({
+      isTenantAdmin: true,
+      hasAnyProjectPmRole: true,
+    });
+    expect(guidance).toContain('許可された FAQ');
+    // 旧 fail-open フレーズが残っていないこと
+    expect(guidance).not.toBe('本ユーザは全権限を持つため、開示制限はありません。');
+  });
+
+  it('権限制限がある場合、回答本文に金額・期間・上限値を「一切出さない」と AI に指示', () => {
+    const guidance = buildRoleGuardancePromptSection({
+      isTenantAdmin: false,
+      hasAnyProjectPmRole: false,
+    });
+    expect(guidance).toContain('回答本文に該当する情報を一切含めず');
+    expect(guidance).toContain('具体的な金額・期間・上限値・操作手順なども一切出さず');
   });
 });

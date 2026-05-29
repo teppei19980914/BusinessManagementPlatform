@@ -245,6 +245,204 @@ export const FAQ_ENTRIES: readonly FaqEntry[] = [
     a: 'キーワード単体ではなく 50〜200 字程度の文章で、業務文脈や専門用語を含めるとヒットしやすくなります。例:「決済」だけより「クレジットカード決済の API 連携で発生したエラー対応」のように具体的に書くのがコツです。',
     visibleTo: 'all',
   },
+
+  // ===========================================================================
+  // PR9 (2026-05-29): 業務操作の具体仕様を網羅する FAQ を 25 件追加
+  //   ユーザ指示「CSV カラム ↔ 一覧カラム対応 / visibility=自分のみ にしたい場合は draft 設定」
+  //   など、初心者が離脱せず業務を進められる粒度で記述する。
+  // ===========================================================================
+
+  // ===== account / MFA =====
+  {
+    id: 'mfa-setup',
+    category: 'account',
+    q: 'MFA (二段階認証) を有効化する手順を教えてください',
+    a: 'テナント管理者・一般メンバーともに任意で有効化できます (運営者のみ強制)。手順:\n1. ログイン後、画面右上のアカウントメニュー → 設定\n2. 「セキュリティ」セクション →「二段階認証 (MFA) を有効化」ボタン\n3. 画面の QR コードを Google Authenticator / Authy などのアプリで読み取る\n4. アプリに表示される 6 桁コードを入力 → 有効化完了\n5. 表示された「リカバリーコード」を必ず紙またはパスワードマネージャに保存 (端末紛失時の唯一の救済手段)',
+    visibleTo: 'all',
+  },
+  {
+    id: 'mfa-recovery-code-lost',
+    category: 'account',
+    q: 'MFA のリカバリーコードを紛失してログインできません',
+    a: '一般メンバーの場合: テナント管理者に依頼し、ユーザ管理画面から「MFA リセット」を実行してもらってください (再設定用メールが届きます)。テナント管理者本人の場合: 公式 LP のお問い合わせフォームから運営にご連絡ください (本人確認後にリセット対応)。リカバリーコードは必ずパスワードマネージャ等に保管してください。',
+    visibleTo: 'all',
+  },
+  {
+    id: 'password-strength-requirement',
+    category: 'account',
+    q: 'パスワードの強度要件は?',
+    a: '12 文字以上で、英大文字・英小文字・数字・記号のうち 3 種類以上を含むことが必須です。これらを満たさないパスワードはサインアップ画面でエラーになります。',
+    visibleTo: 'all',
+  },
+
+  // ===========================================================================
+  // ★最重要★ CSV インポート詳細 (テナント管理者の初回ログイン後の離脱防止)
+  //   ユーザ指示: 「CSV のどのカラムが一覧のどのカラムに該当するのか、どの値がどの選択肢に
+  //   なるのか」をフクロウが具体的に答えられるようにする。
+  //   ground truth: docs/public/csv-import-guide.md
+  // ===========================================================================
+  {
+    id: 'import-features-overview',
+    category: 'import',
+    q: 'たすきばには 3 種類のインポート機能があると聞きました。どれをいつ使えばいいですか?',
+    a: '用途に応じて使い分けてください (すべてテナント管理者または各画面の権限保有者のみ):\n\n1. データインポート (ZIP 一括取込) — テナント設定画面の「データインポート」セクション\n   用途: 別のたすきば組織からのテナント移行 / バックアップからの復元\n   対象: ユーザ・ナレッジ・課題・振り返り・メモ・顧客・ステークホルダー等を横断的に一括\n   形式: 本サービスから出力した ZIP ファイル のみ (外部 Excel ZIP は拒否)\n\n2. 外部データ移行ウィザード — テナント設定画面 →「外部データ移行ウィザード」リンク\n   用途: 他社サービスや社内 wiki から既存ナレッジ・課題を初回移行\n   対象: Knowledge と RiskIssue の 2 種類のみ (CSV)\n   制限: 1 ファイル 5,000 行 / 50 MB\n\n3. エンティティ別 sync-import — 各一覧画面 (ナレッジ・リスク・課題等) の「インポート」ボタン\n   用途: 既存データをエクスポート → 編集 → 再取込 (round-trip)\n   対象: 当該エンティティのみ\n   制限: 1 ファイル 500 行 / 10 MB',
+    visibleTo: 'tenant_admin',
+  },
+  {
+    id: 'import-zip-tenant',
+    category: 'import',
+    q: 'テナント設定画面の「データインポート」(ZIP 一括取込) の手順を教えてください',
+    a: '本サービスから出力した ZIP を再取込する機能です (バックアップ復元・テナント移行用)。手順:\n1. 事前準備: ページ上部の「データエクスポート」セクション →「📦 全データを ZIP でダウンロード」ボタンで ZIP を取得\n2. 同じテナント設定画面 →「データインポート」セクションへ\n3. 「ZIP ファイル」欄の「ファイルを選択」ボタン → 用意した ZIP を選択\n4. 「インポート実行」ボタン\n5. 結果画面で取り込み件数を確認\n対象: ユーザ・顧客・ステークホルダー・プロジェクト・WBS・ナレッジ・リスク・課題・振り返り・メモ・添付ファイル等 すべての業務データを横断的に取り込みます。\n注意: 受付できるファイルは本サービスから出力した ZIP のみ。Excel ファイル / 独自フォーマットの ZIP は拒否されます (外部システムからの移行は「外部データ移行ウィザード」をご利用ください)。',
+    visibleTo: 'tenant_admin',
+  },
+  {
+    id: 'import-external-wizard-where-to-start',
+    category: 'import',
+    q: '初回ログイン後、社内 wiki や旧 PM ツールの既存ナレッジを CSV で取り込みたい。どこから始めれば?',
+    a: 'テナント管理者の方の最初の一歩としておすすめです。「外部データ移行ウィザード」を使います。手順:\n1. 画面右上のアカウントメニュー → 設定 → テナント設定\n2. 「データインポート」セクションの中の黄色い案内ボックスから「外部データ移行ウィザード」リンクをクリック (または直接 /settings/tenant/external-import)\n3. ウィザード上部の「テンプレート CSV (Knowledge / RiskIssue) をダウンロード」を押してテンプレートを取得\n4. Excel でテンプレートを編集 →「CSV UTF-8 (コンマ区切り)」で保存\n5. ウィザードに戻りファイル選択 → マッピング → プレビュー → 取込実行\n料金は全プラン無料 (embedding 生成費用も発生しません)。1 ファイル最大 5,000 行・50 MB まで。',
+    visibleTo: 'tenant_admin',
+  },
+  {
+    id: 'import-external-wizard-4steps-detail',
+    category: 'import',
+    q: '外部データ移行ウィザードの 4 ステップを詳しく教えてください',
+    a: 'Step 1: ファイル選択\n  ① 用意した CSV を「ファイルを選択」ボタンで指定\n  ② 取り込むエンティティを「Knowledge」または「RiskIssue」から選択\n  ③ RiskIssue の場合: 全行を所属させる「デフォルトプロジェクト」を選択\n  ④「次へ (マッピング設定) →」ボタン\n\nStep 2: カラムマッピング\n  ① CSV の各列を、サービス側のフィールドにプルダウンで対応付け\n  ② 必須フィールド (Knowledge は title/background/content/result、RiskIssue は type/title/content/impact/priority) を必ずマッピング\n  ③ 任意フィールド (visibility / knowledgeType / impact 等) もマッピング可能 (空欄は既定値が入る)\n  ④「プレビューを表示 →」ボタン\n\nStep 3: プレビュー (取込前確認)\n  ① 取込予定の各行が表示される\n  ② エラー行が「エラー N 行」と表示されたら CSV を修正 (詳細は別 FAQ「プレビューで『エラー N 行』」)\n  ③ 内容を確認したら「📥 取込実行」ボタン\n\nStep 4: 結果\n  ① 取込成功件数とエラー件数が表示される\n  ② 失敗した行があれば原因と一緒に表示されるので、CSV を修正して再取込\n各ステップで前に戻ることもできます。取込実行ボタンを押すまでデータは入りません。',
+    visibleTo: 'tenant_admin',
+  },
+  {
+    id: 'import-sync-import-where',
+    category: 'import',
+    q: 'エンティティ別 sync-import (各一覧画面のインポート) はどう使いますか?',
+    a: '各エンティティ一覧画面の右上「インポート」ボタンから利用できる「往復編集」用の機能です (一般メンバー以上、自分が作ったデータのみ)。手順:\n1. 一覧画面 (ナレッジ・リスク・課題・振り返り・メモ等) の「エクスポート」ボタンで既存データの CSV をダウンロード\n2. Excel で編集 (一括更新・追加)\n3. 同じ一覧画面の「インポート」ボタンで CSV をアップロード\n4. ID 列がある行は既存データを上書き、ID 列がない行は新規作成\n制限: 1 ファイル 500 行 / 10 MB。階層エンティティ (WBS のタスク) は親エンティティ名で重複判定されるため、テキストエディタで確認してから取り込んでください。',
+    visibleTo: 'all',
+  },
+  {
+    id: 'csv-knowledge-required-fields',
+    category: 'import',
+    q: 'Knowledge (ナレッジ) CSV の必須カラムは何ですか?',
+    a: '必須カラムは 4 つです: \n- title (タイトル、短い件名)\n- background (背景、複数行可)\n- content (内容、本文、複数行可)\n- result (結果、起きた結果・結論、複数行可)\nその他に任意カラム (knowledgeType / conclusion / recommendation / reusability / devMethod / techTags / processTags / businessDomainTags / visibility) があります。任意カラムは空欄でも構いません。',
+    visibleTo: 'tenant_admin',
+  },
+  {
+    id: 'csv-knowledge-type-values',
+    category: 'import',
+    q: 'Knowledge CSV の knowledgeType カラムには何を入れればいいですか?',
+    a: '次の 5 つの値のいずれか (半角小文字):\n- failure: 失敗事例\n- success: 成功事例\n- lesson: 教訓・気づき\n- template: テンプレート (再利用可能な雛形)\n- general: 一般的なナレッジ (既定値)\n空欄にすると general として扱われます。「Failure」「FAILURE」のような大文字混在はエラーになるため、必ず半角小文字で記入してください。',
+    visibleTo: 'tenant_admin',
+  },
+  {
+    id: 'csv-knowledge-visibility-mapping',
+    category: 'import',
+    q: 'Knowledge CSV で公開範囲を「自分のみ」にしたいです。どのカラムにどの値?',
+    a: 'visibility カラムに次のいずれかを設定します (Knowledge の場合):\n- draft → 「自分のみ」(他のメンバーから見えない、提案エンジンの対象外、課金対象外)\n- project → 「プロジェクト内」(関係メンバーのみに公開)\n- company → 「全メンバー (公開)」(全社員に公開、提案エンジン候補に並ぶ。既定値)\n空欄の場合は company (全メンバー公開) になります。「自分のみ」にしたい行は明示的に draft と書いてください。',
+    visibleTo: 'tenant_admin',
+  },
+  {
+    id: 'csv-riskissue-required-fields',
+    category: 'import',
+    q: 'RiskIssue (リスク・課題) CSV の必須カラムは何ですか?',
+    a: '必須カラムは 5 つです:\n- type: risk (リスク) または issue (課題)\n- title: 短い件名\n- content: 本文 (複数行可)\n- impact: 影響度 (low / medium / high)\n- priority: 優先度 (low / medium / high)\n任意カラム: cause / likelihood / responsePolicy / responseDetail / deadline / state / lessonLearned / visibility / riskNature / projectId\nprojectId はマッピング無しの場合、ステップ 1 で選んだ「デフォルトプロジェクト」に全行が所属します。',
+    visibleTo: 'tenant_admin',
+  },
+  {
+    id: 'csv-riskissue-type-values',
+    category: 'import',
+    q: 'RiskIssue の type カラムは何を入れる?',
+    a: '半角小文字の risk または issue です。\n- risk: まだ起きていない、起きるかもしれない問題 (= リスク)\n- issue: すでに起きていて対応が必要な問題 (= 課題)\n「Risk」「ISSUE」のような大文字混在はエラーになります。',
+    visibleTo: 'tenant_admin',
+  },
+  {
+    id: 'csv-riskissue-visibility-mapping',
+    category: 'import',
+    q: 'RiskIssue CSV で公開範囲を設定したい。どのカラムにどの値?',
+    a: 'visibility カラムに次のいずれかを設定します (RiskIssue は 2 段階):\n- draft → 「自分のみ」(既定値、提案エンジン対象外、課金対象外)\n- public → 「公開」(提案エンジンの候補に並ぶ)\n空欄の場合は draft (自分のみ) になります。Knowledge と違って RiskIssue には company / project がないことに注意。',
+    visibleTo: 'tenant_admin',
+  },
+  {
+    id: 'csv-impact-priority-likelihood-values',
+    category: 'import',
+    q: 'impact / priority / likelihood カラムに入れる値は?',
+    a: '3 つとも共通で、半角小文字の low / medium / high のいずれかです。\n- low: 低い\n- medium: 中程度\n- high: 高い\n「High」「中」「High Priority」など、大文字混在・日本語・記号付きはエラーになります。Excel のドロップダウンリスト機能を使うと入力ミスを防げます。',
+    visibleTo: 'tenant_admin',
+  },
+  {
+    id: 'csv-date-format',
+    category: 'import',
+    q: 'CSV の日付 (deadline) はどう書けばいいですか?',
+    a: '必ず YYYY-MM-DD のハイフン区切り (例: 2026-12-31)。\n- ❌ 2026/12/31 (スラッシュ) はエラー\n- ❌ 12-31-2026 (米国式) はエラー\n- ❌ 令和8年12月31日 (和暦) はエラー\nExcel は日付セルを自動的にスラッシュ表示に変換することがあるので、セル書式を「文字列」に変更してから入力するか、CSV 保存後にメモ帳で確認してください。',
+    visibleTo: 'tenant_admin',
+  },
+  {
+    id: 'csv-multiline-cells',
+    category: 'import',
+    q: 'background / content / result など、改行を含む長文セルはどう書く?',
+    a: '改行を含むセルは必ず全体をダブルクォート ("...") で囲んでください。改行を入れたい位置で、Excel なら Alt + Enter (Mac は Option + 改行)、CSV を直接編集する場合は普通に改行を入れます。\n例 (CSV 直接編集):\ntitle,content\n"提案資料の作り方","1. テンプレートを開く\n2. 顧客情報を入力\n3. 提案内容を記入"\nExcel で保存する際に自動でクォートが付かない場合があるので、保存後にメモ帳で開いてダブルクォートが入っているか確認してください。',
+    visibleTo: 'tenant_admin',
+  },
+  {
+    id: 'csv-encoding',
+    category: 'import',
+    q: 'CSV の文字コードは何にすればいい?',
+    a: '必ず UTF-8 (BOM 付きでも無しでも可) です。Excel の既定保存形式 Shift_JIS では日本語が文字化けします。Excel での保存手順:\n1. 「ファイル」→「名前を付けて保存」\n2. ファイル形式のドロップダウンから「CSV UTF-8 (コンマ区切り) (*.csv)」を選択\n3. 保存\nWindows / Mac とも同じ手順です。',
+    visibleTo: 'tenant_admin',
+  },
+  {
+    id: 'csv-tags-syntax',
+    category: 'import',
+    q: 'techTags / processTags / businessDomainTags は CSV にどう書く?',
+    a: '1 つのセル内で**カンマ区切り** にしてください。複数タグは半角カンマで区切ります。\n例: techTags 列に `react,nextjs,prisma`\n例: processTags 列に `要件定義,設計,テスト`\nセル全体に半角カンマが含まれるため、セルをダブルクォートで囲む必要があります (Excel が自動で囲んでくれます)。',
+    visibleTo: 'tenant_admin',
+  },
+  {
+    id: 'csv-row-and-file-limits',
+    category: 'import',
+    q: 'CSV は何行まで取り込めますか? ファイルサイズ上限は?',
+    a: '外部データ移行ウィザード (テナント管理者専用): 1 ファイル最大 5,000 行 / ファイルサイズ 50 MB / 全プラン無料。\nエンティティ別 sync-import (各一覧画面の「インポート」ボタン): 1 ファイル 500 行 / 10 MB。\n5,000 行を超える場合は複数ファイルに分割して取り込んでください。',
+    visibleTo: 'tenant_admin',
+  },
+  {
+    id: 'csv-error-recovery',
+    category: 'import',
+    q: 'プレビュー画面で「エラー N 行」と表示された。実データには入っていますか?',
+    a: '取込実行前のため、データはまだ入っていません。よくあるエラーと対処:\n- 「必須フィールドが空」→ Excel で該当行の値を入力\n- 「knowledgeType は failure/success/lesson/template/general のいずれか」→ 半角小文字で表のいずれかに修正\n- 「impact は low/medium/high のいずれか」→ 大文字混在を半角小文字に修正\n- 「deadline が YYYY-MM-DD 形式ではありません」→ スラッシュ区切りからハイフン区切りに修正\n- 「取込後にナレッジ本文の 2 行目以降が消えている」→ 改行セルがダブルクォートで囲まれていない可能性。CSV をメモ帳で確認',
+    visibleTo: 'tenant_admin',
+  },
+
+  // ===========================================================================
+  // プラン変更 / 月次予算上限 (テナント管理者の運営作業)
+  // ===========================================================================
+  {
+    id: 'plan-upgrade-procedure',
+    category: 'admin',
+    q: 'Beginner から Expert / Pro にアップグレードする手順を教えてください',
+    a: '手順 (テナント管理者のみ):\n1. テナント設定画面を開く (画面右上アカウントメニュー → 設定 → テナント設定)\n2. 「プラン情報」セクションを開く\n3. 「Expert にアップグレード」または「Pro にアップグレード」ボタンを押す\n4. 確認ダイアログで「アップグレードする」をクリック\n5. その瞬間に新プランが反映されます (日割り計算なし)\n以降の操作は新単価 (Expert: ¥10/回、Pro: ¥15/回) で課金されます。Beginner には戻せないので、月額を抑えたい場合は「月次予算上限」を ¥0 に設定してください。',
+    visibleTo: 'tenant_admin',
+  },
+  {
+    id: 'budget-cap-setting',
+    category: 'admin',
+    q: '月次予算上限を設定する手順を教えてください',
+    a: 'Expert / Pro プランの方が利用できる機能です。手順:\n1. テナント設定 → 「課金・プラン」セクション\n2. 「月次予算上限」入力欄に円単位で金額を設定 (例: 10000)\n3. 「保存」ボタン\n設定額に達するとプロジェクト作成・更新の AI 機能が一時停止し、想定外の請求を防ぎます。データの作成・編集は引き続き可能ですが、新規データが提案エンジンに反映されません。翌月 1 日に自動でリセットされます。 ¥0 に設定すると AI 機能の追加課金が一切発生しない運用も可能です。',
+    visibleTo: 'tenant_admin',
+  },
+  {
+    id: 'beginner-90day-timeline',
+    category: 'admin',
+    q: 'Beginner プラン (無料試用) のタイムラインを教えてください',
+    a: '組織作成からの経過日数別の挙動:\n- 0〜59 日: 通常運用、すべての機能を利用可能\n- 60 日: 期限警告メール送信 (通常運用継続)\n- 75 日: 期限警告メール再送 (通常運用継続)\n- 90 日: 読み取り専用モードに移行 (閲覧・エクスポート・アップグレード・セルフ解約のみ可能)\n- 150 日: 自動削除 30 日前予告メール\n- 170 日: 最終警告メール (10 日前)\n- 180 日: 業務データが自動的に物理削除 (ログイン不可、復旧不可)\n継続利用の場合は 90 日経過前に Expert / Pro へアップグレードしてください。',
+    visibleTo: 'tenant_admin',
+  },
+
+  // ===========================================================================
+  // メンバー招待 (テナント管理者の運営作業)
+  // ===========================================================================
+  {
+    id: 'invite-member-procedure',
+    category: 'admin',
+    q: 'メンバーを招待する手順を教えてください',
+    a: '手順 (テナント管理者のみ):\n1. 画面右上のアカウントメニュー → 「ユーザ管理」\n2. 「メンバーを招待」ボタン\n3. 招待先のメールアドレスと付与するロール (テナント管理者 / 一般メンバー) を入力\n4. 「招待を送信」ボタン\n相手にパスワード設定リンク付きの招待メールが noreply@tasukiba.com から届きます (有効期限 24 時間)。届かない場合は迷惑メールフォルダを確認するか、再招待してください。',
+    visibleTo: 'tenant_admin',
+  },
 ] as const;
 
 /**
@@ -327,10 +525,14 @@ export function buildRoleGuardancePromptSection(viewer: ViewerRoles): string {
     );
   }
   if (denied.length === 0) {
-    return '本ユーザは全権限を持つため、開示制限はありません。';
+    // ★severity-2★ fail-open 防御 (PR9): AI に「制限なし」と明示すると、
+    //   prompt injection で「全権限ユーザだから何でも答えていい」と誤認させやすい。
+    //   常に「下記の許可された FAQ/ガイドにある情報のみを答える」と中立的に伝える。
+    return '本ユーザのロールに対する追加の開示制限はありませんが、回答は常に下記の許可された FAQ と使い方ガイドにある情報のみを根拠としてください。';
   }
   return [
     '★重要★ あなたは「情報流出を防ぐ鍵」の役割を持ちます。下記の開示制限を必ず守ってください:',
     ...denied,
+    '上記の制限対象について質問されたら、回答本文に該当する情報を一切含めず (具体的な金額・期間・上限値・操作手順なども一切出さず)、「申し訳ありません、(ロール) の方にお尋ねください」とのみ返答してください。',
   ].join('\n');
 }
