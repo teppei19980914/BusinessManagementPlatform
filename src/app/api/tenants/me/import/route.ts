@@ -111,7 +111,14 @@ export async function POST(req: NextRequest) {
             ? 422
             : result.error === 'DECOMPRESSED_TOO_LARGE'
               ? 413 // Payload Too Large (= ZIP bomb 二重防御の D-1)
-              : 400;
+              // ADR-0025 (2026-05-29): Beginner プラン超過は容量制限のため 403 Forbidden で統一
+              //   (= 他経路 sync-import 5 / attachments-upload / attachments-finalize と整合)
+              : result.error === 'BEGINNER_QUOTA_EXCEEDED'
+                ? 403
+                // ADR-0020: 50GB ハードキャップ超過も他経路と整合させ 403 で統一 (旧 400 から変更)
+                : result.error === 'STORAGE_LIMIT_EXCEEDED'
+                  ? 403
+                  : 400;
     return NextResponse.json(
       { ok: false, error: { code: result.error, message: result.message } },
       { status },
