@@ -88,6 +88,18 @@ Supabase pgvector が **保存済の embedding 同士の Cosine 類似度を DB 
 
 **全候補は常に同じ土俵 (3 軸合算) で評価される**。ベクトルが保存されている候補は embedding 軸で寄与し、NULL の候補は embedding 軸で 0 として扱われる。「タグ全文検索」と「ベクトル検索」が別経路で走るのではなく、**1 つの統一スコア体系**で全データが比較される。
 
+#### B-4-1. UI 段階表示と初期可視性 (2026-05-29 追加 / suggestions-panel + chat-panel 統一)
+
+提案結果は **3 段階の tier UI** で表示され、各 tier の初期表示状態は以下のとおり統一されている。仕様詳細と設計判断の根拠は [SUGGESTION_FEATURE.md §3.6](../specification/SUGGESTION_FEATURE.md) を参照。
+
+| Tier | 初期表示 | 折りたたみトグル | 実装箇所 |
+|---|---|---|---|
+| **strong** | 上位 `SUGGESTION_TIER_STRONG_INITIAL_VISIBLE` (= 5) 件のみ展開。6 件目以降はアコーディオン (デフォルト閉じ) | `expandedStrong` (Set<Category>) / `strongExpanded` (boolean) | [suggestions-panel.tsx](../../src/app/(dashboard)/projects/[projectId]/suggestions/suggestions-panel.tsx) / [chat-panel.tsx](../../src/components/chat-semantic-search/chat-panel.tsx) |
+| **medium** | デフォルト折りたたみ (2026-05-29 改修、旧仕様: 常時展開) | `expandedMedium` / `mediumExpanded` | 同上 |
+| **weak** | デフォルト折りたたみ (PR-X6 から不変) | `expandedWeak` / `weakExpanded` | 同上 |
+
+共有定数 `SUGGESTION_TIER_STRONG_INITIAL_VISIBLE` は [src/config/suggestion.ts](../../src/config/suggestion.ts) に export し、suggestions-panel と chat-panel の両者で同一値を参照する (DRY)。「上位 5 件で判断できる」サービス哲学 ([docs/public/about.md §3-2](../public/about.md)) を UI レイヤで強化する設計判断。
+
 #### B-5. 将来構想: Phase 3 LLM Re-ranking (6/1 リリース時点で未実装)
 
 Pro プランの差別化価値として、提案結果上位 N 件に **Anthropic Sonnet が「なぜ関連するか」の人間ライクな説明文を付与しつつ再ランキング** する機能を Phase 3 で実装予定。6/1 リリース時点では **未実装** で、現状は Pro プランも Expert プランと同じ提案結果 (検索のみ、説明文なし) を表示する。

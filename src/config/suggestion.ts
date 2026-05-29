@@ -88,10 +88,10 @@ export const SUGGESTION_DEFAULT_LIMIT = 50;
 export const SUGGESTION_TIER_STRONG_THRESHOLD = 0.3;
 
 /**
- * 段階表示の閾値: 関連の可能性 (medium tier) のしきい。
- * これ以上 < SUGGESTION_TIER_STRONG_THRESHOLD は「関連の可能性」セクション。
- * これ未満は「弱い関連性」セクションで折りたたみデフォルト。
- * PR-X6 (2026-05-07) で導入。
+ * 段階表示の閾値: 中程度の関連 (medium tier) のしきい。
+ * これ以上 < SUGGESTION_TIER_STRONG_THRESHOLD は「中程度の関連」セクション (デフォルト折りたたみ)。
+ * これ未満は「弱い関連性」セクション (デフォルト折りたたみ)。
+ * PR-X6 (2026-05-07) で導入、2026-05-29 で UI ラベルを「関連の可能性」→「中程度の関連」へ改称。
  */
 export const SUGGESTION_TIER_MEDIUM_THRESHOLD = 0.1;
 
@@ -115,9 +115,25 @@ export const SUGGESTION_TIER_MEDIUM_THRESHOLD = 0.1;
 export const SUGGESTION_MINIMUM_GUARANTEED_COUNT = 5;
 
 /**
+ * 強く関連 (strong tier) の初期可視件数。これ以上は UI でアコーディオン折りたたみ。
+ *
+ * **2026-05-29 改定**: 提案機能の UI 段階表示を chat-panel と統一する目的で導入。
+ *   「上位 5 件で判断できる」サービス哲学を UI レイヤで強化する設計判断。
+ *
+ * 参照:
+ *   - docs/specification/CHAT_SEMANTIC_SEARCH.md (チャット意味検索の同パターン先行実装)
+ *   - docs/specification/SUGGESTION_FEATURE.md §3.6 (提案機能の UI 仕様)
+ *   - src/components/chat-semantic-search/chat-panel.tsx (2026-05-28 H-3 実装)
+ *
+ * 同値である SUGGESTION_MINIMUM_GUARANTEED_COUNT (= 5) とは意味的に独立 (前者: 初期可視件数 /
+ * 後者: 閾値未満時の Top N 保証件数)。たまたま同値だが、調整時は別軸で動かせるよう別定数化する。
+ */
+export const SUGGESTION_TIER_STRONG_INITIAL_VISIBLE = 5;
+
+/**
  * 提案候補の段階分類。
  * - 'strong': 強く関連 (score >= SUGGESTION_TIER_STRONG_THRESHOLD)
- * - 'medium': 関連の可能性 (SUGGESTION_TIER_MEDIUM_THRESHOLD <= score < strong)
+ * - 'medium': 中程度の関連 (SUGGESTION_TIER_MEDIUM_THRESHOLD <= score < strong)
  * - 'weak'  : 弱い関連性 (score < SUGGESTION_TIER_MEDIUM_THRESHOLD)
  */
 export type SuggestionTier = 'strong' | 'medium' | 'weak';
