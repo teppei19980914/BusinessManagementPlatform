@@ -76,6 +76,12 @@ export const PUBLIC_PATHS = [
   //   getDiagnosticsSummary を実行し totalAnomalies > 0 なら super_admin にメール通知。
   //   ダッシュボード未閲覧期間の無音対策。
   '/api/cron/diagnostics-daily-alert',
+  // ADR-0021 (2026-05-26): Attachment Embedding 背景処理 cron (10 分間隔)。
+  //   embeddingStatus='pending' の Attachment を batch 処理する。
+  //   route.ts 側で isCronAuthorized() を行う。
+  //   2026-05-29: 本エントリ追加漏れにより /login へ 302 redirect されファイル検索機能が
+  //   未稼働だった既存バグ修正。同類バグ予防のため routes.test.ts に網羅性ガード追加。
+  '/api/cron/attachment-embedding',
 ] as const;
 
 /**
