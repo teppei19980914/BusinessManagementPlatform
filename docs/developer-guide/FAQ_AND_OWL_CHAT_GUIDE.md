@@ -360,6 +360,23 @@ RAG 移行は ADR-0028 (将来) で正式に決定する。
 
 ---
 
+## 7.5 環境変数 (本機能で使用)
+
+| 変数名 | 必須 | 役割 | 未設定時の挙動 |
+|---|---|---|---|
+| `ANTHROPIC_API_KEY` | 本番のみ | Claude Haiku を呼ぶための API キー | 開発: 未設定でも動作可 (graceful degradation)。route が 503 + `fallbackToAccordion: true` を返し、UI が下部 FAQ アコーディオン誘導に切替 |
+| `VOYAGE_API_KEY` | 本番のみ | (本機能は不使用、関連: chat-semantic-search 用) | チャット意味検索が pg_trgm fallback で縮退動作 |
+
+**本番環境**:
+- Anthropic Console ([console.anthropic.com](https://console.anthropic.com/)) で API キー取得 → Netlify ダッシュボードに `ANTHROPIC_API_KEY` を設定
+- 未設定のまま deploy すると、たすきフクロウ AI ヘルプチャットが永続的に 503 fallback (アコーディオン誘導のみ) になり初心者離脱率が上がるため、リリース前に必ず設定すること
+
+**ローカル開発**:
+- `.env.local` に `ANTHROPIC_API_KEY=sk-ant-xxxxxxxxxx` を設定 (検証時は Anthropic の無料 credit でも OK)
+- 未設定でも UI レイアウト確認は可能 (送信時に「AI が一時的に応答できません」エラー表示)
+
+`HELP_CHAT_MONTHLY_LIMIT_PER_TENANT` (テナント月 100 回上限) は `src/config/billing-feature-units.ts` でハードコード固定 (ADR-0027 で 100 を確定。環境変数化は将来検討)。
+
 ## 8. 関連ドキュメント
 
 - **設計判断**: [ADR-0027 (FAQ AI Concierge)](../adr/0027-help-ai-concierge.md) — チャット導入の根拠
