@@ -93,7 +93,7 @@ describe('正常系', () => {
       monthStart: new Date('2026-05-01T00:00:00Z'),
       monthStartUtc: new Date('2026-05-01T00:00:00Z'),
       hasDrift: false,
-    });
+    } as never);
 
     const res = await POST(makeReq(), { params: Promise.resolve({ id: TARGET_TENANT }) });
     expect(res.status).toBe(200);
@@ -123,7 +123,7 @@ describe('正常系', () => {
       driftRatio: 0,
       monthStartUtc: new Date(),
       hasDrift: false,
-    });
+    } as never);
 
     await POST(makeReq(), { params: Promise.resolve({ id: TARGET_TENANT }) });
 

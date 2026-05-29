@@ -164,10 +164,10 @@ describe('enableMfa', () => {
     } as never);
     vi.mocked(prisma.user.update).mockResolvedValue({} as never);
     let savedEncrypted = '';
-    vi.mocked(prisma.user.update).mockImplementationOnce(async (args) => {
-      savedEncrypted = (args.data as { mfaSecretEncrypted: string }).mfaSecretEncrypted;
+    vi.mocked(prisma.user.update).mockImplementationOnce(((async (args: unknown) => {
+      savedEncrypted = ((args as { data: { mfaSecretEncrypted: string } }).data).mfaSecretEncrypted;
       return {} as never;
-    });
+    }) as never));
     await generateMfaSecret('u1');
 
     vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({
@@ -186,10 +186,10 @@ describe('enableMfa', () => {
       email: 'a@b.co',
     } as never);
     let savedEncrypted = '';
-    vi.mocked(prisma.user.update).mockImplementationOnce(async (args) => {
-      savedEncrypted = (args.data as { mfaSecretEncrypted: string }).mfaSecretEncrypted;
+    vi.mocked(prisma.user.update).mockImplementationOnce(((async (args: unknown) => {
+      savedEncrypted = ((args as { data: { mfaSecretEncrypted: string } }).data).mfaSecretEncrypted;
       return {} as never;
-    });
+    }) as never));
     const gen = await generateMfaSecret('u1');
 
     // 正しい TOTP コード生成
@@ -272,10 +272,10 @@ describe('verifyTotp', () => {
       email: 'a@b.co',
     } as never);
     let savedEncrypted = '';
-    vi.mocked(prisma.user.update).mockImplementationOnce(async (args) => {
-      savedEncrypted = (args.data as { mfaSecretEncrypted: string }).mfaSecretEncrypted;
+    vi.mocked(prisma.user.update).mockImplementationOnce(((async (args: unknown) => {
+      savedEncrypted = ((args as { data: { mfaSecretEncrypted: string } }).data).mfaSecretEncrypted;
       return {} as never;
-    });
+    }) as never));
     const gen = await generateMfaSecret('u1');
 
     const otplib = await import('otplib');
@@ -296,10 +296,10 @@ describe('verifyTotp', () => {
       email: 'a@b.co',
     } as never);
     let savedEncrypted = '';
-    vi.mocked(prisma.user.update).mockImplementationOnce(async (args) => {
-      savedEncrypted = (args.data as { mfaSecretEncrypted: string }).mfaSecretEncrypted;
+    vi.mocked(prisma.user.update).mockImplementationOnce(((async (args: unknown) => {
+      savedEncrypted = ((args as { data: { mfaSecretEncrypted: string } }).data).mfaSecretEncrypted;
       return {} as never;
-    });
+    }) as never));
     await generateMfaSecret('u1');
 
     vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({
@@ -323,10 +323,10 @@ describe('PR #116: MFA ロック機構 (verifyTotp / resetMfaLockOnRecoveryCodeU
       id: 'u1',
       email: 'a@b.co',
     } as never);
-    vi.mocked(prisma.user.update).mockImplementationOnce(async (args) => {
-      savedEncrypted = (args.data as { mfaSecretEncrypted: string }).mfaSecretEncrypted;
+    vi.mocked(prisma.user.update).mockImplementationOnce(((async (args: unknown) => {
+      savedEncrypted = ((args as { data: { mfaSecretEncrypted: string } }).data).mfaSecretEncrypted;
       return {} as never;
-    });
+    }) as never));
     const gen = await generateMfaSecret('u1');
     const otplib = await import('otplib');
     validCode = otplib.generateSync({ secret: gen.secret });

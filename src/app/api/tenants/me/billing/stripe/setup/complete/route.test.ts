@@ -57,7 +57,7 @@ function makeReq(query: Record<string, string>) {
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(isStripeEnabled).mockReturnValue(true);
-  vi.mocked(requireAdmin).mockReturnValue(undefined);
+  vi.mocked(requireAdmin).mockReturnValue(undefined as never);
   vi.mocked(prisma.tenant.findUnique).mockResolvedValue({ timezone: 'Asia/Tokyo' } as never);
 });
 
@@ -115,7 +115,7 @@ describe('return_to サニタイズ (オープンリダイレクト対策)', () 
     vi.mocked(completeStripeSetup).mockResolvedValue({
       ok: true,
       value: { subscriptionId: 'sub', customerId: 'cus', paymentMethodId: 'pm' },
-    });
+    } as never);
   });
 
   it('return_to が異オリジン → /settings/tenant にフォールバック', async () => {
@@ -156,7 +156,7 @@ describe('completeStripeSetup の結果に応じたリダイレクト', () => {
     vi.mocked(completeStripeSetup).mockResolvedValueOnce({
       ok: true,
       value: { subscriptionId: 'sub', customerId: 'cus', paymentMethodId: 'pm' },
-    });
+    } as never);
     const res = await GET(makeReq({
       session_id: 'cs_xxx',
       return_to: 'http://localhost/settings/tenant',
@@ -172,7 +172,7 @@ describe('completeStripeSetup の結果に応じたリダイレクト', () => {
       declineCode: 'insufficient_funds',
       userMessage: '残高不足',
       severity: 'high',
-    });
+    } as never);
     const res = await GET(makeReq({
       session_id: 'cs_xxx',
       return_to: 'http://localhost/settings/tenant',
@@ -188,7 +188,7 @@ describe('completeStripeSetup の結果に応じたリダイレクト', () => {
       code: 'invalid_request',
       userMessage: '...',
       detail: 'session_status_expired',
-    });
+    } as never);
     const res = await GET(makeReq({
       session_id: 'cs_xxx',
       return_to: 'http://localhost/settings/tenant',
@@ -202,7 +202,7 @@ describe('completeStripeSetup の結果に応じたリダイレクト', () => {
       ok: false,
       code: 'authentication',
       userMessage: '...',
-    });
+    } as never);
     const res = await GET(makeReq({
       session_id: 'cs_xxx',
       return_to: 'http://localhost/settings/tenant',
@@ -216,7 +216,7 @@ describe('completeStripeSetup の結果に応じたリダイレクト', () => {
       ok: false,
       code: 'api_error',
       userMessage: '...',
-    });
+    } as never);
     const res = await GET(makeReq({
       session_id: 'cs_xxx',
       return_to: 'http://localhost/settings/tenant',

@@ -65,7 +65,7 @@ beforeEach(() => {
   vi.mocked(prisma.project.findFirst).mockResolvedValue({ id: projectId } as never);
   // 既定: target parent 配下に既存子なし、target parent 自身もデフォルト null (= root)
   // 各テストで個別に上書きする
-  vi.mocked(prisma.task.findMany).mockImplementation(async (args: unknown) => {
+  vi.mocked(prisma.task.findMany).mockImplementation(((async (args: unknown) => {
     const where = (args as { where: { id?: { in: string[] }; parentTaskId?: string | null } }).where;
     if (where.id?.in) {
       // findMany for sources — 各テストで mock しなおす
@@ -73,7 +73,7 @@ beforeEach(() => {
     }
     // findMany for fetchChildrenNames (parentTaskId フィルタ)
     return [] as never;
-  });
+  }) as never));
 });
 
 describe('duplicateTasks: validation', () => {
@@ -98,11 +98,11 @@ describe('duplicateTasks: validation', () => {
   });
 
   it('一部の taskId が DB に存在しない → TASKS_NOT_FOUND', async () => {
-    vi.mocked(prisma.task.findMany).mockImplementation(async (args: unknown) => {
+    vi.mocked(prisma.task.findMany).mockImplementation(((async (args: unknown) => {
       const w = (args as { where: { id?: { in: string[] } } }).where;
       if (w.id?.in) return [baseTask] as never;
       return [] as never;
-    });
+    }) as never));
     await expect(
       duplicateTasks({
         projectId,
@@ -115,11 +115,11 @@ describe('duplicateTasks: validation', () => {
   });
 
   it('別 project の task 混入 → TASKS_CROSS_PROJECT', async () => {
-    vi.mocked(prisma.task.findMany).mockImplementation(async (args: unknown) => {
+    vi.mocked(prisma.task.findMany).mockImplementation(((async (args: unknown) => {
       const w = (args as { where: { id?: { in: string[] } } }).where;
       if (w.id?.in) return [{ ...baseTask, projectId: 'OTHER' }] as never;
       return [] as never;
-    });
+    }) as never));
     await expect(
       duplicateTasks({
         projectId,
@@ -132,11 +132,11 @@ describe('duplicateTasks: validation', () => {
   });
 
   it('target parent が存在しない → TARGET_PARENT_NOT_FOUND', async () => {
-    vi.mocked(prisma.task.findMany).mockImplementation(async (args: unknown) => {
+    vi.mocked(prisma.task.findMany).mockImplementation(((async (args: unknown) => {
       const w = (args as { where: { id?: { in: string[] } } }).where;
       if (w.id?.in) return [baseTask] as never;
       return [] as never;
-    });
+    }) as never));
     vi.mocked(prisma.task.findFirst).mockResolvedValue(null);
     await expect(
       duplicateTasks({
@@ -150,11 +150,11 @@ describe('duplicateTasks: validation', () => {
   });
 
   it('target parent が ACT → TARGET_PARENT_NOT_WP', async () => {
-    vi.mocked(prisma.task.findMany).mockImplementation(async (args: unknown) => {
+    vi.mocked(prisma.task.findMany).mockImplementation(((async (args: unknown) => {
       const w = (args as { where: { id?: { in: string[] } } }).where;
       if (w.id?.in) return [baseTask] as never;
       return [] as never;
-    });
+    }) as never));
     vi.mocked(prisma.task.findFirst).mockResolvedValue({ id: 'act-1', type: 'activity' } as never);
     await expect(
       duplicateTasks({
@@ -168,11 +168,11 @@ describe('duplicateTasks: validation', () => {
   });
 
   it('ACT を root (target=null) に置こうとする → ACT_CANNOT_BE_ROOT', async () => {
-    vi.mocked(prisma.task.findMany).mockImplementation(async (args: unknown) => {
+    vi.mocked(prisma.task.findMany).mockImplementation(((async (args: unknown) => {
       const w = (args as { where: { id?: { in: string[] } } }).where;
       if (w.id?.in) return [{ ...baseTask, type: 'activity', name: 'リーダー作業' }] as never;
       return [] as never;
-    });
+    }) as never));
     await expect(
       duplicateTasks({
         projectId,
@@ -188,17 +188,17 @@ describe('duplicateTasks: validation', () => {
 describe('duplicateTasks: 階層保持 + 実行', () => {
   it('単一 WP の複製: name はリネームなし, 実績はリセット, 計画はコピー', async () => {
     const created: Array<Record<string, unknown>> = [];
-    vi.mocked(prisma.task.findMany).mockImplementation(async (args: unknown) => {
+    vi.mocked(prisma.task.findMany).mockImplementation(((async (args: unknown) => {
       const w = (args as { where: { id?: { in: string[] }; parentTaskId?: string | null } }).where;
       if (w.id?.in) return [baseTask] as never;
       return [] as never; // children names 空
-    });
-    vi.mocked(prisma.task.create).mockImplementation(async (args: unknown) => {
+    }) as never));
+    vi.mocked(prisma.task.create).mockImplementation(((async (args: unknown) => {
       const data = (args as { data: Record<string, unknown> }).data;
       const c = { ...data, id: `new-${created.length + 1}` };
       created.push(c);
       return c as never;
-    });
+    }) as never));
 
     const r = await duplicateTasks({
       projectId,
@@ -218,19 +218,19 @@ describe('duplicateTasks: 階層保持 + 実行', () => {
 
   it('名称衝突: 同 root 配下に同名 WP が既存 → "(コピー)" suffix で renamedCount=1', async () => {
     const created: Array<Record<string, unknown>> = [];
-    vi.mocked(prisma.task.findMany).mockImplementation(async (args: unknown) => {
+    vi.mocked(prisma.task.findMany).mockImplementation(((async (args: unknown) => {
       const w = (args as { where: { id?: { in: string[] }; parentTaskId?: string | null } }).where;
       if (w.id?.in) return [baseTask] as never;
       // root 配下に「設計」が既存
       if (w.parentTaskId === null) return [{ name: '設計' }] as never;
       return [] as never;
-    });
-    vi.mocked(prisma.task.create).mockImplementation(async (args: unknown) => {
+    }) as never));
+    vi.mocked(prisma.task.create).mockImplementation(((async (args: unknown) => {
       const data = (args as { data: Record<string, unknown> }).data;
       const c = { ...data, id: `new-${created.length + 1}` };
       created.push(c);
       return c as never;
-    });
+    }) as never));
 
     const r = await duplicateTasks({
       projectId,
@@ -254,17 +254,17 @@ describe('duplicateTasks: 階層保持 + 実行', () => {
       parentTaskId: 'wp-1',
     };
     const created: Array<Record<string, unknown>> = [];
-    vi.mocked(prisma.task.findMany).mockImplementation(async (args: unknown) => {
+    vi.mocked(prisma.task.findMany).mockImplementation(((async (args: unknown) => {
       const w = (args as { where: { id?: { in: string[] }; parentTaskId?: string | null } }).where;
       if (w.id?.in) return [wp, act] as never;
       return [] as never; // root 配下空
-    });
-    vi.mocked(prisma.task.create).mockImplementation(async (args: unknown) => {
+    }) as never));
+    vi.mocked(prisma.task.create).mockImplementation(((async (args: unknown) => {
       const data = (args as { data: Record<string, unknown> }).data;
       const c = { ...data, id: `new-${created.length + 1}` };
       created.push(c);
       return c as never;
-    });
+    }) as never));
 
     const r = await duplicateTasks({
       projectId,
@@ -291,18 +291,18 @@ describe('duplicateTasks: 階層保持 + 実行', () => {
       parentTaskId: 'unselected-wp', // 選択範囲外
     };
     const created: Array<Record<string, unknown>> = [];
-    vi.mocked(prisma.task.findMany).mockImplementation(async (args: unknown) => {
+    vi.mocked(prisma.task.findMany).mockImplementation(((async (args: unknown) => {
       const w = (args as { where: { id?: { in: string[] }; parentTaskId?: string | null } }).where;
       if (w.id?.in) return [act] as never;
       return [] as never;
-    });
+    }) as never));
     vi.mocked(prisma.task.findFirst).mockResolvedValue({ id: 'target-wp', type: 'work_package' } as never);
-    vi.mocked(prisma.task.create).mockImplementation(async (args: unknown) => {
+    vi.mocked(prisma.task.create).mockImplementation(((async (args: unknown) => {
       const data = (args as { data: Record<string, unknown> }).data;
       const c = { ...data, id: `new-${created.length + 1}` };
       created.push(c);
       return c as never;
-    });
+    }) as never));
 
     const r = await duplicateTasks({
       projectId,
@@ -328,16 +328,16 @@ describe('duplicateTasks: 階層保持 + 実行', () => {
       parentTaskId: 'wp-1',
       plannedEffort: 3,
     };
-    vi.mocked(prisma.task.findMany).mockImplementation(async (args: unknown) => {
+    vi.mocked(prisma.task.findMany).mockImplementation(((async (args: unknown) => {
       const w = (args as { where: { id?: { in: string[] }; parentTaskId?: string | null } }).where;
       if (w.id?.in) return [wp, act] as never;
       return [] as never;
-    });
+    }) as never));
     let createCount = 0;
-    vi.mocked(prisma.task.create).mockImplementation(async () => {
+    vi.mocked(prisma.task.create).mockImplementation(((async () => {
       createCount += 1;
       return { id: `new-${createCount}` } as never;
-    });
+    }) as never));
 
     // target parent: null (root) で複製 → target に対する recalc は呼ばれない
     const r = await duplicateTasks({
@@ -364,17 +364,17 @@ describe('duplicateTasks: 階層保持 + 実行', () => {
       parentTaskId: 'wp-1',
       plannedEffort: 3,
     };
-    vi.mocked(prisma.task.findMany).mockImplementation(async (args: unknown) => {
+    vi.mocked(prisma.task.findMany).mockImplementation(((async (args: unknown) => {
       const w = (args as { where: { id?: { in: string[] }; parentTaskId?: string | null } }).where;
       if (w.id?.in) return [wp, act] as never;
       return [] as never;
-    });
+    }) as never));
     vi.mocked(prisma.task.findFirst).mockResolvedValue({ id: 'target-wp', type: 'work_package' } as never);
     let createCount = 0;
-    vi.mocked(prisma.task.create).mockImplementation(async () => {
+    vi.mocked(prisma.task.create).mockImplementation(((async () => {
       createCount += 1;
       return { id: `new-${createCount}` } as never;
-    });
+    }) as never));
 
     await duplicateTasks({
       projectId,
@@ -394,17 +394,17 @@ describe('duplicateTasks: 階層保持 + 実行', () => {
     const wp1 = { ...baseTask, id: 'wp-1', name: 'WP-A' };
     const wp2 = { ...baseTask, id: 'wp-2', name: 'WP-A' };
     const created: Array<Record<string, unknown>> = [];
-    vi.mocked(prisma.task.findMany).mockImplementation(async (args: unknown) => {
+    vi.mocked(prisma.task.findMany).mockImplementation(((async (args: unknown) => {
       const w = (args as { where: { id?: { in: string[] }; parentTaskId?: string | null } }).where;
       if (w.id?.in) return [wp1, wp2] as never;
       return [] as never;
-    });
-    vi.mocked(prisma.task.create).mockImplementation(async (args: unknown) => {
+    }) as never));
+    vi.mocked(prisma.task.create).mockImplementation(((async (args: unknown) => {
       const data = (args as { data: Record<string, unknown> }).data;
       const c = { ...data, id: `new-${created.length + 1}` };
       created.push(c);
       return c as never;
-    });
+    }) as never));
 
     const r = await duplicateTasks({
       projectId,
@@ -460,7 +460,7 @@ describe('[FIX] bulk-duplicate findMany に projectId フィルタが入る (enu
   it('他 project の task ID は missing 扱いになり、cross-project 情報を露出しない', async () => {
     // mock: findMany(where) を観察し、projectId が where に含まれているか確認
     let observedWhere: unknown = null;
-    vi.mocked(prisma.task.findMany).mockImplementation(async (args: unknown) => {
+    vi.mocked(prisma.task.findMany).mockImplementation(((async (args: unknown) => {
       const w = (args as { where: { id?: { in: string[] }; projectId?: string } }).where;
       if (w.id?.in) {
         observedWhere = w;
@@ -468,7 +468,7 @@ describe('[FIX] bulk-duplicate findMany に projectId フィルタが入る (enu
         return [] as never;
       }
       return [] as never;
-    });
+    }) as never));
 
     await expect(
       duplicateTasks({

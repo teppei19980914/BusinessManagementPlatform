@@ -36,7 +36,7 @@ function makeReq(body: unknown) {
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(isStripeEnabled).mockReturnValue(true);
-  vi.mocked(requireAdmin).mockReturnValue(undefined);
+  vi.mocked(requireAdmin).mockReturnValue(undefined as never);
   vi.mocked(getAuthenticatedUser).mockResolvedValue(ADMIN);
 });
 
@@ -69,7 +69,7 @@ describe('正常系・エラー変換', () => {
     vi.mocked(createCustomerPortalSession).mockResolvedValueOnce({
       ok: true,
       value: { id: 'bps_xxx', url: 'https://billing.stripe.com/p/session/xxx' } as never,
-    });
+    } as never);
 
     const res = await POST(makeReq({ returnUrl: 'https://app.example/settings/tenant' }));
 
@@ -84,7 +84,7 @@ describe('正常系・エラー変換', () => {
       code: 'invalid_request',
       userMessage: '未登録',
       detail: 'stripe_customer_id_missing',
-    });
+    } as never);
 
     const res = await POST(makeReq({ returnUrl: 'https://app.example/settings/tenant' }));
 
@@ -97,7 +97,7 @@ describe('正常系・エラー変換', () => {
       ok: false,
       code: 'api_error',
       userMessage: 'Stripe error',
-    });
+    } as never);
 
     const res = await POST(makeReq({ returnUrl: 'https://app.example/settings/tenant' }));
 
