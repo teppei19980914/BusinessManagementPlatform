@@ -299,6 +299,24 @@ vi.mocked(prisma.emailVerificationToken.findFirst).mockResolvedValue({
 - ❌ **広域 sed で `});` 置換禁止** — 関係ない `});` 行を多数破壊した実績あり
 - ✅ **balanced-brace 対応 perl regex** で `mockImplementation` / `mockResolvedValue` の object/function literal を安全に wrap可
 
+### 4.5.5 未移行 test ファイル群 (将来の段階移行対象)
+
+PR fix/test-tsc-strict-cleanup は **tsc strict エラーが出ていた 27 ファイルのみ移行** した。下記の test ファイル群は main で tsc 通っていたためスコープ外だが、コードベース一貫性の観点で逐次 `getMockCallArg` 移行を推奨:
+
+- `src/app/api/attachments/batch/route.test.ts` (2 箇所)
+- `src/app/api/chat/search/route.test.ts` (6 箇所、`mockedRecordError`)
+- `src/app/api/mention-candidates/route.test.ts` (3 箇所)
+- `src/app/api/notifications/route.test.ts` (3 箇所)
+- `src/app/api/projects/[projectId]/available-users/route.test.ts` (1 箇所)
+- `src/app/api/webhooks/stripe/route.test.ts` (4 箇所)
+- `src/lib/cron-execution-log.test.ts` (1 箇所)
+- (他 10 ファイル程度に類似パターン残存)
+
+**移行方針**:
+- 機能追加 PR で当該 test ファイルを触る際に「ついでに」`getMockCallArg` へ置換
+- 一括移行 PR を切らない (本 PR でも検証コスト高で 1 PR に収まらなかった実績)
+- 新規 test を書く際は最初から `getMockCallArg` を使う
+
 ---
 
 ## 5. モバイルビューポート E2E (PR #128 で追加)
