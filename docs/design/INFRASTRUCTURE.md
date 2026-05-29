@@ -150,7 +150,7 @@ git 履歴から過去記述を参照できる。
 | BREVO_API_KEY | Brevo API キー（MAIL_PROVIDER=brevo 時、本番既定） | xkeysib-xxxxxxxxxx |
 | MAIL_FROM_NAME | メール送信元表示名（Brevo のみ） | たすきば |
 | RESEND_API_KEY | Resend API キー（MAIL_PROVIDER=resend 時、代替選択肢） | re_xxxxxxxxxx |
-| MAIL_FROM | メール送信元アドレス | noreply@example.com |
+| MAIL_FROM | メール送信元アドレス | noreply@tasukiba.com (受信不能の自動送信専用) |
 | INITIAL_ADMIN_EMAIL | 初期管理者メールアドレス（シード用） | admin@example.com |
 | INITIAL_ADMIN_PASSWORD | 初期管理者パスワード（シード用） | （ポリシー準拠のパスワード） |
 | SEARCH_PROVIDER | 検索プロバイダ | pg_trgm（デフォルト） |
@@ -282,14 +282,14 @@ export function createMailProvider(): MailProvider {
 | ログ記録 | 送信成功/失敗を audit_logs に記録（operation_trace_logs 有効時はそちらにも記録） |
 | テンプレート管理 | React Email コンポーネントとして管理 |
 | 開発環境 | ConsoleMailProvider でコンソールに出力（実送信しない） |
-| 送信元アドレス | 環境変数 MAIL_FROM で設定（例: noreply@example.com） |
+| 送信元アドレス | 環境変数 MAIL_FROM で設定（本番: noreply@tasukiba.com、受信不能の自動送信専用。問合せ窓口は LP contact form に集約） |
 
 ### 18.5 環境変数
 
 | 変数名 | 説明 | 例 |
 |---|---|---|
 | RESEND_API_KEY | Resend の API キー | re_xxxxxxxxxx |
-| MAIL_FROM | 送信元メールアドレス | noreply@example.com |
+| MAIL_FROM | 送信元メールアドレス | noreply@tasukiba.com (受信不能の自動送信専用) |
 
 ---
 

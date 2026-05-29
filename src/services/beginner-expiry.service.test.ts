@@ -228,6 +228,16 @@ describe('sendBeginnerExpiryNotices', () => {
         subject: expect.stringContaining('残り 30 日'),
       }),
     );
+    // feat/email-login-info-and-no-reply (2026-05-29):
+    //   全自動送信メール (= beginner 5 タイプ) に no-reply フッタを統一付与。
+    //   sendNoticeEmail の共通連結処理なので Day60 で検証すれば全タイプを代表する。
+    const sendArgs = send.mock.calls[0]?.[0];
+    expect(sendArgs?.text).toContain('noreply@tasukiba.com');
+    expect(sendArgs?.text).toContain('返信は受信できません');
+    expect(sendArgs?.text).toContain('teppei19980914.github.io/HomePage/ja/contact/');
+    expect(sendArgs?.text).toContain('たすきばに関するお問い合わせ');
+    expect(sendArgs?.html).toContain('noreply@tasukiba.com');
+    expect(sendArgs?.html).toContain('返信は受信できません');
   });
 
   it('既に Day60 送信済なら再送しない', async () => {

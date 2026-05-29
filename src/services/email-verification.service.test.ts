@@ -92,6 +92,57 @@ describe('sendVerificationEmail', () => {
     expect(mockSend.mock.calls[0][0].to).toBe('test@example.com');
   });
 
+  // feat/email-login-info-and-no-reply (2026-05-29):
+  //   ログイン情報網羅性向上のため、招待メール本文に受信メールアドレスも明示する。
+  //   noreply@tasukiba.com からの自動送信であり、本文末尾に no-reply 文言 + LP 問合せフォーム URL を含める。
+  it('本文に受信メールアドレスが含まれる (HTML / text 両方)', async () => {
+    mockSend.mockResolvedValue({ success: true, messageId: 'msg-email-1' } as never);
+
+    await sendVerificationEmail('user-id', 'tenant-A', 'login@example.com', 'https://example.com');
+
+    const sendArgs = mockSend.mock.calls[0]?.[0];
+    expect(sendArgs?.html).toContain('login@example.com');
+    expect(sendArgs?.html).toContain('あなたのメールアドレス');
+    expect(sendArgs?.text).toContain('login@example.com');
+    expect(sendArgs?.text).toContain('あなたのメールアドレス');
+  });
+
+  it('本文末尾に no-reply 文言と LP 問合せフォーム URL が含まれる (HTML / text 両方)', async () => {
+    mockSend.mockResolvedValue({ success: true, messageId: 'msg-noreply-1' } as never);
+
+    await sendVerificationEmail('user-id', 'tenant-A', 'test@example.com', 'https://example.com');
+
+    const sendArgs = mockSend.mock.calls[0]?.[0];
+    // 自動送信 + 返信不可表記
+    expect(sendArgs?.html).toContain('noreply@tasukiba.com');
+    expect(sendArgs?.html).toContain('返信は受信できません');
+    expect(sendArgs?.text).toContain('noreply@tasukiba.com');
+    expect(sendArgs?.text).toContain('返信は受信できません');
+    // LP 問合せフォーム導線 (種別「たすきばに関するお問い合わせ」)
+    expect(sendArgs?.html).toContain('teppei19980914.github.io/HomePage/ja/contact/');
+    expect(sendArgs?.html).toContain('たすきばに関するお問い合わせ');
+    expect(sendArgs?.text).toContain('teppei19980914.github.io/HomePage/ja/contact/');
+    expect(sendArgs?.text).toContain('たすきばに関するお問い合わせ');
+  });
+
+  // feat/email-login-info-and-no-reply (2026-05-29) 2 巡目検証:
+  //   email を `${email}` で HTML 直接埋め込みしているため XSS 二重防御 (zod の .email() 検証に加え)。
+  //   テンプレート整合性として `<`, `>`, `"` は HTML entity に escape される。
+  it('受信メールアドレスに HTML 特殊文字が含まれても HTML 側で escape される (XSS 二重防御)', async () => {
+    mockSend.mockResolvedValue({ success: true, messageId: 'msg-xss-1' } as never);
+
+    // RFC 5321 quoted-string で許容され得る `"` を含む合成 email
+    const maliciousEmail = 'a"<script>alert(1)</script>"@example.com';
+    await sendVerificationEmail('user-id', 'tenant-A', maliciousEmail, 'https://example.com');
+
+    const sendArgs = mockSend.mock.calls[0]?.[0];
+    // HTML 側では raw タグが現れず、entity 化されている
+    expect(sendArgs?.html).not.toContain('<script>alert(1)</script>');
+    expect(sendArgs?.html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
+    // text 側はそのまま (plaintext のため escape 不要)
+    expect(sendArgs?.text).toContain(maliciousEmail);
+  });
+
   it('メール送信失敗時は EmailSendError をスローする', async () => {
     mockSend.mockResolvedValue({ success: false, error: 'Resend 403 error' } as never);
 

@@ -65,6 +65,28 @@ describe('sendSuperAdminAlert', () => {
     expect(result.failures).toEqual([]);
   });
 
+  // feat/email-login-info-and-no-reply (2026-05-29):
+  //   noreply@tasukiba.com 自動送信 / 返信不可フッタを HTML / text 両方で付与する。
+  //   super_admin 向け内部 alert のため LP 問合せ導線ではなく「対応は管理画面から」スタイル。
+  it('本文末尾に no-reply 文言が含まれる (HTML / text 両方)', async () => {
+    vi.mocked(prisma.user.findMany).mockResolvedValue([
+      { email: 'a@example.com' },
+    ] as never);
+    mockSend.mockResolvedValue({ success: true });
+
+    await sendSuperAdminAlert('subj', 'original body');
+
+    const sendArgs = mockSend.mock.calls[0]?.[0];
+    expect(sendArgs?.html).toContain('noreply@tasukiba.com');
+    expect(sendArgs?.html).toContain('返信は受信できません');
+    expect(sendArgs?.html).toContain('管理画面から');
+    expect(sendArgs?.text).toContain('noreply@tasukiba.com');
+    expect(sendArgs?.text).toContain('返信は受信できません');
+    expect(sendArgs?.text).toContain('管理画面から');
+    // 本文も保持されている
+    expect(sendArgs?.text).toContain('original body');
+  });
+
   it('super_admin 0 人なら SUPER_ADMIN_INITIAL_EMAIL にフォールバック', async () => {
     vi.mocked(prisma.user.findMany).mockResolvedValue([] as never);
     process.env['SUPER_ADMIN_INITIAL_EMAIL'] = 'fallback@example.com';

@@ -6,9 +6,28 @@ import { prisma } from '@/lib/db';
 import { getMailProvider } from '@/lib/mail';
 import { randomBytes, createHash } from 'crypto';
 import { EMAIL_VERIFICATION_TOKEN_EXPIRY_HOURS as TOKEN_EXPIRY_HOURS } from '@/config';
+import { CONTACT_FORM_URL } from '@/config/operator';
 
 function hashToken(token: string): string {
   return createHash('sha256').update(token).digest('hex');
+}
+
+/**
+ * HTML interpolation 用の XSS escape。
+ *
+ * feat/email-login-info-and-no-reply (2026-05-29):
+ *   招待メール本文に受信メールアドレスを `${email}` で埋め込むにあたり、
+ *   zod の `.email()` 検証 (validators/auth.ts) と二重防御するため追加。
+ *   tenant.slug は regex `[a-z0-9-]` で別途厳格化されており escape 不要だが、
+ *   email は RFC 5321 quoted-string で `"` 等が許容され得るため明示的に escape する。
+ */
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 /**
@@ -63,6 +82,11 @@ export async function sendVerificationEmail(
   //   「自分の組織 ID を覚えていない」ロックアウト事故を防ぐ。
   //   - メール本文は永続的に受信者の inbox に残るため、ブラウザ閉じ後でも再確認可能
   //   - 「【重要】保存推奨」表記で重要性を強調
+  // feat/email-login-info-and-no-reply (2026-05-29):
+  //   ログイン情報の網羅性向上のため受信メールアドレスも本文に明示。
+  //   複数アドレス使い分けや ML 受信時の取り違え事故を予防する。
+  //   さらに「自動送信 / 返信不可」no-reply 文言をフッタに追加し、運営問合せ窓口の
+  //   迷い (返信 vs LP フォーム) を解消する (= 本サービスは inbound mail 受信せず)。
   const mailProvider = getMailProvider();
   const result = await mailProvider.send({
     to: email,
@@ -73,25 +97,35 @@ export async function sendVerificationEmail(
       <h2>たすきば へようこそ</h2>
       <p>あなたのアカウントが作成されました。以下のリンクからパスワードを設定してください。</p>
       <div style="border: 1px solid #e0e0e0; border-radius: 6px; padding: 16px; margin: 16px 0; background-color: #f9fafb;">
-        <p style="margin: 0 0 8px 0; font-weight: bold; color: #d97706;">【重要】組織 ID は再ログイン時に必要です</p>
+        <p style="margin: 0 0 8px 0; font-weight: bold; color: #d97706;">【重要】ログイン情報 (再ログイン時に必要)</p>
         <p style="margin: 0 0 4px 0;">あなたの組織 ID:</p>
         <p style="margin: 0; font-family: monospace; font-size: 18px; font-weight: bold;">${tenant.slug}</p>
-        <p style="margin: 8px 0 0 0; font-size: 12px; color: #6b7280;">本メールは大切に保存してください。ログイン画面で組織 ID の入力が必要になります。</p>
+        <p style="margin: 12px 0 4px 0;">あなたのメールアドレス:</p>
+        <p style="margin: 0; font-family: monospace; font-size: 16px; font-weight: bold;">${escapeHtml(email)}</p>
+        <p style="margin: 8px 0 0 0; font-size: 12px; color: #6b7280;">本メールは大切に保存してください。ログイン画面で組織 ID とメールアドレスの入力が必要になります。</p>
       </div>
       <p><a href="${setupUrl}">パスワードを設定する</a></p>
       <p>このリンクは ${TOKEN_EXPIRY_HOURS} 時間有効です。</p>
       <p>心当たりがない場合は、このメールを無視してください。</p>
+      <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 24px 0 12px 0;" />
+      <p style="font-size: 12px; color: #6b7280; margin: 0 0 6px 0;">※ このメールはシステムからの自動送信 (noreply@tasukiba.com) です。本メールへの返信は受信できません。</p>
+      <p style="font-size: 12px; color: #6b7280; margin: 0;">お問い合わせは <a href="${CONTACT_FORM_URL}">公式 LP のお問い合わせフォーム</a> から「お問い合わせ種別: たすきばに関するお問い合わせ」をご選択ください。</p>
     `,
     text:
       `たすきば へようこそ\n\n` +
       `あなたのアカウントが作成されました。\n\n` +
       `━━━━━━━━━━━━━━━━━━━━\n` +
-      `【重要】組織 ID は再ログイン時に必要です\n` +
+      `【重要】ログイン情報 (再ログイン時に必要)\n` +
       `あなたの組織 ID: ${tenant.slug}\n` +
+      `あなたのメールアドレス: ${email}\n` +
       `━━━━━━━━━━━━━━━━━━━━\n` +
-      `本メールは大切に保存してください。ログイン画面で組織 ID の入力が必要になります。\n\n` +
+      `本メールは大切に保存してください。ログイン画面で組織 ID とメールアドレスの入力が必要になります。\n\n` +
       `以下のURLからパスワードを設定してください。\n${setupUrl}\n\n` +
-      `このリンクは${TOKEN_EXPIRY_HOURS}時間有効です。`,
+      `このリンクは${TOKEN_EXPIRY_HOURS}時間有効です。\n\n` +
+      `――――――――――――――――――\n` +
+      `※ このメールはシステムからの自動送信 (noreply@tasukiba.com) です。本メールへの返信は受信できません。\n` +
+      `お問い合わせは公式 LP のお問い合わせフォームから「お問い合わせ種別: たすきばに関するお問い合わせ」をご選択ください。\n` +
+      `${CONTACT_FORM_URL}`,
   });
 
   if (!result.success) {
