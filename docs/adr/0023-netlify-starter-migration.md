@@ -105,7 +105,7 @@ Vercel 依存機能 (Vercel Cron) は **外部 cron サービス (cron-job.org) 
 ### Risk / 留意事項
 
 - **credits 監視**: `src/services/netlify-metrics.service.ts` で日次集計、`src/app/(dashboard)/admin/super/page.tsx` でリアルタイム可視化。70% で警告、90% で critical
-- **本番 URL のドメイン**: 当面 `tasukiba.netlify.app` を使用。独自ドメインへの切替は別途検討
+- **本番 URL のドメイン**: `tasukiba.com` (2026-05-29 Cloudflare Registrar で取得、独自ドメイン移行済)。Preview/Branch deploy は `*--tasukiba.netlify.app` のまま維持
 - **NEXTAUTH_URL の deploy context 同期**: Deploy Preview / Branch Deploy で URL が変わるため、`scripts/netlify-build.sh` 経由で deploy context に合わせて環境変数を注入 (詳細: [KDD §5.X+99 / §5.X+101](../knowledge/KDD_PATTERNS.md))
 - **Netlify build skip 指定の罠**: コミット message / PR body に `[skip ci]` 系キーワードを書くと予期せぬスキップが起きる (memory: `feedback_netlify_build_skip`)
 - **Bulk LLM 処理の 10 秒制約**: Personal は Background Functions 不可のため、長時間処理が必要になったら Pro 昇格 ($19/seat/month)

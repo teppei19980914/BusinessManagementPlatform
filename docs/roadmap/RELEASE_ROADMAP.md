@@ -185,7 +185,7 @@
 
 - [ ] **テナント管理 UI**: admin 専用画面でのテナント作成・招待・削除
 - [ ] **テナント招待メール**: 新規外部ユーザの受け入れフロー
-- [ ] **テナント slug の URL ルーティング**: `tasukiba.netlify.app/{tenantSlug}/...` への移行
+- [ ] **テナント slug の URL ルーティング**: `tasukiba.com/{tenantSlug}/...` への移行
 - [ ] **Phase 3**: LLM Re-ranking と説明文生成 (Haiku、6月中旬目標)
 - [ ] **Sonnet ティーザー機能**: 無料ユーザの月 3 回までの Pro 体験
 - [ ] **30 日無料試用機能**: Pro プランの体験期間

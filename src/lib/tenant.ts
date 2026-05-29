@@ -28,7 +28,7 @@ export const DEFAULT_TENANT_ID = '00000000-0000-0000-0000-000000000001';
 
 /**
  * デフォルトテナントの slug (URL ルーティング用)。
- * v1.x で `tasukiba.netlify.app/{tenantSlug}/...` のルーティングに移行する際の起点。
+ * v1.x で `tasukiba.com/{tenantSlug}/...` のルーティングに移行する際の起点。
  */
 export const DEFAULT_TENANT_SLUG = 'default';
 

@@ -10,13 +10,13 @@ import {
   buildLockStatusUrl,
 } from './url-builder';
 
-const BASE_URL = 'https://tasukiba.netlify.app';
+const BASE_URL = 'https://tasukiba.com';
 
 describe('url-builder', () => {
   describe('buildLoginUrl', () => {
     it('tenantSlug を query パラメタに含む', () => {
       expect(buildLoginUrl('acme-corp', BASE_URL)).toBe(
-        'https://tasukiba.netlify.app/login?tenant=acme-corp',
+        'https://tasukiba.com/login?tenant=acme-corp',
       );
     });
 
@@ -30,7 +30,7 @@ describe('url-builder', () => {
       const url = buildSetupPasswordUrl('acme-corp', 'tok123', BASE_URL);
       expect(url).toContain('tenant=acme-corp');
       expect(url).toContain('token=tok123');
-      expect(url).toMatch(/^https:\/\/tasukiba\.netlify\.app\/setup-password\?/);
+      expect(url).toMatch(/^https:\/\/tasukiba\.com\/setup-password\?/);
     });
   });
 
@@ -39,14 +39,14 @@ describe('url-builder', () => {
       const url = buildResetPasswordUrl('acme-corp', 'tok456', BASE_URL);
       expect(url).toContain('tenant=acme-corp');
       expect(url).toContain('token=tok456');
-      expect(url).toMatch(/^https:\/\/tasukiba\.netlify\.app\/reset-password\?/);
+      expect(url).toMatch(/^https:\/\/tasukiba\.com\/reset-password\?/);
     });
   });
 
   describe('buildLockStatusUrl', () => {
     it('tenantSlug を query に含む', () => {
       expect(buildLockStatusUrl('acme-corp', BASE_URL)).toBe(
-        'https://tasukiba.netlify.app/lock-status?tenant=acme-corp',
+        'https://tasukiba.com/lock-status?tenant=acme-corp',
       );
     });
   });

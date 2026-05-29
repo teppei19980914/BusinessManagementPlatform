@@ -30,7 +30,7 @@ assignees: []
 - OS: <!-- 例: Windows 11 / macOS 14 / Ubuntu 22.04 -->
 - 画面サイズ: <!-- 例: 1920x1080 / モバイル (iPhone 15) -->
 - ログインロール: <!-- 例: システム管理者 / PM・TL / メンバー / 閲覧者 -->
-- URL: <!-- 例: https://tasukiba.netlify.app/projects/xxxxx -->
+- URL: <!-- 例: https://tasukiba.com/projects/xxxxx -->
 - 発生日時: <!-- 例: 2026-04-23 14:30 JST -->
 
 ## 追加情報

@@ -7,7 +7,7 @@
  *
  * Option B (= 組織 ID 入力欄方式) 採用:
  *   - URL クエリパラメタ `tenant` で tenant_slug を渡す
- *   - 例: https://tasukiba.netlify.app/setup-password?tenant=acme-corp&token=xxx
+ *   - 例: https://tasukiba.com/setup-password?tenant=acme-corp&token=xxx
  *
  * 将来 Option A (= サブドメイン方式) への移行容易化:
  *   - 本ファイルの各関数の内部実装のみを差し替え (= subdomain URL に変更)

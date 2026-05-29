@@ -14,7 +14,7 @@
  *   - **schedule は JST 表記**: cron-job.org が JST タイムゾーンで運用されている前提
  *     (詳細: docs/operations/DEPLOYMENT.md §6.1)
  *   - **endpoint は path のみ**: フルドメイン URL は環境依存のため含めない。表示時に必要なら
- *     画面側で `https://tasukiba.netlify.app` を結合する
+ *     画面側で `https://tasukiba.com` を結合する
  *   - **expectedMaxGapHours** (PR-V8): 「最後の成功実行から N 時間以上経過していたら異常」の閾値。
  *     daily は 25h (= 1 日 + 1h 余裕)、monthly は 35 日 * 24h = 840h (= 月跨ぎ + 余裕)。
  *     診断ダッシュボードで「未登録 / 長期停止」を検知するために使う。

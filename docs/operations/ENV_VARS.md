@@ -41,7 +41,7 @@
 
 | 変数名 | 例 | 用途 | 取得方法 |
 |---|---|---|---|
-| `NEXTAUTH_URL` | `http://localhost:3000` (ローカル) / `https://tasukiba.netlify.app` (Netlify Production のみ) | NextAuth がリダイレクト先の URL 解決に使う | Production は固定 URL。**Deploy preview / Branch deploys では未設定 (Delete) にして trustHost フォールバックを使う** (§2 参照、KDD §5.X+101) |
+| `NEXTAUTH_URL` | `http://localhost:3000` (ローカル) / `https://tasukiba.com` (Netlify Production のみ) | NextAuth がリダイレクト先の URL 解決に使う | Production は固定 URL。**Deploy preview / Branch deploys では未設定 (Delete) にして trustHost フォールバックを使う** (§2 参照、KDD §5.X+101) |
 | `NEXTAUTH_SECRET` | (32 バイトのランダム文字列) | JWT の署名鍵 | ```openssl rand -base64 32``` で生成 |
 
 > **ローテーション時の注意**: `NEXTAUTH_SECRET` を変更すると全ユーザのセッション JWT が即時無効化され、強制的に再ログインとなる。
@@ -60,7 +60,7 @@
 >   NextAuth JWT 戦略は各リクエストで token を再署名する sliding 挙動のため、実質「最後の操作から 9 時間」。
 >
 > **NEXTAUTH_URL の context 分離 (PR #425 / KDD §5.X+101 / 2026-05-22)**:
->   - **Production**: `https://tasukiba.netlify.app` (固定)
+>   - **Production**: `https://tasukiba.com` (固定、2026-05-29 独自ドメイン移行済)
 >   - **Deploy preview / Branch deploys**: **未設定** (= Netlify Dashboard 上で値を空に保存)
 >     → NextAuth v5 が `trustHost: true` でリクエスト host header から base URL を動的に決定する。
 >   - **全 context 共通で本番 URL を入れると、Deploy Preview → 本番 URL に即リダイレクトされ UAT 不能になる**。
@@ -247,7 +247,7 @@ Netlify Dashboard → Site configuration → Environment variables では **同�
 
 | 変数名 | Production | Deploy preview | Branch deploys | Local development | 補足 |
 |---|---|---|---|---|---|
-| `NEXTAUTH_URL` | `https://tasukiba.netlify.app` | **未設定 (Delete)** | **未設定 (Delete)** | `http://localhost:3000` | preview/branch を未設定にすると `trustHost: true` で host header から動的取得。KDD §5.X+101 |
+| `NEXTAUTH_URL` | `https://tasukiba.com` | **未設定 (Delete)** | **未設定 (Delete)** | `http://localhost:3000` | preview/branch を未設定にすると `trustHost: true` で host header から動的取得。KDD §5.X+101 |
 | `NEXTAUTH_SECRET` | (Live secret) | (同左 / Test 用に別でも可) | (同左) | 開発用 secret | Production と preview を分けるとログイン session が context 間で持ち越せない |
 | `STRIPE_ENABLED` | `true` (リリース後) | `true` (TC 実行時) | `true` / `false` 任意 | `false` (通常) / `true` (Stripe 確認時) | 値は文字列 `'true'` で評価 |
 | `STRIPE_SECRET_KEY` | `sk_live_xxx` | `sk_test_xxx` | `sk_test_xxx` | `sk_test_xxx` | Live を preview に共有すると本番カードに誤課金リスク |
@@ -293,7 +293,7 @@ netlify env:set STRIPE_SECRET_KEY "sk_test_xxx" --secret --context deploy-previe
 netlify env:set STRIPE_SECRET_KEY "sk_test_xxx" --secret --context branch-deploy
 
 # Production だけ NEXTAUTH_URL を固定、preview/branch は削除 (= trustHost フォールバック)
-netlify env:set NEXTAUTH_URL "https://tasukiba.netlify.app" --context production
+netlify env:set NEXTAUTH_URL "https://tasukiba.com" --context production
 netlify env:unset NEXTAUTH_URL --context deploy-preview
 netlify env:unset NEXTAUTH_URL --context branch-deploy
 ```

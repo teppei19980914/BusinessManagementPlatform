@@ -251,7 +251,7 @@ main へのマージで Netlify が **Production deploy** を自動起動:
 
 1. `scripts/netlify-build.sh` → `pnpm build:netlify` (= `prisma generate && prisma migrate deploy && next build`)
 2. `@netlify/plugin-nextjs` で Next.js 16 App Router を Functions にバンドル
-3. `https://tasukiba.netlify.app/` (= 本番 URL) に反映
+3. `https://tasukiba.com/` (= 本番 URL) に反映
 
 ### 7.2 進捗確認
 
@@ -278,7 +278,7 @@ main へのマージで Netlify が **Production deploy** を自動起動:
 
 ### 8.1 Smoke test (最低限)
 
-- [ ] `https://tasukiba.netlify.app/` ログイン画面が表示される
+- [ ] `https://tasukiba.com/` ログイン画面が表示される
 - [ ] ログイン → `/projects` まで遷移
 - [ ] 改修対象画面で意図通りの挙動
 - [ ] Sentry / cron_execution_logs / API call logs に異常なエラー急増がないか

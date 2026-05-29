@@ -97,7 +97,7 @@ git 履歴から過去記述を参照できる。
 | メール送信 | Brevo Free (300通/日) | $0 |
 | Cron 実行 | cron-job.org (Free) | $0 |
 | CI/CD | GitHub Actions (Public リポは無制限・無料) | $0 |
-| ドメイン | Netlify サブドメイン (`tasukiba.netlify.app`) | $0 |
+| ドメイン | 独自ドメイン (`tasukiba.com`、Cloudflare Registrar) | 約 $10.46/年 |
 | **合計** | | **約 $9/月 + LLM / Voyage 従量** |
 
 #### 無料枠の制約と対策
