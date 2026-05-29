@@ -462,6 +462,40 @@ USING (
 
 ---
 
+## 11. Stripe Subscription Item 紐付け (2026-05-30 補完)
+
+> **背景**: 本 ADR §6.2 で定義した Meter Event (`tasukiba_storage_file_overage_jpy`) は `stripe-usage-flush` cron で送信されるが、**Subscription Item に紐付かない Meter Event は Stripe Invoice に反映されない** のが Stripe 仕様。初版実装では `createSubscriptionForTenant` にファイルストレージ超過 Item の追加処理が欠けていたため、**credit_card 払いテナントの請求書にファイルストレージ超過分が載らない** 状態だった (= invoice 払いの BillingHistory と Stripe Invoice の金額が乖離 = invariant 違反)。本セクションで Stripe-ready 化を完遂する (ADR-0020 §12 と同設計)。
+
+### 11.1 設計 (Stripe-ready optional パターン、ADR-0020 §12 / ADR-0022 と同設計)
+
+- **新規 schema 列**: `Tenant.stripeSubscriptionItemStorageFileId` (`stripe_subscription_item_storage_file_id` VARCHAR(50) NULLABLE)
+- **新規環境変数**: `STRIPE_PRICE_STORAGE_FILE_OVERAGE` (optional、Test / Live で別 Price ID)
+- **`createSubscriptionForTenant` の挙動**:
+  - env 未設定: 旧挙動互換、Subscription Item に追加されない (= リリース時の挙動)
+  - env 設定済: 新規 Subscription 作成時に Item として追加され、Stripe Meter Event の円整数 quantity が当該 Item に集約されて Stripe Invoice に反映
+- **Webhook 同期**: `handleSubscriptionUpdated` が `extractSubscriptionItemIds` で抽出した Item ID を `stripeSubscriptionItemStorageFileId` に保存
+
+### 11.2 invariant 担保 (4 経路一致)
+
+| 表示・請求経路 | 金額計算ロジック |
+|---|---|
+| テナントダッシュボード | `Tenant.currentMonthApiCostJpy` (`processTenantFileStorageOverage` で月初に increment) |
+| システム管理者ダッシュボード | 同上の SUM |
+| 請求書 (BillingHistory, invoice 払い) | `BILLABLE_FEATURE_UNITS` の `ApiCallLog.costJpy` SUM (= storage-file-overage 含む) |
+| Stripe Invoice (credit_card 払い) | Meter Event の円整数 quantity SUM × Price ¥1/unit = ApiCallLog.costJpy SUM |
+
+→ 4 経路すべて ApiCallLog の `storage-file-overage` cost を真値として一致 (= 完全 invariant 一致)
+
+### 11.3 マイグレーション
+
+[prisma/migrations/20260530_db_storage_subscription_items/migration.sql](../../prisma/migrations/20260530_db_storage_subscription_items/migration.sql) で `stripe_subscription_item_storage_file_id` を NULLABLE 追加 (DB 容量分と同 migration)。既存 credit_card テナント不在のため後付け実行不要。
+
+### 11.4 セットアップ手順
+
+詳細は [docs/operations/STRIPE_SETUP.md §2.6](../operations/STRIPE_SETUP.md) (ファイルストレージ従量課金 + Subscription Item 紐付け項) を参照。
+
+---
+
 ## Consequences
 
 ### Positive

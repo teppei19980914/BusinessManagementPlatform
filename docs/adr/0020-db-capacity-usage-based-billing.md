@@ -230,6 +230,40 @@ try {
 
 ---
 
+## 12. Stripe Subscription Item 紐付け (2026-05-30 補完)
+
+> **背景**: 本 ADR §4.2 で定義した Meter Event (`tasukiba_db_capacity_overage_jpy`) は `stripe-usage-flush` cron で送信されるが、**Subscription Item に紐付かない Meter Event は Stripe Invoice に反映されない** のが Stripe 仕様。初版実装では `createSubscriptionForTenant` に DB 容量超過 Item の追加処理が欠けていたため、**credit_card 払いテナントの請求書に DB 容量超過分が載らない** 状態だった (= invoice 払いの BillingHistory と Stripe Invoice の金額が乖離 = invariant 違反)。本セクションで Stripe-ready 化を完遂する。
+
+### 12.1 設計 (Stripe-ready optional パターン、ADR-0022 Embedding と同設計)
+
+- **新規 schema 列**: `Tenant.stripeSubscriptionItemDbCapacityId` (`stripe_subscription_item_db_capacity_id` VARCHAR(50) NULLABLE)
+- **新規環境変数**: `STRIPE_PRICE_DB_CAPACITY_OVERAGE` (optional、Test / Live で別 Price ID)
+- **`createSubscriptionForTenant` の挙動**:
+  - env 未設定: 旧挙動互換、Subscription Item に追加されない (= Haiku + Sonnet の 2 本のみ。リリース時の挙動)
+  - env 設定済: 新規 Subscription 作成時に Item として追加され、Stripe Meter Event の円整数 quantity が当該 Item に集約されて Stripe Invoice に反映
+- **Webhook 同期**: `handleSubscriptionUpdated` が `extractSubscriptionItemIds` で抽出した Item ID を `stripeSubscriptionItemDbCapacityId` に保存 (= カード再登録などで Subscription が再作成されても DB と Stripe の Item ID が常に一致)
+
+### 12.2 invariant 担保
+
+| 表示・請求経路 | 金額計算ロジック |
+|---|---|
+| テナントダッシュボード | `Tenant.currentMonthApiCostJpy` (`processTenantDbCapacityOverage` で月初に increment) |
+| システム管理者ダッシュボード | 同上の SUM |
+| 請求書 (BillingHistory, invoice 払い) | `BILLABLE_FEATURE_UNITS` の `ApiCallLog.costJpy` SUM (= db-capacity-overage 含む) |
+| Stripe Invoice (credit_card 払い) | Meter Event の円整数 quantity SUM × Price ¥1/unit = ApiCallLog.costJpy SUM |
+
+→ **4 経路すべてが ApiCallLog の `db-capacity-overage` cost を真値として一致** (= 完全 invariant 一致)
+
+### 12.3 マイグレーション
+
+[prisma/migrations/20260530_db_storage_subscription_items/migration.sql](../../prisma/migrations/20260530_db_storage_subscription_items/migration.sql) で `stripe_subscription_item_db_capacity_id` を NULLABLE 追加。既存 credit_card テナント不在 (= 6/1 ローンチは credit OFF) のため後付け実行不要、新規 Subscription は新コードで作成される。
+
+### 12.4 セットアップ手順
+
+詳細は [docs/operations/STRIPE_SETUP.md §2.5](../operations/STRIPE_SETUP.md) (DB 容量従量課金 + Subscription Item 紐付け項) を参照。
+
+---
+
 ## 単価変更ルール (R15)
 
 将来の単価変更時のルール (SaaS 規約と同一):

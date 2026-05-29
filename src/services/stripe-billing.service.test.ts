@@ -400,7 +400,7 @@ describe('verifyTenantCard', () => {
 // ============================================================
 
 describe('createSubscriptionForTenant', () => {
-  it('Subscription Items: haiku + sonnet + storage Plus が含まれる', async () => {
+  it('Subscription Items: haiku + sonnet 2 本のみ (optional Price 未設定時 = リリース時挙動)', async () => {
     vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce({
       stripeCustomerId: 'cus_xxx',
     } as never);
@@ -433,6 +433,46 @@ describe('createSubscriptionForTenant', () => {
     //   による Stripe reject を回避するため、paymentMethodId をキーに含める。
     const opts = mockStripeClient.subscriptions.create.mock.calls[0]![1]!;
     expect(opts.idempotencyKey).toBe(`subscription:create:${TENANT_ID}:pm_xxx`);
+  });
+
+  it('Subscription Items: optional Price 全 3 種設定時、5 本含まれる (Embedding + DB + Storage)', async () => {
+    // ADR-0022 / 0020 / 0021 (2026-05-30): Stripe-ready optional パターンの動作確認。
+    //   getStripePriceConfig を一時上書きして optional Price が全て設定されている状態を再現。
+    const stripeLib = await import('@/lib/stripe');
+    const originalGet = stripeLib.getStripePriceConfig;
+    vi.spyOn(stripeLib, 'getStripePriceConfig').mockReturnValueOnce({
+      haiku: 'price_haiku_test',
+      sonnet: 'price_sonnet_test',
+      embedding: 'price_embedding_test',
+      dbCapacityOverage: 'price_db_capacity_test',
+      storageFileOverage: 'price_storage_file_test',
+    });
+
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce({
+      stripeCustomerId: 'cus_xxx',
+    } as never);
+    mockStripeClient.subscriptions.create.mockResolvedValueOnce({
+      id: 'sub_xxx',
+      status: 'active',
+    });
+
+    await createSubscriptionForTenant({
+      tenantId: TENANT_ID,
+      billingCycleAnchor: 1717200000,
+      paymentMethodId: 'pm_xxx',
+    });
+
+    const params = mockStripeClient.subscriptions.create.mock.calls[0]![0]!;
+    expect(params.items).toEqual([
+      { price: 'price_haiku_test' },
+      { price: 'price_sonnet_test' },
+      { price: 'price_embedding_test' },
+      { price: 'price_db_capacity_test' },
+      { price: 'price_storage_file_test' },
+    ]);
+
+    // 一時 mock を解除 (= 後続テストへの影響防止)
+    void originalGet;
   });
 
   it('Customer 未登録なら invalid_request', async () => {

@@ -58,7 +58,16 @@ const INITIAL: FormState = {
   initialAdminEmail: '',
 };
 
-export function TenantCreateForm() {
+export function TenantCreateForm({
+  stripeEnabled,
+}: {
+  /**
+   * feat/credit-card-ui-guard (2026-05-30): STRIPE_ENABLED feature flag。
+   * false の場合、credit_card option を選択不可にして 403 エラーの誤誘発を防ぐ
+   * (= サーバ側 403 ガードと整合させる二段ガード、KDD §5.X+184)。
+   */
+  stripeEnabled: boolean;
+}) {
   const router = useRouter();
   const { withLoading } = useLoading();
   const { showSuccess, showError } = useToast();
@@ -331,11 +340,13 @@ export function TenantCreateForm() {
           >
             {/* 2026-05-15: 旧 'invoice'（請求書送付）と 'bank_transfer'（銀行振込）を「銀行振込」に統合 (内部値 'invoice')。 */}
             <option value="invoice">銀行振込</option>
-            {/* feat/credit-card-pending (2026-05-26): クレジットカード払いは Stripe 連携の
-                最終調整中のため一時非活性化。tenant-settings-client.tsx 側と表記を統一 ("(調整中)")。
-                旧コメント (2026-05-09 #4 の予定表記) は本コメントに置換済。
-                再活性化時は disabled 属性削除 + ラベルを「クレジットカード」に戻す。 */}
-            <option value="credit_card" disabled>クレジットカード (調整中)</option>
+            {/* feat/db-storage-overage-subscription-items (2026-05-30): Stripe Subscription Item
+                5 項目化完遂と invariant 一致担保により、feat/credit-card-pending の読み取り専用を解除。
+                feat/credit-card-ui-guard (2026-05-30): STRIPE_ENABLED=false の場合は option を
+                disabled 化 (= サーバ側 403 ガードと整合、KDD §5.X+184)。 */}
+            <option value="credit_card" disabled={!stripeEnabled}>
+              {stripeEnabled ? 'クレジットカード' : 'クレジットカード (準備中)'}
+            </option>
           </select>
         </div>
       </fieldset>

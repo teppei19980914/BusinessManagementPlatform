@@ -165,6 +165,17 @@ Dashboard → **商品カタログ** → **商品を追加**
 - **idempotency**: `identifier = usage:db_capacity_overage:{apiCallLogId}` で 24h 重複防止。
 - **timestamp**: 前月末瞬間 (= 月跨ぎ瞬間) を送信、過去 35 日以内なので正常受領される。
 
+#### Stripe Subscription Item 紐付け (2026-05-30 補完) ★credit_card 払いの請求 invariant に必須★
+
+> **重要**: `STRIPE_PRICE_DB_CAPACITY_OVERAGE` 環境変数を設定するだけでは Stripe Meter Event の `tasukiba_db_capacity_overage_jpy` が **Stripe Invoice に反映されない**。Meter Event は Subscription Item に紐付かないと Invoice に乗らない Stripe 仕様のため、`createSubscriptionForTenant` が当該 Price を Item として追加する必要がある。
+
+- **Stripe-ready optional 設計** ([src/services/stripe-billing.service.ts](../../src/services/stripe-billing.service.ts) `createSubscriptionForTenant` / ADR-0022 Embedding と同パターン):
+  - **`STRIPE_PRICE_DB_CAPACITY_OVERAGE` 未設定**: Subscription Item は追加されない (= リリース時の挙動互換)。Stripe Meter Event は送信されるが、Stripe Invoice には反映されない。
+  - **`STRIPE_PRICE_DB_CAPACITY_OVERAGE` 設定済**: 新規 Subscription 作成時に 4 本目の Item として追加 (Haiku + Sonnet + (optional) Embedding + DB 容量超過)。これにより月初 cron が送信する Meter Event の円整数 quantity が当該 Item に集約され、Stripe Invoice に反映される。
+- **invariant 担保**: invoice 払いの BillingHistory (= `BILLABLE_FEATURE_UNITS` の ApiCallLog SUM) と Stripe Invoice の金額が完全一致する設計。テナントダッシュボード表示 = 請求書 = Stripe Invoice の 4 点 invariant。
+- **Webhook 同期**: `handleSubscriptionUpdated` で `stripeSubscriptionItemDbCapacityId` カラムも同期更新 (カード再登録などで Subscription が再作成されても DB と Stripe の Item ID が常に一致)。
+- **コード変更ゼロで Stripe 有効化**: env 設定だけで自動的に動き出す Stripe-ready 設計 (詳細: [src/lib/stripe.ts](../../src/lib/stripe.ts) `getStripePriceConfig` の `dbCapacityOverage?` フィールド)。
+
 ### 2.6 ファイルストレージ従量課金 (ADR-0021 / 2026-05-26)
 
 > **ADR-0021 新規追加**: ファイル添付ストレージを「使った分だけ」階段関数型で課金 (100MB 無料 + 1GB tier × ¥10、50GB hardcap)。
@@ -205,6 +216,15 @@ Dashboard → **商品カタログ** → **商品を追加**
 - **Meter quantity の最大値**: 50GB ハードキャップ到達ユーザでも max ¥500 → 余裕で範囲内。
 - **idempotency**: `identifier = usage:storage_file_overage:{apiCallLogId}` で 24h 重複防止。
 - **timestamp**: 前月末瞬間 (= 月跨ぎ瞬間) を送信、過去 35 日以内なので正常受領される。
+
+#### Stripe Subscription Item 紐付け (2026-05-30 補完) ★credit_card 払いの請求 invariant に必須★
+
+> **重要**: §2.5 と同設計。`STRIPE_PRICE_STORAGE_FILE_OVERAGE` 環境変数を設定するだけでは Stripe Invoice に反映されないため、`createSubscriptionForTenant` が当該 Price を Subscription Item として追加する必要がある。
+
+- **Stripe-ready optional 設計**: `STRIPE_PRICE_STORAGE_FILE_OVERAGE` 設定時のみ Subscription Item として追加 (= 旧挙動互換)。
+- **invariant 担保**: invoice 払いの BillingHistory と Stripe Invoice の金額が完全一致。
+- **Webhook 同期**: `handleSubscriptionUpdated` で `stripeSubscriptionItemStorageFileId` カラムも同期更新。
+- 詳細実装: [src/services/stripe-billing.service.ts](../../src/services/stripe-billing.service.ts) `createSubscriptionForTenant` / [src/lib/stripe.ts](../../src/lib/stripe.ts) `getStripePriceConfig` の `storageFileOverage?` フィールド。
 
 ---
 

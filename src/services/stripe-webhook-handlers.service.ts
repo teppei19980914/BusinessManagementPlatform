@@ -116,7 +116,13 @@ async function handleSubscriptionUpdated(
     return { ok: true, action: 'tenant_not_found' };
   }
 
-  const { haikuItemId, sonnetItemId } = extractSubscriptionItemIds(subscription);
+  const {
+    haikuItemId,
+    sonnetItemId,
+    embeddingItemId,
+    dbCapacityItemId,
+    storageFileItemId,
+  } = extractSubscriptionItemIds(subscription);
   const now = new Date();
 
   // 自動 suspend スケジュールの判定
@@ -134,6 +140,13 @@ async function handleSubscriptionUpdated(
       stripeSubscriptionStatus: subscription.status,
       stripeSubscriptionItemHaikuId: haikuItemId,
       stripeSubscriptionItemSonnetId: sonnetItemId,
+      // ADR-0022 / 0020 / 0021 (2026-05-30): Webhook 同期で Embedding / DB 容量 / ファイルストレージ
+      //   Item ID も更新する (= カード再登録などで Subscription が再作成されたケースでも
+      //   DB の Item ID と Stripe の Item ID が常に一致するよう同期)。
+      //   env 未設定 → extractSubscriptionItemIds は null を返すため null で上書き (= 旧挙動互換)。
+      stripeSubscriptionItemEmbeddingId: embeddingItemId,
+      stripeSubscriptionItemDbCapacityId: dbCapacityItemId,
+      stripeSubscriptionItemStorageFileId: storageFileItemId,
       // chore/storage-addon-backend-removal (2026-05-26): stripeSubscriptionItemStorageId カラムは
       //   schema から撤去済 (Prisma の XOR<UpdateInput, UncheckedUpdateInput> 型は excess
       //   property check が効かず tsc 検出されないため、KDD §5.X+163 に記録)
@@ -526,10 +539,15 @@ async function resolveTenantByPaymentMethod(
 
 /**
  * Subscription Item の Price ID と Tenant の subscriptionItemId* を突合せて
- * haiku / sonnet を抽出。
+ * haiku / sonnet / embedding / db_capacity / storage_file を抽出。
  *
  * Stripe の `subscription.items.data` は items の配列で、各 item の `price.id` と
- * 環境変数 (= STRIPE_PRICE_HAIKU / STRIPE_PRICE_SONNET) を比較して識別する。
+ * 環境変数 (= STRIPE_PRICE_HAIKU / STRIPE_PRICE_SONNET / STRIPE_PRICE_EMBEDDING /
+ * STRIPE_PRICE_DB_CAPACITY_OVERAGE / STRIPE_PRICE_STORAGE_FILE_OVERAGE) を比較して識別する。
+ *
+ * Embedding / DB 容量 / ファイルストレージ は Stripe-ready optional 設計:
+ *   - env 未設定 → 該当 Item ID は null (= 旧挙動互換)
+ *   - env 設定済 → Subscription に Item が含まれていれば ID を抽出
  *
  * chore/storage-addon-backend-removal (2026-05-26): 旧 4 段階 Storage add-on プランは
  * ADR-0020/0021 で完全従量課金化により撤去。STRIPE_PRICE_STORAGE_PLUS / PRO 環境変数も不要に。
@@ -537,20 +555,47 @@ async function resolveTenantByPaymentMethod(
 function extractSubscriptionItemIds(subscription: Stripe.Subscription): {
   haikuItemId: string | null;
   sonnetItemId: string | null;
+  embeddingItemId: string | null;
+  dbCapacityItemId: string | null;
+  storageFileItemId: string | null;
 } {
   const haikuPriceId = process.env['STRIPE_PRICE_HAIKU'];
   const sonnetPriceId = process.env['STRIPE_PRICE_SONNET'];
+  // ADR-0022 / 0020 / 0021 (2026-05-30): Stripe-ready optional Items の Price ID 比較対象。
+  // 空文字列も undefined 扱い (Netlify env で空保存される運用パターンへの defensive)。
+  const embeddingPriceIdRaw = process.env['STRIPE_PRICE_EMBEDDING'];
+  const embeddingPriceId =
+    embeddingPriceIdRaw != null && embeddingPriceIdRaw.length > 0
+      ? embeddingPriceIdRaw
+      : undefined;
+  const dbCapacityPriceIdRaw = process.env['STRIPE_PRICE_DB_CAPACITY_OVERAGE'];
+  const dbCapacityPriceId =
+    dbCapacityPriceIdRaw != null && dbCapacityPriceIdRaw.length > 0
+      ? dbCapacityPriceIdRaw
+      : undefined;
+  const storageFilePriceIdRaw = process.env['STRIPE_PRICE_STORAGE_FILE_OVERAGE'];
+  const storageFilePriceId =
+    storageFilePriceIdRaw != null && storageFilePriceIdRaw.length > 0
+      ? storageFilePriceIdRaw
+      : undefined;
 
   let haikuItemId: string | null = null;
   let sonnetItemId: string | null = null;
+  let embeddingItemId: string | null = null;
+  let dbCapacityItemId: string | null = null;
+  let storageFileItemId: string | null = null;
 
   for (const item of subscription.items.data) {
     const priceId = item.price.id;
     if (priceId === haikuPriceId) haikuItemId = item.id;
     else if (priceId === sonnetPriceId) sonnetItemId = item.id;
+    else if (embeddingPriceId != null && priceId === embeddingPriceId) embeddingItemId = item.id;
+    else if (dbCapacityPriceId != null && priceId === dbCapacityPriceId) dbCapacityItemId = item.id;
+    else if (storageFilePriceId != null && priceId === storageFilePriceId)
+      storageFileItemId = item.id;
   }
 
-  return { haikuItemId, sonnetItemId };
+  return { haikuItemId, sonnetItemId, embeddingItemId, dbCapacityItemId, storageFileItemId };
 }
 
 /**

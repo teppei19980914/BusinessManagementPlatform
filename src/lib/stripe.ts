@@ -186,6 +186,31 @@ export type StripePriceConfig = {
    *     コード変更ゼロで自動的に動き出す (= Stripe-ready 設計)。
    */
   embedding?: string;
+  /**
+   * ADR-0020 (2026-05-25): DB 容量超過の Price ID (¥1/unit, Metered)。
+   *
+   * **optional フィールド**: Embedding と同じ Stripe-ready パターン。
+   *   - 未設定 (undefined): createSubscriptionForTenant は DB 容量超過 Item を追加しない。
+   *     Stripe Meter Event は送信されるが、紐付く Subscription Item がないため Stripe Invoice には
+   *     反映されない (= credit_card 払いで DB 容量超過分が請求されない旧挙動)。
+   *   - 設定済み: createSubscriptionForTenant が Item として追加し、月初 cron で送信される
+   *     `tasukiba_db_capacity_overage_jpy` Meter Event の円整数 quantity が当該 Item に集約され
+   *     Stripe Invoice に反映される (= invoice 払いの BillingHistory と完全 invariant 一致)。
+   *
+   * Meter unit = ¥1 設計 (ADR-0020 R6 案 A): アプリ側で算出した円整数を quantity として送信し
+   * Price 単価 ¥1 で乗算するため、計算は完全一致を保証 (= 端数ロスゼロ)。
+   */
+  dbCapacityOverage?: string;
+  /**
+   * ADR-0021 (2026-05-26): ファイルストレージ超過の Price ID (¥1/unit, Metered)。
+   *
+   * **optional フィールド**: DB 容量超過と同じ Stripe-ready パターン。
+   *   - 未設定 (undefined): createSubscriptionForTenant はファイルストレージ超過 Item を追加しない。
+   *   - 設定済み: createSubscriptionForTenant が Item として追加し、月初 cron で送信される
+   *     `tasukiba_storage_file_overage_jpy` Meter Event の円整数 quantity が当該 Item に集約され
+   *     Stripe Invoice に反映される。
+   */
+  storageFileOverage?: string;
 };
 
 export function getStripePriceConfig(): StripePriceConfig {
@@ -205,7 +230,21 @@ export function getStripePriceConfig(): StripePriceConfig {
   const embeddingRaw = process.env['STRIPE_PRICE_EMBEDDING'];
   const embedding = embeddingRaw != null && embeddingRaw.length > 0 ? embeddingRaw : undefined;
 
-  return { haiku, sonnet, embedding };
+  // ADR-0020 / 0021 (2026-05-30): DB 容量 / ファイルストレージ超過の Price ID も optional。
+  //   Embedding と同じ Stripe-ready 設計 (= 未設定なら Item 追加せず旧挙動互換)。
+  //   空文字列も undefined 扱い。
+  const dbCapacityOverageRaw = process.env['STRIPE_PRICE_DB_CAPACITY_OVERAGE'];
+  const dbCapacityOverage =
+    dbCapacityOverageRaw != null && dbCapacityOverageRaw.length > 0
+      ? dbCapacityOverageRaw
+      : undefined;
+  const storageFileOverageRaw = process.env['STRIPE_PRICE_STORAGE_FILE_OVERAGE'];
+  const storageFileOverage =
+    storageFileOverageRaw != null && storageFileOverageRaw.length > 0
+      ? storageFileOverageRaw
+      : undefined;
+
+  return { haiku, sonnet, embedding, dbCapacityOverage, storageFileOverage };
 }
 
 /**

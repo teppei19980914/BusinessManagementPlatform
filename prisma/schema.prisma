@@ -307,6 +307,17 @@ model Tenant {
   ///   Subscription Item を追加 (= 未設定なら従来通り Haiku+Sonnet 2 本だけで動作 = リリース時の挙動)。
   ///   Stripe-ready 設計: env を後付け設定するだけでクレジットカード払い経路が自動的に動き出す。
   stripeSubscriptionItemEmbeddingId String? @map("stripe_subscription_item_embedding_id") @db.VarChar(50)
+  /// ADR-0020 / 0021 (2026-05-30) DB 容量超過 / ファイルストレージ超過 の Subscription Item ID。
+  ///   Meter event 'tasukiba_db_capacity_overage_jpy' / 'tasukiba_storage_file_overage_jpy' に紐付く
+  ///   Price (¥1/unit、Meter quantity = 円整数) を `STRIPE_PRICE_DB_CAPACITY_OVERAGE` /
+  ///   `STRIPE_PRICE_STORAGE_FILE_OVERAGE` 環境変数で指定し、createSubscriptionForTenant が
+  ///   当該 env 設定時のみ Subscription Item を追加。
+  ///   未設定なら従来通り Haiku+Sonnet 2 本 + (optional) Embedding のみで動作。
+  ///   Stripe-ready 設計: env を後付け設定するだけでクレジットカード払い経路が自動的に動き出す。
+  ///   設定済の場合、Stripe Meter Event 経由で送信される円整数 quantity が Subscription Item を
+  ///   通じて Stripe Invoice に反映される (= invoice 払いの BillingHistory と invariant 一致)。
+  stripeSubscriptionItemDbCapacityId   String? @map("stripe_subscription_item_db_capacity_id") @db.VarChar(50)
+  stripeSubscriptionItemStorageFileId  String? @map("stripe_subscription_item_storage_file_id") @db.VarChar(50)
   // chore/storage-addon-backend-removal (2026-05-26): stripe_subscription_item_storage_id 撤去
   /// Default Payment Method ID (= デフォルトの請求用カード)。Stripe Checkout 登録後に保存
   stripeDefaultPaymentMethodId    String?   @map("stripe_default_payment_method_id") @db.VarChar(50)

@@ -243,6 +243,15 @@ export async function setupSubscriptionWithExistingCard(
     prices.embedding != null
       ? subscription.items.data.find((i) => i.price.id === prices.embedding)
       : undefined;
+  // ADR-0020 / 0021 (2026-05-30): DB 容量 / ファイルストレージ超過 Item も optional (Embedding と同パターン)
+  const dbCapacityItem =
+    prices.dbCapacityOverage != null
+      ? subscription.items.data.find((i) => i.price.id === prices.dbCapacityOverage)
+      : undefined;
+  const storageFileItem =
+    prices.storageFileOverage != null
+      ? subscription.items.data.find((i) => i.price.id === prices.storageFileOverage)
+      : undefined;
   const currentYearMonth = getTenantCurrentYearMonth(
     new Date(),
     tenant.timezone ?? 'Asia/Tokyo',
@@ -258,6 +267,9 @@ export async function setupSubscriptionWithExistingCard(
         stripeSubscriptionItemSonnetId: sonnetItem?.id ?? null,
         // ADR-0022: Embedding Item ID も保存 (= 未設定なら null、Stripe-ready)
         stripeSubscriptionItemEmbeddingId: embeddingItem?.id ?? null,
+        // ADR-0020 / 0021 (2026-05-30): DB 容量 / ファイルストレージ Item ID も保存 (= 未設定なら null)
+        stripeSubscriptionItemDbCapacityId: dbCapacityItem?.id ?? null,
+        stripeSubscriptionItemStorageFileId: storageFileItem?.id ?? null,
         stripeDefaultPaymentMethodId: paymentMethodId,
         cardLastVerifiedAt: new Date(),
         cardVerificationStatus: 'valid',
@@ -511,6 +523,15 @@ export async function completeStripeSetup(
     prices.embedding != null
       ? subscription.items.data.find((i) => i.price.id === prices.embedding)
       : undefined;
+  // ADR-0020 / 0021 (2026-05-30): DB 容量 / ファイルストレージ超過 Item も optional (Embedding と同パターン)
+  const dbCapacityItem =
+    prices.dbCapacityOverage != null
+      ? subscription.items.data.find((i) => i.price.id === prices.dbCapacityOverage)
+      : undefined;
+  const storageFileItem =
+    prices.storageFileOverage != null
+      ? subscription.items.data.find((i) => i.price.id === prices.storageFileOverage)
+      : undefined;
 
   const currentYearMonth = getTenantCurrentYearMonth(
     new Date(),
@@ -527,6 +548,9 @@ export async function completeStripeSetup(
         stripeSubscriptionItemSonnetId: sonnetItem?.id ?? null,
         // ADR-0022: Embedding Item ID も保存 (= 未設定なら null、Stripe-ready)
         stripeSubscriptionItemEmbeddingId: embeddingItem?.id ?? null,
+        // ADR-0020 / 0021 (2026-05-30): DB 容量 / ファイルストレージ Item ID も保存 (= 未設定なら null)
+        stripeSubscriptionItemDbCapacityId: dbCapacityItem?.id ?? null,
+        stripeSubscriptionItemStorageFileId: storageFileItem?.id ?? null,
         paymentMethod: 'credit_card',
       },
     });
@@ -823,19 +847,32 @@ export async function createSubscriptionForTenant(
   const stripe = getStripe();
   const prices = getStripePriceConfig();
 
-  // Subscription Items: Haiku + Sonnet + (optional) Embedding。
+  // Subscription Items: Haiku + Sonnet + (optional) Embedding + (optional) DB capacity + (optional) Storage file。
   // ADR-0022 (2026-06-01) Stripe-ready 設計:
   //   - STRIPE_PRICE_EMBEDDING 未設定 (= リリース時の挙動): Haiku+Sonnet 2 本のみ
   //   - STRIPE_PRICE_EMBEDDING 設定済 (= 将来 Stripe 有効化時): 3 本目として Embedding を追加
   //     これにより withMeteredLLM が embedding event で投入する queue が flush 時に
   //     Subscription Item と紐付き、Stripe Invoice に Embedding 課金が反映される。
-  //   コード変更ゼロで Stripe 有効化が完結する設計。
+  //
+  // ADR-0020 / 0021 (2026-05-30) Stripe-ready 設計 (Embedding と同パターン):
+  //   - STRIPE_PRICE_DB_CAPACITY_OVERAGE / STRIPE_PRICE_STORAGE_FILE_OVERAGE 未設定: Item 追加せず旧挙動互換。
+  //   - 設定済: Item として追加され、月初 cron が送信する Meter Event (円整数 quantity) が
+  //     当該 Item に集約されて Stripe Invoice に反映される。これにより invoice 払いの BillingHistory
+  //     (= BILLABLE_FEATURE_UNITS の ApiCallLog SUM) と Stripe Invoice の金額が完全 invariant 一致する。
+  //
+  //   コード変更ゼロで Stripe 有効化が完結する設計 (= env 設定だけで自動的に動き出す)。
   const items: Stripe.SubscriptionCreateParams.Item[] = [
     { price: prices.haiku },
     { price: prices.sonnet },
   ];
   if (prices.embedding != null) {
     items.push({ price: prices.embedding });
+  }
+  if (prices.dbCapacityOverage != null) {
+    items.push({ price: prices.dbCapacityOverage });
+  }
+  if (prices.storageFileOverage != null) {
+    items.push({ price: prices.storageFileOverage });
   }
 
   const params: Stripe.SubscriptionCreateParams = {
@@ -1071,6 +1108,9 @@ async function clearTenantStripeSubscriptionFields(tenantId: string): Promise<vo
       stripeSubscriptionItemSonnetId: null,
       // ADR-0022 (2026-06-01): Embedding Item ID もクリア (= Subscription 全体が消えた前提)
       stripeSubscriptionItemEmbeddingId: null,
+      // ADR-0020 / 0021 (2026-05-30): DB 容量 / ファイルストレージ Item ID もクリア (Subscription 全体が消えた前提)
+      stripeSubscriptionItemDbCapacityId: null,
+      stripeSubscriptionItemStorageFileId: null,
       stripeDefaultPaymentMethodId: null,
       cardVerificationStatus: null,
       cardLastVerifiedAt: null,

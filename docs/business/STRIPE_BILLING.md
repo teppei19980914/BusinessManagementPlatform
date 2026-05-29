@@ -57,7 +57,7 @@
 |---|---|
 | **Stripe Customer** | Stripe 上のテナント表現。`Tenant.stripeCustomerId` に保存 |
 | **Stripe Subscription** | Stripe 上のテナント契約。1 テナント = 1 Subscription |
-| **Subscription Item** | Subscription 内の課金単位 (= 「Haiku per-call」「Sonnet per-call」「Storage 月額」をそれぞれ 1 Item) |
+| **Subscription Item** | Subscription 内の課金単位。リリース時は **Haiku per-call + Sonnet per-call の 2 Item**。Stripe-ready 設計で env を後付け設定すると **Embedding** (ADR-0022)、**DB 容量超過** (ADR-0020)、**ファイルストレージ超過** (ADR-0021) も Item として追加され、各 Meter Event が Stripe Invoice に反映 (= invoice 払いの BillingHistory と 4 経路 invariant 一致)。詳細は [STRIPE_SETUP.md §2.5/§2.6](../operations/STRIPE_SETUP.md) を参照 |
 | **Usage Record** | Subscription Item に対する使用量レポート (= 各 API 呼び出しで送信) |
 | **Payment Method** | Stripe Customer に紐付くカード情報 |
 | **SetupIntent** | カード登録時のトークン化処理 (本仕様ではカード検証にも使用) |

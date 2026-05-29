@@ -214,6 +214,16 @@ export function TenantSettingsClient({
       // PR #425 (2026-05-21): paymentMethod 切替は別操作 (請求先情報フォーム) に分離されたため、
       //   本処理は「カード情報の登録/更新成功」の通知に文言を統一。
       showSuccess('クレジットカード情報を登録しました');
+    } else if (status === 'pending') {
+      // feat/credit-card-ui-guard (2026-05-30) / KDD §5.X+185:
+      //   Stripe Checkout 完了戻り時に session が失効していた場合 (= login 経由で再ログイン後にここに着く)。
+      //   カード登録自体は Stripe Checkout で完了しており、Webhook (payment_method.attached /
+      //   customer.subscription.created) 経由で DB 同期されるため、ユーザには「同期中」を案内。
+      const reason = searchParams.get('reason') ?? '';
+      const reasonLabel = reason === 'session_expired' ? 'ログイン状態が切れていました' : '同期中';
+      showSuccess(
+        `クレジットカード情報の登録は完了しています (${reasonLabel})。少し待ってからページを再読込してください — 数秒〜1 分以内に表示が反映されます。`,
+      );
     } else if (status === 'canceled') {
       showError('クレジットカード情報の登録をキャンセルしました');
     } else if (status === 'failed') {
@@ -223,6 +233,9 @@ export function TenantSettingsClient({
         expired_card: 'カードの有効期限が切れています',
         processing_error: 'Stripe 処理エラー (時間をおいて再試行)',
         verification_required: 'カード追加認証が必要です',
+        // feat/credit-card-ui-guard (2026-05-30): complete route の追加 reason
+        not_admin: 'admin 権限が必要です',
+        session_id_missing: 'Stripe Checkout の戻り情報が不正です',
       };
       const reasonMessage = reasonMessageMap[reason] ?? '不明なエラー';
       showError(`カード登録に失敗しました (${reasonMessage})。設定は変更されていません`);
@@ -580,6 +593,7 @@ export function TenantSettingsClient({
               feat/tenant-settings-tabs (2026-05-22): タブ切替時の取りこぼし防止に onDirtyChange も渡す。 */}
           <BillingContactSection
             initialInfo={info}
+            stripeEnabled={stripeEnabled}
             onUpdate={refreshInfo}
             onDirtyChange={(dirty) => {
               billingFormDirtyRef.current = dirty;
@@ -1434,10 +1448,17 @@ function SeedDataToggleSection({
 
 function BillingContactSection({
   initialInfo,
+  stripeEnabled,
   onUpdate,
   onDirtyChange,
 }: {
   initialInfo: TenantSelfInfo;
+  /**
+   * feat/credit-card-ui-guard (2026-05-30): Stripe feature flag。
+   * false の場合、credit_card option を選択不可にして 403 エラーの誤誘発を防ぐ
+   * (= STRIPE_DISABLED 状態で UI と Server の整合性を担保、KDD §5.X+184 参照)。
+   */
+  stripeEnabled: boolean;
   /**
    * PR #425 (2026-05-22) ★severity-1★: 更新成功後に親の info state を再取得する callback。
    * paymentMethod 変更が StripePaymentMethodSection のボタン活性条件に即時反映されないと
@@ -1793,17 +1814,18 @@ function BillingContactSection({
               credit_card に切り替わり、下部「クレジットカード情報更新」ボタンが活性化される。
               credit_card → invoice 戻しは server 側で Stripe Subscription を即時 cancel。
 
-              feat/credit-card-pending (2026-05-26): クレジットカード払いは現在 Stripe 連携の
-              最終調整中のため一時非活性化。
-                - 表示: 「クレジットカード (調整中)」+ disabled で選択不可
-                - 既存に paymentMethod='credit_card' で保存されているテナントは current value
-                  として表示は継続するが、変更 (invoice → credit_card) は不可
-                - 再活性化時:
-                    1. `disabled` 属性を削除
-                    2. label を「クレジットカード」に戻す
-                    3. 本コメント (feat/credit-card-pending) を削除
-                    4. paymentMethod='credit_card' 経路の E2E が PASS する事を確認 */}
-          <option value="credit_card" disabled>クレジットカード (調整中)</option>
+              feat/db-storage-overage-subscription-items (2026-05-30): 5 項目すべての Stripe
+              Subscription Item 化を完遂 (Haiku / Sonnet / Embedding / DB 容量超過 / ファイルストレージ超過)。
+              テナント表示 = 請求書 = Stripe Invoice 4 経路完全 invariant 一致を担保し、
+              feat/credit-card-pending の読み取り専用を解除。
+
+              feat/credit-card-ui-guard (2026-05-30) ★severity-high UX 防御深化★:
+              STRIPE_ENABLED=false の場合は option を disabled 化する (= サーバ側 403 ガードと
+              整合)。「UI で選べるが保存すると 403」という UX 矛盾を防ぐ二段ガード設計
+              (KDD §5.X+184 参照)。 */}
+          <option value="credit_card" disabled={!stripeEnabled}>
+            {stripeEnabled ? 'クレジットカード' : 'クレジットカード (準備中)'}
+          </option>
         </select>
       </div>
 

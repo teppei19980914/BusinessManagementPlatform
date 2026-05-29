@@ -17919,3 +17919,156 @@ minDate / totalDays 計算で today を必ず含める (`allDates: string[] = [t
 - 関連 docs: [docs/specification/SCREENS.md §11.5](../specification/SCREENS.md) (ガントチャート画面仕様) / [docs/design/UI_PATTERNS.md](../design/UI_PATTERNS.md) (日付表示の統一方針)
 - 関連 feedback memory: [[feedback_sibling_ui_pattern_horizontal_rollout]] / [[feedback_verify_source_before_listing]]
 - 関連 PR: feat/gantt-initial-scroll-and-locale (本 KDD 対応)
+
+## 5.X+184 **★severity-high UX 矛盾★ Server-side 403 ガードに対応する Client-side UI option disable がなく「選択できるのに保存すると 403」が発生 ─ feature flag は API と UI の両側に二段ガードで反映 (2026-05-30 / PR #469 follow-up / feat/credit-card-ui-guard)**
+
+### 事象
+
+PR #469 で credit_card UI 解除 (`disabled` 属性削除) を実施した直後、ユーザが `STRIPE_ENABLED=false` の Sandbox 環境で credit_card 払いを試したところ、UI では option を選択して「請求先情報を更新」ボタンを押せたが、保存リクエスト `/api/tenants/me/billing/stripe/setup` が **403 STRIPE_DISABLED** で失敗 → 画面に「更新中...」のままハングし、コンソールエラー多発。
+
+サーバ側は設計通りの挙動 ([src/app/api/tenants/me/billing/stripe/setup/route.ts:50-59](../../src/app/api/tenants/me/billing/stripe/setup/route.ts#L50-L59)):
+```typescript
+if (!isStripeEnabled()) {
+  return NextResponse.json(
+    { error: { code: 'STRIPE_DISABLED', ... } },
+    { status: 403 },
+  );
+}
+```
+
+しかし **UI は env を全く知らないので option を enable で表示してしまう** → ユーザは「選べるのに動かない」混乱に直面。
+
+### 根本原因
+
+**Feature flag (env) と UI option の整合性が片側だけにしか実装されていなかった**:
+
+| ガード層 | 状態 (PR #469 直後) |
+|---|---|
+| Server 側 API ガード (`isStripeEnabled` チェック → 403) | ✅ 実装済、設計通り |
+| Client 側 UI ガード (option disable / button disable) | ⚠️ `StripePaymentMethodSection` だけ実装、`BillingContactSection` (paymentMethod セレクト) は **未実装** |
+
+`<BillingContactSection>` の呼出元では `<StripePaymentMethodSection stripeEnabled={stripeEnabled}>` には flag を渡していたが、すぐ隣の `<BillingContactSection>` には渡し忘れていた:
+
+```tsx
+<BillingContactSection
+  initialInfo={info}
+  onUpdate={refreshInfo}
+  onDirtyChange={...}
+  // ← stripeEnabled が渡されていない (バグ)
+/>
+<StripePaymentMethodSection
+  info={info}
+  stripeEnabled={stripeEnabled}  // ← こちらだけ渡している
+  onRefresh={refreshInfo}
+  cardSummary={cardSummary}
+/>
+```
+
+### 対策 (本 PR で反映)
+
+**Feature flag は API と UI の両側に二段ガードで反映する** invariant を確立。
+
+1. `BillingContactSection` の props に `stripeEnabled: boolean` を追加
+2. credit_card option を `disabled={!stripeEnabled}` で動的制御
+3. ラベルも切替 (`stripeEnabled` が false なら「クレジットカード (準備中)」)
+4. `tenant-create-form.tsx` (super_admin テナント作成) も同パターン適用 (= page.tsx server component で `isStripeEnabled()` を呼んで props 渡し)
+5. source-pattern 検証 `credit-card-ui-guard.test.ts` を追加 (退行防止)
+
+### 退行検知パターン
+
+source-pattern テストで以下 5 つの invariant を固定 ([src/app/(dashboard)/settings/tenant/credit-card-ui-guard.test.ts](../../src/app/(dashboard)/settings/tenant/credit-card-ui-guard.test.ts)):
+
+1. `BillingContactSection` / `TenantCreateForm` が `stripeEnabled` prop を受け取る (引数宣言の grep)
+2. `<option value="credit_card" disabled={!stripeEnabled}>` の存在
+3. `stripeEnabled=false` 時の「準備中」ラベル文字列の存在
+4. `<option value="credit_card">クレジットカード</option>` (無条件 enable) の **非存在** (= 退行検知)
+5. `<option value="invoice">銀行振込` (常時 enable) の存在 (= 巻き添え無効化なし)
+
+### 教訓
+
+1. **Feature flag は「サーバの 403 ガード」だけでは UX 不足** ─ 選べる UI で 403 を喰らうと「壊れている」と見える。Client 側でも対応する form 要素を disable し、誤操作を未然に防ぐ。
+2. **隣接コンポーネント間の prop 伝搬を grep で網羅検査** ─ PR #469 で `stripeEnabled` を `StripePaymentMethodSection` には渡したが、すぐ隣の `BillingContactSection` は見落とした。**「同じ feature flag に依存する全コンポーネントへ伝搬されているか」を grep で機械的に確認する** ステップを review に組み込む。
+3. **「読み取り専用解除」と「動的 disable 化」は別概念** ─ PR #469 で "feat/credit-card-pending" の無条件 disable を解除したが、これは「常時 enable」ではなく「env に応じた動的 enable/disable」に置き換えるべきだった。**「フィーチャー本体が解放された後の UI 制御は env 連動で再設計する」** という原則を新規開発の checklist に追加。
+4. **source-pattern test は "無条件" の退行も検知すべき** ─ 旧 `credit-card-pending.test.ts` は「無条件 disable」を invariant にしていたが、本来は「条件付き disable」を invariant にすべきだった。同様のテストは「**この条件の時はこう**」と condition 込みで固定する。
+
+### 関連
+
+- 関連 PR: PR #469 (本 follow-up commit 含む)
+- 関連 KDD: §5.X+182 (姉妹 UI 横展開時の prop 整合性チェック、同根原因)
+- 関連 feedback memory: [[feedback_sibling_ui_pattern_horizontal_rollout]] (隣接コンポーネントの整合性 4 観点 verify)
+- 関連 docs: [docs/operations/STRIPE_SETUP.md](../operations/STRIPE_SETUP.md) §11 (Live mode 切替時の env 注意事項追記)
+- 関連 source: [src/app/(dashboard)/settings/tenant/tenant-settings-client.tsx](../../src/app/(dashboard)/settings/tenant/tenant-settings-client.tsx) (BillingContactSection) / [src/app/(dashboard)/admin/super/tenants/new/tenant-create-form.tsx](../../src/app/(dashboard)/admin/super/tenants/new/tenant-create-form.tsx)
+
+
+## 5.X+185 **★severity-high UX 矛盾★ Stripe Checkout 戻り時の session 失効で「カード入力完了 → ログイン画面」 ─ 認証エラーレスポンスをそのまま return せず、テナント設定画面に pending flag で戻す (2026-05-30 / PR #469 follow-up / feat/credit-card-ui-guard)**
+
+### 事象
+
+クレジットカード払いに切替テスト中、ユーザが Stripe Checkout でカード情報を入力 → 「次へ」を押した時に **ログイン画面に遷移** してしまった。期待挙動は「テナント設定画面に戻る」。
+
+ユーザ視点では:
+1. テナント設定画面で「クレジットカード払い」選択 → 保存
+2. Stripe Checkout 画面に遷移 → カード情報入力 → 「次へ」
+3. **ログイン画面が表示される** ← UX 矛盾、「Stripe で完了したのに何故?」と混乱
+
+### 根本原因
+
+[src/app/api/tenants/me/billing/stripe/setup/complete/route.ts](../../src/app/api/tenants/me/billing/stripe/setup/complete/route.ts) の従来実装:
+
+```typescript
+export async function GET(req: NextRequest) {
+  const user = await getAuthenticatedUser();
+  if (user instanceof NextResponse) return user;  // ← login redirect レスポンスをそのまま返す
+  // ...
+}
+```
+
+Stripe Checkout (別ドメイン `checkout.stripe.com`) で数分滞在中に session が失効すると、`getAuthenticatedUser()` は login redirect レスポンスを返す。これを `return user` で transparent に返してしまうため、ブラウザはログイン画面に遷移する。
+
+session 失効の要因 (複合可能性):
+- Stripe Checkout で数分滞在中の自然失効
+- Netlify Set-Cookie 脱落 ([[feedback_netlify_nextauth_set_cookie]] 関連)
+- ブラウザの cookie 設定 (SameSite 等)
+- 別ウィンドウ・別ブラウザでの操作
+
+### 対策
+
+**session 失効時はログイン画面に飛ばさず、テナント設定画面 (safeReturnTo) に pending flag で redirect する**:
+
+```typescript
+const user = await getAuthenticatedUser();
+if (user instanceof NextResponse) {
+  // login redirect ではなく safeReturnTo に pending&reason=session_expired で redirect
+  return NextResponse.redirect(
+    appendQuery(safeReturnTo, { stripe_setup: 'pending', reason: 'session_expired' }),
+  );
+}
+```
+
+理由:
+- **カード登録自体は Stripe Checkout で完了済** (= ユーザは「次へ」を押した時点で Stripe 側の Checkout Session は completed)
+- **DB 同期は Webhook (payment_method.attached / customer.subscription.created) で行われる** ため、completeStripeSetup を complete route で呼べなくても、Webhook 経由で paymentMethod が credit_card に更新される
+- middleware が `/settings/tenant` を保護していれば、ユーザは自然な再ログインフローに乗り、callback で設定画面に戻る → UI で pending メッセージを見て安心
+
+UI 側 (tenant-settings-client.tsx) に `stripe_setup=pending` のトースト処理を追加:
+> 「クレジットカード情報の登録は完了しています (ログイン状態が切れていました)。少し待ってからページを再読込してください — 数秒〜1 分以内に表示が反映されます。」
+
+### 教訓
+
+1. **「認証エラーをそのまま return」は危険** ─ middleware や API helper が返す login redirect レスポンスは「未保護 route での認証要求」に最適化されている。Stripe / OAuth Callback のような「外部ドメインから戻ってくる route」では、login redirect が UX 矛盾を引き起こす。**API helper の認証エラーは「呼出元の context で再解釈する」** 原則を確立。
+
+2. **Stripe Checkout は session 失効を前提に設計する** ─ Checkout は数分かかることがあり、session 短期失効テナント (= 1 時間とか) では失効リスクが現実的。失効時のフォールバック path を必ず用意する。
+
+3. **Webhook 同期を信頼する** ─ complete route の処理は「即時反映用」の冗長化。Webhook ハンドラ (`handlePaymentMethodAttached` / `handleSubscriptionUpdated`) で DB 同期されるため、complete route がスキップされても最終的には正しい状態になる。複数経路で同期する **二重化設計** の利点。
+
+4. **「pending」状態を UI で明示する** ─ 「failed」と「pending (Webhook 同期中)」は別概念。ユーザに「失敗ではなく同期中」と伝えることで再試行の混乱を防ぐ。
+
+5. **return_to (safeReturnTo) は認証チェックより先に解決する** ─ 認証失敗時の fallback で使うため、`getAuthenticatedUser()` より前に URL パース完了させる。
+
+### 関連
+
+- 関連 PR: PR #469 (本 follow-up commit 含む)
+- 関連 KDD: §5.X+184 (UI feature flag 二段ガード、同根原因 = 「認証/feature flag の状態と UI の整合」)
+- 関連 feedback memory: [[feedback_netlify_nextauth_set_cookie]] (Netlify NextAuth cookie 脱落)
+- 関連 source: [src/app/api/tenants/me/billing/stripe/setup/complete/route.ts](../../src/app/api/tenants/me/billing/stripe/setup/complete/route.ts) / [src/app/(dashboard)/settings/tenant/tenant-settings-client.tsx](../../src/app/(dashboard)/settings/tenant/tenant-settings-client.tsx) (stripe_setup=pending ハンドラ)
+- 関連 Webhook: [src/services/stripe-webhook-handlers.service.ts](../../src/services/stripe-webhook-handlers.service.ts) handlePaymentMethodAttached / handleSubscriptionUpdated (Webhook 同期経路)
