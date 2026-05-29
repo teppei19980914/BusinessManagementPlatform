@@ -363,7 +363,7 @@ export default function SignupPage() {
           <CardTitle>たすきば サインアップ</CardTitle>
           <CardDescription>
             新規テナント (組織) を開設します。プランをご選択ください。<strong>Beginner</strong>{' '}
-            は 90 日試用 (月 100 回まで無料)、期限後は読み取り専用モードに移行します
+            は 90 日試用 (プロジェクト作成・更新が月 50 回まで無料)、期限後は読み取り専用モードに移行します
             (データのエクスポート機能は引き続きご利用いただけます)。
           </CardDescription>
         </CardHeader>
@@ -440,7 +440,7 @@ export default function SignupPage() {
                   />
                   <div>
                     <div className="font-semibold">Beginner</div>
-                    <div className="text-xs text-muted-foreground">90日試用 / 月100call / 5席</div>
+                    <div className="text-xs text-muted-foreground">90日試用 / 月50call / 5席</div>
                   </div>
                 </label>
                 <label
@@ -458,7 +458,7 @@ export default function SignupPage() {
                   />
                   <div>
                     <div className="font-semibold">Expert</div>
-                    <div className="text-xs text-muted-foreground">¥5/call 従量課金</div>
+                    <div className="text-xs text-muted-foreground">¥10/call 従量課金</div>
                   </div>
                 </label>
                 <label

@@ -144,8 +144,9 @@ export function GuideClient({ role, systemRole, userName }: Props) {
                 <strong>会社・組織</strong> 単位の最上位区切り。テナント間でデータは完全に分離されます。
               </GlossaryItem>
               <GlossaryItem term="プラン (Beginner / Expert / Pro)">
-                <strong>Beginner</strong> = 無料・5 席まで。<strong>Expert</strong> = 席数無制限・1 API 呼出 ¥5。
-                <strong>Pro</strong> = 席数無制限・¥15 + AI 説明文付き提案。
+                <strong>Beginner</strong> = 無料・5 席まで (プロジェクト作成・更新 月 50 回まで)。
+                <strong>Expert</strong> = 席数無制限・プロジェクト作成・更新 ¥10/回。
+                <strong>Pro</strong> = 席数無制限・¥15/回 + AI 説明文付き提案。
               </GlossaryItem>
             </>
           )}
