@@ -638,7 +638,7 @@ export function HelpClient({ isTenantAdmin }: Props) {
                       </tr>
                       <tr>
                         <td className="border-b p-2 align-top">月の予算上限の設定</td>
-                        <td className="border-b p-2 align-top text-muted-foreground">設定不可 (月 100 回で自動停止)</td>
+                        <td className="border-b p-2 align-top text-muted-foreground">設定不可 (プロジェクト作成・更新 月 50 回で自動停止)</td>
                         <td className="border-b p-2 align-top">設定可能</td>
                         <td className="border-b p-2 align-top">設定可能</td>
                       </tr>

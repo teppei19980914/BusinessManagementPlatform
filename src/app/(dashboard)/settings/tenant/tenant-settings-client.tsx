@@ -48,7 +48,7 @@ type TenantSelfInfo = {
   name: string;
   /** feat/settings-tenant-identity (2026-05-21): テナント作成日時 (詳細欄表示用)。 */
   createdAt: Date | string;
-  /** feat/settings-tenant-identity (2026-05-21): per-call 単価 (¥5 Haiku / ¥15 Sonnet)。 */
+  /** feat/settings-tenant-identity (2026-05-21): per-call 単価 (¥10 Haiku / ¥15 Sonnet、ADR-0019 改定後)。 */
   pricePerCallHaiku: number;
   pricePerCallSonnet: number;
   /** feat/settings-tenant-identity (2026-05-21): テナント停止状態 (PR #372)。 */

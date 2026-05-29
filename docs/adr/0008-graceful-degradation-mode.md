@@ -10,7 +10,7 @@
 
 ## Context
 
-[ADR-0002](./0002-tenant-billing-per-api-call.md) で per-API-call の従量課金を採用した結果、Beginner プラン (月 100 回まで無料) で上限到達した際の挙動を決める必要があった。
+[ADR-0002](./0002-tenant-billing-per-api-call.md) で per-API-call の従量課金を採用した結果、Beginner プラン (本 ADR 制定時は月 100 回まで無料、[ADR-0019](./0019-billable-feature-units-and-free-tier-expansion.md) 改定後はプロジェクト作成・更新が月 50 回まで無料) で上限到達した際の挙動を決める必要があった。
 本サービスの中核機能 (提案エンジン / LLM 自動タグ抽出 / Voyage embedding) は外部 API への金銭コストが直結するため、上限超過時の制御が必須。
 
 検討時の制約:

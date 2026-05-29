@@ -971,7 +971,7 @@ function AnthropicUsageCard({
         <SummaryCard
           label="内部請求額"
           value={`¥${anthropic.currentMonthInternalCostJpy.toLocaleString()}`}
-          tooltip="プラン別固定単価で計算した内部請求額 (Beginner ¥0 / Expert ¥5/call / Pro ¥15/call、2026-05-15 改定後)。Anthropic 実コストとは別系統"
+          tooltip="プラン別固定単価で計算した内部請求額 (Beginner ¥0 / Expert ¥10/call / Pro ¥15/call、ADR-0019 / 2026-05-24 改定後)。Anthropic 実コストとは別系統"
         />
       </div>
       <p className="text-xs text-muted-foreground">
