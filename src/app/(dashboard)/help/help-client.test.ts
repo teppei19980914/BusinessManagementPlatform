@@ -106,3 +106,84 @@ describe('HelpClient PR1 緊急 FAQ invariant (退会 / 請求 / 容量)', () =>
     expect(source).not.toMatch(/Phase 2 テナント分離適用後/);
   });
 });
+
+/**
+ * PR2 (feat/faq-pr2-clarity-rewrite 2026-05-29):
+ *   非エンジニア向け平易化 6 件 (WP/Activity / KPT / 提案エンジン / PR #470 追加 / 他テナント / 月次予算)
+ *   + 新規 5 件 (アカウント・ログイン 3 件 / データ AI 送信 / バックアップ)。
+ *   過去の専門用語 (集約タスク / KPT 形式 / 意味的類似度 / embedding / 特徴量 / 認可境界 / 縮退モード / HTTP 200) が
+ *   完全に消えていることを担保する。
+ */
+describe('HelpClient PR2 専門用語書き直し invariant', () => {
+  it('WP/Activity FAQ に実業務例 (営業企画) と「半日〜1 週間」表現を含む', () => {
+    expect(source).toMatch(/営業企画プロジェクト/);
+    expect(source).toMatch(/半日〜1 週間/);
+    expect(source).not.toMatch(/集約タスク/);
+    expect(source).not.toMatch(/0\.5〜5 人日/);
+  });
+
+  it('ナレッジ/振り返り FAQ で KPT を「Keep \\(続けたい\\) / Problem \\(困った\\) / Try \\(次は工夫する\\)」と展開', () => {
+    expect(source).toMatch(/Keep \(続けたい\)/);
+    expect(source).toMatch(/Problem \(困った\)/);
+    expect(source).toMatch(/Try \(次は工夫する\)/);
+    // 旧「KPT 形式」のみの記述が残っていないこと
+    expect(source).not.toMatch(/KPT 形式/);
+  });
+
+  it('提案エンジン FAQ に「より高機能な AI」と ADR-0026 由来の「数秒〜のタイムラグ」言及を含む', () => {
+    expect(source).toMatch(/より高機能な AI/);
+    expect(source).toMatch(/数秒〜のタイムラグ/);
+    // 旧専門用語の除去
+    expect(source).not.toMatch(/意味的類似度ベース/);
+    expect(source).not.toMatch(/Claude Sonnet 生成/);
+  });
+
+  it('PR #470 追加 3 件の「特徴量」「private」などの専門表現が消えている', () => {
+    // A-2-3b: 「特徴量」→「検索用データ」、「private」→「自分のみ」へ平易化
+    expect(source).not.toMatch(/意味検索用の特徴量/);
+    expect(source).not.toMatch(/下書き \/ private/);
+    expect(source).toMatch(/検索用データ/);
+  });
+
+  it('他テナント情報 FAQ から「最上位の認可境界」「super_admin」を排除', () => {
+    expect(source).not.toMatch(/最上位の認可境界/);
+    expect(source).not.toMatch(/super_admin/);
+    expect(source).toMatch(/テナント \(= 会社\) ごとにデータは完全に分かれて/);
+  });
+
+  it('月次予算超過 FAQ から「縮退モード」「HTTP 200」「タグ：テキスト = 5：5」を排除', () => {
+    expect(source).not.toMatch(/縮退モード/);
+    expect(source).not.toMatch(/HTTP 200/);
+    expect(source).not.toMatch(/タグ：テキスト = 5：5/);
+    expect(source).toMatch(/AI 機能の一部が一時停止/);
+  });
+});
+
+describe('HelpClient PR2 新規 FAQ 5 件 invariant', () => {
+  it('「アカウント・ログインについて」FaqCategory が新設され 3 件の Q を含む', () => {
+    expect(source).toMatch(/<FaqCategory title="アカウント・ログインについて">/);
+    expect(source).toMatch(/q="組織 ID を忘れました"/);
+    expect(source).toMatch(/q="パスワード設定リンクの有効期限はどれくらいですか？"/);
+    expect(source).toMatch(/q="招待メールが届きません"/);
+    // 重要数値: 90 日 (履歴) / 24 時間 (リンク期限)
+    expect(source).toMatch(/最大 5 件・90 日間/);
+    expect(source).toMatch(/24 時間で期限切れ/);
+    // 送信元アドレス明示
+    expect(source).toMatch(/noreply@tasukiba\.com/);
+  });
+
+  it('「AI に送られるデータ」FAQ が送信対象/非送信対象を両方明示', () => {
+    expect(source).toMatch(/q="AI に送られるデータは何ですか？"/);
+    expect(source).toMatch(/Anthropic \(Claude\) と Voyage AI/);
+    // 非送信対象の明示 (信頼確保)
+    expect(source).toMatch(/パスワードなどの認証情報/);
+    expect(source).toMatch(/添付ファイルの中身/);
+    expect(source).toMatch(/コメント本文/);
+  });
+
+  it('「バックアップ・エクスポート」FAQ がテナント設定 ZIP + 個別 CSV 経路を明示', () => {
+    expect(source).toMatch(/q="データのバックアップ・エクスポートはできますか？"/);
+    expect(source).toMatch(/ZIP 形式で一括エクスポート/);
+    expect(source).toMatch(/個別の CSV ダウンロード/);
+  });
+});
