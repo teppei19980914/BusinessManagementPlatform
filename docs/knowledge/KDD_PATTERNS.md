@@ -17259,57 +17259,82 @@ ADR-0025 PR #461 1 巡目 push 後、フルスキャン Explore agent で `requi
 
 ---
 
-## 5.X+177 ★severity-high (本番 UI 全壊)★ 小さな静的 PNG (マスコット / ロゴ) は `unoptimized` で raw 配信に切替えて Image Optimizer 経由配信の不安定さを回避する (feat/login-mascot-and-layout-fix / 2026-05-29)
+## 5.X+177 ★severity-1 (本番 UI 全壊 + SEO/OG リスク)★ middleware matcher が `public/` 配下の静的ファイルを exclusion 列挙しておらず、`/mascot-owl.png` / `/og-image.png` / `/robots.txt` 等が 302 redirect される潜在バグ (PR #451 で混入、PR #462 で発見・修正)
 
 ### 発覚契機
 
-ユーザから「ログイン画面のマスコットアイコンが表示されない / ヘッダ左上に『たすきば』が縦書きで重複表示されている」と報告。スクリーンショットを精査すると、両症状は同一根本原因:
+ユーザから「ログイン画面のマスコットアイコンが表示されない / ヘッダ左上に『たすきば』が縦書きで重複表示されている」と報告。スクリーンショットを精査すると、両症状は同一根本原因 — `<Image>` がロード失敗してブラウザが alt テキストを box 内で縦書きフォールバック表示していた。
 
+### Round 1 仮説 (false trail だった): Image Optimizer の本番不安定
+
+初回 PR では「Netlify Functions 上の Image Optimizer Lambda が小さな PNG で不安定に失敗する」と仮説立て、5 用途すべての `<Image>` に `unoptimized` を付与する defensive fix を行った。しかし PR push 後に **Linux CI で生成された visual baseline でも mascot が broken のまま** と判明 (`e2e/visual/auth-screens.spec.ts-snapshots/login-chromium-linux.png` の card 部分に broken-image placeholder)。
+
+### Round 2 verification で発見した真原因: middleware redirect
+
+ローカルで CI と同等の standalone build (`node .next/standalone/server.js`) を起動し、curl で直接検証:
+
+```bash
+curl -sI http://127.0.0.1:3458/mascot-owl.png
+# → HTTP/1.1 302 Found
+# → location: http://localhost:3000/login    ← !!!
+
+curl -sI 'http://127.0.0.1:3458/_next/image?url=%2Fmascot-owl.png&w=64&q=75'
+# → HTTP/1.1 400 Bad Request                  ← Optimizer が source fetch に失敗
 ```
-<Image src="/mascot-owl.png" width={28} height={28} alt="たすきば">
-```
 
-の `<Image>` がロード失敗 → ブラウザが alt テキストを 28px 幅 box 内で縦書きフォールバック表示していた (= 「た / す / き / ば」が 4 行に並ぶ)。ログインカード側も同じ broken-image 症状。
+middleware が `/mascot-owl.png` を /login に **302 redirect** していた。これにより:
+1. ブラウザ直接 GET (with `unoptimized`) → 302 → /login HTML → broken-image
+2. Image Optimizer 内部 fetch (without `unoptimized`) → 302 を受けて 400 Bad Request を返す
 
-### 経緯
+`unoptimized` 付与は **両ケース共に無効** だった (両方とも middleware を通過するパス)。
 
-- ローカル `public/mascot-owl.png` は **RGB 512×512 / 376KB** で正しい (`file` コマンド確認済、§5.X+160 の palette PNG 罠は既に修正済)
-- コード側の `<Image>` 参照も `src="/mascot-owl.png"` で正しい
-- にもかかわらず本番 (Netlify) で broken-image 表示
-- 推定原因は **Next.js Image Optimizer Lambda (`/_next/image?url=...`) の失敗**:
-  - Netlify Functions の CPU/メモリ制限、cold start タイムアウト、CDN cache pollution の複合
-  - §5.X+160 の palette PNG 起因は解消済だが、Optimizer 自体の不安定さは別問題として継続
-- KDD §5.X+160 では「palette でも本番では unoptimized fallback で配信される」と記録したが、Netlify では fallback が機能せず broken-image になる事象を新たに確認
+#### 影響範囲 (全 public 静的ファイル)
+
+| URL | 旧 status | 影響 |
+|---|---|---|
+| `/mascot-owl.png` | 302 → /login | マスコット 5 用途すべてで broken-image |
+| `/mascot-owl-chat.png` | 302 → /login | チャット FAB / avatar すべて broken |
+| `/og-image.png` | 302 → /login | **SNS シェア時の OG プレビュー破壊 (公開 LP 効果消失)** |
+| `/robots.txt` | 302 → /login | **招待制中の noindex 制御が機能していない (SEO リスク)** |
+
+PR #451 (mascot 導入) で `public/` 配下に新規ファイルを追加した際、middleware matcher の exclusion 更新が抜け落ちていた。`favicon.ico` のみ exclusion 列挙されており、それ以外の public 静的ファイル全てが認証ガードに巻き込まれていた。**約 1 ヶ月半検知されなかった severity-1 級バグ**。
 
 ### 教訓と防御
 
-1. **小さな静的 PNG (マスコット / ロゴ / favicon 系) は `unoptimized` を明示**:
-   - Optimizer の WebP/AVIF 変換メリットは 376KB → ~200KB 程度 (= 通常 1 回 download)
-   - 一方 Optimizer 失敗時の UI 崩壊コストは「ブランド要素が全て消える + 重複テキスト表示でユーザ困惑」と非対称
-   - 代償が小さく defensive 価値が高い場合は `unoptimized` で raw 配信に倒す
-2. **`<Image>` 採用判断は「optimizer 経由前提」ではなく「Optimizer なくても破綻しない構成か」を考える**:
-   - 大画像 (写真 / ヒーロー画像) → Optimizer 経由 (WebP/AVIF メリット大)
-   - 小アイコン (28×28 〜 120×120 のロゴ / マスコット) → `unoptimized` で raw 配信
-3. **broken-image の alt テキスト縦書き表示は production-only の典型症状**:
-   - ローカル `pnpm dev` では Optimizer が同 process 内で動くため失敗しにくい
-   - 本番 (Netlify Functions) のみで再現する → ローカル動作テストだけでは検知不能
-   - PR で `<Image>` を新規追加するときは「本番で Optimizer 失敗しても UI 崩壊しないか」を考える
+1. **`public/` 配下に新規ファイルを追加する PR では middleware matcher の exclusion を必ず確認**:
+   - PR #451 (mascot)、PR の OG image 追加、将来の webmanifest / sitemap.xml 追加など、すべて該当
+   - レビュー観点: 「`public/` 新規ファイルに対する未認証 GET の HTTP status は 200 か?」を必ず動作確認
+2. **個別ファイル列挙ではなく拡張子ベースの regex で一括除外する** (個別列挙の追記漏れリスク根絶):
+   - 旧: `favicon.ico` のみ列挙
+   - 新: `[^?]+\.(?:png|jpg|jpeg|svg|webp|gif|ico|txt|xml|woff2?|ttf|eot)$` で全静的アセット拡張子を一括除外
+   - `[^?]+` で「`?` を含まない」= 「API クエリ付きルートではない」を担保
+3. **standalone build (`output: 'standalone'` + `node .next/standalone/server.js`) でローカル検証する習慣**:
+   - `pnpm dev` の Turbopack では middleware 挙動が異なる可能性がある
+   - 本 PR の root cause も `pnpm dev` では再現せず、standalone build で初めて 302 を観測できた
+   - 本番 CI と同じ条件で検証することで「production-only の症状」を事前検知
+4. **broken-image の alt テキスト縦書きフォールバック表示は middleware redirect の典型症状**:
+   - `<Image>` が画像読込に失敗 → ブラウザが width/height の box 内に alt を描画
+   - 28px 幅の box に「たすきば」(4 文字) は 1 文字 1 行で縦書きに崩れる
+   - この見た目を見たら **「画像 URL が 302 / 404 を返している」** を最初に疑う
+5. **Round N 検証で「同じ症状の繰り返し報告」が来たら、これまでの仮説を全部捨てて再構築する**:
+   - Round 1: `unoptimized` 仮説 (false trail) → CI baseline 検証で false と判明
+   - Round 2: standalone build ローカル検証で真原因 (middleware redirect) 発見
+   - [[feedback_repeated_verification_request]] の通り、2 回目以降は仮説を疑う
 
 ### 採用した修正
 
+#### 修正 1: middleware matcher に静的アセット拡張子 regex を追加
+
+`src/middleware.ts`:
+
 ```diff
- <Image
-   src="/mascot-owl.png"
-   alt={t('appName')}
-   width={40}
-   height={40}
-   priority
-+  unoptimized
-   className="rounded-sm"
- />
+- matcher: ['/((?!_next/static|_next/image|favicon.ico|api/auth/mfa/verify|api/tenants/me/i18n|api/auth/explicit-signout).*)'],
++ matcher: ['/((?!_next/static|_next/image|favicon.ico|[^?]+\\.(?:png|jpg|jpeg|svg|webp|gif|ico|txt|xml|woff2?|ttf|eot)$|api/auth/mfa/verify|api/tenants/me/i18n|api/auth/explicit-signout).*)'],
 ```
 
-横展開対象 (5 箇所):
+#### 修正 2: false trail だった `unoptimized` を全 5 箇所から削除
+
+middleware fix で Image Optimizer が正常動作するため、`unoptimized` は不要 (むしろ payload 最適化のメリットを失わせるアンチパターン)。削除対象:
 
 | # | ファイル | 用途 |
 |---|---|---|
@@ -17319,10 +17344,22 @@ ADR-0025 PR #461 1 巡目 push 後、フルスキャン Explore agent で `requi
 | 4 | `src/components/chat-semantic-search/chat-fab.tsx` | チャット FAB (64×64) |
 | 5 | `src/components/chat-semantic-search/chat-panel.tsx` | チャットヘッダ avatar (36×36) + AssistantBubble 装飾 avatar (32×32) |
 
-全ファイルに source-pattern 回帰テストで `unoptimized` 付与を invariant 化済 (`app-header.test.tsx` / `help-client.test.ts` / `chat-fab.test.ts` / `chat-panel.test.ts`)。
+#### 修正 3: 回帰防止 invariant test 群を追加
+
+- `src/middleware.test.ts` (新規): matcher に 静的アセット拡張子 regex / 既存除外 API / Next.js 標準パスがすべて含まれることを source-pattern で担保
+- `e2e/specs/17-public-static-assets.spec.ts` (新規): 未認証 GET で `/mascot-owl.png` / `/mascot-owl-chat.png` / `/og-image.png` / `/robots.txt` が **200 OK**、`/_next/image?url=...` も 200 OK、`/projects` などの認証保護パスは引き続き 302 を返すことを HTTP 実応答で担保
+- `src/components/app-header.test.tsx` / `src/app/(dashboard)/help/help-client.test.ts` / `src/components/chat-semantic-search/chat-fab.test.ts` / `src/components/chat-semantic-search/chat-panel.test.ts`: invariant を逆転し **`unoptimized` を許さない** (= optimizer 経由を default とする) を担保
+
+### Round 2 verification の価値 (false trail を看抜いた事例として記録)
+
+本 PR は Round 1 で「Optimizer 不安定」と仮説立て fix → 「もう一度フルスキャン検証して」というユーザリクエスト ([[feedback_repeated_verification_request]] のシグナル) を受けて Round 2 を実施 → visual baseline 検査で「fix が効いていない」と判明 → standalone build ローカル curl 検証で真原因 (middleware redirect) を発見、という流れを辿った。
+
+**学び**: 「仮説 → 修正 → push」だけで終わらせず、**「修正後に本当に直っているか別経路で検証する」** ステップを毎回挟むべき。visual baseline / curl 直叩き / Network tab 等、複数の観測経路を持つことで「直したつもりで直っていない」事故を防げる。
 
 ### 関連
 
-- 関連 KDD: [§5.X+160](#5x160) (palette PNG → 本症状の前史。fix 後でも残った Optimizer 不安定さに対する 2 次防御として本 KDD)
+- 関連 KDD:
+  - [§5.X+160](#5x160) (palette PNG 罠 — 本症状とは独立だが同じ mascot-owl.png 配信に関する KDD)
+  - [§5.X+69](#5x69) / [§5.X+71](#5x71) / [§5.X+72](#5x72) (middleware matcher exclusion を追加した過去事例。本 KDD で 4 件目)
+- 関連 memory: [[feedback_repeated_verification_request]] (Round 2 リクエストを「もっと深く見て」のシグナルとして扱う方針)、[[feedback_design_comment_vs_impl_drift]] (仮説と実装が合っているかは別経路の検証で確認する)
 - 関連 PR: #462 (feat/login-mascot-and-layout-fix)
-- 関連 memory: なし (初出 — `feedback_image_unoptimized_for_small_static` 等として将来 memory 化候補)

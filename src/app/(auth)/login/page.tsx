@@ -185,21 +185,12 @@ function LoginForm() {
            *   - MASCOT.md §使い方ガイド の「推奨される使い方」に明文追加済
            */}
           <div className="flex items-center justify-center gap-3">
-            {/*
-             * 2026-05-29 (feat/login-mascot-and-layout-fix): Image Optimizer 経由配信が
-             *   本番 (Netlify) で安定しない事象 (alt テキスト縦書きフォールバック表示) が
-             *   報告されたため `unoptimized` で raw PNG 直接配信に切替。
-             *   サイズは 40×40 表示 + ソース 512×512 RGB / 376KB と小さく、Optimizer 経由の
-             *   WebP/AVIF 圧縮メリットが薄いため `unoptimized` のデメリットは事実上ない。
-             *   詳細: docs/knowledge/KDD_PATTERNS.md §5.X+177
-             */}
             <Image
               src="/mascot-owl.png"
               alt={t('appName')}
               width={40}
               height={40}
               priority
-              unoptimized
               className="rounded-sm"
               data-testid="login-mascot-owl"
             />

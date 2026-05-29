@@ -174,12 +174,15 @@ describe('AppHeader の公式マスコット表示 invariant (feat/mascot-owl)',
     expect(source).toMatch(/priority\b/);
   });
 
-  it('Image に unoptimized を付与し本番 (Netlify) Image Optimizer 経由配信を回避する', () => {
-    // KDD §5.X+177: Image Optimizer 経由配信が本番で安定せず alt 縦書きフォールバック表示
-    //   になる事象が報告された。`unoptimized` で raw PNG 直接配信に切替えて回避する。
-    //   28×28 表示 + ソース 512×512 RGB / 376KB と小さく Optimizer メリットが薄いため
-    //   `unoptimized` のデメリットは事実上ない。
-    expect(source).toMatch(/unoptimized\b/);
+  it('Image に unoptimized を付与しない (Image Optimizer 経由で payload 最適化 / KDD §5.X+177 真原因 = middleware redirect)', () => {
+    // KDD §5.X+177: 当初 `unoptimized` で broken-image 事象を回避したが、真原因は
+    //   middleware が /mascot-owl.png を /login に 302 redirect していたこと。
+    //   middleware matcher を修正したため Image Optimizer は復帰可能。
+    //   `unoptimized` を再追加するとヘッダ毎ページ 376KB → 5KB の payload 最適化が
+    //   失われるため、再追加を回帰として禁止する。
+    const headerLogoBlock = source.match(/<Image[\s\S]{0,400}?data-testid="app-header-logo"/);
+    expect(headerLogoBlock).not.toBeNull();
+    expect(headerLogoBlock![0]).not.toMatch(/unoptimized\b/);
   });
 
   it('サービス名テキストは sm: 以上で表示し、モバイル (sm 未満) ではアイコンのみに縮退する', () => {

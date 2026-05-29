@@ -62,15 +62,16 @@
 - **チャット意味検索の FAB** — 全画面右下の常時表示ボタン、`public/mascot-owl-chat.png` (チャットバージョン) を使用。aria-label は「たすきフクロウに相談する」固定
 - **チャット意味検索のアシスタント・アバター** — チャットパネル内のヘッダ + 各返答吹き出しの左に同画像を表示し「フクロウが応答している」体験を作る ([CHAT_SEMANTIC_SEARCH.md](../specification/CHAT_SEMANTIC_SEARCH.md))
 
-#### `<Image>` 配信方針: `unoptimized` 必須 (KDD §5.X+177)
+#### `<Image>` 配信方針: Optimizer 経由 default + middleware exclusion 必須 (KDD §5.X+177)
 
-マスコット画像 5 用途 (ヘッダ / ログイン / help FAQ / チャット FAB / チャット avatar) はすべて `<Image>` に **`unoptimized` を明示**する。理由:
+マスコット画像 5 用途 (ヘッダ / ログイン / help FAQ / チャット FAB / チャット avatar) は `<Image>` に **`unoptimized` を付けない** (= Next.js Image Optimizer 経由で WebP/AVIF 自動圧縮された配信を default とする)。
 
-- 本番 (Netlify) の Image Optimizer Lambda (`/_next/image?url=...`) が小さな PNG で不安定に失敗し、broken-image (alt テキスト縦書きフォールバック) を起こす事故が発生したため (詳細: [KDD §5.X+177](../knowledge/KDD_PATTERNS.md))
-- 28×28 〜 120×120 の小アイコンで WebP/AVIF 圧縮メリットは数十 KB 程度。一方 Optimizer 失敗時の UI 崩壊コストは「ブランド要素全消失 + ユーザ困惑」と非対称
-- raw PNG 直接配信 (`unoptimized`) でブラウザ HTTP cache に乗り、CDN level での再配信効率は同等
+ただし `public/` 配下の静的ファイルは **middleware matcher の exclusion に必ず含める必要がある** ([src/middleware.ts](../../src/middleware.ts) の `[^?]+\.(?:png|jpg|...)$` regex 参照)。これを忘れると middleware が画像 URL を /login に 302 redirect し、Image Optimizer の内部 fetch も巻き込まれて画像が表示されない重大バグになる ([KDD §5.X+177](../knowledge/KDD_PATTERNS.md) 真原因)。
 
-全 5 ファイルに source-pattern 回帰テストで `unoptimized` 付与を invariant 化済 (`app-header.test.tsx` / `help-client.test.ts` / `chat-fab.test.ts` / `chat-panel.test.ts`)。
+- Round 1 で「Optimizer 不安定」と誤診断し `unoptimized` を 5 箇所に付与する false trail を踏んだが、Round 2 verification で真原因 (middleware redirect) を特定して撤回
+- middleware fix 後は `unoptimized` 不要で payload 最適化 (376KB → ~5KB) が復活
+
+全 5 ファイル + middleware に source-pattern / E2E 回帰テストで invariant 化済 (`app-header.test.tsx` / `help-client.test.ts` / `chat-fab.test.ts` / `chat-panel.test.ts` / `middleware.test.ts` / `e2e/specs/17-public-static-assets.spec.ts`)。
 - **SNS 公式アカウントのプロフィール画像** — X / LinkedIn / Facebook の会社公式アカウントに人間が手動アップロード。マスター画像は `docs/design/assets/mascot-owl-sns-source.png` (リポジトリ参照のみ、コード参照なし)
 - **ランディングページ (HomePage)** — Header のサービス名横に小さく配置
 - **オンボーディング画面 / 空状態イラスト** — 親しみやすさを補強するために配置可

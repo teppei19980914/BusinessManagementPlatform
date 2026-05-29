@@ -91,11 +91,11 @@ describe('ChatPanel のマスコット統合 invariant', () => {
     expect(matches?.length ?? 0).toBeGreaterThanOrEqual(2);
   });
 
-  it('全アバターに unoptimized を付与し本番 (Netlify) Image Optimizer 経由配信を回避する (KDD §5.X+177)', () => {
-    // ヘッダ avatar + AssistantBubble 装飾 avatar の 2 箇所両方に unoptimized が
-    // 付いていることを担保する。FAB / login / app-header と方針統一。
-    const matches = source.match(/unoptimized\b/g);
-    expect(matches?.length ?? 0).toBeGreaterThanOrEqual(2);
+  it('全アバターに unoptimized を付与しない (Optimizer 経由 / KDD §5.X+177 真原因 = middleware redirect)', () => {
+    // KDD §5.X+177: 当初 `unoptimized` で broken-image 事象を回避したが、真原因は
+    //   middleware が /mascot-owl-chat.png を /login に 302 redirect していたこと。
+    //   middleware matcher を修正したため Optimizer は復帰可能。
+    expect(source).not.toMatch(/unoptimized\b/);
   });
 });
 
