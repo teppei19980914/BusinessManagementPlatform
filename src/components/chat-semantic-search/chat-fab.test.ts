@@ -81,6 +81,13 @@ describe('ChatSemanticSearchFab のマスコット統合 invariant', () => {
     expect(source).toMatch(/priority/);
   });
 
+  it('unoptimized を付与しない (Optimizer 経由 / KDD §5.X+177 真原因 = middleware redirect)', () => {
+    // KDD §5.X+177: 当初 `unoptimized` で broken-image 事象を回避したが、真原因は
+    //   middleware が /mascot-owl-chat.png を /login に 302 redirect していたこと。
+    //   middleware matcher を修正したため Optimizer は復帰可能。
+    expect(source).not.toMatch(/unoptimized\b/);
+  });
+
   it('iOS safe-area-inset-bottom を加味した bottom 位置を持つ (KDD §5.X+166)', () => {
     // home indicator (portrait 34px / landscape 21px) と重ならないよう
     // env(safe-area-inset-bottom) を加算する。通常ブラウザでは 0 のため互換性 OK。

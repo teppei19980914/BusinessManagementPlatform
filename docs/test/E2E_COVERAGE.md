@@ -91,6 +91,13 @@
 ### その他
 - [ ] `/` (ルート) — skip: プロジェクト一覧へのリダイレクト、PR #B の /projects で間接カバー
 
+### Public 静的アセット (PR #462 / 2026-05-29 / KDD §5.X+177)
+- [x] `/mascot-owl.png` — e2e/specs/17-public-static-assets.spec.ts (未認証 GET 200 OK + content-type image/png)
+- [x] `/mascot-owl-chat.png` — 同上
+- [x] `/og-image.png` — 同上 (SNS シェアプレビューのため未認証アクセス必須)
+- [x] `/robots.txt` — 同上 (招待制 noindex 制御のため未認証アクセス必須)
+- [x] `/_next/image?url=%2Fmascot-owl.png&...` — 同上 (Image Optimizer 内部 fetch が middleware に阻害されていないこと)
+
 ---
 
 ## API Routes

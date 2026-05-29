@@ -39,4 +39,10 @@ describe('HelpClient のマスコット FAQ invariant (feat/mascot-owl 2026-05-2
     expect(source).toMatch(/from\s+'next\/image'/);
     expect(source).toMatch(/src="\/mascot-owl\.png"/);
   });
+
+  it('Image に unoptimized を付与しない (Optimizer 経由 / KDD §5.X+177 真原因 = middleware redirect)', () => {
+    // KDD §5.X+177: 当初 `unoptimized` で回避したが、真原因は middleware redirect。
+    //   middleware fix 後は Optimizer 経由で payload 最適化された配信を default とする。
+    expect(source).not.toMatch(/unoptimized\b/);
+  });
 });

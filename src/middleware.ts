@@ -121,5 +121,23 @@ export const config = {
   //   本ルート自身が `await auth()` + DB tokenVersion increment で認証チェック + 失効を
   //   行うため、middleware 除外でも認証要件は維持。
   //   詳細: docs/knowledge/KDD_PATTERNS.md §5.X+72
-  matcher: ['/((?!_next/static|_next/image|favicon.ico|api/auth/mfa/verify|api/tenants/me/i18n|api/auth/explicit-signout).*)'],
+  //
+  // fix/login-mascot-and-layout-fix (2026-05-29, ★severity-1 critical★):
+  //   `public/` 配下の静的ファイル群を matcher 除外に追加。理由:
+  //     - PR #451 (mascot 導入) 以降、`/mascot-owl.png`, `/mascot-owl-chat.png`,
+  //       `/og-image.png`, `/robots.txt` が middleware の認証ガードで /login に
+  //       **302 redirect** されていた (= unauthenticated user は public 静的ファイルにすら
+  //       アクセスできない状態)。
+  //     - 結果: マスコット 5 用途すべてで broken-image 表示、SNS シェア時の OG プレビュー
+  //       完全消失、招待制中の robots.txt noindex 制御が機能していない (SEO リスク)
+  //     - 旧実装は `favicon.ico` のみ exclusion 列挙していたが、PR #451 で新規追加された
+  //       public 静的ファイルは追記漏れだった
+  //   regex に `[^?]+\.(png|jpg|jpeg|svg|webp|gif|ico|txt|xml|woff2?|ttf|eot)$` を追加し、
+  //   `?` を含まない (= API ではない) パスで拡張子が静的アセット拡張子のものはすべて
+  //   middleware を素通りさせる。これにより public/ 配下の現在 / 将来のファイルを
+  //   一括で保護する (個別列挙の追記漏れリスクを根絶)。
+  //   セキュリティ: public/ 配下は Next.js の設計上「全公開リソース」なので、middleware
+  //   除外しても情報漏洩リスクはない (むしろ middleware redirect の方が異常動作)。
+  //   詳細: docs/knowledge/KDD_PATTERNS.md §5.X+177
+  matcher: ['/((?!_next/static|_next/image|favicon.ico|[^?]+\\.(?:png|jpg|jpeg|svg|webp|gif|ico|txt|xml|woff2?|ttf|eot)$|api/auth/mfa/verify|api/tenants/me/i18n|api/auth/explicit-signout).*)'],
 };

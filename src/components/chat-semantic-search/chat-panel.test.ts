@@ -90,6 +90,13 @@ describe('ChatPanel のマスコット統合 invariant', () => {
     const matches = source.match(/object-cover/g);
     expect(matches?.length ?? 0).toBeGreaterThanOrEqual(2);
   });
+
+  it('全アバターに unoptimized を付与しない (Optimizer 経由 / KDD §5.X+177 真原因 = middleware redirect)', () => {
+    // KDD §5.X+177: 当初 `unoptimized` で broken-image 事象を回避したが、真原因は
+    //   middleware が /mascot-owl-chat.png を /login に 302 redirect していたこと。
+    //   middleware matcher を修正したため Optimizer は復帰可能。
+    expect(source).not.toMatch(/unoptimized\b/);
+  });
 });
 
 describe('ChatPanel 会話履歴の永続化 invariant (H-1 / H-2)', () => {

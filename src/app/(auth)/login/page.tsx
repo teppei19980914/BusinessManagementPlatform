@@ -164,7 +164,13 @@ function LoginForm() {
   }
 
   return (
-    <div className="flex flex-1 items-center justify-center bg-muted px-4 py-8">
+    // 2026-05-29 (feat/login-mascot-and-layout-fix): setup-guide footer を Card の
+    //   横ではなく **下** に配置するため flex-col を追加。
+    //   旧構成 (flex-row + items-center) では Card と footer が横並びで、毎日利用するユーザにとって
+    //   常時表示される「セットアップガイド」リンクが視覚ノイズになっていた。flex-col で縦並びにし、
+    //   Card 下に控えめに表示することで「初見ユーザ向け案内 + 既存ユーザ向け視覚ノイズ最小化」の
+    //   両立を実現する。
+    <div className="flex flex-1 flex-col items-center justify-center bg-muted px-4 py-8">
       <Card className="w-full max-w-[min(90vw,28rem)]">
         <CardHeader className="text-center">
           {/*
