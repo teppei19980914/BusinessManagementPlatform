@@ -684,7 +684,10 @@ export async function billOneTenantDbCapacityOverage(args: {
             action: 'CREATE',
             // 専用 entityType で監査クエリから明示的に区別可能にする
             entityType: 'api_call_log_skip',
-            entityId: requestId,
+            // ADR-0025 (2026-05-29 修正): entityId は @db.Uuid 型のため tenantId を入れる。
+            //   requestId (`db-capacity-overage-{tenantId}-{ym}-{scope}` 文字列) は UUID 型違反で
+            //   PostgreSQL が rejection するため使用不可。識別子は afterValue.requestId 経由で保持。
+            entityId: tenantId,
             beforeValue: { storageBytesPeakThisMonth: peakBytes.toString() },
             afterValue: {
               featureUnit: 'db-capacity-overage',
@@ -937,7 +940,8 @@ export async function billOneTenantFileStorageOverage(args: {
             userId: systemUserId,
             action: 'CREATE',
             entityType: 'api_call_log_skip',
-            entityId: requestId,
+            // ADR-0025 (2026-05-29 修正): entityId は @db.Uuid 型のため tenantId を入れる (DB capacity と同設計)
+            entityId: tenantId,
             beforeValue: { storageFileBytesPeakThisMonth: peakBytes.toString() },
             afterValue: {
               featureUnit: 'storage-file-overage',

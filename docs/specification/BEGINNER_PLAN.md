@@ -68,7 +68,13 @@ DB 容量と File Storage 容量の両方を消費する全エンティティ:
 - **DB**: Project, Knowledge, RiskIssue, Retrospective, Memo, Task, Customer, Stakeholder, Comment, Mention, Notification, Attachment (DB row 部分)
 - **File Storage**: Attachment (Supabase Storage バイト数部分)
 
-実装は [src/services/storage-guard.service.ts](../../src/services/storage-guard.service.ts) の 4 関数 (`precheckStorageLimit` / `assertStorageLimitInTx` / `precheckFileStorageLimit` / `assertFileStorageLimitInTx`) で全 write 経路を自動的にカバー。
+実装は [src/services/storage-guard.service.ts](../../src/services/storage-guard.service.ts) の 4 関数 (`precheckStorageLimit` / `assertStorageLimitInTx` / `precheckFileStorageLimit` / `assertFileStorageLimitInTx`) に Beginner 判定を統合。各 write route ごとにエラーマッパー (`mapBeginnerWriteGuardErrorToResponse` または `code === 'BEGINNER_*_QUOTA_EXCEEDED'` 分岐) で UX 文言を統一して返す。
+
+**現在の Beginner エラー UX 文言が正しく返る経路**:
+- 単発 POST/PUT/PATCH 32 route (`requireStorageQuotaForWrite` 経由) — [src/lib/api-helpers.ts](../../src/lib/api-helpers.ts) で集約対応
+- sync-import 5 route (knowledge / risks / retrospectives / memos / tasks)
+- attachment finalize / upload
+- ZIP import (`/api/tenants/me/import`)
 
 ### 3.5 DELETE 後の自動再集計 (debounce 30s)
 
@@ -81,7 +87,17 @@ cron キャッシュ値ベース判定の弱点 (ユーザが DELETE で容量�
 
 **debounce 30s**: 連続 DELETE 時の負荷防止のため、直近 30 秒以内に再集計済なら skip。手動 `[再集計]` ボタン (容量セクション UI) で強制実行可能。
 
-**fail-safe**: 再集計失敗は DELETE のビジネストランザクションをロールバックさせない。
+**fail-safe**: 再集計失敗は DELETE のビジネストランザクションをロールバックさせない。失敗時は `recordError` で warn ログを残し可観測性を確保 (= 監視ダッシュボードから検知可能)。
+
+**現在の自動再集計対象 DELETE 経路** (主要 6 service):
+- knowledge.service.ts (`deleteKnowledge`)
+- project.service.ts (`deleteProject` + `deleteProjectCascade`)
+- risk.service.ts (`deleteRisk`)
+- retrospective.service.ts (`deleteRetrospective`)
+- memo.service.ts (`deleteMemo`)
+- attachment.service.ts (`deleteAttachment`)
+
+**対象外 DELETE 経路**: customer / stakeholder / comment / mention / notification / task / estimate の DELETE は自動再集計対象外 (= 容量寄与が小さいため省略)。これらの削除後に容量解放を即時反映したい場合は、テナント設定画面の `[DB 容量 / API 利用量を再集計]` ボタンを手動で押すことで強制再集計可能。
 
 ---
 

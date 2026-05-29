@@ -835,15 +835,24 @@ describe('ADR-0025: Beginner プラン overage skip — billOneTenantDbCapacityO
     const auditCall = auditLogCreateMock.mock.calls[0]?.[0] as {
       data: {
         entityType: string;
+        entityId: string;
         afterValue: {
           adr: string;
           skipReason: string;
           costJpy: number;
           calculatedCostJpyIfBilled: number;
+          requestId: string;
         };
       };
     };
     expect(auditCall.data.entityType).toBe('api_call_log_skip');
+    // ADR-0025 (2026-05-29 修正): entityId は @db.Uuid 型のため tenantId を入れる
+    //   (旧実装の requestId='db-capacity-overage-{tenantId}-{ym}-{scope}' は UUID 型違反で
+    //    production の PostgreSQL で reject されていた)
+    expect(auditCall.data.entityId).toBe(TENANT_ID);
+    // requestId は afterValue 経由で識別子として保持
+    expect(auditCall.data.afterValue.requestId).toContain('db-capacity-overage');
+    expect(auditCall.data.afterValue.requestId).toContain(TENANT_ID);
     expect(auditCall.data.afterValue.adr).toBe('ADR-0025');
     expect(auditCall.data.afterValue.skipReason).toContain('beginner');
     expect(auditCall.data.afterValue.costJpy).toBe(0);

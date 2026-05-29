@@ -109,3 +109,57 @@ describe('requireStorageQuotaForWrite (ADR-0020 50GB ハードキャップ)', ()
     if (r) expect(r.status).toBe(403);
   });
 });
+
+// ================================================================
+// ADR-0025 (2026-05-29): Beginner プラン専用エラーレスポンス
+// ================================================================
+
+import { BEGINNER_DB_FREE_TIER_BYTES } from '@/config/db-capacity-pricing';
+
+describe('requireStorageQuotaForWrite — ADR-0025 Beginner プラン分岐', () => {
+  it('Beginner × 50MB 超過 → 403 BEGINNER_DB_QUOTA_EXCEEDED + 専用文言 + upgradeUrl', async () => {
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce({
+      plan: 'beginner',
+      storageBytesUsed: BigInt(BEGINNER_DB_FREE_TIER_BYTES + 1000),
+      storageGuardCircuitOpenedAt: null,
+    } as never);
+
+    const r = await requireStorageQuotaForWrite(TENANT_ID, 0);
+    expect(r).not.toBeNull();
+    if (r) {
+      expect(r.status).toBe(403);
+      const body = await r.json();
+      // ADR-0025: Beginner 専用コード + 専用 UX 文言 + upgradeUrl
+      expect(body.error.code).toBe('BEGINNER_DB_QUOTA_EXCEEDED');
+      expect(body.error.quotaType).toBe('db');
+      expect(body.error.message).toContain('Beginner');
+      expect(body.error.message).toContain('Expert');
+      expect(body.error.upgradeUrl).toBe('/settings/tenant');
+      expect(body.error.limitBytes).toBe(BEGINNER_DB_FREE_TIER_BYTES);
+      // ハードキャップ 50GB ではなく Beginner 上限 50MB が返ること
+      expect(body.error.limitBytes).not.toBe(DB_CAPACITY_L3_HARD_CAP_BYTES);
+    }
+  });
+
+  it('Expert × 50MB 超過 → null (= Beginner ガード対象外、50GB まで許可)', async () => {
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce({
+      plan: 'expert',
+      storageBytesUsed: BigInt(BEGINNER_DB_FREE_TIER_BYTES + 1000),
+      storageGuardCircuitOpenedAt: null,
+    } as never);
+
+    const r = await requireStorageQuotaForWrite(TENANT_ID, 0);
+    expect(r).toBeNull();
+  });
+
+  it('Pro × 50MB 超過 → null (Beginner ガード対象外)', async () => {
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce({
+      plan: 'pro',
+      storageBytesUsed: BigInt(BEGINNER_DB_FREE_TIER_BYTES + 1000),
+      storageGuardCircuitOpenedAt: null,
+    } as never);
+
+    const r = await requireStorageQuotaForWrite(TENANT_ID, 0);
+    expect(r).toBeNull();
+  });
+});

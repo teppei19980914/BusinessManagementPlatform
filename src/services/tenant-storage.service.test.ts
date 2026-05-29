@@ -199,4 +199,20 @@ describe('maybeRecalcAfterBeginnerDelete (ADR-0025)', () => {
     vi.mocked(prisma.tenant.findFirst).mockRejectedValueOnce(new Error('db error'));
     await expect(maybeRecalcAfterBeginnerDelete(TENANT_ID)).resolves.toBeUndefined();
   });
+
+  it('plan fetch 例外時 recordError を warn で呼ぶ (= 可観測性確保、ADR-0025 修正 §3.5)', async () => {
+    const { recordError } = await import('@/services/error-log.service');
+    vi.mocked(prisma.tenant.findFirst).mockRejectedValueOnce(new Error('db connection lost'));
+    await maybeRecalcAfterBeginnerDelete(TENANT_ID);
+    expect(recordError).toHaveBeenCalledWith(
+      expect.objectContaining({
+        severity: 'warn',
+        context: expect.objectContaining({
+          kind: 'beginner_recalc_plan_fetch_failed',
+          tenantId: TENANT_ID,
+          adr: 'ADR-0025',
+        }),
+      }),
+    );
+  });
 });

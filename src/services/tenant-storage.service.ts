@@ -261,8 +261,27 @@ export async function maybeRecalcAfterBeginnerDelete(tenantId: string): Promise<
     if (tenant?.plan === 'beginner') {
       await recalculateTenantStorageUsageWithDebounce(tenantId);
     }
-  } catch {
-    // fail-safe: plan 取得自体が失敗しても呼出元には影響させない (= cron 任せで OK)
+  } catch (e) {
+    // ADR-0025 (2026-05-29 修正): plan 取得失敗時も silent return するが、Beginner ユーザの場合
+    //   「DELETE しても 24h 待たないと write 復活しない」UX 問題に繋がるため、可観測性を確保する
+    //   ため recordError で warn ログを残す (= 検証指摘 §3.5)。
+    //   fail-safe 性は維持 (= 呼出元 (DELETE) には throw しない)。
+    try {
+      await recordError({
+        severity: 'warn',
+        source: 'server',
+        message: `[beginner-recalc] plan fetch failed in maybeRecalcAfterBeginnerDelete for tenant ${tenantId}`,
+        stack: e instanceof Error ? e.stack : undefined,
+        context: {
+          kind: 'beginner_recalc_plan_fetch_failed',
+          tenantId,
+          error: e instanceof Error ? e.message : String(e),
+          adr: 'ADR-0025',
+        },
+      });
+    } catch {
+      // recordError も失敗した最終フォールバック: silent
+    }
   }
 }
 

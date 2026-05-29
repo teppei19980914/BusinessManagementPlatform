@@ -64,7 +64,15 @@ Beginner プランのテナントは、**DB 使用量が 50MB / File Storage 使
 | `precheckFileStorageLimit()` | File Storage 50GB hard cap pre-check | + Beginner 100MB 超過判定 |
 | `assertFileStorageLimitInTx()` | File Storage 50GB hard cap post-check | + Beginner 100MB 超過判定 |
 
-これら 4 関数は既に **全 write 経路 + sync-import / external-import / attachment finalize** から呼ばれているため (ADR-0020 §11.4)、本拡張で全経路が自動的に Beginner ガード対象となる。
+これら 4 関数は既に複数経路から呼ばれているが、**呼出元ごとにエラーマッパーを個別に Beginner 対応させる必要がある** (= 戻り値の `code` を見ずにハードコードメッセージを返すラッパーが既存にあるため)。本 PR では以下 3 経路にエラーマッパー対応を追加した:
+
+| 経路 | エラーマッパー対応 | 備考 |
+|---|---|---|
+| sync-import 5 route (knowledge / risks / retrospectives / memos / tasks) | ✅ 直接 `mapBeginnerWriteGuardErrorToResponse` 呼出 | 既存の `mapStorageGuardErrorToResponse` の前段で処理 |
+| attachment/finalize | ✅ `BeginnerWriteGuardExceededError` インスタンス判定で分岐 | post-check 経路 |
+| attachment/upload (Pre-signed URL) | ✅ `code === 'BEGINNER_STORAGE_QUOTA_EXCEEDED'` 分岐 | pre-check 経路 |
+| **`requireStorageQuotaForWrite` ラッパー経由 (32 単発 POST/PUT route)** | ✅ `code === 'BEGINNER_DB_QUOTA_EXCEEDED'` 分岐 | [src/lib/api-helpers.ts](../../src/lib/api-helpers.ts) で集約対応 |
+| ZIP import (`/api/tenants/me/import`) | ✅ `data-import.service.ts` で `BeginnerWriteGuardExceededError` を catch | post-check 経路 |
 
 ### 3. エラー型 / エラーコード
 
