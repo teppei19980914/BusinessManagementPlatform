@@ -570,6 +570,14 @@ export async function applyImport(input: {
   let totalCostJpy = 0;
 
   if (batchItems.length > 0) {
+    // PR-9 perf (2026-05-29 / ADR-0026) **意図的に同期 await のまま残す**:
+    //   外部データインポート (CSV/XLSX/ZIP の bulk 取込) は「長時間 wizard を表示しながら N 件
+    //   処理する」フローであり、ユーザは完了まで待つことを前提に操作している。レスポンスに
+    //   `embeddingGenerated` / `embeddingFailed` / `totalCostJpy` を含めて結果サマリを表示する
+    //   設計のため、afterSafe で後回しにすると課金額が「0 円」と表示され誤解を招く
+    //   (= 請求 invariant 報告の信頼性が崩れる、メモリ `feedback_billing_invariant` 違反)。
+    //   ユーザ向け即時操作 (Knowledge/Risk/Retro/Memo の単発 create/update + bulk visibility 公開化)
+    //   とは UX 文脈が異なるため、本処理は同期 await を維持。
     const batchResult = await generateAndPersistBatchEmbeddings({
       items: batchItems,
       tenantId: input.tenantId,

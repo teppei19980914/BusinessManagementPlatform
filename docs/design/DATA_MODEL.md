@@ -519,6 +519,7 @@ erDiagram
 **インデックス**:
 - `idx_projects_status` (status, WHERE deleted_at IS NULL)
 - `idx_projects_customer_id` (customer_id) — PR #111-2 以降、`customer_name` 列は廃止
+- `idx_projects_tenant_status` (tenant_id, status) — PR-1 perf (2026-06-02): `/projects` 一覧の `WHERE tenant_id = ? AND status = ?` を 1 回の index scan で完結させるための複合 index。tenantId 単独 / status 単独だと PostgreSQL planner が二度スキャン + マージする plan を選びがちで、テナント内データが増えるほど線形に遅くなる課題への対処
 
 ### 5.2b customers（顧客 / PR #111-1 新設、#111-2 完全移行）
 
@@ -746,6 +747,7 @@ User ──< project_members >── Project
 - `idx_knowledges_type` (knowledge_type, WHERE deleted_at IS NULL)
 - `idx_knowledges_visibility` (visibility, WHERE deleted_at IS NULL)
 - `idx_knowledges_fulltext` (GIN index on title, content for 全文検索)
+- `idx_knowledges_tenant_visibility_created` (tenant_id, visibility, created_at) — PR-1 perf (2026-06-02): `/knowledge` 一覧 / 全ナレッジ画面の `WHERE tenant_id = ? AND visibility = 'public' ORDER BY created_at DESC` を index scan のみで完結させる複合 index
 
 ### 5.9 retrospectives（振り返り）
 
@@ -1004,6 +1006,7 @@ export type DevMethod = keyof typeof DEV_METHODS;
 | idx_projects_status | status | 部分 | 一覧のステータスフィルタ |
 | idx_projects_customer_id | customer_id | 通常 | 顧客経由の絞込 (PR #111-2 以降、customer_name 索引は廃止) |
 | idx_projects_dates | planned_start_date, planned_end_date | 部分 | 一覧の日付範囲フィルタ |
+| idx_projects_tenant_status | tenant_id, status | 通常 | `/projects` 一覧の `tenantId + status` 複合フィルタ (PR-1 perf 2026-06-02) |
 
 #### project_members
 
@@ -1049,6 +1052,7 @@ export type DevMethod = keyof typeof DEV_METHODS;
 | idx_knowledges_type | knowledge_type | 部分 | 種別フィルタ |
 | idx_knowledges_visibility | visibility | 部分 | 公開範囲フィルタ |
 | idx_knowledges_search | (title, content 連結) | GIN (pg_trgm) | 全文検索（セクション16） |
+| idx_knowledges_tenant_visibility_created | tenant_id, visibility, created_at | 通常 | `/knowledge` 一覧の `tenantId + visibility + ORDER BY createdAt DESC` を一括 index scan (PR-1 perf 2026-06-02) |
 
 #### retrospectives
 

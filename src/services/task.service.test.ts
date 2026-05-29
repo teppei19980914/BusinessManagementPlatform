@@ -7,6 +7,23 @@ vi.mock('@/lib/db', () => ({
     task: {
       findMany: vi.fn(),
     },
+    project: {
+      findMany: vi.fn(),
+    },
+  },
+}));
+
+// PR-3 perf (2026-05-29): listMyTaskProjects 内で動的 import される helper を mock。
+//   テストランナー上では実装を返して通常通り filterTreeByAssignee を実行させる。
+vi.mock('@/lib/task-tree-utils', () => ({
+  filterTreeByAssignee: (tree: TaskDTO[], assignees: Set<string>): TaskDTO[] => {
+    function walk(node: TaskDTO): TaskDTO | null {
+      const matched = node.assigneeId ? assignees.has(node.assigneeId) : false;
+      const children = (node.children ?? []).map(walk).filter(Boolean) as TaskDTO[];
+      if (matched || children.length > 0) return { ...node, children };
+      return null;
+    }
+    return tree.map(walk).filter(Boolean) as TaskDTO[];
   },
 }));
 
@@ -19,6 +36,7 @@ import {
   normalizeProgressForStatus,
   isWpAggregationEqual,
   previewActivityWorkload,
+  listMyTaskProjects,
   type WpAggregationChild,
   type WpAggregationResult,
 } from './task.service';
@@ -643,5 +661,119 @@ describe('previewActivityWorkload', () => {
     const call = vi.mocked(prisma.task.findMany).mock.calls[0]![0]!;
     const where = call.where as { project?: { tenantId: string } };
     expect(where.project).toEqual({ tenantId: TENANT_A });
+  });
+});
+
+// PR-3 perf (2026-05-29): listMyTaskProjects の N+1 解消が結果に影響しないことを担保。
+//   旧実装: projects 数 N に対して N 回 listTasks (= N 回 findMany)。
+//   新実装: 1 回の findMany で全プロジェクト分のタスクを取得し JS グルーピング。
+describe('listMyTaskProjects (PR-3 perf: N+1 解消の同等性検証)', () => {
+  const USER = '00000000-0000-0000-0000-000000000aaa';
+  const TENANT = '00000000-0000-0000-0000-0000000000aa';
+  const PROJECT_A = '00000000-0000-0000-0000-00000000000a';
+  const PROJECT_B = '00000000-0000-0000-0000-00000000000b';
+
+  beforeEach(() => {
+    vi.mocked(prisma.task.findMany).mockReset();
+    vi.mocked(prisma.project.findMany).mockReset();
+  });
+
+  function taskFixture(overrides: {
+    id: string;
+    projectId: string;
+    name?: string;
+    parentTaskId?: string | null;
+    assigneeId?: string | null;
+    type?: 'work_package' | 'activity';
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  }): any {
+    return {
+      id: overrides.id,
+      projectId: overrides.projectId,
+      name: overrides.name ?? `task-${overrides.id}`,
+      type: overrides.type ?? 'activity',
+      parentTaskId: overrides.parentTaskId ?? null,
+      assigneeId: overrides.assigneeId ?? USER,
+      status: 'not_started',
+      plannedStartDate: null,
+      plannedEndDate: null,
+      plannedEffort: dec(1),
+      actualStartDate: null,
+      actualEndDate: null,
+      progressRate: 0,
+      description: null,
+      createdBy: USER,
+      updatedBy: USER,
+      createdAt: new Date('2026-05-29T00:00:00Z'),
+      updatedAt: new Date('2026-05-29T00:00:00Z'),
+      deletedAt: null,
+      assignee: { name: 'Alice' },
+      parentTask: overrides.parentTaskId ? { name: 'parent' } : null,
+    };
+  }
+
+  it('プロジェクト 0 件のとき空配列を返し、後続クエリが発行されないこと', async () => {
+    vi.mocked(prisma.task.findMany).mockResolvedValueOnce([]);
+
+    const result = await listMyTaskProjects(USER, TENANT);
+
+    expect(result).toEqual([]);
+    expect(prisma.task.findMany).toHaveBeenCalledTimes(1);
+    expect(prisma.project.findMany).not.toHaveBeenCalled();
+  });
+
+  it('複数プロジェクトでも DB ラウンドトリップが固定 3 回 (assignments / projects / tasks) に収まること', async () => {
+    vi.mocked(prisma.task.findMany)
+      // assignments query (担当 ACT の projectId)
+      .mockResolvedValueOnce([
+        { projectId: PROJECT_A },
+        { projectId: PROJECT_A },
+        { projectId: PROJECT_B },
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ] as any)
+      // all tasks across projects (PR-3 で 1 回に統合)
+      .mockResolvedValueOnce([
+        taskFixture({ id: 'a1', projectId: PROJECT_A }),
+        taskFixture({ id: 'a2', projectId: PROJECT_A }),
+        taskFixture({ id: 'b1', projectId: PROJECT_B }),
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ] as any);
+    vi.mocked(prisma.project.findMany).mockResolvedValueOnce([
+      { id: PROJECT_A, name: 'Alpha' },
+      { id: PROJECT_B, name: 'Beta' },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ] as any);
+
+    const result = await listMyTaskProjects(USER, TENANT);
+
+    // 結果がプロジェクト名順 + 各プロジェクトのタスクが正しく分配されていること
+    expect(result).toHaveLength(2);
+    expect(result[0]!.projectName).toBe('Alpha');
+    expect(result[1]!.projectName).toBe('Beta');
+    expect(result[0]!.tree.map((t) => t.id).sort()).toEqual(['a1', 'a2']);
+    expect(result[1]!.tree.map((t) => t.id)).toEqual(['b1']);
+
+    // PR-3 の本質: findMany が **2 回** (assignments + 全タスク) のみ。
+    // 旧実装はプロジェクト数 N に対し findMany が N+1 回呼ばれていた。
+    expect(prisma.task.findMany).toHaveBeenCalledTimes(2);
+    expect(prisma.project.findMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('全タスク取得クエリに viewerTenantId フィルタが含まれている (severity-1 越境防御)', async () => {
+    vi.mocked(prisma.task.findMany)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .mockResolvedValueOnce([{ projectId: PROJECT_A }] as any)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .mockResolvedValueOnce([] as any);
+    vi.mocked(prisma.project.findMany).mockResolvedValueOnce([
+      { id: PROJECT_A, name: 'Alpha' },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ] as any);
+
+    await listMyTaskProjects(USER, TENANT);
+
+    const secondCall = vi.mocked(prisma.task.findMany).mock.calls[1]![0]!;
+    const where = secondCall.where as { project?: { tenantId: string } };
+    expect(where.project).toEqual({ tenantId: TENANT });
   });
 });

@@ -1,4 +1,6 @@
-import { auth } from '@/lib/auth';
+// PR-7 perf (2026-05-29): React.cache でラップ済の auth() を使い、(dashboard)/layout の
+//   requireAuthForLayout() と JWT 復号を共有する (= 同一 request で 1 回に集約)。
+import { getCachedAuth } from '@/lib/auth-cached';
 import { redirect } from 'next/navigation';
 import { LOGIN_ROUTE } from '@/config';
 import { listProjects } from '@/services/project.service';
@@ -26,7 +28,7 @@ type SearchParams = Promise<{
 }>;
 
 export default async function ProjectsPage({ searchParams }: { searchParams: SearchParams }) {
-  const session = await auth();
+  const session = await getCachedAuth();
   if (!session) redirect(LOGIN_ROUTE);
 
   // Next.js 15: searchParams は Promise なので await が必須

@@ -33,6 +33,11 @@ import {
 } from './auto-tag.service';
 import { persistEmbedding } from './embedding.service';
 import { recordError } from './error-log.service';
+// PR-9 perf (2026-05-29 / ADR-0026): embedding 永続化 (DB UPDATE) を `after()` で非同期化。
+//   ※ Project の LLM 呼出 (extractTagsAndEmbedForProject) は auto-tag を同期的に必要とするため
+//     ここで await する必要があるが、結果の embedding を DB へ書く UPDATE は遅延可。
+//     Knowledge/Risk/Retro/Memo と同等の async パターンで応答時間を削減する。
+import { afterSafe } from '@/lib/after-safe';
 import { withMeteredLLM } from '@/lib/llm/metered';
 import { voyageEmbed } from '@/lib/llm/voyage-client';
 import { EMBEDDING_DIMENSIONS } from '@/config/llm';
@@ -262,8 +267,15 @@ export async function createProject(
   });
 
   // (2026-05-15) embedding は LLM 呼出時に取得済。project.id が確定したここで DB に書く。
+  // PR-9 perf (2026-05-29 / ADR-0026): embedding 永続化 (raw SQL UPDATE) を `after()` で非同期化。
   if (llm.embedding != null) {
-    await persistProjectEmbedding(project.id, tenantId, llm.embedding, userId);
+    const embedding = llm.embedding;
+    afterSafe(
+      persistProjectEmbedding(project.id, tenantId, embedding, userId).catch((err) => {
+        // eslint-disable-next-line no-console
+        console.error('[project.create] async embedding persist failed (monthly backfill will retry)', err);
+      }),
+    );
   }
 
   return toProjectDTO(project);
@@ -409,8 +421,15 @@ export async function updateProject(
 
   // (2026-05-15) text 変更時のみ embedding を再永続化。LLM 呼出は上で実施済。
   //   text 変更なし = 既存 embedding 流用 (= LLM 課金回避)。
+  // PR-9 perf (2026-05-29 / ADR-0026): embedding 永続化を `after()` で非同期化。
   if (textFieldsChanging && embeddingFromLlm != null) {
-    await persistProjectEmbedding(projectId, tenantId, embeddingFromLlm, userId);
+    const embedding = embeddingFromLlm;
+    afterSafe(
+      persistProjectEmbedding(projectId, tenantId, embedding, userId).catch((err) => {
+        // eslint-disable-next-line no-console
+        console.error('[project.update] async embedding persist failed (monthly backfill will retry)', err);
+      }),
+    );
   }
 
   return toProjectDTO(project);

@@ -21,6 +21,7 @@
  */
 
 import { prisma } from '@/lib/db';
+import { afterSafe } from '@/lib/after-safe';
 import { assertAssigneeTenant } from '@/lib/assignee-validation';
 import { generateAndPersistEntityEmbedding, generateAndPersistBatchEmbeddings } from './embedding.service';
 import type { CreateMemoInput, UpdateMemoInput } from '@/lib/validators/memo';
@@ -204,15 +205,21 @@ export async function createMemo(
   // (2026-05-15) 公開範囲='全メンバー' のときのみ embedding を生成 + 保存。
   //   公開範囲='自分のみ' (private) は提案エンジン対象外 → Voyage API 課金回避。
   //   失敗時はサイレントにスキップ (本体保存は成功、月初 backfill cron で補完)。
+  // PR-9 perf (2026-05-29 / ADR-0026): embedding 生成を `after()` で非同期化。
   if (visibility === 'public') {
-    await generateAndPersistEntityEmbedding({
-      table: 'memos',
-      rowId: created.id,
-      tenantId,
-      userId,
-      text: composeMemoText({ title: input.title, content: input.content }),
-      featureUnit: 'memo-embedding',
-    });
+    afterSafe(
+      generateAndPersistEntityEmbedding({
+        table: 'memos',
+        rowId: created.id,
+        tenantId,
+        userId,
+        text: composeMemoText({ title: input.title, content: input.content }),
+        featureUnit: 'memo-embedding',
+      }).catch((err) => {
+        // eslint-disable-next-line no-console
+        console.error('[memo.create] async embedding failed (monthly backfill will retry)', err);
+      }),
+    );
   }
 
   return toDTO(created, userId);
@@ -314,14 +321,20 @@ export async function updateMemo(
     !willBePrivate && (becamePublic || (stayedPublic && textFieldsChanging));
 
   if (shouldGenerateEmbedding) {
-    await generateAndPersistEntityEmbedding({
-      table: 'memos',
-      rowId: memoId,
-      tenantId: viewerTenantId,
-      userId,
-      text: composeMemoText({ title: updated.title, content: updated.content }),
-      featureUnit: 'memo-embedding',
-    });
+    // PR-9 perf (2026-05-29 / ADR-0026): embedding 再生成を `after()` で非同期化。
+    afterSafe(
+      generateAndPersistEntityEmbedding({
+        table: 'memos',
+        rowId: memoId,
+        tenantId: viewerTenantId,
+        userId,
+        text: composeMemoText({ title: updated.title, content: updated.content }),
+        featureUnit: 'memo-embedding',
+      }).catch((err) => {
+        // eslint-disable-next-line no-console
+        console.error('[memo.update] async embedding failed (monthly backfill will retry)', err);
+      }),
+    );
   }
 
   return toDTO(updated, userId);
@@ -408,13 +421,19 @@ export async function bulkUpdateMemosVisibilityFromList(
         rowId: t.id,
         text: composeMemoText({ title: t.title, content: t.content }),
       }));
-      const res = await generateAndPersistBatchEmbeddings({
-        items,
-        tenantId: viewerTenantId,
-        userId: viewerUserId,
-        featureUnit: 'memo-embedding',
-      });
-      embeddingsGenerated = res.generated;
+      // PR-9 perf (2026-05-29 / ADR-0026): batch embedding 生成を `after()` で非同期化。
+      embeddingsGenerated = items.length;
+      afterSafe(
+        generateAndPersistBatchEmbeddings({
+          items,
+          tenantId: viewerTenantId,
+          userId: viewerUserId,
+          featureUnit: 'memo-embedding',
+        }).catch((err) => {
+          // eslint-disable-next-line no-console
+          console.error('[memo.bulk] async embedding failed (monthly backfill will retry)', err);
+        }),
+      );
     }
   }
 

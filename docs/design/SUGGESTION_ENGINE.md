@@ -26,6 +26,16 @@
 
 **重要**: トリガー③ では **何度提案画面を開いても追加課金は発生しない**。Voyage は事前にトリガー①②で生成・保存済みの embedding を pgvector が読み出して比較するだけのため、検索・表示時に外部 API は不要。これが本サービスのアーキテクチャ上の優位性で、外部 API 障害時 (Voyage 全停止) でも提案機能は止まらない fail-safe 性を担保する。
 
+**🆕 PR-9 perf (2026-05-29, ADR-0026): embedding 生成は非同期化済**
+
+トリガー①②の embedding 生成（および Project の自動タグ抽出後の embedding 永続化）は、Next.js 16 標準の `after()` API でレスポンス返却後に実行される。
+
+- 資産の作成・更新レスポンスは embedding 生成完了を待たずに即時返却される（体感 100-200ms）
+- embedding 生成自体は response 後にバックグラウンドで実行される (300-800ms / Voyage API)
+- **提案エンジンへの反映には数秒〜のタイムラグが発生する**（保存直後に提案画面を開くと、最新データが未反映の状態で表示される可能性がある）
+- 失敗時は月初 `runMonthlyEmbeddingBackfill` cron が NULL 行を一括補完してリカバリ
+- 詳細・トレードオフは [ADR-0026](../adr/0026-embedding-async-generation.md) 参照
+
 ### B. 機能概要 (各トリガーで何が起きるか)
 
 #### B-1. Project 作成・更新時 (トリガー①)

@@ -32,6 +32,7 @@
  */
 
 import { prisma } from '@/lib/db';
+import { afterSafe } from '@/lib/after-safe';
 import { assertAssigneeTenant } from '@/lib/assignee-validation';
 import { generateAndPersistEntityEmbedding, generateAndPersistBatchEmbeddings } from './embedding.service';
 // ADR-0025 (2026-05-29): DELETE 後に Beginner プランのテナント容量を自動再集計するための hook
@@ -419,22 +420,32 @@ export async function createKnowledge(
   //   per-candidate でタグ:テキスト=5:5 の縮退モード重み再配分で動作する。2026-05-14)。
   // PR #357 (2026-05-14): visibility='draft' (公開範囲: 自分のみ) は提案エンジン側で
   //   filter 除外されるため、embedding を生成せず Voyage API 呼出 (= 課金) も発生させない。
+  // PR-9 perf (2026-05-29 / ADR-0026): embedding 生成を `after()` で非同期化。
+  //   レスポンスはここで即返却され、Voyage API 呼出 (300-800ms) は response 後に
+  //   バックグラウンドで実行される。提案エンジンへの反映は数秒タイムラグが発生するが、
+  //   月次 backfill cron (`runMonthlyEmbeddingBackfill`) が NULL 検出時にリカバリする。
+  //   `after()` は Next.js 15+ の標準 API で、Function 実行を response 完了後まで保持する。
   if (k.visibility !== 'draft') {
-    await generateAndPersistEntityEmbedding({
-      table: 'knowledges',
-      rowId: k.id,
-      tenantId,
-      userId,
-      text: composeKnowledgeText({
-        title: input.title,
-        background: input.background,
-        content: input.content,
-        result: input.result,
-        conclusion: input.conclusion ?? null,
-        recommendation: input.recommendation ?? null,
+    afterSafe(
+      generateAndPersistEntityEmbedding({
+        table: 'knowledges',
+        rowId: k.id,
+        tenantId,
+        userId,
+        text: composeKnowledgeText({
+          title: input.title,
+          background: input.background,
+          content: input.content,
+          result: input.result,
+          conclusion: input.conclusion ?? null,
+          recommendation: input.recommendation ?? null,
+        }),
+        featureUnit: 'knowledge-embedding',
+      }).catch((err) => {
+        // eslint-disable-next-line no-console
+        console.error('[knowledge.create] async embedding failed (monthly backfill will retry)', err);
       }),
-      featureUnit: 'knowledge-embedding',
-    });
+    );
   }
 
   return toKnowledgeDTO(k);
@@ -587,21 +598,27 @@ export async function updateKnowledge(
     !willBeDraft && (becameVisible || (stayedVisible && textFieldsChanging));
 
   if (shouldGenerateEmbedding) {
-    await generateAndPersistEntityEmbedding({
-      table: 'knowledges',
-      rowId: knowledgeId,
-      tenantId,
-      userId,
-      text: composeKnowledgeText({
-        title: k.title,
-        background: k.background,
-        content: k.content,
-        result: k.result,
-        conclusion: k.conclusion,
-        recommendation: k.recommendation,
+    // PR-9 perf (2026-05-29 / ADR-0026): embedding 再生成を `after()` で非同期化。
+    afterSafe(
+      generateAndPersistEntityEmbedding({
+        table: 'knowledges',
+        rowId: knowledgeId,
+        tenantId,
+        userId,
+        text: composeKnowledgeText({
+          title: k.title,
+          background: k.background,
+          content: k.content,
+          result: k.result,
+          conclusion: k.conclusion,
+          recommendation: k.recommendation,
+        }),
+        featureUnit: 'knowledge-embedding',
+      }).catch((err) => {
+        // eslint-disable-next-line no-console
+        console.error('[knowledge.update] async embedding failed (monthly backfill will retry)', err);
       }),
-      featureUnit: 'knowledge-embedding',
-    });
+    );
   }
 
   return toKnowledgeDTO(k);
@@ -782,13 +799,22 @@ export async function bulkUpdateKnowledgeVisibilityFromList(
           recommendation: t.recommendation,
         }),
       }));
-      const res = await generateAndPersistBatchEmbeddings({
-        items,
-        tenantId: viewerTenantId,
-        userId: viewerUserId,
-        featureUnit: 'knowledge-embedding',
-      });
-      embeddingsGenerated = res.generated;
+      // PR-9 perf (2026-05-29 / ADR-0026): batch embedding 生成を `after()` で非同期化。
+      //   レスポンスは即返却、Voyage API 呼出と DB UPDATE は response 後に実行される。
+      //   `embeddingsGenerated` はスケジュール対象数を返す (= ユーザに見える「N 件の埋め込み
+      //   生成を予約しました」の意味で同等)。実際の生成数は cron / sentry log で監視。
+      embeddingsGenerated = items.length;
+      afterSafe(
+        generateAndPersistBatchEmbeddings({
+          items,
+          tenantId: viewerTenantId,
+          userId: viewerUserId,
+          featureUnit: 'knowledge-embedding',
+        }).catch((err) => {
+          // eslint-disable-next-line no-console
+          console.error('[knowledge.bulk] async embedding failed (monthly backfill will retry)', err);
+        }),
+      );
     }
   }
 

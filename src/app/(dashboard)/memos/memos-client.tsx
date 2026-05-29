@@ -208,6 +208,15 @@ export function MemosClient({
   });
   const [stagedCreateAttachments, setStagedCreateAttachments] = useState<StagedAttachment[]>([]);
 
+  // PR-1 perf (2026-05-29): フォーム setter を functional updater + useCallback に統一。
+  //   詳細は projects-client.tsx 同パターン参照。
+  const updateCreateField = useCallback(
+    <K extends keyof typeof createForm>(key: K, value: (typeof createForm)[K]) => {
+      setCreateForm((prev) => ({ ...prev, [key]: value }));
+    },
+    [],
+  );
+
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     setError('');
@@ -251,6 +260,13 @@ export function MemosClient({
     content: '',
     visibility: 'private',
   });
+  // PR-1 perf (2026-05-29): 編集フォーム setter も functional updater + useCallback に統一。
+  const updateEditField = useCallback(
+    <K extends keyof EditFormState>(key: K, value: EditFormState[K]) => {
+      setEditForm((prev) => ({ ...prev, [key]: value }));
+    },
+    [],
+  );
   const [prevEditingId, setPrevEditingId] = useState<string | null>(null);
   if (editing && editing.id !== prevEditingId) {
     setPrevEditingId(editing.id);
@@ -398,7 +414,7 @@ export function MemosClient({
                   <Label>{tField('visibility')}</Label>
                   <select
                     value={createForm.visibility}
-                    onChange={(e) => setCreateForm({ ...createForm, visibility: e.target.value })}
+                    onChange={(e) => updateCreateField('visibility', e.target.value)}
                     className={nativeSelectClass}
                   >
                     {Object.entries(VISIBILITY_LABELS).map(([k, l]) => (
@@ -416,7 +432,7 @@ export function MemosClient({
                   </Label>
                   <Input
                     value={createForm.title}
-                    onChange={(e) => setCreateForm({ ...createForm, title: e.target.value })}
+                    onChange={(e) => updateCreateField('title', e.target.value)}
                     maxLength={150}
                     required={createForm.visibility === 'public'}
                   />
@@ -426,7 +442,7 @@ export function MemosClient({
                   {/* refactor/list-create-content-optional (2026-04-27 #6): タイトル必須、本文は任意 */}
                   <MarkdownTextarea
                     value={createForm.content}
-                    onChange={(v) => setCreateForm({ ...createForm, content: v })}
+                    onChange={(v) => updateCreateField('content', v)}
                     rows={8}
                     maxLength={10000}
                   />
@@ -531,7 +547,7 @@ export function MemosClient({
                 <Label>{tField('visibility')}</Label>
                 <select
                   value={editForm.visibility}
-                  onChange={(e) => setEditForm({ ...editForm, visibility: e.target.value })}
+                  onChange={(e) => updateEditField('visibility', e.target.value)}
                   className={nativeSelectClass}
                 >
                   {Object.entries(VISIBILITY_LABELS).map(([k, l]) => (
@@ -549,7 +565,7 @@ export function MemosClient({
                 </Label>
                 <Input
                   value={editForm.title}
-                  onChange={(e) => setEditForm({ ...editForm, title: e.target.value })}
+                  onChange={(e) => updateEditField('title', e.target.value)}
                   maxLength={150}
                   required={editForm.visibility === 'public'}
                 />
@@ -559,7 +575,7 @@ export function MemosClient({
                 {/* refactor/list-create-content-optional (2026-04-27 #6): 編集時も本文は任意 */}
                 <MarkdownTextarea
                   value={editForm.content}
-                  onChange={(v) => setEditForm({ ...editForm, content: v })}
+                  onChange={(v) => updateEditField('content', v)}
                   previousValue={editing.content}
                   rows={8}
                   maxLength={10000}

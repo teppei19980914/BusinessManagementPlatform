@@ -32,6 +32,7 @@
  */
 
 import { prisma } from '@/lib/db';
+import { afterSafe } from '@/lib/after-safe';
 import { assertAssigneeTenant } from '@/lib/assignee-validation';
 import { generateAndPersistEntityEmbedding, generateAndPersistBatchEmbeddings } from './embedding.service';
 import type { CreateRetrospectiveInput } from '@/lib/validators/retrospective';
@@ -333,22 +334,28 @@ export async function createRetrospective(
   // PR #5-c (T-03 Phase 2): 本体 INSERT 後に embedding を生成 + 保存 (fail-safe)
   // PR #357 (2026-05-14): visibility='draft' (公開範囲: 自分のみ) は提案エンジン側で
   //   filter 除外されるため、embedding を生成せず Voyage API 呼出 (= 課金) を発生させない。
+  // PR-9 perf (2026-05-29 / ADR-0026): embedding 生成を `after()` で非同期化。
   if (r.visibility !== 'draft') {
-    await generateAndPersistEntityEmbedding({
-      table: 'retrospectives',
-      rowId: r.id,
-      tenantId,
-      userId,
-      text: composeRetrospectiveText({
-        planSummary: input.planSummary,
-        actualSummary: input.actualSummary,
-        goodPoints: input.goodPoints,
-        problems: input.problems,
-        improvements: input.improvements,
-        knowledgeToShare: input.knowledgeToShare ?? null,
+    afterSafe(
+      generateAndPersistEntityEmbedding({
+        table: 'retrospectives',
+        rowId: r.id,
+        tenantId,
+        userId,
+        text: composeRetrospectiveText({
+          planSummary: input.planSummary,
+          actualSummary: input.actualSummary,
+          goodPoints: input.goodPoints,
+          problems: input.problems,
+          improvements: input.improvements,
+          knowledgeToShare: input.knowledgeToShare ?? null,
+        }),
+        featureUnit: 'retrospective-embedding',
+      }).catch((err) => {
+        // eslint-disable-next-line no-console
+        console.error('[retrospective.create] async embedding failed (monthly backfill will retry)', err);
       }),
-      featureUnit: 'retrospective-embedding',
-    });
+    );
   }
 
   return {
@@ -524,21 +531,27 @@ export async function updateRetrospective(
     !willBeDraft && (becameVisible || (stayedVisible && textFieldsChanging));
 
   if (shouldGenerateEmbedding) {
-    await generateAndPersistEntityEmbedding({
-      table: 'retrospectives',
-      rowId: retroId,
-      tenantId,
-      userId,
-      text: composeRetrospectiveText({
-        planSummary: r.planSummary,
-        actualSummary: r.actualSummary,
-        goodPoints: r.goodPoints,
-        problems: r.problems,
-        improvements: r.improvements,
-        knowledgeToShare: r.knowledgeToShare,
+    // PR-9 perf (2026-05-29 / ADR-0026): embedding 再生成を `after()` で非同期化。
+    afterSafe(
+      generateAndPersistEntityEmbedding({
+        table: 'retrospectives',
+        rowId: retroId,
+        tenantId,
+        userId,
+        text: composeRetrospectiveText({
+          planSummary: r.planSummary,
+          actualSummary: r.actualSummary,
+          goodPoints: r.goodPoints,
+          problems: r.problems,
+          improvements: r.improvements,
+          knowledgeToShare: r.knowledgeToShare,
+        }),
+        featureUnit: 'retrospective-embedding',
+      }).catch((err) => {
+        // eslint-disable-next-line no-console
+        console.error('[retrospective.update] async embedding failed (monthly backfill will retry)', err);
       }),
-      featureUnit: 'retrospective-embedding',
-    });
+    );
   }
 }
 
@@ -688,13 +701,19 @@ export async function bulkUpdateRetrospectivesVisibilityFromList(
           knowledgeToShare: t.knowledgeToShare,
         }),
       }));
-      const res = await generateAndPersistBatchEmbeddings({
-        items,
-        tenantId: viewerTenantId,
-        userId: viewerUserId,
-        featureUnit: 'retrospective-embedding',
-      });
-      embeddingsGenerated = res.generated;
+      // PR-9 perf (2026-05-29 / ADR-0026): batch embedding 生成を `after()` で非同期化。
+      embeddingsGenerated = items.length;
+      afterSafe(
+        generateAndPersistBatchEmbeddings({
+          items,
+          tenantId: viewerTenantId,
+          userId: viewerUserId,
+          featureUnit: 'retrospective-embedding',
+        }).catch((err) => {
+          // eslint-disable-next-line no-console
+          console.error('[retrospective.bulk] async embedding failed (monthly backfill will retry)', err);
+        }),
+      );
     }
   }
 

@@ -20,6 +20,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import dynamic from 'next/dynamic';
 import { useTranslations } from 'next-intl';
 import Link from 'next/link';
 import { Badge } from '@/components/ui/badge';
@@ -35,11 +36,30 @@ import {
 import { useLoading } from '@/components/loading-overlay';
 import { useToast } from '@/components/toast-provider';
 import { KNOWLEDGE_TYPES } from '@/types';
-// 2026-05-09 feedback: 提案された資産の詳細をその場で確認できる readOnly ダイアログ。
-// 「全○○」画面の行クリック UX と統一 (採用判断のため詳細確認可能性を担保)。
-import { RiskEditDialog } from '@/components/dialogs/risk-edit-dialog';
-import { KnowledgeEditDialog } from '@/components/dialogs/knowledge-edit-dialog';
-import { RetrospectiveEditDialog } from '@/components/dialogs/retrospective-edit-dialog';
+
+// PR-8 perf (2026-05-29): 提案された資産の詳細ダイアログ 3 種を dynamic import 化。
+//   旧: 提案画面を開いた瞬間に 3 ダイアログ (Risk / Knowledge / Retrospective edit) の
+//       初期 JS bundle が常時 hydration される。ダイアログは「提案行クリック時」のみ
+//       表示されるため、開かずに閉じる多数派ユーザにとって無駄な初期コストだった。
+//   新: `dynamic` + `ssr: false` で、ダイアログを開く瞬間まで chunk ロードを遅延。
+//       MarkdownTextarea (= react-markdown chunk) も連鎖的に遅延される。
+//   `import type` で型のみ取り込み、`Parameters<typeof X>` の型推論を維持する
+//   (dynamic 戻り値の ComponentType は generic 制約を満たさないため、型は静的 import から得る)。
+import type { RiskEditDialog as RiskEditDialogType } from '@/components/dialogs/risk-edit-dialog';
+import type { KnowledgeEditDialog as KnowledgeEditDialogType } from '@/components/dialogs/knowledge-edit-dialog';
+import type { RetrospectiveEditDialog as RetrospectiveEditDialogType } from '@/components/dialogs/retrospective-edit-dialog';
+const RiskEditDialog = dynamic(
+  () => import('@/components/dialogs/risk-edit-dialog').then((m) => m.RiskEditDialog),
+  { ssr: false, loading: () => null },
+);
+const KnowledgeEditDialog = dynamic(
+  () => import('@/components/dialogs/knowledge-edit-dialog').then((m) => m.KnowledgeEditDialog),
+  { ssr: false, loading: () => null },
+);
+const RetrospectiveEditDialog = dynamic(
+  () => import('@/components/dialogs/retrospective-edit-dialog').then((m) => m.RetrospectiveEditDialog),
+  { ssr: false, loading: () => null },
+);
 
 type SuggestionTier = 'strong' | 'medium' | 'weak';
 
@@ -775,7 +795,7 @@ export function SuggestionsPanel({
           fetch 完了 (viewingData != null) まではダイアログを描画しない (空フォーム表示の防止)。 */}
       {viewing?.kind === 'risk' || viewing?.kind === 'issue' ? (
         <RiskEditDialog
-          risk={(viewingData as Parameters<typeof RiskEditDialog>[0]['risk']) ?? null}
+          risk={(viewingData as Parameters<typeof RiskEditDialogType>[0]['risk']) ?? null}
           members={[]}
           open={viewingData !== null}
           onOpenChange={(v) => { if (!v) closeViewing(); }}
@@ -786,7 +806,7 @@ export function SuggestionsPanel({
       ) : null}
       {viewing?.kind === 'knowledge' ? (
         <KnowledgeEditDialog
-          knowledge={(viewingData as Parameters<typeof KnowledgeEditDialog>[0]['knowledge']) ?? null}
+          knowledge={(viewingData as Parameters<typeof KnowledgeEditDialogType>[0]['knowledge']) ?? null}
           projectId={null}
           open={viewingData !== null}
           onOpenChange={(v) => { if (!v) closeViewing(); }}
@@ -796,7 +816,7 @@ export function SuggestionsPanel({
       ) : null}
       {viewing?.kind === 'retrospective' ? (
         <RetrospectiveEditDialog
-          retro={(viewingData as Parameters<typeof RetrospectiveEditDialog>[0]['retro']) ?? null}
+          retro={(viewingData as Parameters<typeof RetrospectiveEditDialogType>[0]['retro']) ?? null}
           open={viewingData !== null}
           onOpenChange={(v) => { if (!v) closeViewing(); }}
           onSaved={async () => {}}

@@ -1,6 +1,6 @@
 'use client';
 
-import { createContext, useContext, useState, useCallback } from 'react';
+import { createContext, useContext, useState, useCallback, useMemo } from 'react';
 import { useTranslations } from 'next-intl';
 
 type LoadingContextType = {
@@ -37,8 +37,17 @@ export function LoadingProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  // PR-1 perf (2026-05-29): value object を useMemo で安定化。
+  //   未 memo だと毎レンダで新規参照になり、useLoading() を呼ぶ全 component が
+  //   毎回再レンダされる (LoadingProvider は (dashboard)/layout 直下なので全画面に影響)。
+  //   ToastProvider と同じ最適化パターン。
+  const value = useMemo(
+    () => ({ isLoading, startLoading, stopLoading, withLoading }),
+    [isLoading, startLoading, stopLoading, withLoading],
+  );
+
   return (
-    <LoadingContext.Provider value={{ isLoading, startLoading, stopLoading, withLoading }}>
+    <LoadingContext.Provider value={value}>
       {children}
       {isLoading && (
         // fix/loading-overlay-z (2026-05-26): z-50 → z-[60] に拡引き。

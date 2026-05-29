@@ -133,6 +133,11 @@ export async function backfillTenant(
       continue;
     }
 
+    // PR-9 perf (2026-05-29 / ADR-0026) **意図的に同期 await のまま残す**:
+    //   本処理は monthly cron (`runMonthlyEmbeddingBackfill`) で、まさに「保留中の embedding を
+    //   生成する」ことが目的の処理。afterSafe で後回しにすると cron handler が embedding 生成
+    //   完了を待たずに return し、cron 監視ログ (`generated` / `failed` / `skipped`) の数値が
+    //   無意味になる (常に 0 件報告される)。ユーザ向け同期 API ではないので体感影響もなし。
     const res = await generateAndPersistBatchEmbeddings({
       items: items.map((it) => ({ table, rowId: it.rowId, text: it.text })),
       tenantId,

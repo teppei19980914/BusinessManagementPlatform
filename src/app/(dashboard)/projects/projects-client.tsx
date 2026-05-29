@@ -19,7 +19,7 @@
  *   - DESIGN.md §23 (核心機能 / 新規作成時の提案サジェスト連動)
  */
 
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
@@ -156,6 +156,25 @@ export function ProjectsClient({
 
   // fix/project-create-customer-validation: 重複定義を `@/lib/parse-tags` に集約。
   // 半角カンマ `,` に加え全角読点 `、` (日本語入力中に自然に混ざる) も区切りとして受容する。
+
+  // PR-1 perf (2026-05-29): SearchableSelect 用の options を useMemo で安定化。
+  //   JSX インラインで `customers.map(c => ({...}))` すると毎レンダで新規配列になり、
+  //   SearchableSelect の memo 化が機能せず内部 list が再構築される。
+  const customerOptions = useMemo(
+    () => customers.map((c) => ({ value: c.id, label: c.name })),
+    [customers],
+  );
+
+  // PR-1 perf (2026-05-29): フォーム setter を関数形式の updater に統一。
+  //   旧 `setForm({ ...form, ... })` は最新 form を closure 参照するため stale 値リスク + 毎回
+  //   onChange が新規 reference になり子コンポーネントの memo が破壊される。functional updater
+  //   + useCallback (空依存) で render 間で onChange を再利用できる。
+  const updateField = useCallback(
+    <K extends keyof typeof form>(key: K, value: (typeof form)[K]) => {
+      setForm((prev) => ({ ...prev, [key]: value }));
+    },
+    [],
+  );
 
   // PR #67: 作成ダイアログで入力された添付 URL を staging。
   // プロジェクト作成成功後に entityId を使って一括 POST する。
@@ -300,7 +319,7 @@ export function ProjectsClient({
                   <Input
                     id="project-create-name"
                     value={form.name}
-                    onChange={(e) => setForm({ ...form, name: e.target.value })}
+                    onChange={(e) => updateField('name', e.target.value)}
                     maxLength={100}
                     required
                   />
@@ -312,8 +331,8 @@ export function ProjectsClient({
                   <SearchableSelect
                     id="project-create-customer"
                     value={form.customerId}
-                    onValueChange={(v) => setForm({ ...form, customerId: v })}
-                    options={customers.map((c) => ({ value: c.id, label: c.name }))}
+                    onValueChange={(v) => updateField('customerId', v)}
+                    options={customerOptions}
                     placeholder={t('customerSelectPlaceholder')}
                     aria-label={t('customerSelectAriaLabel')}
                   />
@@ -333,7 +352,7 @@ export function ProjectsClient({
                     id="project-create-purpose"
                     className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     value={form.purpose}
-                    onChange={(e) => setForm({ ...form, purpose: e.target.value })}
+                    onChange={(e) => updateField('purpose', e.target.value)}
                     rows={3}
                     maxLength={2000}
                     required
@@ -345,7 +364,7 @@ export function ProjectsClient({
                     id="project-create-background"
                     className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     value={form.background}
-                    onChange={(e) => setForm({ ...form, background: e.target.value })}
+                    onChange={(e) => updateField('background', e.target.value)}
                     rows={3}
                     maxLength={2000}
                     required
@@ -357,7 +376,7 @@ export function ProjectsClient({
                     id="project-create-scope"
                     className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     value={form.scope}
-                    onChange={(e) => setForm({ ...form, scope: e.target.value })}
+                    onChange={(e) => updateField('scope', e.target.value)}
                     rows={3}
                     maxLength={2000}
                     required
@@ -366,7 +385,7 @@ export function ProjectsClient({
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label htmlFor="project-create-devmethod">{t('fieldDevMethod')}</Label>
-                    <select id="project-create-devmethod" value={form.devMethod} onChange={(e) => setForm({ ...form, devMethod: e.target.value })} className={nativeSelectClass}>
+                    <select id="project-create-devmethod" value={form.devMethod} onChange={(e) => updateField('devMethod', e.target.value)} className={nativeSelectClass}>
                       {Object.entries(DEV_METHODS).map(([key, label]) => (
                         <option key={key} value={key}>{label}</option>
                       ))}
@@ -378,7 +397,7 @@ export function ProjectsClient({
                     <select
                       id="project-create-contracttype"
                       value={form.contractType}
-                      onChange={(e) => setForm({ ...form, contractType: e.target.value as typeof form.contractType })}
+                      onChange={(e) => updateField('contractType', e.target.value as typeof form.contractType)}
                       className={nativeSelectClass}
                     >
                       <option value="">{t('contractTypeUnset')}</option>
@@ -393,7 +412,7 @@ export function ProjectsClient({
                     <Label>{t('fieldPlannedStartDate')}</Label>
                     <DateFieldWithActions
                       value={form.plannedStartDate}
-                      onChange={(v) => setForm({ ...form, plannedStartDate: v })}
+                      onChange={(v) => updateField('plannedStartDate', v)}
                       required
                       hideClear
                     />
@@ -402,7 +421,7 @@ export function ProjectsClient({
                     <Label>{t('fieldPlannedEndDate')}</Label>
                     <DateFieldWithActions
                       value={form.plannedEndDate}
-                      onChange={(v) => setForm({ ...form, plannedEndDate: v })}
+                      onChange={(v) => updateField('plannedEndDate', v)}
                       required
                       hideClear
                     />
@@ -426,7 +445,7 @@ export function ProjectsClient({
                     <Input
                       id="project-create-business-domain-tags"
                       value={form.businessDomainTagsInput}
-                      onChange={(e) => setForm({ ...form, businessDomainTagsInput: e.target.value })}
+                      onChange={(e) => updateField('businessDomainTagsInput', e.target.value)}
                       placeholder={t('tagPlaceholderBusinessDomain')}
                       maxLength={500}
                     />
@@ -436,7 +455,7 @@ export function ProjectsClient({
                     <Input
                       id="project-create-tech-stack-tags"
                       value={form.techStackTagsInput}
-                      onChange={(e) => setForm({ ...form, techStackTagsInput: e.target.value })}
+                      onChange={(e) => updateField('techStackTagsInput', e.target.value)}
                       placeholder={t('tagPlaceholderTechStackFull')}
                       maxLength={500}
                     />
@@ -446,7 +465,7 @@ export function ProjectsClient({
                     <Input
                       id="project-create-process-tags"
                       value={form.processTagsInput}
-                      onChange={(e) => setForm({ ...form, processTagsInput: e.target.value })}
+                      onChange={(e) => updateField('processTagsInput', e.target.value)}
                       placeholder={t('tagPlaceholderProcessFull')}
                       maxLength={500}
                     />

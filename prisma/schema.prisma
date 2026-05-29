@@ -655,6 +655,10 @@ model Project {
   @@index([customerId], map: "idx_projects_customer_id")
   @@index([plannedStartDate, plannedEndDate], map: "idx_projects_dates")
   @@index([tenantId], map: "idx_projects_tenant")
+  // PR-1 perf (2026-05-29): /projects 一覧クエリは `tenantId + status + deletedAt` で
+  //   絞り込むため、tenantId 単独 / status 単独だと両方をスキャンしてマージする plan
+  //   になりやすい。複合 index で seq scan / 二重スキャンを回避。
+  @@index([tenantId, status], map: "idx_projects_tenant_status")
   // PR-X5: サンプルデータの非表示フィルタを高速化する partial index (true の行のみ index)
   @@index([isSampleData], map: "idx_projects_is_sample_data")
   @@map("projects")
@@ -974,6 +978,10 @@ model Knowledge {
   @@index([knowledgeType], map: "idx_knowledges_type")
   @@index([visibility], map: "idx_knowledges_visibility")
   @@index([tenantId], map: "idx_knowledges_tenant")
+  // PR-1 perf (2026-05-29): /knowledge 一覧 / 全ナレッジ画面では
+  //   `tenantId + visibility (= 'public') ORDER BY createdAt DESC` が頻出。複合 index で
+  //   visibility フィルタ + createdAt ソートを一度に効かせる。
+  @@index([tenantId, visibility, createdAt], map: "idx_knowledges_tenant_visibility_created")
   // partial index: シードフィルタ用 (true の行のみ index、Project と同じ最適化)
   @@index([isSampleData], map: "idx_knowledges_is_sample_data")
   // feat/asset-assignee-expansion (2026-05-26): 担当者引き受け一覧画面用 index

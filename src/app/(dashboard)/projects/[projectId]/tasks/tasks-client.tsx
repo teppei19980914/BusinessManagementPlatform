@@ -651,6 +651,19 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     () => [...members.map((m) => m.userId), UNASSIGNED_KEY],
     [members],
   );
+  // PR-1 perf (2026-05-29): MultiSelectFilter 用 options を useMemo で安定化。
+  //   JSX インライン spread だと毎レンダで新規参照になり、子コンポーネント memo が機能しない。
+  const assigneeFilterOptions = useMemo(
+    () => [
+      ...members.map((m) => ({ value: m.userId, label: m.userName })),
+      { value: UNASSIGNED_KEY, label: t('unassigned'), muted: true },
+    ],
+    [members, t],
+  );
+  const statusFilterOptions = useMemo(
+    () => ALL_STATUS_KEYS.map((k) => ({ value: k, label: TASK_STATUSES[k] })),
+    [],
+  );
   const [assigneeFilter, setAssigneeFilter] = useSessionStringSet(
     `wbs:${projectId}:assignee-filter`,
     () => allAssigneeKeys,
@@ -1244,6 +1257,23 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     plannedEffort: 0,
   });
 
+  // PR-1 perf (2026-05-29): フォーム setter を functional updater + useCallback に統一。
+  //   旧 `setForm({ ...form, ... })` は最新 form を closure 参照するため毎レンダで onChange が
+  //   新規 reference になり、子 input/SearchableSelect の memo 化が効かなかった。
+  const updateField = useCallback(
+    <K extends keyof typeof form>(key: K, value: (typeof form)[K]) => {
+      setForm((prev) => ({ ...prev, [key]: value }));
+    },
+    [],
+  );
+  // setEditForm は EditForm | null なので、null の場合は更新しない関数形式に統一。
+  const updateEditField = useCallback(
+    <K extends keyof EditForm>(key: K, value: EditForm[K]) => {
+      setEditForm((prev) => (prev ? { ...prev, [key]: value } : prev));
+    },
+    [],
+  );
+
   // PR #361 (2026-05-14): 日次工数プレビュー hook (edit / create 用、各々独立)。
   //   React hook ルール上、条件付き呼出禁止のため両方とも常時呼ぶ。
   //   enabled flag で PM/TL ロール + dialog 開閉 + ACT type を判定して fetch をスキップ。
@@ -1412,7 +1442,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                   <Label>{t('columnName')}</Label>
                   <Input
                     value={form.name}
-                    onChange={(e) => setForm({ ...form, name: e.target.value })}
+                    onChange={(e) => updateField('name', e.target.value)}
                     maxLength={100}
                     required
                   />
@@ -1427,7 +1457,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                       ) : (
                         <select
                           value={form.assigneeId}
-                          onChange={(e) => setForm({ ...form, assigneeId: e.target.value })}
+                          onChange={(e) => updateField('assigneeId', e.target.value)}
                           className={nativeSelectClass}
                           required
                         >
@@ -1441,16 +1471,16 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2">
                         <Label>{t('plannedStartDate')}</Label>
-                        <DateFieldWithActions value={form.plannedStartDate} onChange={(v) => setForm({ ...form, plannedStartDate: v })} required hideClear />
+                        <DateFieldWithActions value={form.plannedStartDate} onChange={(v) => updateField('plannedStartDate', v)} required hideClear />
                       </div>
                       <div className="space-y-2">
                         <Label>{t('plannedEndDate')}</Label>
-                        <DateFieldWithActions value={form.plannedEndDate} onChange={(v) => setForm({ ...form, plannedEndDate: v })} required hideClear />
+                        <DateFieldWithActions value={form.plannedEndDate} onChange={(v) => updateField('plannedEndDate', v)} required hideClear />
                       </div>
                     </div>
                     <div className="space-y-2">
                       <Label>{t('plannedEffort')}</Label>
-                      <NumberInput min={0.5} step={0.5} value={form.plannedEffort} onChange={(n) => setForm({ ...form, plannedEffort: n })} required />
+                      <NumberInput min={0.5} step={0.5} value={form.plannedEffort} onChange={(n) => updateField('plannedEffort', n)} required />
                       {/* PR #361 (2026-05-14): 日次工数プレビュー (PM/TL のみ。enabled flag で fetch 制御) */}
                       {canEditPmTl && (
                         <WorkloadPreviewLine
@@ -1465,7 +1495,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                       <textarea
                         id="task-create-description"
                         value={form.description}
-                        onChange={(e) => setForm({ ...form, description: e.target.value })}
+                        onChange={(e) => updateField('description', e.target.value)}
                         placeholder={t('descriptionPlaceholder')}
                         maxLength={2000}
                         rows={4}
@@ -1523,10 +1553,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
         >
           <MultiSelectFilter
             label={t('columnAssignee')}
-            options={[
-              ...members.map((m) => ({ value: m.userId, label: m.userName })),
-              { value: UNASSIGNED_KEY, label: t('unassigned'), muted: true },
-            ]}
+            options={assigneeFilterOptions}
             selected={assigneeFilter}
             onToggle={toggleAssignee}
             onSelectAll={selectAllAssignees}
@@ -1536,7 +1563,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
           />
           <MultiSelectFilter
             label={t('status')}
-            options={ALL_STATUS_KEYS.map((k) => ({ value: k, label: TASK_STATUSES[k] }))}
+            options={statusFilterOptions}
             selected={statusFilter}
             onToggle={toggleStatus}
             onSelectAll={selectAllStatuses}
@@ -1922,7 +1949,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                     <Label>{t('type')}</Label>
                     <select
                       value={editForm.type}
-                      onChange={(e) => setEditForm({ ...editForm, type: e.target.value as 'work_package' | 'activity' })}
+                      onChange={(e) => updateEditField('type', e.target.value as 'work_package' | 'activity')}
                       className={nativeSelectClass}
                     >
                       {Object.entries(WBS_TYPES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
@@ -1932,7 +1959,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                     <Label>{t('parentWp')}</Label>
                     <select
                       value={editForm.parentTaskId}
-                      onChange={(e) => setEditForm({ ...editForm, parentTaskId: e.target.value })}
+                      onChange={(e) => updateEditField('parentTaskId', e.target.value)}
                       className={nativeSelectClass}
                     >
                       <option value="">{t('noParentTopLevel')}</option>
@@ -1943,7 +1970,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                   </div>
                   <div className="space-y-2">
                     <Label>{t('columnName')}</Label>
-                    <Input value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} required />
+                    <Input value={editForm.name} onChange={(e) => updateEditField('name', e.target.value)} required />
                   </div>
                   {editForm.type === 'activity' && (
                     <>
@@ -1951,7 +1978,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                         <Label>{t('columnAssignee')}</Label>
                         <select
                           value={editForm.assigneeId}
-                          onChange={(e) => setEditForm({ ...editForm, assigneeId: e.target.value })}
+                          onChange={(e) => updateEditField('assigneeId', e.target.value)}
                           className={nativeSelectClass}
                         >
                           <option value="">{t('notSet')}</option>
@@ -1965,15 +1992,15 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                           flex-wrap で崩れるため)。 */}
                       <div className="space-y-2">
                         <Label>{t('plannedStartDate')}</Label>
-                        <DateFieldWithActions value={editForm.plannedStartDate} onChange={(v) => setEditForm({ ...editForm, plannedStartDate: v })} />
+                        <DateFieldWithActions value={editForm.plannedStartDate} onChange={(v) => updateEditField('plannedStartDate', v)} />
                       </div>
                       <div className="space-y-2">
                         <Label>{t('plannedEndDate')}</Label>
-                        <DateFieldWithActions value={editForm.plannedEndDate} onChange={(v) => setEditForm({ ...editForm, plannedEndDate: v })} />
+                        <DateFieldWithActions value={editForm.plannedEndDate} onChange={(v) => updateEditField('plannedEndDate', v)} />
                       </div>
                       <div className="space-y-2">
                         <Label>{t('estimatedEffort')}</Label>
-                        <NumberInput min={0.5} step={0.5} value={editForm.plannedEffort} onChange={(n) => setEditForm({ ...editForm, plannedEffort: n })} />
+                        <NumberInput min={0.5} step={0.5} value={editForm.plannedEffort} onChange={(n) => updateEditField('plannedEffort', n)} />
                         {/* PR #361 (2026-05-14): 日次工数プレビュー (PM/TL のみ) */}
                         {canEditPmTl && (
                           <WorkloadPreviewLine
@@ -1988,7 +2015,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                         <textarea
                           id="task-edit-description"
                           value={editForm.description}
-                          onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
+                          onChange={(e) => updateEditField('description', e.target.value)}
                           placeholder={t('descriptionPlaceholder')}
                           maxLength={2000}
                           rows={4}
@@ -2044,7 +2071,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                     <Label className={editingActualStartDisabled ? 'text-muted-foreground' : ''}>{t('actualStartDate')}</Label>
                     <DateFieldWithActions
                       value={editForm.actualStartDate}
-                      onChange={(v) => setEditForm({ ...editForm, actualStartDate: v })}
+                      onChange={(v) => updateEditField('actualStartDate', v)}
                       disabled={editingActualStartDisabled}
                     />
                   </div>
@@ -2052,7 +2079,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                     <Label className={editingActualEndDisabled ? 'text-muted-foreground' : ''}>{t('actualEndDate')}</Label>
                     <DateFieldWithActions
                       value={editForm.actualEndDate}
-                      onChange={(v) => setEditForm({ ...editForm, actualEndDate: v })}
+                      onChange={(v) => updateEditField('actualEndDate', v)}
                       disabled={editingActualEndDisabled}
                     />
                   </div>

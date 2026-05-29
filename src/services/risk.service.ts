@@ -32,6 +32,7 @@
  */
 
 import { prisma } from '@/lib/db';
+import { afterSafe } from '@/lib/after-safe';
 import { assertAssigneeTenant } from '@/lib/assignee-validation';
 import { generateAndPersistEntityEmbedding, generateAndPersistBatchEmbeddings } from './embedding.service';
 // Prisma types used for Decimal handling in toRiskDTO
@@ -509,23 +510,31 @@ export async function createRisk(
   //   さらに state='resolved' でないものは embedding 生成しない (= 解消するまで Voyage 課金回避)。
   //   通常 createRisk は state='open' で起票されるためここでは生成されないが、import 経由など
   //   で resolved 状態のレコードが直接作成された場合は initial embedding を生成する。
+  // PR-9 perf (2026-05-29 / ADR-0026): embedding 生成を `after()` で非同期化。
+  //   (createRisk は通常 state='open' で起票され embedding 不要のため、ここは import 経由で
+  //   resolved 状態が直接作成されたレアケースのみ走る。それでも latency 改善のため async 化。)
   if (r.visibility === 'public' && r.state === 'resolved') {
-    await generateAndPersistEntityEmbedding({
-      table: 'risks_issues',
-      rowId: r.id,
-      tenantId,
-      userId,
-      text: composeRiskText({
-        title: input.title,
-        content: input.content,
-        // feat/risk-issue-4-section (2026-05-26): occurrence も検索対象に含める
-        occurrence: input.occurrence ?? null,
-        cause: input.cause ?? null,
-        responsePolicy: input.responsePolicy ?? null,
-        responseDetail: input.responseDetail ?? null,
+    afterSafe(
+      generateAndPersistEntityEmbedding({
+        table: 'risks_issues',
+        rowId: r.id,
+        tenantId,
+        userId,
+        text: composeRiskText({
+          title: input.title,
+          content: input.content,
+          // feat/risk-issue-4-section (2026-05-26): occurrence も検索対象に含める
+          occurrence: input.occurrence ?? null,
+          cause: input.cause ?? null,
+          responsePolicy: input.responsePolicy ?? null,
+          responseDetail: input.responseDetail ?? null,
+        }),
+        featureUnit: 'risk-issue-embedding',
+      }).catch((err) => {
+        // eslint-disable-next-line no-console
+        console.error('[risk.create] async embedding failed (monthly backfill will retry)', err);
       }),
-      featureUnit: 'risk-issue-embedding',
-    });
+    );
   }
 
   return toRiskDTO(r);
@@ -715,21 +724,27 @@ export async function updateRisk(
     (becameResolved || becameVisible || (stayedEligible && textFieldsChanging));
 
   if (shouldGenerateEmbedding) {
-    await generateAndPersistEntityEmbedding({
-      table: 'risks_issues',
-      rowId: riskId,
-      tenantId,
-      userId,
-      text: composeRiskText({
-        title: r.title,
-        content: r.content,
-        occurrence: r.occurrence,
-        cause: r.cause,
-        responsePolicy: r.responsePolicy,
-        responseDetail: r.responseDetail,
+    // PR-9 perf (2026-05-29 / ADR-0026): embedding 再生成を `after()` で非同期化。
+    afterSafe(
+      generateAndPersistEntityEmbedding({
+        table: 'risks_issues',
+        rowId: riskId,
+        tenantId,
+        userId,
+        text: composeRiskText({
+          title: r.title,
+          content: r.content,
+          occurrence: r.occurrence,
+          cause: r.cause,
+          responsePolicy: r.responsePolicy,
+          responseDetail: r.responseDetail,
+        }),
+        featureUnit: 'risk-issue-embedding',
+      }).catch((err) => {
+        // eslint-disable-next-line no-console
+        console.error('[risk.update] async embedding failed (monthly backfill will retry)', err);
       }),
-      featureUnit: 'risk-issue-embedding',
-    });
+    );
   }
 
   return toRiskDTO(r);
@@ -844,13 +859,19 @@ export async function bulkUpdateRisksVisibilityFromList(
           responseDetail: t.responseDetail,
         }),
       }));
-      const res = await generateAndPersistBatchEmbeddings({
-        items,
-        tenantId: viewerTenantId,
-        userId: viewerUserId,
-        featureUnit: 'risk-issue-embedding',
-      });
-      embeddingsGenerated = res.generated;
+      // PR-9 perf (2026-05-29 / ADR-0026): batch embedding 生成を `after()` で非同期化。
+      embeddingsGenerated = items.length;
+      afterSafe(
+        generateAndPersistBatchEmbeddings({
+          items,
+          tenantId: viewerTenantId,
+          userId: viewerUserId,
+          featureUnit: 'risk-issue-embedding',
+        }).catch((err) => {
+          // eslint-disable-next-line no-console
+          console.error('[risk.bulk] async embedding failed (monthly backfill will retry)', err);
+        }),
+      );
     }
   }
 
