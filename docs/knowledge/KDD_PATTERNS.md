@@ -18072,3 +18072,51 @@ UI 側 (tenant-settings-client.tsx) に `stripe_setup=pending` のトースト�
 - 関連 feedback memory: [[feedback_netlify_nextauth_set_cookie]] (Netlify NextAuth cookie 脱落)
 - 関連 source: [src/app/api/tenants/me/billing/stripe/setup/complete/route.ts](../../src/app/api/tenants/me/billing/stripe/setup/complete/route.ts) / [src/app/(dashboard)/settings/tenant/tenant-settings-client.tsx](../../src/app/(dashboard)/settings/tenant/tenant-settings-client.tsx) (stripe_setup=pending ハンドラ)
 - 関連 Webhook: [src/services/stripe-webhook-handlers.service.ts](../../src/services/stripe-webhook-handlers.service.ts) handlePaymentMethodAttached / handleSubscriptionUpdated (Webhook 同期経路)
+
+## §5.X+186 Next.js `after()` で重い LLM 呼出を response クリティカルパスから外す (PR-9 / ADR-0026)
+
+**問題**: Voyage AI への embedding 生成リクエストが、Knowledge / Risk / Retrospective / Memo / Project の作成・更新パスでレスポンス返却まで同期 await されていた。HTTP 往復 300〜800ms（Project は 800〜1500ms）が「保存ボタン押下後の待ち時間」としてそのままユーザ体感に直結し、「異様に重い」報告の根本原因となっていた。
+
+**結論**: Next.js 16 標準の `after()` API でレスポンス返却後に embedding 生成を実行するよう移行。
+
+```ts
+import { after } from 'next/server';
+
+const k = await prisma.knowledge.create({...});
+if (k.visibility !== 'draft') {
+  after(
+    generateAndPersistEntityEmbedding({...})
+      .catch((err) => console.error('[knowledge.create] async embedding failed', err))
+  );
+}
+return k;  // ユーザには即返却、embedding は response 後に裏で生成される
+```
+
+**設計上の留意点 (4 点)**:
+
+1. **`after()` は Next.js 15+ の安定 API**。サーバ Function プロセスをレスポンス送信後もコールバック完了まで保持するため、単純な `Promise.then().catch()` での fire-and-forget と異なり、Netlify / Vercel Functions で実行中に切られない。
+2. **失敗時のリカバリは月初 `runMonthlyEmbeddingBackfill` cron** に委譲する設計。永続的な NULL 残骸は最大 1 ヶ月の遅延でリカバリされる（業務影響は提案エンジン反映遅延のみ、データ損失なし）。
+3. **bulk 処理の戻り値 `embeddingsGenerated`** は「同期生成済件数」から「スケジュール対象数 (= `items.length`)」に意味が変わる。ユーザに見える件数は同等のため API レスポンスの semantics は維持できる。
+4. **既存テストの修正必須**: 「作成直後に embedding が同期反映される」前提のユニットテスト・E2E は `vi.waitFor` / Playwright の wait 追加、または `embeddingsGenerated` の意味変更に追従する必要がある。
+
+**何を避けるべきか**:
+
+- ❌ クリティカルパス内で `await` のまま放置（ユーザに 800ms の待ち時間を強いる）
+- ❌ `Promise.then().catch()` だけで fire-and-forget（serverless 終了で中断される確率が高い）
+- ❌ ジョブキュー（Bull / SQS）の即時導入（インフラ追加が必要、リリース窓に間に合わない）
+- ❌ 即時生成を完全廃止して cron 任せ（反映遅延が常時 1 ヶ月になり提案エンジンの「全網羅性」と矛盾）
+
+**横展開チェックリスト**:
+
+- [ ] LLM / Voyage / 外部 API への同期 await がレスポンス返却前に発生していないか
+- [ ] 失敗時の月次 backfill or 再試行経路が存在するか（無い場合は専用 cron 追加）
+- [ ] テナント請求 invariant に影響しないか（`feedback_billing_invariant` 参照）
+- [ ] ユーザが「反映遅延」に気づく経路があるか（FAQ / ガイド更新）
+
+### 関連
+
+- 関連 ADR: [ADR-0026](../adr/0026-embedding-async-generation.md) (本決定の根拠)
+- 関連 PR: feat/perf-pr9-embedding-async (本 PR で実装)
+- 関連 feedback memory: [[feedback_billing_invariant]] / [[feedback_billing_4layer_classification]] / [[project_suggestion_engine_priority]]
+- 関連 source: [src/services/knowledge.service.ts](../../src/services/knowledge.service.ts) / [risk.service.ts](../../src/services/risk.service.ts) / [retrospective.service.ts](../../src/services/retrospective.service.ts) / [memo.service.ts](../../src/services/memo.service.ts) / [project.service.ts](../../src/services/project.service.ts)
+- 関連 backfill: [src/services/embedding-backfill.service.ts](../../src/services/embedding-backfill.service.ts)

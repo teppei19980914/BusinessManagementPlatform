@@ -19,7 +19,10 @@
  */
 
 import { redirect } from 'next/navigation';
-import { auth } from '@/lib/auth';
+// PR-7 perf (2026-05-29): JWT 復号を同一 request 内で 1 回に集約するため React.cache 経由で auth() を呼ぶ。
+//   `getCachedAuth` は `auth()` を `cache()` でラップした薄いヘルパで、戻り値は通常の auth() と同等。
+//   layout → page で重複していた JWT 復号 (~50-100ms) が 1 回に統合される。
+import { getCachedAuth } from '@/lib/auth-cached';
 import { prisma } from '@/lib/db';
 import { LOGIN_ROUTE } from '@/config';
 import type { Session } from 'next-auth';
@@ -31,7 +34,7 @@ import type { Session } from 'next-auth';
  * Server Component 配下の `prisma` クエリが古い `tenantId` で実行されないよう描画を中断する。
  */
 export async function requireAuthForLayout(): Promise<Session['user']> {
-  const session = await auth();
+  const session = await getCachedAuth();
   if (!session) {
     redirect(LOGIN_ROUTE);
   }
@@ -80,7 +83,7 @@ export async function requireAuthForLayout(): Promise<Session['user']> {
  * 検証を行うことでその穴を塞ぐ。
  */
 export async function optionalAuthForLayout(): Promise<Session['user'] | null> {
-  const session = await auth();
+  const session = await getCachedAuth();
   if (!session) return null;
 
   const jwtTokenVersion = session.user.tokenVersion ?? 0;

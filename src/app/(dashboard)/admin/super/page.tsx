@@ -11,7 +11,7 @@
  *   (300 通/日) 超過事故を未然に検知する。
  */
 
-import type { ReactNode } from 'react';
+import { Suspense, type ReactNode } from 'react';
 import Link from 'next/link';
 import {
   getCrossTenantUsageSummary,
@@ -53,7 +53,63 @@ import { getDiagnosticsSummary } from '@/services/diagnostics.service';
 // PR #425 (2026-05-22): Netlify ビルドクレジット消費の可視化
 import { getNetlifyMetrics, type NetlifyMetrics as NetlifyMetricsType } from '@/services/netlify-metrics.service';
 
-export default async function SuperAdminTopPage() {
+/**
+ * PR-4 perf (2026-05-29): Super Admin ダッシュボードを Suspense でストリーミング化。
+ *
+ *   旧構造: SuperAdminTopPage が全データ集計の await を完了するまで何も表示されず、
+ *           本番では合計 5-15 秒間ページが固まる体感。
+ *   新構造: Header (タイトル + 再集計ボタン + 説明) を即座にレンダリングし、
+ *           重い集計部分は <DashboardContent /> として Suspense 境界の内側に配置。
+ *           これにより first paint は瞬時、データは順次ストリーミングされる。
+ *
+ *   再集計ロジック自体は変更していない (メモリ `feedback_billing_data_realtime` 通り、
+ *   画面遷移時の再集計は維持)。表示と再集計を「同期 await」から「ストリーミング」に
+ *   切り替えただけで、最終的に得られる数値・UI は完全に同等。
+ */
+export default function SuperAdminTopPage() {
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h1 className="text-2xl font-bold">システム管理者ダッシュボード</h1>
+        {/* 2026-05-14: 全テナントの DB 容量 + API 利用量を明示的に再集計 */}
+        <RecalculateButton
+          endpoint="/api/admin/super/recalculate-all"
+          label="全テナント再集計"
+          size="default"
+          variant="default"
+        />
+      </div>
+      <p className="text-xs text-muted-foreground">
+        DB 容量と API 利用量はこの画面を開いた時点で全テナントの最新値を集計しています。手動で再集計するには上のボタンを押してください。
+      </p>
+
+      <Suspense fallback={<DashboardLoadingFallback />}>
+        <DashboardContent />
+      </Suspense>
+    </div>
+  );
+}
+
+/** PR-4 perf (2026-05-29): 集計データのロード中に表示する skeleton。 */
+function DashboardLoadingFallback() {
+  return (
+    <div className="space-y-4">
+      <div className="rounded border border-dashed bg-muted/30 p-4 text-sm text-muted-foreground">
+        全テナントの最新値を集計しています...（通常 5〜15 秒。完了次第ここに順次表示されます）
+      </div>
+      <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <div key={i} className="h-24 animate-pulse rounded border bg-muted/30" />
+        ))}
+      </section>
+      <div className="h-32 animate-pulse rounded border bg-muted/30" />
+      <div className="h-32 animate-pulse rounded border bg-muted/30" />
+      <div className="h-32 animate-pulse rounded border bg-muted/30" />
+    </div>
+  );
+}
+
+async function DashboardContent() {
   // 2026-05-14: 表示前に全テナントの最新値を作る (請求根拠なのでキャッシュ依存しない)。
   //   updateAllStorageBytesUsed は内部で個別失敗を吸収する。
   //   reconcileAllTenantsApiUsage は Promise.allSettled で並列実行。
@@ -86,21 +142,7 @@ export default async function SuperAdminTopPage() {
     : null;
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h1 className="text-2xl font-bold">システム管理者ダッシュボード</h1>
-        {/* 2026-05-14: 全テナントの DB 容量 + API 利用量を明示的に再集計 */}
-        <RecalculateButton
-          endpoint="/api/admin/super/recalculate-all"
-          label="全テナント再集計"
-          size="default"
-          variant="default"
-        />
-      </div>
-      <p className="text-xs text-muted-foreground">
-        DB 容量と API 利用量はこの画面を開いた時点で全テナントの最新値を集計しています。手動で再集計するには上のボタンを押してください。
-      </p>
-
+    <>
       {/* PR-V8 (2026-05-19): 診断ダッシュボードへの誘導バナー */}
       {diagnostics.totalAnomalies > 0 && (
         <Link
@@ -211,7 +253,7 @@ export default async function SuperAdminTopPage() {
           )}
         </ul>
       </section>
-    </div>
+    </>
   );
 }
 

@@ -20,7 +20,7 @@
  *   - DESIGN.md §8 (権限制御 / ロール変更履歴 role_change_logs)
  */
 
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { useLoading } from '@/components/loading-overlay';
@@ -80,8 +80,18 @@ export function MembersClient({ projectId, members, allUsers, canManage, canMana
   const [addError, setAddError] = useState('');
 
   // メンバー追加候補（既にメンバーのユーザを除外）
-  const memberUserIds = new Set(members.map((m) => m.userId));
-  const availableUsers = allUsers.filter((u) => !memberUserIds.has(u.id) && u.isActive);
+  // PR-1 perf (2026-05-29): 派生値を useMemo で安定化し SearchableSelect の memo を機能させる。
+  const availableUsers = useMemo(() => {
+    const memberUserIds = new Set(members.map((m) => m.userId));
+    return allUsers.filter((u) => !memberUserIds.has(u.id) && u.isActive);
+  }, [members, allUsers]);
+  const availableUserOptions = useMemo(
+    () => availableUsers.map((u) => ({
+      value: u.id,
+      label: t('userOptionLabel', { name: u.name, email: u.email }),
+    })),
+    [availableUsers, t],
+  );
 
   async function handleAdd(e: React.FormEvent) {
     e.preventDefault();
@@ -172,10 +182,7 @@ export function MembersClient({ projectId, members, allUsers, canManage, canMana
                     id="member-add-user"
                     value={addForm.userId}
                     onValueChange={(v) => setAddForm({ ...addForm, userId: v })}
-                    options={availableUsers.map((u) => ({
-                      value: u.id,
-                      label: t('userOptionLabel', { name: u.name, email: u.email }),
-                    }))}
+                    options={availableUserOptions}
                     placeholder={t('userPlaceholder')}
                     aria-label={t('userAriaLabel')}
                   />

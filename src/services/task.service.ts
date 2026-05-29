@@ -187,14 +187,42 @@ export async function listMyTaskProjects(userId: string, viewerTenantId: string)
   // filterTreeByAssignee は動的 import で循環依存を避ける (同じパッケージ内でも可読性優先)
   const { filterTreeByAssignee } = await import('@/lib/task-tree-utils');
 
-  const results = await Promise.all(
-    projects.map(async (p) => {
-      const tree = await listTasks(p.id, viewerTenantId);
-      const filtered = filterTreeByAssignee(tree, new Set([userId]));
-      return { projectId: p.id, projectName: p.name, tree: filtered };
-    }),
-  );
-  return results;
+  // PR-3 perf (2026-05-29): N+1 解消。
+  //   旧実装は projects.map で各プロジェクトに対し `listTasks(p.id)` を並列実行していた。
+  //   `Promise.all` で並列化されているとはいえ、内部で各々が個別 findMany + buildTree を
+  //   実行するため、プロジェクト数 N に対し N 回の DB ラウンドトリップが発生していた
+  //   (Beginner プランで 5 件、Pro/Expert で 10-20 件の遅延が顕著)。
+  //
+  //   新実装は **1 回の findMany** で全プロジェクト分の Task を一括取得し、JS 側で
+  //   projectId ごとに O(N) でグルーピングしてから buildTree / filterTreeByAssignee を
+  //   適用する。集約結果は旧実装と完全に同じ (順序・親子関係・filtered tree)。
+  const allTasks = await prisma.task.findMany({
+    where: {
+      projectId: { in: projectIds },
+      deletedAt: null,
+      project: { tenantId: viewerTenantId },
+    },
+    include: { assignee: { select: { name: true } }, parentTask: { select: { name: true } } },
+    orderBy: [{ plannedStartDate: 'asc' }, { plannedEndDate: 'asc' }, { createdAt: 'asc' }],
+  });
+
+  const tasksByProjectId = new Map<string, typeof allTasks>();
+  for (const task of allTasks) {
+    const list = tasksByProjectId.get(task.projectId);
+    if (list) {
+      list.push(task);
+    } else {
+      tasksByProjectId.set(task.projectId, [task]);
+    }
+  }
+
+  return projects.map((p) => {
+    const projectTasks = tasksByProjectId.get(p.id) ?? [];
+    const dtos = projectTasks.map(toTaskDTO);
+    const tree = buildTree(dtos);
+    const filtered = filterTreeByAssignee(tree, new Set([userId]));
+    return { projectId: p.id, projectName: p.name, tree: filtered };
+  });
 }
 
 /**
