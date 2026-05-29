@@ -23,7 +23,7 @@
 #         設定された値 (全 scope 共通の本番 URL) が読まれ続けていた。
 #
 #   真の根本解決 (KDD §5.X+101): Netlify Dashboard で NEXTAUTH_URL を context override
-#     - Production:       https://tasukiba.netlify.app (固定値)
+#     - Production:       https://tasukiba.com (固定値、2026-05-29 独自ドメイン移行)
 #     - Deploy preview:   未設定 (= NextAuth が trustHost: true で host header を使用)
 #     - Branch deploys:   未設定 (= 同上)
 #     操作手順は KDD §5.X+101 「解決策」セクション参照。

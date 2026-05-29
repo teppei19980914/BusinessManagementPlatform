@@ -122,7 +122,7 @@ Netlify は **同一 env var を deploy context (Production / Deploy preview / B
 
 | 変数名 | Production | Deploy preview | Branch deploys | 理由 |
 |---|---|---|---|---|
-| `NEXTAUTH_URL` | `https://tasukiba.netlify.app` | **未設定 (Delete)** | **未設定 (Delete)** | preview/branch は URL が動的に変わるため、本番 URL を共有設定すると NextAuth が本番 origin にリダイレクトしてしまう (= KDD §5.X+101 で実害)。未設定にすれば `trustHost: true` で host header から動的取得 |
+| `NEXTAUTH_URL` | `https://tasukiba.com` | **未設定 (Delete)** | **未設定 (Delete)** | preview/branch は URL が動的に変わるため、本番 URL を共有設定すると NextAuth が本番 origin にリダイレクトしてしまう (= KDD §5.X+101 で実害)。未設定にすれば `trustHost: true` で host header から動的取得 |
 | `STRIPE_ENABLED` | `true` (リリース後) | `true` (TC 実行用) | `false` または `true` (検証目的に応じ) | プレビューでも Stripe 動作を検証する必要があれば `true` を上書き設定 |
 | `STRIPE_SECRET_KEY` | `sk_live_xxx` (Live key) | `sk_test_xxx` (Test mode) | `sk_test_xxx` (Test mode) | 本番のみ Live mode、preview/branch は必ず Test mode key を使用 (誤って本番カードに課金しないため) |
 | `STRIPE_WEBHOOK_SECRET` | Live mode endpoint の `whsec_xxx` | Test mode endpoint の `whsec_xxx` | Test mode endpoint の `whsec_xxx` | Stripe Dashboard 上でも Test / Live で別エンドポイントを作成すること |
@@ -145,7 +145,7 @@ Netlify は **同一 env var を deploy context (Production / Deploy preview / B
 特定 context にだけ値を入れる:
 ```bash
 # Production context のみ NEXTAUTH_URL を固定
-netlify env:set NEXTAUTH_URL "https://tasukiba.netlify.app" --context production
+netlify env:set NEXTAUTH_URL "https://tasukiba.com" --context production
 
 # Deploy Preview / Branch deploy では削除 (= undefined にして trustHost を活かす)
 netlify env:unset NEXTAUTH_URL --context deploy-preview
@@ -202,7 +202,7 @@ Netlify は GitHub への push を検知して、状況に応じて 3 種類の 
 
 | Context | トリガー | URL | 主用途 |
 |---|---|---|---|
-| **Production build** | `main` への push (= PR merge) | `https://tasukiba.netlify.app` | 本番リリース (外部ユーザ向け) |
+| **Production build** | `main` への push (= PR merge) | `https://tasukiba.com` | 本番リリース (外部ユーザ向け) |
 | **Branch Deploy** | 指定ブランチ (例: `staging`) への push | `https://<branch-name>--tasukiba.netlify.app` | **ブランチ単位の途中経過確認**、他者共有可 |
 | **Deploy Preview** | PR の作成 / 更新 | `https://deploy-preview-<PR番号>--tasukiba.netlify.app` | **PR マージ判断のステージング検証**、レビュアー共有 |
 
@@ -228,7 +228,7 @@ git push -u origin feat/xxx
 #    → docs だけの変更なら scripts/netlify-ignore.sh で skip される (= credits 0)
 
 # 3. レビュー + 動作確認 OK → main にマージ (→ Production build 自動発火 = ~15 credits)
-#    → URL: https://tasukiba.netlify.app
+#    → URL: https://tasukiba.com
 #    → Locked Deploy 設定 (§5) が有効なら手動 Publish が必要
 
 # 4. 本番動作確認 (smoke test)
@@ -459,7 +459,7 @@ Netlify Personal plan は **1,000 credits/月** (= Production deploy 約 65 回�
   
 [Production deploy (= main merge)]
   ├ レビュー + UAT 通過 → main merge → 自動 build (~15 credits)
-  └ tasukiba.netlify.app に反映、外部ユーザ公開
+  └ tasukiba.com に反映、外部ユーザ公開
 
 合計: ~30 credits / 1 機能 (修正なし時) / Free plan 月 10 機能ペース
 ```
@@ -493,7 +493,7 @@ git push -u origin feat/xxx
 2. **追加カラムに `DEFAULT` がある場合**、旧コードも既存のまま動く (ADD COLUMN は互換性あり)
 3. 本番 DB 更新後、**GitHub で PR をマージ** → Netlify が自動デプロイ
 4. Locked Deploy が有効なら、Netlify UI で対象 deploy を選んで **「Publish deploy」**
-5. デプロイ完了後、<https://tasukiba.netlify.app> にアクセスし動作確認
+5. デプロイ完了後、<https://tasukiba.com> にアクセスし動作確認
 
 ### 4.2 破壊的変更 (DROP / RENAME) の場合
 
@@ -588,7 +588,7 @@ Netlify Scheduled Functions は使わず、**[cron-job.org](https://cron-job.org
 
 1. <https://cron-job.org/en/signup/> でアカウント作成 (無料、cron 数無制限)
 2. 「Create cronjob」を 8 件作成、各々以下を設定:
-   - **URL**: `https://tasukiba.netlify.app/api/cron/xxx`
+   - **URL**: `https://tasukiba.com/api/cron/xxx`
    - **Method**: POST (一部 GET、`/api/health` は GET)
    - **Headers**: `Authorization: Bearer $CRON_SECRET` を追加
      - `CRON_SECRET` は Netlify 環境変数と同じ値を使用
@@ -614,7 +614,7 @@ Netlify Scheduled Functions は使わず、**[cron-job.org](https://cron-job.org
 
 ### 6.4 cron 実行履歴ダッシュボード (PR feat/cron-execution-log)
 
-super_admin として `https://tasukiba.netlify.app/admin/super/cron-history` にアクセスすると、社内 dashboard で:
+super_admin として `https://tasukiba.com/admin/super/cron-history` にアクセスすると、社内 dashboard で:
 
 - 直近 24h の成功 / 失敗 / 実行中 / **stale running (= timeout 疑い)** の集計
 - 登録 cron 一覧 (動作概要 + スケジュール)
@@ -633,7 +633,7 @@ super_admin として `https://tasukiba.netlify.app/admin/super/cron-history` �
 $cronSecret = "<CRON_SECRET の値>"
 curl -X POST `
   -H "Authorization: Bearer $cronSecret" `
-  https://tasukiba.netlify.app/api/cron/daily-notifications
+  https://tasukiba.com/api/cron/daily-notifications
 ```
 
 ---

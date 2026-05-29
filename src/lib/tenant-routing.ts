@@ -2,7 +2,7 @@
  * Tenant slug → tenantId 解決 helper (PR #2-d / T-03)
  *
  * 役割:
- *   v1.x で導入予定の URL パターン `tasukiba.netlify.app/{tenantSlug}/...` で
+ *   v1.x で導入予定の URL パターン `tasukiba.com/{tenantSlug}/...` で
  *   slug から tenantId への解決を行う関数の **入り口** を v1 段階で先行整備。
  *   これにより、後続 PR (UI / middleware) が API を変えずに dynamic routing へ
  *   移行できる土台を作る。

@@ -100,7 +100,7 @@ export async function GET(req: NextRequest) {
  * - 失敗時は固定値 `/settings/tenant` にフォールバック
  *
  * PR #425 (2026-05-21): Netlify Deploy Preview 対応。
- *   Netlify Functions では req.url の origin が本番 URL (= tasukiba.netlify.app) に
+ *   Netlify Functions では req.url の origin が本番 URL (= tasukiba.com) に
  *   固定されるケースがあり、Deploy Preview URL (= deploy-preview-NNN--...) から来た
  *   returnTo が「異なるオリジン」として弾かれて本番 URL にフォールバックする事象が発生。
  *   対策: Netlify が自動設定する URL env var (= deploy context に応じて値が変化) も

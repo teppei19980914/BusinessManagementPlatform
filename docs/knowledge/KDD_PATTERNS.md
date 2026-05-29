@@ -17405,3 +17405,105 @@ vi.mocked(prisma.task.findMany).mockImplementation(((async (args: unknown) => { 
 - 関連 KDD: [§5.X+176](#5x176) (本 KDD の前段、main の test 234 個 type エラーは PR 範囲外として無視可能とした判断。今回これを正式に解消)
 - 関連 docs: [docs/test/STRATEGY.md §4.5](../test/STRATEGY.md) (helper 使い方を網羅)
 - 関連 PR: fix/test-tsc-strict-cleanup
+
+---
+
+## 5.X+179 **独自ドメイン (tasukiba.com) 移行 ─ Cloudflare Registrar + Netlify カスタムドメイン + 4 レイヤ更新 (URL/env/外部サービス/DNS) の段階手順とフルスキャン教訓 (2026-05-29 / PR #464)**
+
+### 背景
+
+`tasukiba.netlify.app` (Netlify 無料サブドメイン) から独自ドメイン `tasukiba.com` へ Production URL を切替。年間 ~1,800 円 (Cloudflare Registrar $10.46 + 海外取引手数料) のランニングコスト追加でブランド整合性 / SEO 蓄積 / Stripe 連携の信頼性向上を獲得。Preview/Branch deploy は `*--tasukiba.netlify.app` のまま維持 (Netlify 仕様 + Email Routing 等の段階移行容易化)。
+
+### 移行アーキテクチャ (4 レイヤ更新)
+
+ドメイン移行で本番動作を切替えるには、**以下 4 レイヤ全部の更新が必須** (どれか 1 つでも欠けると挙動不整合):
+
+| レイヤ | 何を更新 | どこで | PR #464 対象 |
+|---|---|---|---|
+| **L1: DNS** | A record (apex) + CNAME (www) | Cloudflare DNS | 範囲外 (手動) |
+| **L2: 環境変数** | `NEXTAUTH_URL` env var | Netlify Dashboard | 範囲外 (手動) |
+| **L3: コード/設定** | JSDoc 例 URL, テスト BASE_URL, docs Production URL | repo | ✅ PR #464 |
+| **L4: 外部サービス** | Stripe Webhook URL, cron-job.org URL | 各 Dashboard | 範囲外 (手動) |
+
+### 採用した DNS 設計
+
+```
+[Cloudflare DNS]
+  tasukiba.com  → A 75.2.60.5 (Netlify Load Balancer IP) — DNS only (灰色雲)
+  www           → CNAME tasukiba.netlify.app — DNS only (灰色雲)
+```
+
+★ **重要**: Cloudflare Proxy (オレンジ雲) は **必ず OFF** (灰色雲 = DNS only)。
+- 理由: Cloudflare CDN と Netlify CDN が二重になり、Let's Encrypt の ACME challenge が Cloudflare レイヤで遮断されて SSL 発行が失敗する。Netlify が CDN + SSL を提供するので Cloudflare はあくまで DNS のみ提供。
+
+### 確認した「2 段リダイレクトチェーン」(NEXTAUTH_URL 未更新時)
+
+DNS / Netlify カスタムドメイン設定だけ完了して **NEXTAUTH_URL を tasukiba.netlify.app のまま放置** すると、以下の挙動になる (curl で確認):
+
+```
+1. https://www.tasukiba.com/
+   → HTTP 301 Moved Permanently
+   → Location: https://tasukiba.com/    ✅ Netlify が正しく www→apex リダイレクト
+
+2. https://tasukiba.com/
+   → HTTP 302 Found
+   → Location: https://tasukiba.netlify.app/login   ⚠️ NextAuth が旧 NEXTAUTH_URL を canonical 扱い
+   → Set-Cookie: __Secure-authjs.callback-url=https%3A%2F%2Ftasukiba.netlify.app
+
+3. https://tasukiba.netlify.app/login
+   → HTTP 200 OK
+```
+
+### 教訓 (Lessons Learned)
+
+1. **★最重要★ Production URL 切替には Netlify Dashboard の `NEXTAUTH_URL` 更新を別途トリガー必須** — NextAuth v5 は `NEXTAUTH_URL` 定義時はそちらを canonical として最優先する (= `trustHost: true` より優先される)。DNS + Netlify カスタムドメイン設定だけでは画面遷移が旧 URL に飛ぶ事象が発生する。確認は **`curl -IL https://tasukiba.com/`** で 302 リダイレクト先を見るのが最速 (Set-Cookie の `__Secure-authjs.callback-url` 値で NextAuth が認識している base URL が判明)
+2. **Cookie の `Domain` 属性は設定しない (host-only scoped が正解)** — `src/lib/auth.config.ts` の cookie options で `domain` を意図的に省略している。これにより `tasukiba.com` と `*--tasukiba.netlify.app` (Preview) の cookie が分離され、ブラウザ間移行時の cookie 漏出を防げる。`.tasukiba.com` のようなドット先頭 domain でサブドメイン共有する設計は今回採用せず、tenant 分離は path-based ルーティングで担保する方針 ([TENANT_AND_BILLING.md §34.11.6](../business/TENANT_AND_BILLING.md))
+3. **Preview/Branch deploy は netlify.app のまま維持する設計判断** — Netlify は Preview/Branch deploy URL を `*--<site-name>.netlify.app` 形式で自動発行する仕様で、これを独自ドメインに移すには Netlify Pro plan ($19/月) の "Automatic deploy subdomains" 機能が必須。Personal plan では非対応。よって `NEXTAUTH_URL` は context override で **Production: `https://tasukiba.com` / Preview/Branch: 未設定 (= trustHost フォールバック)** を維持 (KDD §5.X+101 の設計をそのまま継承)
+4. **`process.env.NEXTAUTH_URL || req.nextUrl.origin` パターンの「動的フォールバック」が機能する** — `src/app/api/admin/users/route.ts` / `src/app/api/auth/signup/route.ts` の `baseUrl` 構築は本パターンを採用。NEXTAUTH_URL が正しく更新されていればそちらを使い、未設定でも request origin で動作継続 (= 2 重防御)。今回の移行で env 更新と PR マージのタイミングを多少前後しても挙動破壊しない構造になっていた
+5. **sanitizeReturnTo の `allowedOrigins` 動的構築設計はドメイン移行に強い** — `src/app/api/tenants/me/billing/stripe/setup/complete/route.ts` の `sanitizeReturnTo` は `[reqUrl, NEXTAUTH_URL, process.env.URL, DEPLOY_PRIME_URL]` を Set として収集する設計。PR #425 当時は Deploy Preview 対応で導入したが、独自ドメイン移行でも primaryOrigin が自動的に新 URL に切り替わり、コード修正なしで対応完了
+6. **Stripe Webhook signature 検証は URL 非依存だが、Stripe Dashboard 側で URL 再登録すると新 `whsec_xxx` が発行される** — `STRIPE_WEBHOOK_SECRET` env var の更新を同時に行わないと、新 URL でのリクエストは全て signature mismatch で 400 になる。チェックリスト化必須
+7. **Cloudflare Registrar の現実価格は $10.46/年 (旧 $9.15 から値上げ)** — 2024 年 9 月以降 Verisign が .com 卸価格を $8.97 → $10.26 に値上げ。Cloudflare の「at-cost 販売」方針は不変だが、絶対値は他レジストラと同水準。長期保有での優位性は依然あり (お名前.com 初年度キャンペーン後の更新値上げと比較すると、3 年目以降で逆転)
+8. **DNS + SSL 反映は 5-30 分で完了する** — Cloudflare DNS は global anycast で伝播が速く、Netlify Let's Encrypt 自動発行も 5-15 分。事前見積もりの「最大 48 時間」は実態より長い
+
+### 検証手順 (再現用)
+
+```powershell
+# 1. DNS 伝播確認
+nslookup tasukiba.com
+nslookup www.tasukiba.com
+# 期待: tasukiba.com → 75.2.60.5, www → tasukiba.netlify.app の CNAME → 75.2.60.5
+
+# 2. SSL + リダイレクトチェーン確認 (NEXTAUTH_URL 更新後)
+curl -IL https://www.tasukiba.com/
+# 期待: 301 → https://tasukiba.com/ → 302 → https://tasukiba.com/login → 200
+# NG パターン: 302 先が tasukiba.netlify.app/login なら NEXTAUTH_URL 未更新
+
+# 3. Set-Cookie の callback URL 確認
+curl -IL https://tasukiba.com/ 2>&1 | grep callback-url
+# 期待: __Secure-authjs.callback-url=https%3A%2F%2Ftasukiba.com
+# NG: tasukiba.netlify.app が含まれていたら NEXTAUTH_URL 反映漏れ
+
+# 4. Stripe Webhook 再登録後、テストイベントで signature 検証成功確認
+# Stripe Dashboard → Webhooks → tasukiba-production-webhook → "Send test webhook"
+# → 200 OK が返ること (signature mismatch なら STRIPE_WEBHOOK_SECRET 更新漏れ)
+```
+
+### フルスキャン検証で確認した「移行に強い設計」(0 件修正で済んだ理由)
+
+`feedback_repeated_verification_request` の教訓に従い PR #464 マージ前に 2 観点 (自前 + Explore agent) で 38 ファイル / 9 カテゴリをスキャンした結果、**修正必要 0 件 / 重大発見なし**。元から URL 移行に強い設計だった点:
+
+- **CSP: `default-src 'self'`** — 特定ドメイン whitelist なし、ドメイン変更で影響なし
+- **Cookie: `domain` 属性なし** — host-only scoped で自動切り替え
+- **NextAuth `trustHost: true`** — host header フォールバックで Preview/Branch 自動対応
+- **Stripe `new URL(returnUrl).origin`** — UI 起点で動的構築、ハードコードなし
+- **cron 認可: `Authorization: Bearer ${CRON_SECRET}`** — URL/host 非依存
+- **`req.headers.host`** — 唯一の参照は `tenant-resolver.ts:45` のコメントアウト済将来コードのみ
+- **i18n messages / E2E specs / prisma seed / public/*.md** — URL 言及一切なし
+
+### 関連
+
+- 関連 KDD: [§5.X+99](#5x99) (Stripe Deploy Preview リダイレクト罠) / [§5.X+101](#5x101) (NEXTAUTH_URL context override 真の根本解決) / [§5.X+108](#5x108) (Set-Cookie 脱落) / [§5.X+177](#5x177) (middleware matcher の public asset 除外)
+- 関連 docs: [docs/operations/ENV_VARS.md §1.3](../operations/ENV_VARS.md) (NEXTAUTH_URL context 分離) / [docs/operations/DEPLOYMENT.md §2](../operations/DEPLOYMENT.md) (deploy context 別 env 設定) / [docs/operations/STRIPE_SETUP.md §4](../operations/STRIPE_SETUP.md) (Webhook URL 設定) / [docs/operations/CRON.md](../operations/CRON.md) (cron URL 設定)
+- 関連 ADR: [ADR-0023](../adr/0023-netlify-starter-migration.md) (Netlify 移行決定、本 KDD で `tasukiba.com` 注記を追加)
+- 関連 feedback memory: [[feedback_repeated_verification_request]] (フルスキャン 2 観点で 0 件確認 = 設計品質の証拠) / [[feedback_branch_verification]] (main 同期確認) / [[feedback_design_comment_vs_impl_drift]] (コメント vs 実装の整合確認、本 PR では JSDoc も同時更新)
+- 関連 PR: PR #464 (`chore(domain): 本番 URL を tasukiba.com 独自ドメインに切替`)

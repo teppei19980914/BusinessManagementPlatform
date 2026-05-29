@@ -53,7 +53,7 @@
 **手動実行** (動作確認用):
 
 ```bash
-curl -X POST https://tasukiba.netlify.app/api/cron/daily-notifications \
+curl -X POST https://tasukiba.com/api/cron/daily-notifications \
   -H "Authorization: Bearer ${CRON_SECRET}"
 ```
 
@@ -79,7 +79,7 @@ curl -X POST https://tasukiba.netlify.app/api/cron/daily-notifications \
 **手動実行** (動作確認用):
 
 ```bash
-curl -X POST https://tasukiba.netlify.app/api/cron/tenant-monthly-reset \
+curl -X POST https://tasukiba.com/api/cron/tenant-monthly-reset \
   -H "Authorization: Bearer ${CRON_SECRET}"
 ```
 
@@ -145,7 +145,7 @@ ref: <https://docs.cron-job.org/>
 | 項目 | 値 |
 |---|---|
 | Title | `tasukiba warm-up` |
-| URL | `https://tasukiba.netlify.app/api/health` |
+| URL | `https://tasukiba.com/api/health` |
 | Execution schedule | **Every 5 minutes** (Common schedules のプリセット、または Custom で `*/5 * * * *`) |
 | Enabled | ✅ ON |
 
@@ -187,7 +187,7 @@ cron-job.org の **Settings → Notifications** で以下を有効化:
 
 ### 10.1 エンドポイント
 
-`GET https://tasukiba.netlify.app/api/health`
+`GET https://tasukiba.com/api/health`
 
 ### 10.2 応答
 

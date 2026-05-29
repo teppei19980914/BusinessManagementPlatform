@@ -82,7 +82,7 @@ model User {
 
 メールリンク (= 招待 / パスワードリセット) には URL クエリで tenant_slug を埋め込み:
 ```
-https://tasukiba.netlify.app/setup-password?tenant=acme-corp&token=xxx
+https://tasukiba.com/setup-password?tenant=acme-corp&token=xxx
 ```
 
 ### Pre-auth tenant 解決の抽象化 (= 将来 Option A 移行容易化)

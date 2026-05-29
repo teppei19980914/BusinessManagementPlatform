@@ -14,6 +14,7 @@
       "PowerShell(Get-ChildItem -Path \"c:\\\\Users\\\\SF02512\\\\GitHub\\\\Private\\\\BusinessManagementPlatform\\\\docs\\\\specification\" | ForEach-Object { $_.FullName })",
       "Read(//c/Program Files/Docker/Docker/**)",
       "PowerShell($cpu = Get-WmiObject Win32_Processor; Write-Host \"CPU VirtualizationFirmwareEnabled: $\\($cpu.VirtualizationFirmwareEnabled\\)\"; Write-Host \"CPU SecondLevelAddressTranslationExtensions: $\\($cpu.SecondLevelAddressTranslationExtensions\\)\"; Write-Host \"---\"; $hv = Get-ComputerInfo -Property HyperVisorPresent,WindowsProductName,OsArchitecture; $hv | Format-List; Write-Host \"---\"; wsl --status 2>&1 | Select-Object -First 10)",
+      "WebFetch(domain:tasukiba.com)",
       "WebFetch(domain:tasukiba.netlify.app)",
       "WebFetch(domain:open-api.netlify.com)",
       "WebFetch(domain:www.netlify.com)",

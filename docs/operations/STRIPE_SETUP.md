@@ -236,7 +236,7 @@ Dashboard → **開発者** → **Webhook** → **送信先を追加**
 | 項目 | 値 |
 |---|---|
 | 送信先名 | `tasukiba-sandbox-webhook` (Sandbox) / `tasukiba-production-webhook` (Live) |
-| エンドポイント URL | **Sandbox / Live 共通**: `https://tasukiba.netlify.app/api/webhooks/stripe`<br>(Live mode 用ドメインが分かれる場合はそれに合わせる) |
+| エンドポイント URL | **Sandbox / Live 共通**: `https://tasukiba.com/api/webhooks/stripe`<br>(Live mode 用ドメインが分かれる場合はそれに合わせる) |
 | API バージョン | **`2026-04-22.dahlia`** (2026-05-19 時点で Sandbox 新規アカウントの最新版) |
 | 説明 | `たすきば Webhook (Sandbox / Live)` |
 
@@ -306,7 +306,7 @@ Dashboard → **設定** → **Billing** → **カスタマーポータル**
 | 項目 | 値 |
 |---|---|
 | ポータルのヘッダー | (任意。Sandbox: デフォルト "tasukiba サンドボックスは Stripe を使用しています"、Live: 「たすきば」推奨) |
-| リダイレクトリンク | (任意。`https://tasukiba.netlify.app/settings/tenant` を設定すると UX 向上) |
+| リダイレクトリンク | (任意。`https://tasukiba.com/settings/tenant` を設定すると UX 向上) |
 | リーガルポリシー (利用規約 / プライバシーポリシー) | **「公開事業情報」画面 (§7) で設定した値を参照** |
 
 ---
@@ -331,7 +331,7 @@ Sandbox では Stripe placeholder のテストデータが入っている項目�
 - サポート部門の住所 (= 実事業所住所、日本)
 - サポート部門の電話番号 (= 実電話番号)
 - 顧客サポートのメール (= 実メールアドレス)
-- ビジネスのウェブサイト (= `https://tasukiba.netlify.app/`)
+- ビジネスのウェブサイト (= `https://tasukiba.com/`)
 
 ---
 
