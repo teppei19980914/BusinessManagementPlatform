@@ -88,14 +88,9 @@ export function HelpClient({ isTenantAdmin }: Props) {
         <FaqItem
           q="リスクと課題の違いは何ですか？"
           a={
-            <>
-              <p>
-                <strong>リスク</strong> は「まだ発生していない潜在的な不確実性」、
-                <strong>課題</strong> は「すでに発生したブロッカー・要対処事項」です。
-                リスクが顕在化したら同じレコードを課題に変換するのではなく、課題として新規起票することを推奨します
-                (リスク側に「対策で抑えられた」記録が残るため)。
-              </p>
-            </>
+            <p>
+              <strong>リスク</strong> は「まだ起きていない、起きるかもしれない問題」、<strong>課題</strong> は「すでに起きていて対応が必要な問題」です。リスクが実際に起こったら、そのリスクは触らず別途「課題」として新規登録するのがおすすめ (リスク側に「警戒した結果」が記録として残り、後の振り返りに役立つため)。
+            </p>
           }
         />
         <FaqItem
@@ -188,6 +183,97 @@ export function HelpClient({ isTenantAdmin }: Props) {
                 ※ タイトル・本文以外の項目 (タグ・優先度・期日など) の編集では作り直しは走りません (提案に使うのは本文テキストだけのため)。
               </p>
             </>
+          }
+        />
+        <FaqItem
+          q="プロジェクトを誤って削除しました、復元できますか？"
+          a={
+            <p>
+              削除後 <strong>30 日以内</strong> なら、テナント管理者経由で運営側にお問い合わせください (内部的にはまだ残っており復元可能)。30 日経過後は完全に削除され、復元できません。誤削除予防のため、削除確認ダイアログでは慎重にご判断ください。
+            </p>
+          }
+        />
+        <FaqItem
+          q="終了 (closed) したプロジェクトは編集できますか？"
+          a={
+            <p>
+              <strong>編集できます</strong> (権限があれば)。「終了」は表示用のステータスで、編集ロックではありません。終了後の振り返り追記やナレッジ整理などにご活用ください。
+            </p>
+          }
+        />
+        <FaqItem
+          q="プロジェクトをテンプレートから複製できますか？"
+          a={
+            <p>
+              プロジェクト全体のテンプレート機能は現時点で未実装です。<strong>WBS (作業構造) 単位の複製</strong> はプロジェクト内の WBS 画面 (タスク一覧) から実行できます。
+            </p>
+          }
+        />
+        <FaqItem
+          q="チャット検索で結果が 0 件になります"
+          a={
+            <p>
+              キーワード単体ではなく <strong>50〜200 字程度の文章で、業務文脈や専門用語を含める</strong> とヒットしやすくなります。例:「決済」だけより「クレジットカード決済の API 連携で発生したエラー対応」のように具体的に書くのがコツです。
+            </p>
+          }
+        />
+        <FaqItem
+          q="「下書き / 自分のみ」のデータも提案に出てきますか？"
+          a={
+            <p>
+              出てきません。<strong>「下書き / 自分のみ」状態のデータは提案エンジンの対象外</strong> です (検索用データも作られないため、コスト面でも無駄が発生しない設計)。提案に出したい場合は公開範囲を「プロジェクト内公開」または「全メンバー (公開)」に変更してください。
+            </p>
+          }
+        />
+        <FaqItem
+          q="「なぜ参考になる?」ボタンは押すたびに ¥15 課金されますか？"
+          a={
+            <p>
+              いいえ、<strong>同じ組み合わせ (今のプロジェクト × 参考候補) で 2 回目以降はキャッシュから表示され、追加課金は発生しません</strong>。組み合わせが変わったとき (別の候補で押す / 元データの本文が編集された後) のみ ¥15 が発生します。
+            </p>
+          }
+        />
+      </FaqCategory>
+
+      {/* 権限とロール */}
+      <FaqCategory title="権限とロールについて">
+        <FaqItem
+          q="運営者 / テナント管理者 / 一般メンバーの違いは？"
+          a={
+            <div className="mt-2 overflow-x-auto rounded-md border">
+              <table className="w-full border-collapse text-sm">
+                <thead className="bg-muted/40">
+                  <tr>
+                    <th className="border-b p-2 text-left">操作</th>
+                    <th className="border-b p-2 text-left">運営者</th>
+                    <th className="border-b p-2 text-left">テナント管理者</th>
+                    <th className="border-b p-2 text-left">一般メンバー</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr><td className="border-b p-2">テナント作成・削除・課金管理</td><td className="border-b p-2">○</td><td className="border-b p-2">○ (自社のみ)</td><td className="border-b p-2">−</td></tr>
+                  <tr><td className="border-b p-2">メンバー招待・ロール変更</td><td className="border-b p-2">−</td><td className="border-b p-2">○</td><td className="border-b p-2">−</td></tr>
+                  <tr><td className="border-b p-2">プロジェクト・ナレッジ・課題の作成/編集</td><td className="border-b p-2">−</td><td className="border-b p-2">○</td><td className="border-b p-2">○</td></tr>
+                  <tr><td className="p-2">他社データの閲覧</td><td className="p-2">課金集計のみ</td><td className="p-2">−</td><td className="p-2">−</td></tr>
+                </tbody>
+              </table>
+            </div>
+          }
+        />
+        <FaqItem
+          q="自分のロールはどこで確認できますか？"
+          a={
+            <p>
+              画面右上のアカウントメニュー (アバターアイコン) を開くと、<strong>組織 → ロール → 名前 → メール</strong> の順で表示されます。
+            </p>
+          }
+        />
+        <FaqItem
+          q="退職者が担当していたナレッジ・課題はどう引き継ぎますか？"
+          a={
+            <p>
+              ナレッジ・リスク・課題・振り返り・メモは <strong>担当者 (assignee) を別のメンバーに付け替える</strong> ことで引き継げます。各データの編集画面の「担当者」欄から変更してください (データ自体はそのまま残ります)。
+            </p>
           }
         />
       </FaqCategory>
@@ -311,6 +397,38 @@ export function HelpClient({ isTenantAdmin }: Props) {
             </>
           }
         />
+        <FaqItem
+          q="ナレッジの公開範囲 (下書き / プロジェクト内 / 全メンバー) はどう使い分けますか？"
+          a={
+            <>
+              <p>用途別の目安:</p>
+              <ul className="mt-2 ml-4 list-disc space-y-1">
+                <li><strong>下書き (draft)</strong>: 自分の作業メモ。他のメンバーから見えない (提案エンジン対象外)</li>
+                <li><strong>プロジェクト内 (project)</strong>: 関係するプロジェクトメンバーのみに公開</li>
+                <li><strong>全メンバー (company)</strong>: 全社員に公開、提案エンジンの候補にも並ぶ</li>
+              </ul>
+              <p className="mt-2">
+                リスク・課題 (RiskIssue) は <strong>下書き</strong> または <strong>公開</strong> の 2 段階です。
+              </p>
+            </>
+          }
+        />
+        <FaqItem
+          q="公開範囲を後から変更できますか？"
+          a={
+            <p>
+              はい、各データの編集画面で変更できます (PM・テナント管理者のみ)。<strong>「下書き → 全メンバー」に初めて変更した時点で AI が検索用データを作成</strong> するため、提案エンジンに反映されるまで <strong>数秒〜のタイムラグ</strong> が発生します。
+            </p>
+          }
+        />
+        <FaqItem
+          q="@メンションした個人メモは相手から見えますか？"
+          a={
+            <p>
+              メモには <strong>private (自分のみ) と public (全メンバーに公開) の 2 段階</strong> があります。private なメモ内で @メンションしても、相手は閲覧できません (通知も飛びません)。共有したい場合は <strong>public に変更してから</strong> @メンションしてください。
+            </p>
+          }
+        />
       </FaqCategory>
 
       {/* テナント管理者向け FAQ + 生成 AI 解説 */}
@@ -406,6 +524,17 @@ export function HelpClient({ isTenantAdmin }: Props) {
                       <strong>取込後に本文の 2 行目以降が消えている</strong> →{' '}
                       改行を含むセルがダブルクォートで囲まれていなかった可能性。CSV をメモ帳 / VS Code で開き
                       該当セルが <code>&quot;...&quot;</code> で囲まれているか確認 (Excel 保存時にクォートが外れる事故あり)
+                    </li>
+                  </ul>
+                  <p className="mt-3 text-muted-foreground">
+                    <strong>Excel での操作補足</strong>:
+                  </p>
+                  <ul className="mt-1 list-disc space-y-1 pl-5 text-muted-foreground">
+                    <li>
+                      <strong>CSV UTF-8 で保存</strong>: Excel メニュー「ファイル」→「名前を付けて保存」→ ファイル形式のドロップダウンから「CSV UTF-8 (コンマ区切り) (*.csv)」を選択 (Windows / Mac とも同じ)
+                    </li>
+                    <li>
+                      <strong>セル内改行</strong>: 改行を入れたいセル内で <code>Alt + Enter</code> (Mac は <code>Option + 改行</code>) を押す。改行を含むセルは保存時に自動的に <code>&quot;</code> で囲まれる
                     </li>
                   </ul>
                 </>
@@ -605,40 +734,63 @@ export function HelpClient({ isTenantAdmin }: Props) {
               q="プラン (Beginner / Expert / Pro) の違いは？"
               a={
                 <>
-                  <ul className="list-disc space-y-1 pl-5">
-                    <li>
-                      <strong>Beginner (無料)</strong>: 5 席まで・プロジェクト作成/更新 月 50 回まで無料・Claude Haiku。
-                      <strong>資産入力 (ナレッジ・リスク・振り返り・メモ) とチャット検索は無料・無制限</strong> (ADR-0019)。
-                      プロジェクト作成/更新が 50 回到達すると当該機能のみ縮退、それ以外は継続。
-                    </li>
-                    <li>
-                      <strong>Expert (¥10/回)</strong>: 席数無制限・Claude Haiku・月間使用量上限なし
-                      (予算上限は自己設定可)。プロジェクト作成/更新のみ課金。
-                      <strong>資産入力とチャット検索は無料・無制限</strong>。
-                    </li>
-                    <li>
-                      <strong>Pro (¥15/回)</strong>: 席数無制限・Claude Sonnet・「なぜ?」機能限定。
-                      プロジェクト作成/更新 + なぜ機能のみ課金。資産入力とチャット検索は無料・無制限。
-                    </li>
-                  </ul>
+                  <div className="mt-2 overflow-x-auto rounded-md border">
+                    <table className="w-full border-collapse text-sm">
+                      <thead className="bg-muted/40">
+                        <tr>
+                          <th className="border-b p-2 text-left">項目</th>
+                          <th className="border-b p-2 text-left">Beginner (無料)</th>
+                          <th className="border-b p-2 text-left">Expert (¥10/回)</th>
+                          <th className="border-b p-2 text-left">Pro (¥15/回)</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <td className="border-b p-2">席数</td>
+                          <td className="border-b p-2">5 人まで</td>
+                          <td className="border-b p-2">無制限</td>
+                          <td className="border-b p-2">無制限</td>
+                        </tr>
+                        <tr>
+                          <td className="border-b p-2">プロジェクト作成/更新</td>
+                          <td className="border-b p-2">月 50 回まで無料</td>
+                          <td className="border-b p-2">¥10/回</td>
+                          <td className="border-b p-2">¥15/回</td>
+                        </tr>
+                        <tr>
+                          <td className="border-b p-2">資産入力 / チャット検索</td>
+                          <td className="border-b p-2" colSpan={3}>全プラン無料・無制限</td>
+                        </tr>
+                        <tr>
+                          <td className="border-b p-2">使う AI モデル</td>
+                          <td className="border-b p-2">基本 AI (Claude Haiku)</td>
+                          <td className="border-b p-2">基本 AI (Claude Haiku)</td>
+                          <td className="border-b p-2">高機能 AI (Claude Sonnet)</td>
+                        </tr>
+                        <tr>
+                          <td className="p-2">「なぜ参考になる?」機能</td>
+                          <td className="p-2 text-muted-foreground">利用不可</td>
+                          <td className="p-2 text-muted-foreground">利用不可</td>
+                          <td className="p-2">利用可 (¥15/回)</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
                   <p className="mt-2 text-muted-foreground">
                     詳細は{' '}
                     <Link href="/settings/tenant" className="text-primary underline">
                       テナント設定
-                    </Link>{' '}
-                    のプラン情報セクション。
+                    </Link>
+                    {' '}のプラン情報セクションで確認できます。
                   </p>
                 </>
               }
             />
             <FaqItem
-              q="ダウングレード (Pro → Beginner) は即時反映されますか？"
+              q="Expert と Pro の切替はいつ反映されますか？"
               a={
                 <p>
-                  いいえ、<strong>当月末まで現プラン継続、翌月 1 日から Beginner に切替</strong>{' '}
-                  します。月途中ダウングレードによる課金回避を防ぐ仕様です。
-                  また現席数が 6 名以上の場合はシステム側でダウングレードを拒否します
-                  (5 名以下にしてから再試行)。
+                  Expert ↔ Pro の切替は <strong>切替ボタンを押した瞬間に即時反映</strong> されます (日割り計算なし、切替前後の利用分はそれぞれの単価で計算)。Beginner プランへ戻すことはできません (「Expert / Pro から Beginner プランに戻せますか？」FAQ を参照)。
                 </p>
               }
             />

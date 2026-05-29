@@ -187,3 +187,71 @@ describe('HelpClient PR2 新規 FAQ 5 件 invariant', () => {
     expect(source).toMatch(/個別の CSV ダウンロード/);
   });
 });
+
+/**
+ * PR3 (feat/faq-pr3-medium-priority 2026-05-29):
+ *   中優先度 16 件: 書き直し 4 件 (リスク/課題 / プラン表形式 / CSV Excel 補足 / Expert↔Pro 切替)
+ *   + 新規 12 件 (権限ロール 3 / プロジェクト運用 3 / 検索提案 3 / visibility 3)。
+ *   ADR-0013 ダウングレード禁止と整合した文言で「ダウングレード (Pro → Beginner)」記述を排除。
+ */
+describe('HelpClient PR3 書き直し 4 件 invariant', () => {
+  it('リスクと課題 FAQ から「顕在化」「ブロッカー」が消え平易表現になっている', () => {
+    expect(source).not.toMatch(/顕在化/);
+    expect(source).not.toMatch(/ブロッカー/);
+    expect(source).toMatch(/まだ起きていない、起きるかもしれない問題/);
+    expect(source).toMatch(/警戒した結果/);
+  });
+
+  it('プラン違い FAQ が表形式化され「基本 AI」「高機能 AI」表現を使用', () => {
+    expect(source).toMatch(/q="プラン \(Beginner \/ Expert \/ Pro\) の違いは？"/);
+    expect(source).toMatch(/基本 AI \(Claude Haiku\)/);
+    expect(source).toMatch(/高機能 AI \(Claude Sonnet\)/);
+    // 旧箇条書きの記述は撤去
+    expect(source).not.toMatch(/プロジェクト作成\/更新が 50 回到達すると当該機能のみ縮退/);
+  });
+
+  it('CSV エラー対処 FAQ に Excel 補足 (CSV UTF-8 保存 / Alt + Enter) を含む', () => {
+    expect(source).toMatch(/CSV UTF-8 \(コンマ区切り\) \(\*.csv\)/);
+    expect(source).toMatch(/Alt \+ Enter/);
+    expect(source).toMatch(/Option \+ 改行/);
+  });
+
+  it('「ダウングレード (Pro → Beginner)」FAQ を撤去し「Expert と Pro の切替」に置換', () => {
+    expect(source).not.toMatch(/q="ダウングレード \(Pro → Beginner\) は即時反映されますか？"/);
+    expect(source).toMatch(/q="Expert と Pro の切替はいつ反映されますか？"/);
+    expect(source).toMatch(/切替ボタンを押した瞬間に即時反映/);
+  });
+});
+
+describe('HelpClient PR3 新規 12 件 invariant', () => {
+  it('「権限とロールについて」FaqCategory が新設され 3 件の Q を含む (表形式の比較)', () => {
+    expect(source).toMatch(/<FaqCategory title="権限とロールについて">/);
+    expect(source).toMatch(/q="運営者 \/ テナント管理者 \/ 一般メンバーの違いは？"/);
+    expect(source).toMatch(/q="自分のロールはどこで確認できますか？"/);
+    expect(source).toMatch(/q="退職者が担当していたナレッジ・課題はどう引き継ぎますか？"/);
+    expect(source).toMatch(/担当者 \(assignee\) を別のメンバーに付け替える/);
+  });
+
+  it('業務利用カテゴリにプロジェクト運用 3 件 (誤削除 / closed / テンプレ複製) が追加', () => {
+    expect(source).toMatch(/q="プロジェクトを誤って削除しました、復元できますか？"/);
+    expect(source).toMatch(/q="終了 \(closed\) したプロジェクトは編集できますか？"/);
+    expect(source).toMatch(/q="プロジェクトをテンプレートから複製できますか？"/);
+    expect(source).toMatch(/削除後 <strong>30 日以内/);
+  });
+
+  it('業務利用カテゴリに検索/提案 3 件 (ヒット 0 / draft / なぜ機能キャッシュ) が追加', () => {
+    expect(source).toMatch(/q="チャット検索で結果が 0 件になります"/);
+    expect(source).toMatch(/q="「下書き \/ 自分のみ」のデータも提案に出てきますか？"/);
+    expect(source).toMatch(/q="「なぜ参考になる\?」ボタンは押すたびに ¥15 課金されますか？"/);
+    expect(source).toMatch(/50〜200 字程度の文章で、業務文脈や専門用語を含める/);
+    expect(source).toMatch(/2 回目以降はキャッシュから表示され、追加課金は発生しません/);
+  });
+
+  it('データとプライバシーカテゴリに visibility 3 件 (使い分け / 後から変更 / @メンション個人メモ) が追加', () => {
+    expect(source).toMatch(/q="ナレッジの公開範囲 \(下書き \/ プロジェクト内 \/ 全メンバー\) はどう使い分けますか？"/);
+    expect(source).toMatch(/q="公開範囲を後から変更できますか？"/);
+    expect(source).toMatch(/q="@メンションした個人メモは相手から見えますか？"/);
+    // visibility=draft が提案対象外であることを明示
+    expect(source).toMatch(/提案エンジン対象外/);
+  });
+});
