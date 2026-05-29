@@ -84,6 +84,9 @@ import {
   ResetColumnsButton,
 } from '@/components/ui/resizable-columns';
 import { DateFieldWithActions } from '@/components/ui/date-field-with-actions';
+// feat/gantt-initial-scroll-and-locale (2026-05-29): WBS と Gantt で日付表示を統一する
+//   ため date-only 値の locale 表示ヘルパを使う。
+import { useFormatters } from '@/lib/use-formatters';
 import type { TaskDTO } from '@/services/task.service';
 import type { MemberDTO } from '@/services/member.service';
 import { useSessionStringSet } from '@/lib/use-session-state';
@@ -193,6 +196,7 @@ function TaskTreeNodeImpl({
   // CRUD 後の reload + stale-while-revalidate（PR #33）で UI が追従する。
   const t = useTranslations('wbs');
   const { showSuccess, showError } = useToast();
+  const { formatDateOnly } = useFormatters();
   const unsetLabel = t('unsetShort');
 
   const isWP = task.type === 'work_package';
@@ -205,13 +209,15 @@ function TaskTreeNodeImpl({
   const canMemberEdit = !isWP && isAssignee;
   const canOpenEdit = canEditPmTl || canMemberEdit;
   // 予定期間 / 実績期間の表示テキスト（片方しかない場合は unsetLabel を反対側に挿入）
+  // feat/gantt-initial-scroll-and-locale (2026-05-29): Gantt tooltip と表示形式を統一するため
+  //   生 YYYY-MM-DD ではなく formatDateOnly() で locale 表示 (ja: 2026/05/15、en-US: 05/15/2026)
   const plannedRangeText = (() => {
     if (!task.plannedStartDate && !task.plannedEndDate) return '-';
-    return `${task.plannedStartDate || unsetLabel} 〜 ${task.plannedEndDate || unsetLabel}`;
+    return `${formatDateOnly(task.plannedStartDate ?? '') || unsetLabel} 〜 ${formatDateOnly(task.plannedEndDate ?? '') || unsetLabel}`;
   })();
   const actualRangeText = (() => {
     if (!task.actualStartDate && !task.actualEndDate) return '-';
-    return `${task.actualStartDate || unsetLabel} 〜 ${task.actualEndDate || unsetLabel}`;
+    return `${formatDateOnly(task.actualStartDate ?? '') || unsetLabel} 〜 ${formatDateOnly(task.actualEndDate ?? '') || unsetLabel}`;
   })();
   // 進捗&工数の表示: ACT は 進捗% / 工数h、WP は進捗%のみ（工数は子から集計済を表示）
   const effortText = task.plannedEffort > 0 ? `${task.plannedEffort}h` : null;
@@ -438,6 +444,7 @@ function TaskMobileCardImpl({
 }: Omit<TaskTreeNodeProps, 'canSelectForProgress' | 'isSelected' | 'selectedIds' | 'onToggleSelect' | 'showIdColumn'>) {
   const t = useTranslations('wbs');
   const { showSuccess, showError } = useToast();
+  const { formatDateOnly } = useFormatters();
   const unsetLabel = t('unsetShort');
   const isWP = task.type === 'work_package';
   const hasChildren = task.children && task.children.length > 0;
@@ -445,13 +452,14 @@ function TaskMobileCardImpl({
   const isAssignee = task.assigneeId === userId;
   const canMemberEdit = !isWP && isAssignee;
   const canOpenEdit = canEditPmTl || canMemberEdit;
+  // feat/gantt-initial-scroll-and-locale (2026-05-29): mobile card 表示も Gantt と統一
   const plannedRangeText = (() => {
     if (!task.plannedStartDate && !task.plannedEndDate) return '-';
-    return `${task.plannedStartDate || unsetLabel} 〜 ${task.plannedEndDate || unsetLabel}`;
+    return `${formatDateOnly(task.plannedStartDate ?? '') || unsetLabel} 〜 ${formatDateOnly(task.plannedEndDate ?? '') || unsetLabel}`;
   })();
   const actualRangeText = (() => {
     if (!task.actualStartDate && !task.actualEndDate) return '-';
-    return `${task.actualStartDate || unsetLabel} 〜 ${task.actualEndDate || unsetLabel}`;
+    return `${formatDateOnly(task.actualStartDate ?? '') || unsetLabel} 〜 ${formatDateOnly(task.actualEndDate ?? '') || unsetLabel}`;
   })();
   const effortText = task.plannedEffort > 0 ? `${task.plannedEffort}h` : null;
   void parentOptions;

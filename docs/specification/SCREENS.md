@@ -370,6 +370,10 @@
 - **日本の祝日** (元日・建国記念の日・こどもの日・敬老の日 等) は土日と同じグレー背景扱い、日付セルの `title` 属性に祝日名を出力 (マウスオーバーで祝日名表示) — PR #125 で追加
 - 1日あたり32pxの固定幅でスクロール可能
 - 親ワークパッケージ名をタスク名の上に小さく表示
+- **初期表示位置 (feat/gantt-initial-scroll-and-locale 2026-05-29)**: 画面マウント時に **「今日」の日付列が左端** になるよう scrollLeft を `dayOffset(minDate, today) * DAY_WIDTH` で初期化。これにより毎回手動で今日にスクロールする手間を撲滅し、進行中タスクの状況を即座に確認できる
+- **「今日」の判定**: server-side で `getTenantTodayString(new Date(), session.user.timezone)` により tenant TZ ベースで算出し、client に props で渡す (UTC 起点で日付がずれる罠を排除)
+- **表示期間の保証**: minDate / totalDays 計算に today を必ず含めるため、全タスクが過去 or 未来のみのケースでも今日マーカーが表示レンジに必ず収まる
+- **月ヘッダの表記**: `Intl.DateTimeFormat(tenantLocale, { timeZone: tenantTimeZone, year: 'numeric', month: 'long' })` で locale 依存に整形 (ja-JP → "2026年5月"、en-US → "May 2026")
 
 ### 一覧項目
 | 項目 | 内容 |

@@ -104,11 +104,16 @@ type Props = {
   canCreate: boolean;
   /** 作成者本人判定用 (createdBy === currentUserId で編集/削除許可) */
   currentUserId: string;
+  /**
+   * feat/gantt-initial-scroll-and-locale (2026-05-29): tenant TZ ベースの「今日」(YYYY-MM-DD)。
+   * 作成 form の conductedDate 初期値として使用する (UTC ズレ対策)。
+   */
+  today: string;
   /** CRUD 後に呼び出す再取得ハンドラ（未指定時は router.refresh フォールバック）*/
   onReload?: () => Promise<void> | void;
 };
 
-export function RetrospectivesClient({ projectId, retros, members, canCreate, currentUserId, onReload }: Props) {
+export function RetrospectivesClient({ projectId, retros, members, canCreate, currentUserId, today, onReload }: Props) {
   const t = useTranslations('action');
   const tRetro = useTranslations('retro');
   const tCommon = useTranslations('common');
@@ -116,7 +121,7 @@ export function RetrospectivesClient({ projectId, retros, members, canCreate, cu
   const router = useRouter();
   const { withLoading } = useLoading();
   const { showSuccess, showError } = useToast();
-  const { formatDate } = useFormatters();
+  const { formatDate, formatDateOnly } = useFormatters();
   // UI_PATTERNS §35: カラムソート (sessionStorage 永続化、複数列対応)
   const { sortState, setSortColumn } = useMultiSort(`sort:project-retrospectives-${projectId}`);
   const reload = useCallback(async () => {
@@ -137,7 +142,7 @@ export function RetrospectivesClient({ projectId, retros, members, canCreate, cu
   const { fullscreenClassName: createFsClassName, FullscreenToggle: CreateFullscreenToggle } = useDialogFullscreen();
 
   const [form, setForm] = useState({
-    conductedDate: new Date().toISOString().split('T')[0],
+    conductedDate: today,
     planSummary: '',
     actualSummary: '',
     goodPoints: '',
@@ -230,7 +235,7 @@ export function RetrospectivesClient({ projectId, retros, members, canCreate, cu
     setStagedCreateAttachments([]);
 
     setIsCreateOpen(false);
-    setForm({ conductedDate: new Date().toISOString().split('T')[0], planSummary: '', actualSummary: '', goodPoints: '', problems: '', improvements: '', visibility: 'draft' });
+    setForm({ conductedDate: today, planSummary: '', actualSummary: '', goodPoints: '', problems: '', improvements: '', visibility: 'draft' });
     showSuccess('振り返りを作成しました');
     await reload();
   }
@@ -453,10 +458,10 @@ export function RetrospectivesClient({ projectId, retros, members, canCreate, cu
                       stopPropagation
                       selected={selectedIds.has(retro.id)}
                       onToggle={() => toggleOneRetro(retro.id)}
-                      ariaLabel={`振り返り (${retro.conductedDate}) を一括編集対象に追加`}
+                      ariaLabel={`振り返り (${formatDateOnly(retro.conductedDate)}) を一括編集対象に追加`}
                     />
                   </TableCell>
-                  <TableCell className="font-medium">{retro.conductedDate}</TableCell>
+                  <TableCell className="font-medium">{formatDateOnly(retro.conductedDate)}</TableCell>
                   <TableCell>
                     <Badge variant={retro.state === 'confirmed' ? 'default' : 'outline'}>
                       {retro.state === 'confirmed' ? tRetro('confirmAction') : tRetro('draftBadge')}

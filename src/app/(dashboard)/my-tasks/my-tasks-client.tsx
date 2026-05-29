@@ -37,6 +37,8 @@ import { useMultiSort } from '@/components/sort/use-multi-sort';
 import { multiSort } from '@/lib/multi-sort';
 // feat/gantt-tab-restructure (PR-C item 7): マイタスクに横断 Gantt 表示
 import { GanttClient } from '@/app/(dashboard)/projects/[projectId]/gantt/gantt-client';
+// feat/gantt-initial-scroll-and-locale (2026-05-29): WBS / Gantt と表示形式を統一する
+import { useFormatters } from '@/lib/use-formatters';
 
 type ProjectGroup = {
   projectId: string;
@@ -48,6 +50,9 @@ type Props = {
   projectGroups: ProjectGroup[];
   /** サーバ側で算出した本日日付 (YYYY-MM-DD)。遅延判定のハイドレーション安全化に使用 */
   today: string;
+  /** feat/gantt-initial-scroll-and-locale (2026-05-29): 横断 Gantt の TZ/locale 表示用 */
+  tenantTimeZone: string;
+  tenantLocale: string;
   /** feat/gantt-tab-restructure (PR-C item 7): Gantt 表示時の担当者フィルタ初期値 */
   currentUserId: string;
   currentUserName: string;
@@ -85,7 +90,7 @@ function getMyTaskSortValue(t: TaskDTO, columnKey: string): unknown {
  *   - プロジェクト / WP の展開状態は sessionStorage で保持 (同一タブ内で永続)
  *   - 状況 (task status) の複数選択フィルタを追加 (デフォルト全選択)
  */
-export function MyTasksClient({ projectGroups, today, currentUserId, currentUserName, dataLoadError = false }: Props) {
+export function MyTasksClient({ projectGroups, today, tenantTimeZone, tenantLocale, currentUserId, currentUserName, dataLoadError = false }: Props) {
   const tMyTask = useTranslations('myTask');
   // feat/gantt-tab-restructure (PR-C item 7): Gantt 表示トグル
   const [showGantt, setShowGantt] = useState(false);
@@ -232,7 +237,14 @@ export function MyTasksClient({ projectGroups, today, currentUserId, currentUser
               >
                 {pg.projectName}
               </Link>
-              <GanttClient projectId={pg.projectId} tasks={pg.tree} members={ganttMembers} />
+              <GanttClient
+                projectId={pg.projectId}
+                tasks={pg.tree}
+                members={ganttMembers}
+                today={today}
+                tenantTimeZone={tenantTimeZone}
+                tenantLocale={tenantLocale}
+              />
             </div>
           ))}
         </div>
@@ -321,19 +333,21 @@ function TaskRow({
   onToggleTask: (id: string) => void;
 }) {
   const tMyTask = useTranslations('myTask');
+  const { formatDateOnly } = useFormatters();
   const isWP = task.type === 'work_package';
   const hasChildren = task.children && task.children.length > 0;
   // WP のみ折りたたみ対象。ACT は常に展開表示。
   const isExpanded = !isWP || !hasChildren || expandedTasks.has(task.id);
 
   const unsetLabel = tMyTask('unset');
+  // feat/gantt-initial-scroll-and-locale (2026-05-29): WBS / Gantt tooltip と完全一致させる
   const plannedRangeText = (() => {
     if (!task.plannedStartDate && !task.plannedEndDate) return '-';
-    return `${task.plannedStartDate || unsetLabel} 〜 ${task.plannedEndDate || unsetLabel}`;
+    return `${formatDateOnly(task.plannedStartDate ?? '') || unsetLabel} 〜 ${formatDateOnly(task.plannedEndDate ?? '') || unsetLabel}`;
   })();
   const actualRangeText = (() => {
     if (!task.actualStartDate && !task.actualEndDate) return '-';
-    return `${task.actualStartDate || unsetLabel} 〜 ${task.actualEndDate || unsetLabel}`;
+    return `${formatDateOnly(task.actualStartDate ?? '') || unsetLabel} 〜 ${formatDateOnly(task.actualEndDate ?? '') || unsetLabel}`;
   })();
   const effortText = task.plannedEffort > 0 ? `${task.plannedEffort}h` : null;
 

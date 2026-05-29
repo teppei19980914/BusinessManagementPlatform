@@ -553,7 +553,6 @@
     "legendMilestone": "Milestone",
     "noTasksFiltered": "No tasks match the selected assignees",
     "noTasks": "No tasks",
-    "monthHeader": "{year}/{month}",
     "dayLabelSun": "Sun",
     "dayLabelMon": "Mon",
     "dayLabelTue": "Tue",

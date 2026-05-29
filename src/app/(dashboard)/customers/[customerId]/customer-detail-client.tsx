@@ -44,6 +44,8 @@ import { PROJECT_STATUSES } from '@/types';
 import type { CustomerDTO } from '@/services/customer.service';
 // PR #199: コメントセクション (顧客は admin 専用エンティティ)
 import { CommentSection } from '@/components/comments/comment-section';
+// feat/gantt-initial-scroll-and-locale (2026-05-29): date-only 日付の locale 表示
+import { useFormatters } from '@/lib/use-formatters';
 
 type ProjectSummary = {
   id: string;
@@ -65,6 +67,7 @@ export function CustomerDetailClient({ customer, projects }: Props) {
   const tProject = useTranslations('project');
   const { withLoading } = useLoading();
   const { showSuccess, showError } = useToast();
+  const { formatDateOnly } = useFormatters();
 
   // --- 編集ダイアログ ---
   const [isEditOpen, setIsEditOpen] = useState(false);
@@ -417,8 +420,8 @@ export function CustomerDetailClient({ customer, projects }: Props) {
                       {PROJECT_STATUSES[p.status as keyof typeof PROJECT_STATUSES] || p.status}
                     </Badge>
                   </TableCell>
-                  <TableCell>{p.plannedStartDate}</TableCell>
-                  <TableCell>{p.plannedEndDate}</TableCell>
+                  <TableCell>{formatDateOnly(p.plannedStartDate)}</TableCell>
+                  <TableCell>{formatDateOnly(p.plannedEndDate)}</TableCell>
                 </TableRow>
               ))}
             </TableBody>

@@ -57,6 +57,7 @@ import { useLazyFetch, type LazyState } from '@/lib/use-lazy-fetch';
 import { AttachmentList } from '@/components/attachments/attachment-list';
 import { SingleUrlField } from '@/components/attachments/single-url-field';
 import { DateFieldWithActions } from '@/components/ui/date-field-with-actions';
+import { useFormatters } from '@/lib/use-formatters';
 import { EstimatesClient } from './estimates/estimates-client';
 import { TasksClient } from './tasks/tasks-client';
 import { GanttClient } from './gantt/gantt-client';
@@ -86,6 +87,15 @@ type Props = {
   customers: CustomerOption[];
   // 2026-05-09 (#22): 「なぜ?」ボタンを Pro プラン限定にするため tenant.plan を渡す
   tenantPlan: string;
+  /**
+   * feat/gantt-initial-scroll-and-locale (2026-05-29): tenant TZ ベースの「今日」(YYYY-MM-DD)。
+   * ガントタブの初期スクロール基準 + 振り返り作成フォームの初期 conductedDate に使用。
+   */
+  today: string;
+  /** Tenant TZ (IANA、ガントヘッダ・各種日付計算に使用) */
+  tenantTimeZone: string;
+  /** Tenant locale (BCP 47、ガント月ヘッダの言語表記に使用) */
+  tenantLocale: string;
 };
 
 const NEXT_STATUSES: Record<string, string[]> = {
@@ -126,12 +136,15 @@ function LazyTabContent<T>({
 export function ProjectDetailClient({
   project, projectRole, systemRole, userId,
   canEdit, canCreate, canCreateOwnedList, customers, tenantPlan,
+  today, tenantTimeZone, tenantLocale,
 }: Props) {
   const t = useTranslations('project');
   const tAction = useTranslations('action');
   const router = useRouter();
   const { withLoading } = useLoading();
   const { showSuccess, showError } = useToast();
+  // feat/gantt-initial-scroll-and-locale (2026-05-29): date-only 日付の locale 表示用
+  const { formatDateOnly } = useFormatters();
   const [isChangingStatus, setIsChangingStatus] = useState(false);
   // 概要タブ内ヘッダの操作ボタン権限 (PR #58 → fix/quick-ux item 1 で改修):
   //   状態変更 / 編集: 実際のプロジェクト PM/TL **または** システム管理者
@@ -750,11 +763,11 @@ export function ProjectDetailClient({
                 </div>
                 <div className="flex justify-between">
                   <dt className="text-muted-foreground">{t('fieldPlannedStartDate')}</dt>
-                  <dd>{project.plannedStartDate}</dd>
+                  <dd>{formatDateOnly(project.plannedStartDate)}</dd>
                 </div>
                 <div className="flex justify-between">
                   <dt className="text-muted-foreground">{t('fieldPlannedEndDate')}</dt>
-                  <dd>{project.plannedEndDate}</dd>
+                  <dd>{formatDateOnly(project.plannedEndDate)}</dd>
                 </div>
               </dl>
             </ClickableCard>
@@ -943,6 +956,9 @@ export function ProjectDetailClient({
                     projectId={project.id}
                     tasks={tasksData.tree}
                     members={membersData}
+                    today={today}
+                    tenantTimeZone={tenantTimeZone}
+                    tenantLocale={tenantLocale}
                   />
                 )}
               </LazyTabContent>
@@ -1007,6 +1023,7 @@ export function ProjectDetailClient({
                     members={membersData}
                     canCreate={canCreateOwnedList}
                     currentUserId={userId}
+                    today={today}
                     onReload={reloadRetros}
                   />
                 )}

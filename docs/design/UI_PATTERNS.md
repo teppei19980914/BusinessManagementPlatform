@@ -1497,3 +1497,73 @@ LINE / Teams 等の対話 UI と同じ「**自分の発言は右、相手の発�
 
 ---
 
+## 37. 日付表示のロケール統一方針 (feat/gantt-initial-scroll-and-locale, 2026-05-29)
+
+### 37.1 背景
+
+ガントチャート (進捗確認の中核) を起点に、画面上のすべての日付表示が
+`session.user.locale` + `session.user.timezone` (= テナント TZ/locale) を
+反映するよう統一する。MVP までは ja-JP のみ運用だが、Phase C i18n 化
+(PR #175) で en-US が選択可能になっており、両方で破綻なく動作する
+必要がある。
+
+### 37.2 ヘルパの 2 層分離
+
+| 用途 | 関数 | 入力 | TZ 適用 | 主な呼び出し元 |
+|---|---|---|---|---|
+| ISO datetime → locale 表示 | `formatDateTime(iso)` / `formatDate(iso)` | `2026-05-15T03:00:00Z` 等 | `opts.timeZone` | `createdAt`/`updatedAt` |
+| date-only `YYYY-MM-DD` → locale 表示 | `formatDateOnly(ymd)` | `2026-05-15` | **適用しない** (UTC 固定) | `conductedDate`/`plannedStartDate`/`deadline` 等 |
+| 詳細フル | `formatDateTimeFull(iso)` | ISO datetime | `opts.timeZone` | tooltip / 詳細欄 |
+
+client 側では `useFormatters()` で 4 種すべてが `session.user.timezone`/
+`session.user.locale` 既定で利用可能。明示的に locale 指定したい場合は
+[src/lib/format.ts](../../src/lib/format.ts) の関数を直接呼ぶ。
+
+### 37.3 「今日」の確定は server で行う
+
+`new Date().toISOString().split('T')[0]` を client で書かない。理由:
+
+1. SSR/CSR で異なる時刻が解決されハイドレーションミスマッチ (React error #418) を生む
+2. browser TZ 依存になり、tenant.timezone と乖離する
+
+server (page.tsx) で `getTenantTodayString(new Date(), session.user.timezone)`
+を使って算出し、props で client に渡す。
+
+ガントチャート系では加えて `tenantTimeZone` / `tenantLocale` も props で
+渡し、月ヘッダの `Intl.DateTimeFormat(tenantLocale, { timeZone: tenantTimeZone })`
+構築に使う。
+
+### 37.4 ガントチャート専用の初期スクロール仕様
+
+`gantt-client.tsx` は scroll container に `useRef<HTMLDivElement>` を持ち、
+mount 時の useEffect で:
+
+```tsx
+const todayOffset = dayOffset(minDate, today);
+el.scrollLeft = todayOffset * DAY_WIDTH;
+```
+
+依存配列は `[projectId, today]` のみ — filter/折りたたみ変更でユーザの
+スクロール操作を上書きしない。別プロジェクトに遷移したときだけ再初期化。
+
+minDate / totalDays 計算では today を必ず allDates に含めることで、
+全タスクが過去 or 未来のみのケースでも today マーカーが表示レンジから外れない。
+
+### 37.5 違反検知 (CI で固定)
+
+- `src/lib/format.test.ts` — `formatDateOnly` の TZ 非適用ガード (en-US 指定で前日にずれない)
+- `src/app/(dashboard)/projects/[projectId]/gantt/gantt-client.test.ts` —
+  Props / useMemo today 撤去 / useEffect 初期スクロール / Intl 月ヘッダ
+- `src/app/(dashboard)/projects/[projectId]/gantt/page.test.ts` —
+  全 GanttClient 呼び出し元 (3 箇所) と RetrospectivesClient 呼び出し元
+  での props 伝搬 invariant
+
+### 37.6 関連
+
+- [docs/specification/SCREENS.md §11.5](../specification/SCREENS.md) — ガントチャート画面仕様 (初期表示位置の記述追加)
+- [docs/knowledge/KDD_PATTERNS.md §5.X+183](../knowledge/KDD_PATTERNS.md) — 設計教訓
+- [src/lib/tenant-time.ts](../../src/lib/tenant-time.ts) — tenant TZ ヘルパ群
+- [src/lib/format.ts](../../src/lib/format.ts) — locale フォーマッタ
+- [src/lib/use-formatters.ts](../../src/lib/use-formatters.ts) — React フック
+- [src/config/i18n.ts](../../src/config/i18n.ts) — `resolveTimezone` / `resolveLocale`
+

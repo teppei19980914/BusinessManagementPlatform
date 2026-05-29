@@ -17828,3 +17828,94 @@ WCAG 1.3.1 (Info and Relationships) で求められる **toggle button と展開
 - 関連 docs: [docs/specification/SUGGESTION_FEATURE.md §3.6](../specification/SUGGESTION_FEATURE.md) (UI 段階表示仕様) / [docs/specification/CHAT_SEMANTIC_SEARCH.md](../specification/CHAT_SEMANTIC_SEARCH.md) (姉妹実装)
 - 関連 feedback memory: [[feedback_repeated_verification_request]] (フルスキャン依頼の深掘りシグナル、本ケースで検出に寄与) / [[feedback_design_comment_vs_impl_drift]] (drift 予防原則) / [[feedback_sibling_ui_pattern_horizontal_rollout]] (新規確立、姉妹 UI 横展開時の 4 観点 verify ルール)
 - 関連 PR: PR #465 (`feat/suggestion-tier-ux-improvement` follow-up commit)
+
+## 5.X+183 **★UX 向上★ ガントチャート初期スクロール = 今日左端 + 日付表示の tenant locale/TZ 統一 (2026-05-29 / `feat/gantt-initial-scroll-and-locale`)**
+
+### 背景
+
+ガントチャート (プロジェクト進捗確認の中核) が以下 2 つの UX 問題を抱えていた:
+
+1. **初期表示位置の罠**: scrollLeft = 0 (= WBS 開始日が左端) で固定されており、進行中タスクの状況を見るには毎回手動で「今日」までスクロールする必要があった。プロジェクト開始から数ヶ月経つと "今日" は viewport 数百 px〜千 px 右にあり、毎日訪れるユーザの認知負荷が大きい。
+2. **日付表示のロケール対応漏れ**: 「今日」マーカーや月ヘッダ、各種一覧での日付表示が tenant.locale / tenant.timezone を反映していなかった。具体的には:
+   - `new Date().toISOString().split('T')[0]` で UTC 起点の today を計算 → 負方向 TZ ユーザで「昨日」表示の罠
+   - 月ヘッダが i18n key `"{year}/{month}"` の素朴連結 → 英語圏ユーザにとって自然な "May 2026" にならない
+   - 詳細画面で `{project.plannedStartDate}` を生で表示 → `2026-05-15` 固定 (ja の "2026/05/15"、en-US の "05/15/2026" に未対応)
+
+### 解決パターン
+
+#### 1. server-driven の今日日付伝搬
+
+`new Date()` を client component で呼ばず、すべて server (page.tsx) で `getTenantTodayString(new Date(), session.user.timezone)` で算出し、props で渡す。
+
+これにより:
+- SSR/CSR で同じ today 値 → ハイドレーション安全
+- tenant TZ ベースのカレンダー日付 → UTC ズレ撲滅
+- client の Date 依存箇所がゼロになり、テストが決定論的
+
+影響範囲:
+- `gantt/page.tsx` / `my-tasks/page.tsx` / `retrospectives/page.tsx` / `projects/[projectId]/page.tsx` で `getTenantTodayString` を呼ぶ
+- それぞれのクライアントコンポーネント Props に `today: string` (+ Gantt 用に `tenantTimeZone`/`tenantLocale`) を追加
+- 中間 client (project-detail-client / my-tasks-client) は props を forward
+
+#### 2. 初期スクロール = 今日列を左端に揃える
+
+`gantt-client.tsx` の scroll container に `useRef<HTMLDivElement>` を付与し、`useEffect` で mount 時に:
+
+```tsx
+const todayOffset = dayOffset(minDate, today);
+el.scrollLeft = todayOffset * DAY_WIDTH;
+```
+
+依存配列を `[projectId, today]` に限定して、filter/折りたたみ操作で再スクロールしないようにする (= 別プロジェクトを開いた時のみ再初期化)。
+
+minDate / totalDays 計算で today を必ず含める (`allDates: string[] = [today]` を初期値に) ことで、全タスクが過去 or 未来のみのケースでも today が表示レンジ内に保証される。
+
+#### 3. 日付ヘルパの 2 層分離 (datetime vs date-only)
+
+`src/lib/format.ts` に既存の `formatDate` (datetime → locale 日付) に加え、新規 `formatDateOnly(ymd, opts)` を追加:
+
+| ヘルパ | 入力 | TZ シフト | 用途 |
+|---|---|---|---|
+| `formatDate(iso)` | ISO datetime (時刻成分あり) | `opts.timeZone` 適用 | `createdAt` `updatedAt` 等 |
+| `formatDateOnly(ymd)` | `YYYY-MM-DD` (date-only) | **しない** (timeZone: 'UTC' 固定) | `conductedDate` `plannedStartDate` 等 |
+
+罠: date-only 値 (`2026-05-15`) を `formatDate` に渡すと、`new Date('2026-05-15')` が UTC midnight として parse され、`America/New_York` (UTC-5) で「2026-05-14 19:00 EST → May 14」と前日にずれる。`formatDateOnly` は parse 結果をそのまま `Intl.DateTimeFormat({ timeZone: 'UTC' })` に流すことでズレを撲滅。
+
+#### 4. 月ヘッダの Intl 直接生成 (i18n key を撤去)
+
+旧来の i18n key `monthHeader = "{year}/{month}"` (en) / `"{year}/{month}月"` (ja) は素朴連結で locale 自然性が低かった。`Intl.DateTimeFormat(tenantLocale, { timeZone: tenantTimeZone, year: 'numeric', month: 'long' })` で直接生成すると:
+
+- ja-JP → "2026年5月" (自然な日本語)
+- en-US → "May 2026" (自然な英語)
+
+新言語追加時も Intl が自動対応するため、json への翻訳追加が不要になる。
+
+`messages/{ja,en-US}.json` から `monthHeader` キーを削除し、source pattern test (`gantt-client.test.ts`) で `t('monthHeader',` 残留を CI でブロック。
+
+### 横展開検証 (フルスキャン)
+
+「ガントだけ直す」では不十分で、「すべての日付表示を locale 経由に」「すべての client side new Date() を tenant TZ ベースに」の網羅対応が必要。grep 観点:
+
+| パターン | 結果 |
+|---|---|
+| `new Date().toISOString().split('T')[0]` | 3 ファイル (gantt-client, my-tasks/page, retrospectives-client) を tenant TZ ベースに置換 |
+| `\{\s*\w+\.(plannedStartDate|conductedDate|...)\s*\}` 生表示 | 5 ファイル (customer-detail / all-retrospectives-table / project-detail / projects-client / retrospectives-client) を formatDateOnly に置換 |
+| `t('monthHeader',` 使用 | gantt-client のみ → Intl 直接生成に切替 |
+| 旧 `monthHeader` キー | 2 ファイル (ja/en-US json) から削除 |
+
+`GanttClient` は **3 箇所** で呼ばれる (gantt/page.tsx / project-detail-client.tsx / my-tasks-client.tsx)。1 箇所で props 漏れがあるだけで「タブを開いた時だけスクロール初期化されない」silent regression になるため、source pattern test (`gantt/page.test.ts`) で全呼び出し元の props 渡しを invariant 化。
+
+### 教訓
+
+1. **「今日」を確定する責務は server に置く** ─ client での `new Date()` は browser TZ 依存で SSR/CSR でズレる。tenant TZ を session に持っている前提なら、server で計算して props で渡すのが最も決定論的。
+2. **date-only と datetime のヘルパは分離必須** ─ 同じ `formatDate` で混ぜると、負方向 TZ ユーザで「日付が 1 日ずれる」silent bug を産む。型 (`Date` vs `string YYYY-MM-DD`) でも分離しきれないため、ヘルパ名で意図を明示する。
+3. **横展開時は「同じ Client を呼ぶ全箇所」を grep で洗い出す** ─ GanttClient は 3 箇所で呼ばれていた。1 箇所だけ直して終わりだと UX 改善が部分的に欠落する。source pattern test で複数呼び出し元の invariant を固定する ([[feedback_sibling_ui_pattern_horizontal_rollout]] と同根原因)。
+4. **i18n key の素朴連結は限界** ─ locale ごとに語順や記号が大きく違う表現 (月日表記、相対日付等) は `Intl.DateTimeFormat` の長形式オプションで直接生成する方が拡張性も自然さも高い。
+5. **初期スクロール位置はユーザの「日次ルーチン」を起点に設計する** ─ プロジェクト管理ツールでは「今日の進捗確認」が最頻アクション。WBS 開始日固定 (= プロジェクト履歴) でなく、毎日進む基準点に viewport を寄せる。
+
+### 関連
+
+- 関連 KDD: [§5.X+182](#5x182) (姉妹 UI 横展開、同根原因) / [§5.X+182 関連の feedback_sibling_ui_pattern_horizontal_rollout]
+- 関連 docs: [docs/specification/SCREENS.md §11.5](../specification/SCREENS.md) (ガントチャート画面仕様) / [docs/design/UI_PATTERNS.md](../design/UI_PATTERNS.md) (日付表示の統一方針)
+- 関連 feedback memory: [[feedback_sibling_ui_pattern_horizontal_rollout]] / [[feedback_verify_source_before_listing]]
+- 関連 PR: feat/gantt-initial-scroll-and-locale (本 KDD 対応)

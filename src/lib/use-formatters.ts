@@ -24,12 +24,18 @@ import {
   formatDate as formatDateCore,
   formatDateTime as formatDateTimeCore,
   formatDateTimeFull as formatDateTimeFullCore,
+  formatDateOnly as formatDateOnlyCore,
 } from '@/lib/format';
 
 export type Formatters = {
   formatDate: (iso: string) => string;
   formatDateTime: (iso: string) => string;
   formatDateTimeFull: (iso: string) => string;
+  /**
+   * 'YYYY-MM-DD' 形式の date-only 値を locale 表記に整形する (TZ シフトなし)。
+   * 「実施日」「期限」など datetime ではなく calendar day を表す値に使用する。
+   */
+  formatDateOnly: (ymd: string) => string;
 };
 
 export function useFormatters(): Formatters {
@@ -42,6 +48,7 @@ export function useFormatters(): Formatters {
       formatDate: (iso) => formatDateCore(iso, { timeZone, locale }),
       formatDateTime: (iso) => formatDateTimeCore(iso, { timeZone, locale }),
       formatDateTimeFull: (iso) => formatDateTimeFullCore(iso, { timeZone, locale }),
+      formatDateOnly: (ymd) => formatDateOnlyCore(ymd, { locale }),
     }),
     [timeZone, locale],
   );

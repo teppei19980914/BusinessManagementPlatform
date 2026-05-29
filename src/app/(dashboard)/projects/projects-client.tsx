@@ -33,6 +33,8 @@ import { nativeSelectClass } from '@/components/ui/native-select-style';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 // fix/project-create-customer-validation: 重複定義を集約、全角読点 (、) 対応追加
 import { parseTagsInput } from '@/lib/parse-tags';
+// feat/gantt-initial-scroll-and-locale (2026-05-29): date-only 日付の locale 表示
+import { useFormatters } from '@/lib/use-formatters';
 import {
   TableBody,
   TableCell,
@@ -121,6 +123,7 @@ export function ProjectsClient({
   const t = useTranslations('project');
   const { withLoading } = useLoading();
   const { showSuccess, showError } = useToast();
+  const { formatDateOnly } = useFormatters();
   // PR #425 (2026-05-22): URL params から初期化 (検索後リロード/共有時の input 復元)
   const [keyword, setKeyword] = useState(initialKeyword);
   const [statusFilter, setStatusFilter] = useState<string>(initialStatusFilter);
@@ -525,8 +528,8 @@ export function ProjectsClient({
                         project.status}
                     </Badge>
                   </TableCell>
-                  <TableCell>{project.plannedStartDate}</TableCell>
-                  <TableCell>{project.plannedEndDate}</TableCell>
+                  <TableCell>{formatDateOnly(project.plannedStartDate)}</TableCell>
+                  <TableCell>{formatDateOnly(project.plannedEndDate)}</TableCell>
                 </TableRow>
               ))}
               {sortedProjects.length === 0 && (
