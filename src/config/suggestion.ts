@@ -131,6 +131,24 @@ export const SUGGESTION_MINIMUM_GUARANTEED_COUNT = 5;
 export const SUGGESTION_TIER_STRONG_INITIAL_VISIBLE = 5;
 
 /**
+ * inline 軽量サジェスト (RiskIssue 起票中の text 入力に対する関連過去課題提示) の最大返却件数。
+ *
+ * `SUGGESTION_TIER_STRONG_INITIAL_VISIBLE` (= 5) と数値は同じだが、**意味的に独立した別軸の制限値**:
+ *   - 前者: tier UI で初期表示する strong tier の件数 (UI レイヤ)
+ *   - 本定数: service 層で返却する候補総数 (service レイヤ)
+ *
+ * 両者の使い分け:
+ *   - 起票ダイアログでは画面占有を最小化したいため、service が 5 件のみ返す
+ *     (UI で更に絞る必要がないため、tier UI の Top 5 アコーディオンは無関係)
+ *
+ * 2026-05-29 改修: hardcoded `5` を定数化し、将来「画面占有 vs 取りこぼし防止」のチューニング時に
+ * UI layer (SUGGESTION_TIER_STRONG_INITIAL_VISIBLE) と独立に調整可能にする。
+ *
+ * 参照: docs/knowledge/KDD_PATTERNS.md §5.X+181 (フルスキャン検証で発覚した hardcoded drift リスク)
+ */
+export const SUGGESTION_INLINE_MAX_RESULTS = 5;
+
+/**
  * 提案候補の段階分類。
  * - 'strong': 強く関連 (score >= SUGGESTION_TIER_STRONG_THRESHOLD)
  * - 'medium': 中程度の関連 (SUGGESTION_TIER_MEDIUM_THRESHOLD <= score < strong)

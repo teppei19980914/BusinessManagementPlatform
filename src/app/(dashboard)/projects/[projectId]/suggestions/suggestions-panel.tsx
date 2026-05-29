@@ -638,17 +638,23 @@ export function SuggestionsPanel({
               <div className="ml-3">
                 <button
                   type="button"
-                  className="text-xs font-medium text-muted-foreground hover:text-foreground hover:underline"
+                  className="text-xs font-medium text-muted-foreground hover:text-foreground hover:underline focus:outline-2 focus:outline-offset-2"
                   onClick={() => toggleStrong(category)}
                   aria-expanded={isStrongRestExpanded}
+                  aria-controls={`suggestion-strong-rest-content-${category}`}
                   data-testid={`suggestion-toggle-strong-rest-${category}`}
                 >
                   {isStrongRestExpanded
-                    ? t('collapseStrongRest', { count: grouped.strong.length })
+                    ? t('collapseStrongRest', { count: strongRest.length })
                     : t('expandStrongRest', { count: strongRest.length })}
                 </button>
                 {isStrongRestExpanded && (
-                  <ul className="mt-2 space-y-2">{strongRest.map(renderItem)}</ul>
+                  <ul
+                    id={`suggestion-strong-rest-content-${category}`}
+                    className="mt-2 space-y-2"
+                  >
+                    {strongRest.map(renderItem)}
+                  </ul>
                 )}
               </div>
             )}
@@ -664,19 +670,20 @@ export function SuggestionsPanel({
               </h4>
               <button
                 type="button"
-                className="text-xs text-info hover:underline"
+                className="text-xs text-info hover:underline focus:outline-2 focus:outline-offset-2"
                 onClick={() => toggleMedium(category)}
                 aria-expanded={isMediumExpanded}
+                aria-controls={`suggestion-medium-content-${category}`}
                 data-testid={`suggestion-toggle-medium-${category}`}
               >
                 {isMediumExpanded ? t('collapseMediumSection') : t('expandMediumSection')}
               </button>
             </div>
             {isMediumExpanded && (
-              <>
+              <div id={`suggestion-medium-content-${category}`}>
                 <p className="ml-3 text-xs text-muted-foreground">{t('tierMediumDescription')}</p>
                 <ul className="ml-3 space-y-2">{grouped.medium.map(renderItem)}</ul>
-              </>
+              </div>
             )}
           </div>
         )}
@@ -690,19 +697,20 @@ export function SuggestionsPanel({
               </h4>
               <button
                 type="button"
-                className="text-xs text-info hover:underline"
+                className="text-xs text-info hover:underline focus:outline-2 focus:outline-offset-2"
                 onClick={() => toggleWeak(category)}
                 aria-expanded={isWeakExpanded}
+                aria-controls={`suggestion-weak-content-${category}`}
                 data-testid={`suggestion-toggle-weak-${category}`}
               >
                 {isWeakExpanded ? t('collapseWeakSection') : t('expandWeakSection')}
               </button>
             </div>
             {isWeakExpanded && (
-              <>
+              <div id={`suggestion-weak-content-${category}`}>
                 <p className="ml-3 text-xs text-muted-foreground">{t('tierWeakDescription')}</p>
                 <ul className="ml-3 space-y-2">{grouped.weak.map(renderItem)}</ul>
-              </>
+              </div>
             )}
           </div>
         )}

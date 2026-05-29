@@ -17719,3 +17719,112 @@ ESLint / TypeScript では 1-4 の整合性を機械的にチェックできな�
 - 関連 docs: [docs/operations/CRON.md](../operations/CRON.md) / [docs/operations/STRIPE_SETUP.md](../operations/STRIPE_SETUP.md)
 - 関連 feedback memory: [[feedback_verify_source_before_listing]] (新規確立、本セッション罠 3 起因) / [[feedback_cron_watchdog_pattern]] (cron 監視 2 段構え) / [[feedback_design_comment_vs_impl_drift]] (コメント vs 実装の乖離)
 - 関連 PR: `feat/suggestion-tier-ux-improvement` (本 PR、CRON_JOBS Record に `billing-monthly-aggregation` 追加 + KDD §5.X+179/+180/+181)
+
+---
+
+## 5.X+182 **★severity-high (UX 一貫性バグ)★ 姉妹 UI コンポーネントへのパターン横展開時、i18n placeholder の `{count}` セマンティクスをコピーし忘れた ─ フルスキャン検証 2 巡目で「同じラベルなのに片方は全件数・もう片方は折りたたみ件数」を検出 (2026-05-29 / PR #465 follow-up)**
+
+### 事象
+
+PR #465 で chat-panel.tsx の Top 5 + medium 折りたたみパターンを suggestions-panel.tsx に横展開した際、i18n キー `collapseStrongRest` に渡す `{count}` placeholder の値が **両 UI で意味的に異なる** バグが混入した。
+
+```tsx
+// chat-panel.tsx (原本、2026-05-28)
+`▼ さらに表示中 (${strongRest.length}件)`  // ← strongRest.length (折りたたまれていた件数)
+
+// suggestions-panel.tsx (横展開時、2026-05-29 初版で混入)
+t('collapseStrongRest', { count: grouped.strong.length })  // ← grouped.strong.length (全件数) ★バグ★
+```
+
+文言は両者とも「**▼ さらに表示中 ({count} 件)**」だが、表示される数字が:
+- chat-panel: 「(折りたたみで新たに見える 5 件)」
+- suggestions-panel: 「(strong tier 全体 13 件)」
+
+を意味する不整合。同じ tier ラベル下でユーザに混乱を与える severity-high な UX バグ。
+
+### 検出経緯 (フルスキャン検証 2 巡目)
+
+[[feedback_repeated_verification_request]] (同じフルスキャン依頼の繰り返し = 「もっと深く見て」のシグナル) に従い、2 巡目検証で chat-panel と suggestions-panel の **placeholder 値の意味比較** を実施。
+
+- 1 巡目: 「実装した」「品質ゲート PASS した」を確認し PR 作成
+- 2 巡目: ユーザ依頼で「セキュリティ + 横断的整合 + デグレ確認」を網羅実施 → **検出**
+
+### 真の根本原因
+
+「姉妹 UI コンポーネントへの横展開」では **コード構造 (state / handler / JSX) はコピーするが、placeholder 値の意味まで verify するチェックリストが無い**。
+
+- ✅ verify したこと: state 名、toggle 関数、JSX 構造、aria 属性
+- ❌ verify しなかったこと: **t() に渡す引数の値が原本と意味的に一致するか**
+
+i18n key 文字列だけ見ても「{count} がどこから来るか」は読み取れない。実装側でしか追えない。
+
+### 解決パターン
+
+#### 1. 即時 fix: count を strongRest.length に統一
+
+```tsx
+// suggestions-panel.tsx (修正後)
+t('collapseStrongRest', { count: strongRest.length })  // ← chat-panel と同じ意味
+```
+
+両 UI で `{count}` = 「折りたたみで新たに見える件数」 として統一。
+
+#### 2. 横展開時の verify チェックリスト (本 KDD で確立)
+
+姉妹 UI コンポーネントへのパターン横展開時は **以下 4 観点** を必ず diff で並べて検証する:
+
+| # | 観点 | 例 |
+|---|---|---|
+| 1 | 共有定数の参照一致 | 両 UI が同じ config 定数を import している |
+| 2 | state 構造の意味一致 | useState 初期値 + 型が一致、独立性が保たれている |
+| 3 | **i18n placeholder 値の意味一致** ← 本 KDD で追加 | `t(key, { count: X })` の X が両 UI で同じセマンティクスか |
+| 4 | a11y 属性の付与一致 | aria-expanded / aria-controls / role が両 UI で揃う |
+
+#### 3. テストレイヤでの担保
+
+`suggestions-panel.test.ts` (新規作成) に明示的な expectation を追加:
+
+```ts
+it('strong tier アコーディオンの count は両方向 (展開/折りたたみ) で strongRest.length に統一', () => {
+  expect(source).toMatch(/t\(['"]collapseStrongRest['"],\s*\{\s*count:\s*strongRest\.length\s*\}\)/);
+  expect(source).toMatch(/t\(['"]expandStrongRest['"],\s*\{\s*count:\s*strongRest\.length\s*\}\)/);
+  expect(source).not.toMatch(/t\(['"]collapseStrongRest['"],\s*\{\s*count:\s*grouped\.strong\.length\s*\}\)/);
+});
+```
+
+これにより、将来の re-introduction を CI で防御。
+
+### 同 PR で発見・対応した 2 件目: hardcoded `5` の意味重複
+
+`suggestRelatedIssuesForText` ([src/services/suggestion.service.ts:1054](../../src/services/suggestion.service.ts)) で `.slice(0, 5)` の hardcoded `5` を `SUGGESTION_INLINE_MAX_RESULTS` 定数化。
+
+- 数値は `SUGGESTION_TIER_STRONG_INITIAL_VISIBLE` と同値 (= 5) だが、**意味が異なる**:
+  - 前者: service 層で返却する候補総数 (起票ダイアログの画面占有最小化)
+  - 後者: UI 層で初期表示する strong tier の件数
+
+「たまたま同値の hardcoded」を放置すると、将来片方を tuning した時に **どちらも変えるべきか / 片方だけ変えるか** が判断できない。意味で分離するため別定数化。
+
+### 同 PR で発見・対応した 3 件目: a11y aria-controls 欠落
+
+WCAG 1.3.1 (Info and Relationships) で求められる **toggle button と展開コンテンツの関連付け** が欠落していた。3 つの toggle button すべてに `aria-controls` と対応する `id` 属性を付与:
+
+```tsx
+<button aria-controls={`suggestion-medium-content-${category}`} ... />
+{isMediumExpanded && <div id={`suggestion-medium-content-${category}`}>...</div>}
+```
+
+スクリーンリーダーで「展開ボタン」とコンテンツの関係が伝わるようになる。
+
+### 教訓
+
+1. **横展開時の verify は「コード構造」より「動作意味」を優先** ─ コピペできれいに見えても、コード生成 AI が引数値を誤って書き換える可能性は常にある。i18n placeholder のように「文言は同じだが値が違う」バグは静的解析・型システムをすり抜ける。
+2. **同値の hardcoded は意味で分離** ─ 数値が同じでも意味が異なるなら別定数。将来の tuning 時の判断材料になる ([[feedback_design_comment_vs_impl_drift]] の派生)。
+3. **フルスキャン検証は必ず複数回・観点を変えて実施** ─ 1 巡目で「実装した」「PASS した」を確認しても、UX 一貫性のバグは別観点でないと出てこない。本 KDD §5.X+182 のケースは [[feedback_repeated_verification_request]] が機能した好例。
+4. **source pattern test で UI 不変項を機械的に固定** ─ `chat-panel.test.ts` 同等の `suggestions-panel.test.ts` を作ることで、両 UI の構造的差分を CI で検知可能にした。
+
+### 関連
+
+- 関連 KDD: [§5.X+180](#5x180) (本セッション主 KDD、姉妹 UI パターンの横展開) / [§5.X+172](#5x172) (コメント vs 実装 drift / 同根原因) / [§5.X+162](#5x162) (UI ラベル変更時の grep 漏れ)
+- 関連 docs: [docs/specification/SUGGESTION_FEATURE.md §3.6](../specification/SUGGESTION_FEATURE.md) (UI 段階表示仕様) / [docs/specification/CHAT_SEMANTIC_SEARCH.md](../specification/CHAT_SEMANTIC_SEARCH.md) (姉妹実装)
+- 関連 feedback memory: [[feedback_repeated_verification_request]] (フルスキャン依頼の深掘りシグナル、本ケースで検出に寄与) / [[feedback_design_comment_vs_impl_drift]] (drift 予防原則) / [[feedback_sibling_ui_pattern_horizontal_rollout]] (新規確立、姉妹 UI 横展開時の 4 観点 verify ルール)
+- 関連 PR: PR #465 (`feat/suggestion-tier-ux-improvement` follow-up commit)

@@ -180,6 +180,19 @@ Supabase pgvector が **保存済の embedding 同士の Cosine 類似度を DB 
 
 - ラベルは「**強く関連 (8 件)**」のように **その tier の総件数** を表示する (折りたたみ中の件数を含む)。
 - 強く関連の「さらに N 件を表示」ボタンの N は **折りたたまれている件数** (6 件目以降の総数)。
+- 強く関連の「さらに表示中 (N 件)」ボタンの N も **折りたたまれていた件数 (= 新たに見えている件数)** で統一する (= `strongRest.length`)。
+  この意味は chat-panel と suggestions-panel で **必ず一致** させる (KDD §5.X+182、2 巡目フルスキャン検証で発覚した UX 一貫性バグの予防)。
+
+#### アクセシビリティ (a11y)
+
+3 つの toggle button (strong 6 件目以降展開 / medium 全体展開 / weak 全体展開) すべてに以下属性を付与:
+
+- `aria-expanded={isExpanded}` — 展開状態
+- `aria-controls={"suggestion-${tier}-content-${category}"}` — 制御対象コンテンツの id (WCAG 1.3.1)
+- `focus:outline-2 focus:outline-offset-2` — キーボード focus 可視性
+- `data-testid` — category 単位の E2E セレクタ安定性
+
+対応するコンテンツ要素には `id` 属性を付与してスクリーンリーダーで関係が伝わるようにする。
 
 ### 3.7 将来構想: Phase 3 LLM Re-ranking (6/1 リリース時点で未実装)
 
