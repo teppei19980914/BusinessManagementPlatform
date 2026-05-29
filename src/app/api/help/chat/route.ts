@@ -200,12 +200,26 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     );
   }
 
-  // 4. viewer roles 構築 (PR5: isTenantAdmin のみ厳密判定、project_pm は PR6 で動的解決)
+  // 4. viewer roles 構築
+  //   - isTenantAdmin: systemRole から判定
+  //   - hasAnyProjectPmRole: ProjectMembership から「少なくとも 1 プロジェクトで pm_tl ロールを
+  //     持つか」を判定 (リリース前必須、PR8 で動的解決を追加)。
+  //     これにより PM/PL ユーザに対して project_pm 限定 FAQ (提案エンジン参考タブ等) が
+  //     開示されるようになる。
   const isTenantAdmin =
     user.systemRole === 'admin' || user.systemRole === 'super_admin';
+  const pmMembership = await prisma.projectMember.findFirst({
+    where: {
+      userId: user.id,
+      projectRole: 'pm_tl',
+      // 削除済プロジェクト・他テナントの membership は除外
+      project: { deletedAt: null, tenantId: user.tenantId },
+    },
+    select: { id: true },
+  });
   const viewer: ViewerRoles = {
     isTenantAdmin,
-    hasAnyProjectPmRole: false, // PR6 で ProjectMembership から動的解決
+    hasAnyProjectPmRole: pmMembership !== null,
   };
 
   // 5. system prompt 構築

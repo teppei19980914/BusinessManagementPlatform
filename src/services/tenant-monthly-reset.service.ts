@@ -329,6 +329,7 @@ export async function saveMonthlyUsageSnapshots(now: Date = new Date()): Promise
  * - 結果:
  *     - currentMonthApiCallCount=0, currentMonthApiCostJpy=0 (= LLM 系 counter)
  *     - currentMonthEmbeddingCallCount=0, currentMonthEmbeddingCostJpy=0 (= ADR-0022 で追加)
+ *     - currentMonthHelpChatCount=0 (= ADR-0027 で追加、たすきフクロウ AI ヘルプチャット月次上限管理)
  *     - lastResetAt=テナント TZ 月初
  * - 冪等: 一度適用済みのテナントは再対象外
  *
@@ -337,6 +338,9 @@ export async function saveMonthlyUsageSnapshots(now: Date = new Date()): Promise
  *   3 レイヤ同期 (feedback_3layer_sync_filter): Tenant counter / 月初 snapshot / 履歴 CSV を
  *   すべて更新する。Embedding counter は LLM とは独立に管理しているため、リセット漏れの
  *   影響範囲は「翌月の累積件数が永遠に膨らみ続ける」となり致命的。
+ * **ADR-0027 (2026-05-29)**: たすきフクロウ AI ヘルプチャット (LEARNING_FREE) の Counter
+ *   currentMonthHelpChatCount も同時リセット。本カラムは「テナント月 100 回上限」の判定軸
+ *   のため、リセット漏れがあると翌月以降ユーザがヘルプチャットを使えなくなる重要 invariant。
  *
  * 注意: cron は UTC ベースの起動時刻で動くが、判定はテナントごとの TZ ローカル月初。
  * cron を最低 hourly で動かせば各テナントの TZ 月初を逃さない。
@@ -355,6 +359,8 @@ export async function resetTenantMonthlyCounters(now: Date = new Date()): Promis
       // ADR-0022 (2026-06-01): Embedding counter も before 値として audit_log 記録
       currentMonthEmbeddingCallCount: true,
       currentMonthEmbeddingCostJpy: true,
+      // ADR-0027 (2026-05-29): たすきフクロウ AI ヘルプチャット Counter も before 値記録
+      currentMonthHelpChatCount: true,
     },
   });
 
@@ -381,6 +387,8 @@ export async function resetTenantMonthlyCounters(now: Date = new Date()): Promis
               // ADR-0022 (2026-06-01): Embedding counter も同時リセット
               currentMonthEmbeddingCallCount: 0,
               currentMonthEmbeddingCostJpy: 0,
+              // ADR-0027 (2026-05-29): ヘルプチャット Counter も同時リセット
+              currentMonthHelpChatCount: 0,
               lastResetAt: monthStart,
             },
           }),
@@ -397,6 +405,8 @@ export async function resetTenantMonthlyCounters(now: Date = new Date()): Promis
                 // ADR-0022: Embedding counter before
                 currentMonthEmbeddingCallCount: t.currentMonthEmbeddingCallCount,
                 currentMonthEmbeddingCostJpy: t.currentMonthEmbeddingCostJpy,
+                // ADR-0027: ヘルプチャット Counter before
+                currentMonthHelpChatCount: t.currentMonthHelpChatCount,
                 lastResetAt: t.lastResetAt?.toISOString() ?? null,
               },
               afterValue: {
@@ -406,6 +416,8 @@ export async function resetTenantMonthlyCounters(now: Date = new Date()): Promis
                 // ADR-0022: Embedding counter after
                 currentMonthEmbeddingCallCount: 0,
                 currentMonthEmbeddingCostJpy: 0,
+                // ADR-0027: ヘルプチャット Counter after
+                currentMonthHelpChatCount: 0,
                 lastResetAt: monthStart.toISOString(),
                 timezone: t.timezone,
               },
@@ -422,6 +434,8 @@ export async function resetTenantMonthlyCounters(now: Date = new Date()): Promis
             // ADR-0022 (2026-06-01): Embedding counter も同時リセット
             currentMonthEmbeddingCallCount: 0,
             currentMonthEmbeddingCostJpy: 0,
+            // ADR-0027 (2026-05-29): ヘルプチャット Counter も同時リセット
+            currentMonthHelpChatCount: 0,
             lastResetAt: monthStart,
           },
         });
