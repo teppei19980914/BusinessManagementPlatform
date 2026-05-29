@@ -198,7 +198,7 @@ describe('POST /api/auth/mfa/verify', () => {
     vi.mocked(prisma.recoveryCode.findMany).mockResolvedValue([
       { id: 'rc1', codeHash: 'hashed' },
     ] as never);
-    vi.mocked(compare).mockResolvedValue(true as never);
+    vi.mocked(compare).mockResolvedValue(false as never);
 
     const res = await POST(
       makeReq({ userId: USER_ID, recoveryCode: 'WRONG-CODE' }),
