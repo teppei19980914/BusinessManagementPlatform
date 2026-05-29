@@ -61,6 +61,9 @@ describe('getStripePriceConfig', () => {
   beforeEach(() => {
     delete process.env['STRIPE_PRICE_HAIKU'];
     delete process.env['STRIPE_PRICE_SONNET'];
+    delete process.env['STRIPE_PRICE_EMBEDDING'];
+    delete process.env['STRIPE_PRICE_DB_CAPACITY_OVERAGE'];
+    delete process.env['STRIPE_PRICE_STORAGE_FILE_OVERAGE'];
     // chore/storage-addon-backend-removal (2026-05-26): STRIPE_PRICE_STORAGE_PLUS / PRO は撤去済
   });
 
@@ -68,17 +71,48 @@ describe('getStripePriceConfig', () => {
     process.env = { ...originalEnv };
   });
 
-  it('全環境変数がセットされていれば 4 つの ID を返す', () => {
+  it('必須環境変数のみセットされていれば 2 つの ID + 3 つの undefined を返す (= Stripe-ready 旧挙動互換)', () => {
     process.env['STRIPE_PRICE_HAIKU'] = 'price_haiku_1';
     process.env['STRIPE_PRICE_SONNET'] = 'price_sonnet_2';
     const config = getStripePriceConfig();
     expect(config).toEqual({
       haiku: 'price_haiku_1',
       sonnet: 'price_sonnet_2',
+      embedding: undefined,
+      dbCapacityOverage: undefined,
+      storageFileOverage: undefined,
     });
   });
 
-  it('1 つでも未設定なら throw', () => {
+  it('optional 3 つ全部セット済なら 5 つの ID を返す (= ADR-0022/0020/0021 Stripe 有効化時)', () => {
+    process.env['STRIPE_PRICE_HAIKU'] = 'price_haiku_1';
+    process.env['STRIPE_PRICE_SONNET'] = 'price_sonnet_2';
+    process.env['STRIPE_PRICE_EMBEDDING'] = 'price_embedding_3';
+    process.env['STRIPE_PRICE_DB_CAPACITY_OVERAGE'] = 'price_db_capacity_4';
+    process.env['STRIPE_PRICE_STORAGE_FILE_OVERAGE'] = 'price_storage_file_5';
+    const config = getStripePriceConfig();
+    expect(config).toEqual({
+      haiku: 'price_haiku_1',
+      sonnet: 'price_sonnet_2',
+      embedding: 'price_embedding_3',
+      dbCapacityOverage: 'price_db_capacity_4',
+      storageFileOverage: 'price_storage_file_5',
+    });
+  });
+
+  it('optional 環境変数は空文字列なら undefined 扱い (Netlify env 空保存対策)', () => {
+    process.env['STRIPE_PRICE_HAIKU'] = 'price_haiku_1';
+    process.env['STRIPE_PRICE_SONNET'] = 'price_sonnet_2';
+    process.env['STRIPE_PRICE_EMBEDDING'] = '';
+    process.env['STRIPE_PRICE_DB_CAPACITY_OVERAGE'] = '';
+    process.env['STRIPE_PRICE_STORAGE_FILE_OVERAGE'] = '';
+    const config = getStripePriceConfig();
+    expect(config.embedding).toBeUndefined();
+    expect(config.dbCapacityOverage).toBeUndefined();
+    expect(config.storageFileOverage).toBeUndefined();
+  });
+
+  it('1 つでも必須未設定なら throw', () => {
     process.env['STRIPE_PRICE_HAIKU'] = 'price_haiku_1';
     // SONNET 欠落
     expect(() => getStripePriceConfig()).toThrow('STRIPE_PRICE_*');

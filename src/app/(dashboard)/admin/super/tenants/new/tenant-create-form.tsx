@@ -331,11 +331,9 @@ export function TenantCreateForm() {
           >
             {/* 2026-05-15: 旧 'invoice'（請求書送付）と 'bank_transfer'（銀行振込）を「銀行振込」に統合 (内部値 'invoice')。 */}
             <option value="invoice">銀行振込</option>
-            {/* feat/credit-card-pending (2026-05-26): クレジットカード払いは Stripe 連携の
-                最終調整中のため一時非活性化。tenant-settings-client.tsx 側と表記を統一 ("(調整中)")。
-                旧コメント (2026-05-09 #4 の予定表記) は本コメントに置換済。
-                再活性化時は disabled 属性削除 + ラベルを「クレジットカード」に戻す。 */}
-            <option value="credit_card" disabled>クレジットカード (調整中)</option>
+            {/* feat/db-storage-overage-subscription-items (2026-05-30): Stripe Subscription Item
+                5 項目化完遂と invariant 一致担保により、feat/credit-card-pending の読み取り専用を解除。 */}
+            <option value="credit_card">クレジットカード</option>
           </select>
         </div>
       </fieldset>

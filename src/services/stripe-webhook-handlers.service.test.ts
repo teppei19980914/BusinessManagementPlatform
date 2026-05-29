@@ -120,6 +120,12 @@ beforeEach(() => {
   // chore/storage-addon-backend-removal (2026-05-26): STRIPE_PRICE_STORAGE_PLUS / PRO は撤去済
   process.env['STRIPE_PRICE_HAIKU'] = 'price_haiku_test';
   process.env['STRIPE_PRICE_SONNET'] = 'price_sonnet_test';
+  // ADR-0022 / 0020 / 0021 (2026-05-30): Stripe-ready optional Price IDs。
+  //   テスト時は値を設定して extractSubscriptionItemIds が当該 Item を識別できることを確認。
+  //   未設定挙動 (= 旧挙動互換) は専用 test 内で個別に delete してから確認する。
+  process.env['STRIPE_PRICE_EMBEDDING'] = 'price_embedding_test';
+  process.env['STRIPE_PRICE_DB_CAPACITY_OVERAGE'] = 'price_db_capacity_test';
+  process.env['STRIPE_PRICE_STORAGE_FILE_OVERAGE'] = 'price_storage_file_test';
 });
 
 // ============================================================
@@ -186,6 +192,55 @@ describe('handleSubscriptionUpdated', () => {
     // 約 3 日 (= 2.9〜3.1 日の範囲で許容)
     expect(deltaMs).toBeGreaterThan(2.9 * 24 * 60 * 60 * 1000);
     expect(deltaMs).toBeLessThan(3.1 * 24 * 60 * 60 * 1000);
+  });
+
+  it('Subscription 5 Item (Haiku/Sonnet/Embedding/DB 容量/ファイルストレージ) を tenant.update に全件同期する (ADR-0022 / 0020 / 0021)', async () => {
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValue(buildTenant() as never);
+    vi.mocked(prisma.tenant.update).mockResolvedValue({} as never);
+
+    const sub = buildSubscription({
+      status: 'active',
+      items: {
+        data: [
+          { id: 'si_haiku', price: { id: 'price_haiku_test' } },
+          { id: 'si_sonnet', price: { id: 'price_sonnet_test' } },
+          { id: 'si_embedding', price: { id: 'price_embedding_test' } },
+          { id: 'si_db_capacity', price: { id: 'price_db_capacity_test' } },
+          { id: 'si_storage_file', price: { id: 'price_storage_file_test' } },
+        ],
+      },
+    } as unknown as Partial<Stripe.Subscription>);
+
+    await handleSubscriptionUpdated(sub);
+
+    const updateCall = vi.mocked(prisma.tenant.update).mock.calls[0]?.[0];
+    expect(updateCall?.data.stripeSubscriptionItemHaikuId).toBe('si_haiku');
+    expect(updateCall?.data.stripeSubscriptionItemSonnetId).toBe('si_sonnet');
+    // ADR-0022 (2026-06-01): Embedding 同期も含まれる (旧 PR で漏れていた fix)
+    expect(updateCall?.data.stripeSubscriptionItemEmbeddingId).toBe('si_embedding');
+    // ADR-0020 / 0021 (2026-05-30): DB 容量 / ファイルストレージ も同期
+    expect(updateCall?.data.stripeSubscriptionItemDbCapacityId).toBe('si_db_capacity');
+    expect(updateCall?.data.stripeSubscriptionItemStorageFileId).toBe('si_storage_file');
+  });
+
+  it('optional env 未設定で Subscription Item に含まれていない場合は null で上書きされる (= 旧挙動互換)', async () => {
+    delete process.env['STRIPE_PRICE_EMBEDDING'];
+    delete process.env['STRIPE_PRICE_DB_CAPACITY_OVERAGE'];
+    delete process.env['STRIPE_PRICE_STORAGE_FILE_OVERAGE'];
+
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValue(buildTenant() as never);
+    vi.mocked(prisma.tenant.update).mockResolvedValue({} as never);
+
+    const sub = buildSubscription({ status: 'active' });
+    await handleSubscriptionUpdated(sub);
+
+    const updateCall = vi.mocked(prisma.tenant.update).mock.calls[0]?.[0];
+    expect(updateCall?.data.stripeSubscriptionItemHaikuId).toBe('si_haiku');
+    expect(updateCall?.data.stripeSubscriptionItemSonnetId).toBe('si_sonnet');
+    // env 未設定 → null で上書き (= 旧挙動互換、リリース時の挙動)
+    expect(updateCall?.data.stripeSubscriptionItemEmbeddingId).toBeNull();
+    expect(updateCall?.data.stripeSubscriptionItemDbCapacityId).toBeNull();
+    expect(updateCall?.data.stripeSubscriptionItemStorageFileId).toBeNull();
   });
 
   it('status=active → autoSuspendScheduledAt が null にクリアされる', async () => {
@@ -427,7 +482,7 @@ describe('handlePaymentMethodUpdated', () => {
 // ============================================================
 
 describe('extractSubscriptionItemIds', () => {
-  it('Haiku / Sonnet の SubscriptionItem ID を抽出する', () => {
+  it('Haiku / Sonnet の SubscriptionItem ID を抽出する (optional は env 設定済 → 該当 Item があれば抽出)', () => {
     // chore/storage-addon-backend-removal (2026-05-26): Storage item テストは削除済
     // (Storage add-on は ADR-0020/0021 で完全従量課金化により撤去)
     const sub = buildSubscription({
@@ -442,6 +497,56 @@ describe('extractSubscriptionItemIds', () => {
     const result = extractSubscriptionItemIds(sub);
     expect(result.haikuItemId).toBe('si_haiku');
     expect(result.sonnetItemId).toBe('si_sonnet');
+    // env は設定されているが Subscription Item が含まれていない → null
+    expect(result.embeddingItemId).toBeNull();
+    expect(result.dbCapacityItemId).toBeNull();
+    expect(result.storageFileItemId).toBeNull();
+  });
+
+  it('Embedding / DB 容量 / ファイルストレージ Item も含まれていれば 5 件抽出する (ADR-0022 / 0020 / 0021)', () => {
+    const sub = buildSubscription({
+      items: {
+        data: [
+          { id: 'si_haiku', price: { id: 'price_haiku_test' } },
+          { id: 'si_sonnet', price: { id: 'price_sonnet_test' } },
+          { id: 'si_embedding', price: { id: 'price_embedding_test' } },
+          { id: 'si_db_capacity', price: { id: 'price_db_capacity_test' } },
+          { id: 'si_storage_file', price: { id: 'price_storage_file_test' } },
+        ],
+      },
+    } as unknown as Partial<Stripe.Subscription>);
+
+    const result = extractSubscriptionItemIds(sub);
+    expect(result.haikuItemId).toBe('si_haiku');
+    expect(result.sonnetItemId).toBe('si_sonnet');
+    expect(result.embeddingItemId).toBe('si_embedding');
+    expect(result.dbCapacityItemId).toBe('si_db_capacity');
+    expect(result.storageFileItemId).toBe('si_storage_file');
+  });
+
+  it('optional env (Embedding / DB / Storage) 未設定なら Subscription Item があっても null を返す (旧挙動互換)', () => {
+    delete process.env['STRIPE_PRICE_EMBEDDING'];
+    delete process.env['STRIPE_PRICE_DB_CAPACITY_OVERAGE'];
+    delete process.env['STRIPE_PRICE_STORAGE_FILE_OVERAGE'];
+
+    const sub = buildSubscription({
+      items: {
+        data: [
+          { id: 'si_haiku', price: { id: 'price_haiku_test' } },
+          { id: 'si_sonnet', price: { id: 'price_sonnet_test' } },
+          { id: 'si_embedding', price: { id: 'price_embedding_test' } },
+          { id: 'si_db_capacity', price: { id: 'price_db_capacity_test' } },
+        ],
+      },
+    } as unknown as Partial<Stripe.Subscription>);
+
+    const result = extractSubscriptionItemIds(sub);
+    expect(result.haikuItemId).toBe('si_haiku');
+    expect(result.sonnetItemId).toBe('si_sonnet');
+    // env 未設定 → 該当 Price ID マッチ判定をスキップして null のまま
+    expect(result.embeddingItemId).toBeNull();
+    expect(result.dbCapacityItemId).toBeNull();
+    expect(result.storageFileItemId).toBeNull();
   });
 
   it('未知の Price ID は null を返す', () => {
@@ -454,6 +559,9 @@ describe('extractSubscriptionItemIds', () => {
     const result = extractSubscriptionItemIds(sub);
     expect(result.haikuItemId).toBeNull();
     expect(result.sonnetItemId).toBeNull();
+    expect(result.embeddingItemId).toBeNull();
+    expect(result.dbCapacityItemId).toBeNull();
+    expect(result.storageFileItemId).toBeNull();
   });
 });
 

@@ -78,15 +78,22 @@ export async function completeStripeSetup(tenantId: string, setupSessionId: stri
   // Step 4: Stripe Subscription を作成 (= 外部呼出、idempotent)
   let subscription: Stripe.Subscription;
   try {
+    // Stripe Subscription は **基本 Haiku / Sonnet の 2 Meter**。
+    // ADR-0022 (2026-06-01) / ADR-0020 / ADR-0021 (2026-05-30) Stripe-ready optional 設計:
+    //   STRIPE_PRICE_EMBEDDING / STRIPE_PRICE_DB_CAPACITY_OVERAGE / STRIPE_PRICE_STORAGE_FILE_OVERAGE
+    //   が設定されていれば追加 Item として組み込まれ、各 Meter Event が Stripe Invoice に反映される
+    //   (= invoice 払いの BillingHistory と 4 経路 invariant 一致)。
+    //   未設定なら旧挙動互換 (= 2 本のみ、リリース時の挙動)。
+    const items = [
+      { price: STRIPE_PRICE_HAIKU },
+      { price: STRIPE_PRICE_SONNET },
+    ];
+    if (STRIPE_PRICE_EMBEDDING) items.push({ price: STRIPE_PRICE_EMBEDDING });
+    if (STRIPE_PRICE_DB_CAPACITY_OVERAGE) items.push({ price: STRIPE_PRICE_DB_CAPACITY_OVERAGE });
+    if (STRIPE_PRICE_STORAGE_FILE_OVERAGE) items.push({ price: STRIPE_PRICE_STORAGE_FILE_OVERAGE });
     subscription = await stripe.subscriptions.create({
       customer: customerId,
-      // chore/storage-addon-backend-removal (2026-05-26):
-      //   旧 storage line item は ADR-0020/0021 で従量課金化されたため Subscription Item から撤去。
-      //   Stripe Subscription は Haiku / Sonnet の 2 Meter のみで構成される。
-      items: [
-        { price: STRIPE_PRICE_HAIKU },
-        { price: STRIPE_PRICE_SONNET },
-      ],
+      items,
       default_payment_method: paymentMethodId,
       automatic_tax: { enabled: true },
     }, {

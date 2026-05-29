@@ -1793,17 +1793,11 @@ function BillingContactSection({
               credit_card に切り替わり、下部「クレジットカード情報更新」ボタンが活性化される。
               credit_card → invoice 戻しは server 側で Stripe Subscription を即時 cancel。
 
-              feat/credit-card-pending (2026-05-26): クレジットカード払いは現在 Stripe 連携の
-              最終調整中のため一時非活性化。
-                - 表示: 「クレジットカード (調整中)」+ disabled で選択不可
-                - 既存に paymentMethod='credit_card' で保存されているテナントは current value
-                  として表示は継続するが、変更 (invoice → credit_card) は不可
-                - 再活性化時:
-                    1. `disabled` 属性を削除
-                    2. label を「クレジットカード」に戻す
-                    3. 本コメント (feat/credit-card-pending) を削除
-                    4. paymentMethod='credit_card' 経路の E2E が PASS する事を確認 */}
-          <option value="credit_card" disabled>クレジットカード (調整中)</option>
+              feat/db-storage-overage-subscription-items (2026-05-30): 5 項目すべての Stripe
+              Subscription Item 化を完遂 (Haiku / Sonnet / Embedding / DB 容量超過 / ファイルストレージ超過)。
+              テナント表示 = 請求書 = Stripe Invoice 4 経路完全 invariant 一致を担保し、
+              feat/credit-card-pending の読み取り専用を解除。 */}
+          <option value="credit_card">クレジットカード</option>
         </select>
       </div>
 
