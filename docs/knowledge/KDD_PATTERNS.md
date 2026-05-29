@@ -17919,3 +17919,83 @@ minDate / totalDays 計算で today を必ず含める (`allDates: string[] = [t
 - 関連 docs: [docs/specification/SCREENS.md §11.5](../specification/SCREENS.md) (ガントチャート画面仕様) / [docs/design/UI_PATTERNS.md](../design/UI_PATTERNS.md) (日付表示の統一方針)
 - 関連 feedback memory: [[feedback_sibling_ui_pattern_horizontal_rollout]] / [[feedback_verify_source_before_listing]]
 - 関連 PR: feat/gantt-initial-scroll-and-locale (本 KDD 対応)
+
+## 5.X+184 **★severity-high UX 矛盾★ Server-side 403 ガードに対応する Client-side UI option disable がなく「選択できるのに保存すると 403」が発生 ─ feature flag は API と UI の両側に二段ガードで反映 (2026-05-30 / PR #469 follow-up / feat/credit-card-ui-guard)**
+
+### 事象
+
+PR #469 で credit_card UI 解除 (`disabled` 属性削除) を実施した直後、ユーザが `STRIPE_ENABLED=false` の Sandbox 環境で credit_card 払いを試したところ、UI では option を選択して「請求先情報を更新」ボタンを押せたが、保存リクエスト `/api/tenants/me/billing/stripe/setup` が **403 STRIPE_DISABLED** で失敗 → 画面に「更新中...」のままハングし、コンソールエラー多発。
+
+サーバ側は設計通りの挙動 ([src/app/api/tenants/me/billing/stripe/setup/route.ts:50-59](../../src/app/api/tenants/me/billing/stripe/setup/route.ts#L50-L59)):
+```typescript
+if (!isStripeEnabled()) {
+  return NextResponse.json(
+    { error: { code: 'STRIPE_DISABLED', ... } },
+    { status: 403 },
+  );
+}
+```
+
+しかし **UI は env を全く知らないので option を enable で表示してしまう** → ユーザは「選べるのに動かない」混乱に直面。
+
+### 根本原因
+
+**Feature flag (env) と UI option の整合性が片側だけにしか実装されていなかった**:
+
+| ガード層 | 状態 (PR #469 直後) |
+|---|---|
+| Server 側 API ガード (`isStripeEnabled` チェック → 403) | ✅ 実装済、設計通り |
+| Client 側 UI ガード (option disable / button disable) | ⚠️ `StripePaymentMethodSection` だけ実装、`BillingContactSection` (paymentMethod セレクト) は **未実装** |
+
+`<BillingContactSection>` の呼出元では `<StripePaymentMethodSection stripeEnabled={stripeEnabled}>` には flag を渡していたが、すぐ隣の `<BillingContactSection>` には渡し忘れていた:
+
+```tsx
+<BillingContactSection
+  initialInfo={info}
+  onUpdate={refreshInfo}
+  onDirtyChange={...}
+  // ← stripeEnabled が渡されていない (バグ)
+/>
+<StripePaymentMethodSection
+  info={info}
+  stripeEnabled={stripeEnabled}  // ← こちらだけ渡している
+  onRefresh={refreshInfo}
+  cardSummary={cardSummary}
+/>
+```
+
+### 対策 (本 PR で反映)
+
+**Feature flag は API と UI の両側に二段ガードで反映する** invariant を確立。
+
+1. `BillingContactSection` の props に `stripeEnabled: boolean` を追加
+2. credit_card option を `disabled={!stripeEnabled}` で動的制御
+3. ラベルも切替 (`stripeEnabled` が false なら「クレジットカード (準備中)」)
+4. `tenant-create-form.tsx` (super_admin テナント作成) も同パターン適用 (= page.tsx server component で `isStripeEnabled()` を呼んで props 渡し)
+5. source-pattern 検証 `credit-card-ui-guard.test.ts` を追加 (退行防止)
+
+### 退行検知パターン
+
+source-pattern テストで以下 5 つの invariant を固定 ([src/app/(dashboard)/settings/tenant/credit-card-ui-guard.test.ts](../../src/app/(dashboard)/settings/tenant/credit-card-ui-guard.test.ts)):
+
+1. `BillingContactSection` / `TenantCreateForm` が `stripeEnabled` prop を受け取る (引数宣言の grep)
+2. `<option value="credit_card" disabled={!stripeEnabled}>` の存在
+3. `stripeEnabled=false` 時の「準備中」ラベル文字列の存在
+4. `<option value="credit_card">クレジットカード</option>` (無条件 enable) の **非存在** (= 退行検知)
+5. `<option value="invoice">銀行振込` (常時 enable) の存在 (= 巻き添え無効化なし)
+
+### 教訓
+
+1. **Feature flag は「サーバの 403 ガード」だけでは UX 不足** ─ 選べる UI で 403 を喰らうと「壊れている」と見える。Client 側でも対応する form 要素を disable し、誤操作を未然に防ぐ。
+2. **隣接コンポーネント間の prop 伝搬を grep で網羅検査** ─ PR #469 で `stripeEnabled` を `StripePaymentMethodSection` には渡したが、すぐ隣の `BillingContactSection` は見落とした。**「同じ feature flag に依存する全コンポーネントへ伝搬されているか」を grep で機械的に確認する** ステップを review に組み込む。
+3. **「読み取り専用解除」と「動的 disable 化」は別概念** ─ PR #469 で "feat/credit-card-pending" の無条件 disable を解除したが、これは「常時 enable」ではなく「env に応じた動的 enable/disable」に置き換えるべきだった。**「フィーチャー本体が解放された後の UI 制御は env 連動で再設計する」** という原則を新規開発の checklist に追加。
+4. **source-pattern test は "無条件" の退行も検知すべき** ─ 旧 `credit-card-pending.test.ts` は「無条件 disable」を invariant にしていたが、本来は「条件付き disable」を invariant にすべきだった。同様のテストは「**この条件の時はこう**」と condition 込みで固定する。
+
+### 関連
+
+- 関連 PR: PR #469 (本 follow-up commit 含む)
+- 関連 KDD: §5.X+182 (姉妹 UI 横展開時の prop 整合性チェック、同根原因)
+- 関連 feedback memory: [[feedback_sibling_ui_pattern_horizontal_rollout]] (隣接コンポーネントの整合性 4 観点 verify)
+- 関連 docs: [docs/operations/STRIPE_SETUP.md](../operations/STRIPE_SETUP.md) §11 (Live mode 切替時の env 注意事項追記)
+- 関連 source: [src/app/(dashboard)/settings/tenant/tenant-settings-client.tsx](../../src/app/(dashboard)/settings/tenant/tenant-settings-client.tsx) (BillingContactSection) / [src/app/(dashboard)/admin/super/tenants/new/tenant-create-form.tsx](../../src/app/(dashboard)/admin/super/tenants/new/tenant-create-form.tsx)
+

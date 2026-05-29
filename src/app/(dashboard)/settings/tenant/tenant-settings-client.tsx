@@ -580,6 +580,7 @@ export function TenantSettingsClient({
               feat/tenant-settings-tabs (2026-05-22): タブ切替時の取りこぼし防止に onDirtyChange も渡す。 */}
           <BillingContactSection
             initialInfo={info}
+            stripeEnabled={stripeEnabled}
             onUpdate={refreshInfo}
             onDirtyChange={(dirty) => {
               billingFormDirtyRef.current = dirty;
@@ -1434,10 +1435,17 @@ function SeedDataToggleSection({
 
 function BillingContactSection({
   initialInfo,
+  stripeEnabled,
   onUpdate,
   onDirtyChange,
 }: {
   initialInfo: TenantSelfInfo;
+  /**
+   * feat/credit-card-ui-guard (2026-05-30): Stripe feature flag。
+   * false の場合、credit_card option を選択不可にして 403 エラーの誤誘発を防ぐ
+   * (= STRIPE_DISABLED 状態で UI と Server の整合性を担保、KDD §5.X+184 参照)。
+   */
+  stripeEnabled: boolean;
   /**
    * PR #425 (2026-05-22) ★severity-1★: 更新成功後に親の info state を再取得する callback。
    * paymentMethod 変更が StripePaymentMethodSection のボタン活性条件に即時反映されないと
@@ -1796,8 +1804,15 @@ function BillingContactSection({
               feat/db-storage-overage-subscription-items (2026-05-30): 5 項目すべての Stripe
               Subscription Item 化を完遂 (Haiku / Sonnet / Embedding / DB 容量超過 / ファイルストレージ超過)。
               テナント表示 = 請求書 = Stripe Invoice 4 経路完全 invariant 一致を担保し、
-              feat/credit-card-pending の読み取り専用を解除。 */}
-          <option value="credit_card">クレジットカード</option>
+              feat/credit-card-pending の読み取り専用を解除。
+
+              feat/credit-card-ui-guard (2026-05-30) ★severity-high UX 防御深化★:
+              STRIPE_ENABLED=false の場合は option を disabled 化する (= サーバ側 403 ガードと
+              整合)。「UI で選べるが保存すると 403」という UX 矛盾を防ぐ二段ガード設計
+              (KDD §5.X+184 参照)。 */}
+          <option value="credit_card" disabled={!stripeEnabled}>
+            {stripeEnabled ? 'クレジットカード' : 'クレジットカード (準備中)'}
+          </option>
         </select>
       </div>
 
