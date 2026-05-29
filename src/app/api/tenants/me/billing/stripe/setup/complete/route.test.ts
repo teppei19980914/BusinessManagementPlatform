@@ -62,21 +62,34 @@ beforeEach(() => {
 });
 
 describe('認可', () => {
-  it('未認証時は伝播', async () => {
+  it('未認証 (= session 失効) → ログイン画面ではなく safeReturnTo に pending+session_expired で redirect (KDD §5.X+185)', async () => {
+    // feat/credit-card-ui-guard (2026-05-30): Stripe Checkout 戻り時に session が失効していると
+    //   従来は login redirect レスポンスをそのまま return していたが、「カード入力完了 → ログイン画面」
+    //   という UX 矛盾だったため、safeReturnTo に pending&reason=session_expired で redirect する仕様に変更。
     vi.mocked(getAuthenticatedUser).mockResolvedValue(
       NextResponse.json({ error: { code: 'UNAUTHORIZED' } }, { status: 401 }) as never,
     );
     const res = await GET(makeReq({ session_id: 'cs_xxx', return_to: 'http://localhost/settings/tenant' }));
-    expect(res.status).toBe(401);
+    expect([302, 307]).toContain(res.status);
+    const loc = res.headers.get('location')!;
+    expect(loc).toContain('http://localhost/settings/tenant');
+    expect(loc).toContain('stripe_setup=pending');
+    expect(loc).toContain('reason=session_expired');
+    // session 失効時は処理を実行しない (Webhook 経由で同期される前提)
+    expect(completeStripeSetup).not.toHaveBeenCalled();
   });
 
-  it('admin 以外は requireAdmin の 403', async () => {
+  it('admin 以外 (= requireAdmin の 403) → safeReturnTo に failed+not_admin で redirect', async () => {
     vi.mocked(getAuthenticatedUser).mockResolvedValue(ADMIN);
     vi.mocked(requireAdmin).mockReturnValue(
       NextResponse.json({ error: { code: 'FORBIDDEN' } }, { status: 403 }) as never,
     );
     const res = await GET(makeReq({ session_id: 'cs_xxx', return_to: 'http://localhost/settings/tenant' }));
-    expect(res.status).toBe(403);
+    expect([302, 307]).toContain(res.status);
+    const loc = res.headers.get('location')!;
+    expect(loc).toContain('http://localhost/settings/tenant');
+    expect(loc).toContain('stripe_setup=failed');
+    expect(loc).toContain('reason=not_admin');
   });
 });
 

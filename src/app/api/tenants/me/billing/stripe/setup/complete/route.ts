@@ -34,24 +34,43 @@ import { getTenantCurrentYearMonth } from '@/lib/tenant-time';
 import { prisma } from '@/lib/db';
 
 export async function GET(req: NextRequest) {
+  // クエリパラメタ取得 (認証チェック前に取得しておき、すべての fallback で利用できるようにする)
+  const url = new URL(req.url);
+  const sessionId = url.searchParams.get('session_id');
+  const returnTo = url.searchParams.get('return_to');
+  const safeReturnTo = sanitizeReturnTo(returnTo, req.url);
+
+  // feat/credit-card-ui-guard (2026-05-30) ★severity-high UX★:
+  //   Stripe Checkout から戻ってきた時に session が失効していると、従来は
+  //   getAuthenticatedUser が返す login redirect レスポンスをそのまま return してしまい、
+  //   「カード入力完了 → ログイン画面に飛ばされる」という UX 矛盾を引き起こしていた。
+  //
+  //   修正: session 失効時はログイン画面ではなく、safeReturnTo (= /settings/tenant?tab=billing)
+  //   に `stripe_setup=pending&reason=session_expired` を付けて redirect する。
+  //   - カード登録自体は Stripe Checkout で完了済 (= Webhook 同期で DB は正しく更新される)
+  //   - middleware が /settings/tenant を保護 → 再ログイン → callback で戻る、という自然なフロー
+  //   - UI 側 (tenant-settings-client.tsx の URL query 検出) で pending メッセージを表示
+  //
+  //   KDD §5.X+185: Stripe Checkout 戻り時の session 失効対策。
   const user = await getAuthenticatedUser();
-  if (user instanceof NextResponse) return user;
+  if (user instanceof NextResponse) {
+    return NextResponse.redirect(
+      appendQuery(safeReturnTo, { stripe_setup: 'pending', reason: 'session_expired' }),
+    );
+  }
 
   const forbidden = requireAdmin(user);
-  if (forbidden) return forbidden;
+  if (forbidden) {
+    // admin 以外のユーザが complete URL を直接踏んだ場合: 設定画面に戻す
+    return NextResponse.redirect(
+      appendQuery(safeReturnTo, { stripe_setup: 'failed', reason: 'not_admin' }),
+    );
+  }
 
   if (!isStripeEnabled()) {
     // feature flag 無効時はトップへフォールバック (= 想定外のアクセス、エラー表示なし)
     return NextResponse.redirect(new URL('/', req.url));
   }
-
-  // クエリパラメタ取得
-  const url = new URL(req.url);
-  const sessionId = url.searchParams.get('session_id');
-  const returnTo = url.searchParams.get('return_to');
-
-  // 安全な戻り先 URL を決定 (= return_to が不正なら /settings/tenant に固定)
-  const safeReturnTo = sanitizeReturnTo(returnTo, req.url);
 
   if (sessionId == null || sessionId.length === 0) {
     // session_id 欠落: 想定外 (Stripe placeholder 展開失敗 or 直接アクセス)

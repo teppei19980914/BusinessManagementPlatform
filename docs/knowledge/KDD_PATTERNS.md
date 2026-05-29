@@ -17999,3 +17999,76 @@ source-pattern テストで以下 5 つの invariant を固定 ([src/app/(dashbo
 - 関連 docs: [docs/operations/STRIPE_SETUP.md](../operations/STRIPE_SETUP.md) §11 (Live mode 切替時の env 注意事項追記)
 - 関連 source: [src/app/(dashboard)/settings/tenant/tenant-settings-client.tsx](../../src/app/(dashboard)/settings/tenant/tenant-settings-client.tsx) (BillingContactSection) / [src/app/(dashboard)/admin/super/tenants/new/tenant-create-form.tsx](../../src/app/(dashboard)/admin/super/tenants/new/tenant-create-form.tsx)
 
+
+## 5.X+185 **★severity-high UX 矛盾★ Stripe Checkout 戻り時の session 失効で「カード入力完了 → ログイン画面」 ─ 認証エラーレスポンスをそのまま return せず、テナント設定画面に pending flag で戻す (2026-05-30 / PR #469 follow-up / feat/credit-card-ui-guard)**
+
+### 事象
+
+クレジットカード払いに切替テスト中、ユーザが Stripe Checkout でカード情報を入力 → 「次へ」を押した時に **ログイン画面に遷移** してしまった。期待挙動は「テナント設定画面に戻る」。
+
+ユーザ視点では:
+1. テナント設定画面で「クレジットカード払い」選択 → 保存
+2. Stripe Checkout 画面に遷移 → カード情報入力 → 「次へ」
+3. **ログイン画面が表示される** ← UX 矛盾、「Stripe で完了したのに何故?」と混乱
+
+### 根本原因
+
+[src/app/api/tenants/me/billing/stripe/setup/complete/route.ts](../../src/app/api/tenants/me/billing/stripe/setup/complete/route.ts) の従来実装:
+
+```typescript
+export async function GET(req: NextRequest) {
+  const user = await getAuthenticatedUser();
+  if (user instanceof NextResponse) return user;  // ← login redirect レスポンスをそのまま返す
+  // ...
+}
+```
+
+Stripe Checkout (別ドメイン `checkout.stripe.com`) で数分滞在中に session が失効すると、`getAuthenticatedUser()` は login redirect レスポンスを返す。これを `return user` で transparent に返してしまうため、ブラウザはログイン画面に遷移する。
+
+session 失効の要因 (複合可能性):
+- Stripe Checkout で数分滞在中の自然失効
+- Netlify Set-Cookie 脱落 ([[feedback_netlify_nextauth_set_cookie]] 関連)
+- ブラウザの cookie 設定 (SameSite 等)
+- 別ウィンドウ・別ブラウザでの操作
+
+### 対策
+
+**session 失効時はログイン画面に飛ばさず、テナント設定画面 (safeReturnTo) に pending flag で redirect する**:
+
+```typescript
+const user = await getAuthenticatedUser();
+if (user instanceof NextResponse) {
+  // login redirect ではなく safeReturnTo に pending&reason=session_expired で redirect
+  return NextResponse.redirect(
+    appendQuery(safeReturnTo, { stripe_setup: 'pending', reason: 'session_expired' }),
+  );
+}
+```
+
+理由:
+- **カード登録自体は Stripe Checkout で完了済** (= ユーザは「次へ」を押した時点で Stripe 側の Checkout Session は completed)
+- **DB 同期は Webhook (payment_method.attached / customer.subscription.created) で行われる** ため、completeStripeSetup を complete route で呼べなくても、Webhook 経由で paymentMethod が credit_card に更新される
+- middleware が `/settings/tenant` を保護していれば、ユーザは自然な再ログインフローに乗り、callback で設定画面に戻る → UI で pending メッセージを見て安心
+
+UI 側 (tenant-settings-client.tsx) に `stripe_setup=pending` のトースト処理を追加:
+> 「クレジットカード情報の登録は完了しています (ログイン状態が切れていました)。少し待ってからページを再読込してください — 数秒〜1 分以内に表示が反映されます。」
+
+### 教訓
+
+1. **「認証エラーをそのまま return」は危険** ─ middleware や API helper が返す login redirect レスポンスは「未保護 route での認証要求」に最適化されている。Stripe / OAuth Callback のような「外部ドメインから戻ってくる route」では、login redirect が UX 矛盾を引き起こす。**API helper の認証エラーは「呼出元の context で再解釈する」** 原則を確立。
+
+2. **Stripe Checkout は session 失効を前提に設計する** ─ Checkout は数分かかることがあり、session 短期失効テナント (= 1 時間とか) では失効リスクが現実的。失効時のフォールバック path を必ず用意する。
+
+3. **Webhook 同期を信頼する** ─ complete route の処理は「即時反映用」の冗長化。Webhook ハンドラ (`handlePaymentMethodAttached` / `handleSubscriptionUpdated`) で DB 同期されるため、complete route がスキップされても最終的には正しい状態になる。複数経路で同期する **二重化設計** の利点。
+
+4. **「pending」状態を UI で明示する** ─ 「failed」と「pending (Webhook 同期中)」は別概念。ユーザに「失敗ではなく同期中」と伝えることで再試行の混乱を防ぐ。
+
+5. **return_to (safeReturnTo) は認証チェックより先に解決する** ─ 認証失敗時の fallback で使うため、`getAuthenticatedUser()` より前に URL パース完了させる。
+
+### 関連
+
+- 関連 PR: PR #469 (本 follow-up commit 含む)
+- 関連 KDD: §5.X+184 (UI feature flag 二段ガード、同根原因 = 「認証/feature flag の状態と UI の整合」)
+- 関連 feedback memory: [[feedback_netlify_nextauth_set_cookie]] (Netlify NextAuth cookie 脱落)
+- 関連 source: [src/app/api/tenants/me/billing/stripe/setup/complete/route.ts](../../src/app/api/tenants/me/billing/stripe/setup/complete/route.ts) / [src/app/(dashboard)/settings/tenant/tenant-settings-client.tsx](../../src/app/(dashboard)/settings/tenant/tenant-settings-client.tsx) (stripe_setup=pending ハンドラ)
+- 関連 Webhook: [src/services/stripe-webhook-handlers.service.ts](../../src/services/stripe-webhook-handlers.service.ts) handlePaymentMethodAttached / handleSubscriptionUpdated (Webhook 同期経路)

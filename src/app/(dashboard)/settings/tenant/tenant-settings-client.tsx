@@ -214,6 +214,16 @@ export function TenantSettingsClient({
       // PR #425 (2026-05-21): paymentMethod 切替は別操作 (請求先情報フォーム) に分離されたため、
       //   本処理は「カード情報の登録/更新成功」の通知に文言を統一。
       showSuccess('クレジットカード情報を登録しました');
+    } else if (status === 'pending') {
+      // feat/credit-card-ui-guard (2026-05-30) / KDD §5.X+185:
+      //   Stripe Checkout 完了戻り時に session が失効していた場合 (= login 経由で再ログイン後にここに着く)。
+      //   カード登録自体は Stripe Checkout で完了しており、Webhook (payment_method.attached /
+      //   customer.subscription.created) 経由で DB 同期されるため、ユーザには「同期中」を案内。
+      const reason = searchParams.get('reason') ?? '';
+      const reasonLabel = reason === 'session_expired' ? 'ログイン状態が切れていました' : '同期中';
+      showSuccess(
+        `クレジットカード情報の登録は完了しています (${reasonLabel})。少し待ってからページを再読込してください — 数秒〜1 分以内に表示が反映されます。`,
+      );
     } else if (status === 'canceled') {
       showError('クレジットカード情報の登録をキャンセルしました');
     } else if (status === 'failed') {
@@ -223,6 +233,9 @@ export function TenantSettingsClient({
         expired_card: 'カードの有効期限が切れています',
         processing_error: 'Stripe 処理エラー (時間をおいて再試行)',
         verification_required: 'カード追加認証が必要です',
+        // feat/credit-card-ui-guard (2026-05-30): complete route の追加 reason
+        not_admin: 'admin 権限が必要です',
+        session_id_missing: 'Stripe Checkout の戻り情報が不正です',
       };
       const reasonMessage = reasonMessageMap[reason] ?? '不明なエラー';
       showError(`カード登録に失敗しました (${reasonMessage})。設定は変更されていません`);
