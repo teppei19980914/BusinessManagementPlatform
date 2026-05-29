@@ -122,14 +122,14 @@ describe('getMemoForViewer', () => {
 
   it('存在しなければ null', async () => {
     vi.mocked(prisma.memo.findFirst).mockResolvedValue(null);
-    expect(await getMemoForViewer('x', 'user-1')).toBe(null);
+    expect(await getMemoForViewer('x', 'user-1', 'tenant-A')).toBe(null);
   });
 
   it('本人なら private でも取得可', async () => {
     vi.mocked(prisma.memo.findFirst).mockResolvedValue(
       memoRow({ userId: 'user-1', visibility: 'private' }) as never,
     );
-    const result = await getMemoForViewer('memo-1', 'user-1');
+    const result = await getMemoForViewer('memo-1', 'user-1', 'tenant-A');
     expect(result?.isMine).toBe(true);
   });
 
@@ -137,14 +137,14 @@ describe('getMemoForViewer', () => {
     vi.mocked(prisma.memo.findFirst).mockResolvedValue(
       memoRow({ userId: 'user-2', visibility: 'private' }) as never,
     );
-    expect(await getMemoForViewer('memo-1', 'user-1')).toBe(null);
+    expect(await getMemoForViewer('memo-1', 'user-1', 'tenant-A')).toBe(null);
   });
 
   it('他人の public は取得可 (isMine: false)', async () => {
     vi.mocked(prisma.memo.findFirst).mockResolvedValue(
       memoRow({ userId: 'user-2', visibility: 'public' }) as never,
     );
-    const result = await getMemoForViewer('memo-1', 'user-1');
+    const result = await getMemoForViewer('memo-1', 'user-1', 'tenant-A');
     expect(result?.isMine).toBe(false);
   });
 });
@@ -156,7 +156,7 @@ describe('createMemo', () => {
     vi.mocked(prisma.memo.create).mockResolvedValue(
       memoRow({ visibility: 'private' }) as never,
     );
-    await createMemo({ title: 't', content: 'c', visibility: 'private' }, 'user-1');
+    await createMemo({ title: 't', content: 'c', visibility: 'private' }, 'user-1', 'tenant-A');
     expect(prisma.memo.create).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ visibility: 'private' }) }),
     );
@@ -166,7 +166,7 @@ describe('createMemo', () => {
     vi.mocked(prisma.memo.create).mockResolvedValue(
       memoRow({ visibility: 'public' }) as never,
     );
-    await createMemo({ title: 't', content: 'c', visibility: 'public' }, 'user-1');
+    await createMemo({ title: 't', content: 'c', visibility: 'public' }, 'user-1', 'tenant-A');
     expect(prisma.memo.create).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ visibility: 'public' }) }),
     );
@@ -175,7 +175,7 @@ describe('createMemo', () => {
   // feat/asset-assignee-expansion (2026-05-26) severity-1: private memo に他人 assignee を拒否
   it('private memo + 他人 assignee 指定 (create) → PRIVATE_MEMO_ASSIGNEE_FORBIDDEN', async () => {
     await expect(
-      createMemo({ title: 't', content: 'c', visibility: 'private', assigneeId: 'user-other' }, 'user-1'),
+      createMemo({ title: 't', content: 'c', visibility: 'private', assigneeId: 'user-other' }, 'user-1', 'tenant-A'),
     ).rejects.toThrow('PRIVATE_MEMO_ASSIGNEE_FORBIDDEN');
     expect(prisma.memo.create).not.toHaveBeenCalled();
   });
@@ -184,7 +184,7 @@ describe('createMemo', () => {
     vi.mocked(prisma.memo.create).mockResolvedValue(
       memoRow({ visibility: 'public', assigneeId: 'user-other' }) as never,
     );
-    await createMemo({ title: 't', content: 'c', visibility: 'public', assigneeId: 'user-other' }, 'user-1');
+    await createMemo({ title: 't', content: 'c', visibility: 'public', assigneeId: 'user-other' }, 'user-1', 'tenant-A');
     expect(prisma.memo.create).toHaveBeenCalled();
   });
 });
@@ -194,7 +194,7 @@ describe('updateMemo', () => {
 
   it('存在しなければ null', async () => {
     vi.mocked(prisma.memo.findFirst).mockResolvedValue(null);
-    expect(await updateMemo('x', { title: 't2' }, 'user-1')).toBe(null);
+    expect(await updateMemo('x', { title: 't2' }, 'user-1', 'tenant-A')).toBe(null);
     expect(prisma.memo.update).not.toHaveBeenCalled();
   });
 
@@ -202,7 +202,7 @@ describe('updateMemo', () => {
     vi.mocked(prisma.memo.findFirst).mockResolvedValue(
       { userId: 'user-2', assigneeId: null } as never,
     );
-    expect(await updateMemo('memo-1', { title: 't2' }, 'user-1')).toBe(null);
+    expect(await updateMemo('memo-1', { title: 't2' }, 'user-1', 'tenant-A')).toBe(null);
     expect(prisma.memo.update).not.toHaveBeenCalled();
   });
 
@@ -212,7 +212,7 @@ describe('updateMemo', () => {
       memoRow({ title: 't2' }) as never,
     );
 
-    const result = await updateMemo('memo-1', { title: 't2' }, 'user-1');
+    const result = await updateMemo('memo-1', { title: 't2' }, 'user-1', 'tenant-A');
 
     expect(result?.title).toBe('t2');
     expect(prisma.memo.update).toHaveBeenCalled();
@@ -225,7 +225,7 @@ describe('updateMemo', () => {
     );
     vi.mocked(prisma.memo.update).mockResolvedValue(memoRow({ title: 't2' }) as never);
 
-    const result = await updateMemo('memo-1', { title: 't2' }, 'user-assignee');
+    const result = await updateMemo('memo-1', { title: 't2' }, 'user-assignee', 'tenant-A');
 
     expect(result?.title).toBe('t2');
     expect(prisma.memo.update).toHaveBeenCalled();
@@ -237,7 +237,7 @@ describe('updateMemo', () => {
       { userId: 'user-1', assigneeId: null, visibility: 'private', title: 't', content: 'c' } as never,
     );
     await expect(
-      updateMemo('memo-1', { assigneeId: 'user-other' }, 'user-1'),
+      updateMemo('memo-1', { assigneeId: 'user-other' }, 'user-1', 'tenant-A'),
     ).rejects.toThrow('PRIVATE_MEMO_ASSIGNEE_FORBIDDEN');
     expect(prisma.memo.update).not.toHaveBeenCalled();
   });
@@ -247,7 +247,7 @@ describe('updateMemo', () => {
       { userId: 'user-1', assigneeId: 'user-other', visibility: 'public', title: 't', content: 'c' } as never,
     );
     await expect(
-      updateMemo('memo-1', { visibility: 'private' }, 'user-1'),
+      updateMemo('memo-1', { visibility: 'private' }, 'user-1', 'tenant-A'),
     ).rejects.toThrow('PRIVATE_MEMO_ASSIGNEE_FORBIDDEN');
   });
 
@@ -256,7 +256,7 @@ describe('updateMemo', () => {
       { userId: 'user-1', assigneeId: null, visibility: 'private', title: 't', content: 'c' } as never,
     );
     vi.mocked(prisma.memo.update).mockResolvedValue(memoRow({ assigneeId: 'user-1' }) as never);
-    const result = await updateMemo('memo-1', { assigneeId: 'user-1' }, 'user-1');
+    const result = await updateMemo('memo-1', { assigneeId: 'user-1' }, 'user-1', 'tenant-A');
     expect(result).not.toBeNull();
   });
 });

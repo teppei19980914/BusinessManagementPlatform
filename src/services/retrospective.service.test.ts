@@ -92,7 +92,7 @@ describe('listRetrospectives', () => {
     vi.mocked(prisma.retrospective.findMany).mockResolvedValue([retRow()] as never);
     vi.mocked(prisma.user.findMany).mockResolvedValue([]);
 
-    await listRetrospectives('p-1', 'admin-1', 'admin');
+    await listRetrospectives('p-1', 'admin-1', 'admin', 'tenant-A');
 
     const call = getMockCallArg(vi.mocked(prisma.retrospective.findMany));
     expect(call.where).not.toHaveProperty('OR');
@@ -102,7 +102,7 @@ describe('listRetrospectives', () => {
     vi.mocked(prisma.retrospective.findMany).mockResolvedValue([]);
     vi.mocked(prisma.user.findMany).mockResolvedValue([]);
 
-    await listRetrospectives('p-1', 'u-1', 'general');
+    await listRetrospectives('p-1', 'u-1', 'general', 'tenant-A');
 
     const call = getMockCallArg(vi.mocked(prisma.retrospective.findMany));
     expect(call.where.OR).toEqual([
@@ -493,7 +493,7 @@ describe('confirmRetrospective / deleteRetrospective', () => {
 
   it('confirm: state=confirmed', async () => {
     vi.mocked(prisma.retrospective.update).mockResolvedValue({} as never);
-    await confirmRetrospective('ret-1', 'u-1');
+    await confirmRetrospective('ret-1', 'u-1', 'tenant-A');
 
     expect(prisma.retrospective.update).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -694,7 +694,7 @@ describe('bulkUpdateRetrospectivesVisibilityFromList', () => {
     ] as never);
     vi.mocked(prisma.retrospective.updateMany).mockResolvedValue({ count: 1 } as never);
 
-    const r = await bulkUpdateRetrospectivesVisibilityFromList('p-1', ['ret-1', 'ret-MISSING'], 'public', 'u-1');
+    const r = await bulkUpdateRetrospectivesVisibilityFromList('p-1', ['ret-1', 'ret-MISSING'], 'public', 'u-1', 'tenant-A');
     expect(r.skippedNotFound).toBe(1);
     expect(r.updatedIds).toEqual(['ret-1']);
   });
@@ -811,14 +811,14 @@ describe('unlinkRetrospectiveFromProject', () => {
     vi.mocked(prisma.retrospectiveProject.findUnique).mockResolvedValue({ id: 'rp-1' } as never);
     vi.mocked(prisma.retrospectiveProject.delete).mockResolvedValue({} as never);
 
-    const result = await unlinkRetrospectiveFromProject('ret-1', 'p-2');
+    const result = await unlinkRetrospectiveFromProject('ret-1', 'p-2', 'tenant-A');
     expect(result).toEqual({ removed: true });
   });
 
   it('紐付けなし → removed=false (idempotent)', async () => {
     vi.mocked(prisma.retrospectiveProject.findUnique).mockResolvedValue(null);
 
-    const result = await unlinkRetrospectiveFromProject('ret-1', 'p-2');
+    const result = await unlinkRetrospectiveFromProject('ret-1', 'p-2', 'tenant-A');
     expect(result).toEqual({ removed: false });
   });
 });
