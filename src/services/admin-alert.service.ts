@@ -76,14 +76,25 @@ export async function sendSuperAdminAlert(
   const provider = getMailProvider();
   const sentTo: string[] = [];
   const failures: string[] = [];
+  // feat/email-login-info-and-no-reply (2026-05-29): 自動送信 / 返信不可フッタを追加。
+  //   super_admin 向けで「返信先で対応依頼」運用は採っていないため (= 対応経路は
+  //   /admin/super/diagnostics 等の専用画面)、誤返信での見落とし防止。
+  //   From は noreply@tasukiba.com で受信不能な点も明示。
+  const noReplyHtml
+    = '<hr style="border:none;border-top:1px solid #d1d5db;margin:16px 0 8px 0;" />'
+    + '<p style="font-size:11px;color:#6b7280;margin:0;">※ このメールはシステムからの自動送信 (noreply@tasukiba.com) です。本メールへの返信は受信できません。対応は管理画面から実施してください。</p>';
+  const noReplyText
+    = '\n\n――――――――――――――――――\n'
+    + '※ このメールはシステムからの自動送信 (noreply@tasukiba.com) です。本メールへの返信は受信できません。対応は管理画面から実施してください。';
   // alert は plain text 中心。html 必須のため text を <pre> でラップ (= 改行と等幅を維持)
-  const html = `<pre style="font-family:monospace;white-space:pre-wrap;">${escapeHtml(body)}</pre>`;
+  const html = `<pre style="font-family:monospace;white-space:pre-wrap;">${escapeHtml(body)}</pre>${noReplyHtml}`;
+  const text = `${body}${noReplyText}`;
   for (const to of recipients) {
     const result = await provider.send({
       to,
       subject,
       html,
-      text: body,
+      text,
       type: 'admin_alert',
     });
     if (result.success) sentTo.push(to);

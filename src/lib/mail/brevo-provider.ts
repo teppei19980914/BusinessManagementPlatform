@@ -14,7 +14,11 @@ export class BrevoMailProvider implements MailProvider {
 
   constructor() {
     this.apiKey = process.env.BREVO_API_KEY || '';
-    this.senderEmail = process.env.MAIL_FROM || 'noreply@example.com';
+    // 2026-05-29 (feat/email-login-info-and-no-reply): フォールバック値を本番値に統一。
+    //   createMailProvider が B-7 で MAIL_FROM 必須化済のためここに到達するのは
+    //   開発者が直接 `new BrevoMailProvider()` を呼んだ場合のみ (dead code at runtime)。
+    //   一貫性のため本番運用 From アドレスを default にする。
+    this.senderEmail = process.env.MAIL_FROM || 'noreply@tasukiba.com';
     this.senderName = process.env.MAIL_FROM_NAME || 'たすきば';
 
     if (!this.apiKey) {

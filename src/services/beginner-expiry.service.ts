@@ -33,6 +33,8 @@ import { MANAGEMENT_TENANT_ID } from '@/lib/tenant';
 // PR-4 (2026-05-15): テナント TZ ベースの日付計算ヘルパ
 import { tenantCalendarDayDiff } from '@/lib/tenant-time';
 import { DEFAULT_TIMEZONE } from '@/config/i18n';
+// feat/email-login-info-and-no-reply (2026-05-29): 全自動送信メールで no-reply フッタ統一
+import { CONTACT_FORM_URL } from '@/config/operator';
 
 // ================================================================
 // 公開定数
@@ -333,7 +335,8 @@ async function sendNoticeEmail(
 引き続きアクティブにご利用いただく場合は、Expert または Pro プランへのアップグレードをお願いいたします:
 ${upgradeUrl}
 
-ご不明な点は本メールへの返信でお問い合わせください。
+ご不明な点は公式 LP のお問い合わせフォームから「お問い合わせ種別: たすきばに関するお問い合わせ」をご選択のうえご連絡ください:
+${CONTACT_FORM_URL}
 
 — たすきば 運営チーム`;
   } else if (type === 'day_75') {
@@ -374,7 +377,8 @@ ${upgradeUrl}
 
 何もしない場合、上記期日に業務データが **不可逆的に削除** されますのでご注意ください。
 
-ご不明点は本メールへご返信ください。
+ご不明点は公式 LP のお問い合わせフォームから「お問い合わせ種別: たすきばに関するお問い合わせ」をご選択のうえご連絡ください:
+${CONTACT_FORM_URL}
 
 — たすきば 運営チーム`;
   } else if (type === 'auto_delete_day_170') {
@@ -394,7 +398,8 @@ ${upgradeUrl}
 
 2. **エクスポート**: テナント設定画面からデータをダウンロードして退避してください。
 
-ご質問・ご相談は本メールへご返信いただくか、Discord コミュニティへお気軽にお問い合わせください。
+ご質問・ご相談は公式 LP のお問い合わせフォームから「お問い合わせ種別: たすきばに関するお問い合わせ」をご選択のうえご連絡ください:
+${CONTACT_FORM_URL}
 
 — たすきば 運営チーム`;
   } else {
@@ -414,7 +419,8 @@ ${upgradeUrl}
 
 ⚠ **重要なお知らせ**: 本日から **90 日後 (テナント作成から合計 180 日経過時点)** にアップグレードされていないテナントは、業務データを **自動的に物理削除** いたします。継続してご利用の場合は猶予期間中にアップグレードをお願いいたします。データのみ退避したい場合はエクスポート機能で取得可能です。
 
-ご解約をご希望の場合はテナント設定画面のセルフ解約機能をご利用いただくか、お手数ですが本メールへご返信ください (運営側でデータエクスポート代行も承ります)。
+ご解約をご希望の場合はテナント設定画面のセルフ解約機能をご利用ください。データエクスポート代行のご依頼など個別ご相談は公式 LP のお問い合わせフォームから「お問い合わせ種別: たすきばに関するお問い合わせ」をご選択のうえご連絡ください:
+${CONTACT_FORM_URL}
 
 — たすきば 運営チーム`;
   }
@@ -432,11 +438,19 @@ ${upgradeUrl}
           : type === 'auto_delete_day_170'
             ? 'beginner_auto_delete_warning_170'
             : 'beginner_expired';
+  // feat/email-login-info-and-no-reply (2026-05-29): 全自動送信メールに no-reply フッタを統一付与。
+  //   From は noreply@tasukiba.com で受信不能のため、誤返信での問合せロストを防ぐ。
+  //   問合せ窓口は LP フォーム (種別「たすきばに関するお問い合わせ」) に一本化。
+  const bodyWithNoReply = body
+    + '\n\n――――――――――――――――――\n'
+    + '※ このメールはシステムからの自動送信 (noreply@tasukiba.com) です。本メールへの返信は受信できません。\n'
+    + 'お問い合わせは公式 LP のお問い合わせフォームから「お問い合わせ種別: たすきばに関するお問い合わせ」をご選択のうえご連絡ください。\n'
+    + CONTACT_FORM_URL;
   const sendResult = await provider.send({
     to: tenant.billingContactEmail,
     subject,
-    text: body,
-    html: `<pre style="font-family: sans-serif; white-space: pre-wrap;">${escapeHtml(body)}</pre>`,
+    text: bodyWithNoReply,
+    html: `<pre style="font-family: sans-serif; white-space: pre-wrap;">${escapeHtml(bodyWithNoReply)}</pre>`,
     type: mailType,
     tenantId: tenant.id,
   });

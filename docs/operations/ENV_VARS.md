@@ -74,7 +74,7 @@
 | 変数名 | 値 | 用途 |
 |---|---|---|
 | `MAIL_PROVIDER` | `console` / `brevo` / `resend` / `inbox` | 送信方法の切替 (`console` は実送信せずコンソールへ出力、`inbox` は E2E 専用でファイル出力) |
-| `MAIL_FROM` | `noreply@example.com` | 送信元アドレス (Brevo / Resend 共通) |
+| `MAIL_FROM` | `noreply@tasukiba.com` | 送信元アドレス (Brevo / Resend 共通)。**本番値は受信不能の自動送信専用**。問合せ窓口は LP contact form ([`src/config/operator.ts`](../../src/config/operator.ts) `CONTACT_FORM_URL`) に集約 |
 | `MAIL_FROM_NAME` | `たすきば` | 送信元表示名 (Brevo のみ使用) |
 | `BREVO_API_KEY` | `xkeysib-xxxxx...` | Brevo API キー (`MAIL_PROVIDER=brevo` 時、**本番既定**)。取得: <https://app.brevo.com/settings/keys/api>。送信元アドレスは Brevo ダッシュボードで事前検証必須 |
 | `RESEND_API_KEY` | `re_xxxxx...` | Resend API キー (`MAIL_PROVIDER=resend` 時、代替選択肢)。取得: <https://resend.com/api-keys>。ドメイン未検証時はオーナーメール以外に送信不可 |
