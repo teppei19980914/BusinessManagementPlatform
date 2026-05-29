@@ -89,6 +89,27 @@
 - 上限: テナント月 100 回 (= ¥50/月程度の運営コスト想定)
 - 上限到達時: HTTP 429 + `fallbackToAccordion: true` を返却 → UI が入力欄を disable してアコーディオン誘導
 
+#### 1.3.1 ★重要★ なぜ `withMeteredLLM` を経由しないか
+
+たすきフクロウ AI ヘルプチャットは **意図的に `withMeteredLLM` を経由しない独立経路** として設計されています。これは ADR-0027 で正当化された設計判断であり、`scripts/check-llm-billing-bypass.ts` の `ALLOWLIST_EXACT` に `src/app/api/help/chat/route.ts` を登録する形で CI ガードからも除外しています (KDD §5.X+189 参照)。
+
+理由:
+
+1. **cost=0 全プラン無料**: `withMeteredLLM` は cost > 0 を想定した課金ゲートウェイ (LLM 単価計算 / `currentMonthApiCallCount` increment / Stripe queue 投入)。help-chat は学習コストとして運営吸収するため、これらの処理がすべて noop で複雑性だけが増す。
+2. **専用 Counter で月次回数を独自管理**: `Tenant.currentMonthHelpChatCount` (新規カラム) で help-chat 専用の月次カウントを保持。`BILLABLE_FEATURE_UNITS` 集計対象外なので invoice/billing-aggregation も汚染しない。
+3. **代替の暴走防止機構を二重に持つ**:
+   - `applyRateLimit({key: 'help-chat', max: 10, windowMs: 60_000})` (1 分 10 回 / IP)
+   - テナント月 100 回上限 (`HELP_CHAT_MONTHLY_LIMIT_PER_TENANT`)
+   - これにより `withMeteredLLM` の rate limit / Beginner 上限ロジックなしでも DoS / 課金枯渇を防げる。
+4. **将来 LEARNING_FREE 機能を追加するときの参考設計**: 同じく cost=0 で運営が学習コストを吸収する機能 (例: 初心者向けチュートリアル AI) を追加する場合、本経路をテンプレートにすると安全。
+
+新規 LLM 機能を追加する開発者は、上記設計判断を踏まえ:
+
+- 課金対象 (Expert/Pro で課金が発生) → `withMeteredLLM` 経由のラッパー (`auto-tag.service.ts` / `suggestion-explanation.service.ts` 等) を使う
+- LEARNING_FREE 等の意図的 cost=0 独立経路 → 本ガイドのパターンに従い、`check-llm-billing-bypass.ts` の ALLOWLIST に追記 + ADR で正当化
+
+を選び分けてください。判断に迷ったら ADR-0019 と ADR-0027 を読み比べて、課金分類 4 階層 (LLM / EMBEDDING / STORAGE_OVERAGE / BACKFILL_FREE) のどれに該当するかを確認してください ([memory: 課金 4 階層分類](../../C:/Users/SF02512/.claude/projects/c--Users-SF02512-GitHub-Private-BusinessManagementPlatform/memory/feedback_billing_4layer_classification.md))。
+
 ### 1.4 ファイル構成
 
 | ファイル | 役割 |

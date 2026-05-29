@@ -18270,3 +18270,63 @@ system prompt で権限制限を伝えても、AI は確率的に許可外の id
 - 関連 test: [src/config/faq-content.test.ts](../../src/config/faq-content.test.ts) (権限フィルタ 14 ケース) / [src/config/guide-content.test.ts](../../src/config/guide-content.test.ts) (横展開 7 ケース)
 - 開発者ガイド: [FAQ_AND_OWL_CHAT_GUIDE.md](../developer-guide/FAQ_AND_OWL_CHAT_GUIDE.md) §6
 - 仕様書: [HELP_CHAT.md](../specification/HELP_CHAT.md) §5
+
+## §5.X+189 LEARNING_FREE 等の「意図的に withMeteredLLM を経由しない」LLM 経路は check-llm-billing-bypass の ALLOWLIST_EXACT に追加必須 (PR #471 CI fail / ADR-0027)
+
+**問題**: 新規 LLM 機能をローカルで `pnpm lint && tsc && test && build` がすべて PASS する状態で push したが、CI ジョブ「LLM billing bypass check」だけが失敗した。エラー:
+
+```
+[check-llm-billing-bypass] ❌ 課金バイパス検出
+  src/app/api/help/chat/route.ts:57 — import { getAnthropicClient } from '@/lib/llm/anthropic-client'
+    getAnthropicClient の直接 import は禁止です。withMeteredLLM 経由のラッパー (auto-tag.service / suggestion-explanation.service) を使ってください。
+  src/app/api/help/chat/route.ts:245 — getAnthropicClient()
+    getAnthropicClient() を直接呼んでいます。withMeteredLLM の callback 内で呼ぶか、auto-tag.service.ts / suggestion-explanation.service.ts 経由で使ってください。
+```
+
+この CI ガード (`scripts/check-llm-billing-bypass.ts`) は ADR-0019 (BILLABLE_FEATURE_UNITS 設計) で「Anthropic / Voyage の直叩きは ApiCallLog 記録 / Stripe queue / rate limit / fair use limit のすべてをバイパスしてしまう」ことを構造的に防ぐためのもので、ローカルの 4 点セット (lint / tsc / test / build) には含まれない **CI 専用ガード**。
+
+**結論**: 「ADR で正当化された LEARNING_FREE 等の独立経路」は **設計判断として正当な例外** のため、`scripts/check-llm-billing-bypass.ts` の `ALLOWLIST_EXACT` に追加して CI を PASS させる。
+
+```ts
+// scripts/check-llm-billing-bypass.ts
+const ALLOWLIST_EXACT = new Set<string>([
+  'src/lib/llm/anthropic-client.ts',
+  // ...既存
+  // ADR-0027 (2026-05-29): たすきフクロウ AI ヘルプチャットは LEARNING_FREE 分類で
+  //   意図的に withMeteredLLM を経由しない独立経路 (cost=0 全プラン無料、
+  //   Tenant.currentMonthHelpChatCount で月次回数を独自管理)。
+  'src/app/api/help/chat/route.ts',
+]);
+```
+
+**設計上の留意点 (3 点)**:
+
+1. **ALLOWLIST 追加には必ず ADR で正当化された設計判断が必要**: 「ちょっと試したいから」「面倒だから」での追加は禁止。ADR-0027 のように、「なぜ withMeteredLLM を経由しないか」「代替の課金/制限機構は何か」を文書化することが必須。help-chat の場合は (a) cost=0 全プラン無料 (b) `Tenant.currentMonthHelpChatCount` で独自カウント (c) `applyRateLimit('help-chat', 10/min)` + テナント月 100 回上限の二重ガード で代替を担保している。
+
+2. **コメントで ADR への参照を必ず付ける**: ALLOWLIST_EXACT への追記行と、スクリプト上部のコメントブロック (Allowlist 一覧) の両方に「ADR-XXXX」を明記する。将来の保守者が「なぜここに入っているか」を即座に追跡可能にする。
+
+3. **行末 `// llm-billing-allow:` パターンは一時的・限定的な許可向け**: スクリプトは行末コメント `// llm-billing-allow:` を含む行を読み飛ばす設計だが、これは「ADR でまだ正当化されていないが緊急対応で必要」など短期例外向け。ADR で正式に設計された経路は ALLOWLIST_EXACT に登録する方が、将来の意図伝達と grep 追跡性に優れる。
+
+**何を避けるべきか**:
+
+- ❌ CI fail を見て「`withMeteredLLM` 経由に書き直さなきゃ」と反射的にリファクタする (LEARNING_FREE 等の cost=0 独立経路には不要かつ余計な複雑性を持ち込む)
+- ❌ `// llm-billing-allow: temporary` で長期間放置する (ADR 化の動機を失う)
+- ❌ ALLOWLIST_EXACT 追記時に ADR/コメント無しで PR を出す (レビュー観点が「なぜここを許可してよいか」に集中できない)
+- ❌ ローカルで lint + tsc + test + build のみ実行して push する (LLM 機能を新規追加する PR では CI 固有ガード を踏まえ、push 前に `pnpm check:llm-billing-bypass` も明示的に実行する)
+
+**横展開チェックリスト**:
+
+- [ ] 新規 LLM 機能を追加する PR では、commit 前に `pnpm check:llm-billing-bypass` を必ず実行
+- [ ] 直叩きが必要な設計判断 (LEARNING_FREE / その他 cost=0 経路) は ADR で文書化されているか
+- [ ] ALLOWLIST_EXACT 追記時に該当 ADR への参照コメントを付与
+- [ ] 同じ判断は `scripts/check-llm-billing-bypass.ts` 上部の Allowlist 説明ブロックにも反映
+- [ ] 開発者ガイド (例: FAQ_AND_OWL_CHAT_GUIDE.md) に「課金ゲートウェイの設計判断」セクションがあれば併記
+
+### 関連
+
+- 関連 ADR: [ADR-0019](../adr/0019-billable-feature-units-and-free-tier-expansion.md) (BILLABLE_FEATURE_UNITS、本ガードの趣旨) / [ADR-0027](../adr/0027-help-ai-concierge.md) (LEARNING_FREE で独立経路を正当化)
+- 関連 PR: PR #471 (本 CI fail / 修正の事例) / PR5 `251bf7fb` (LEARNING_FREE_FEATURE_UNITS の新設) / PR9 `2f2a5692` (rate limit 追加)
+- 関連 source: [scripts/check-llm-billing-bypass.ts](../../scripts/check-llm-billing-bypass.ts) (本ガード本体) / [src/app/api/help/chat/route.ts](../../src/app/api/help/chat/route.ts) (ALLOWLIST に追加した route) / [src/config/billing-feature-units.ts](../../src/config/billing-feature-units.ts) (`LEARNING_FREE_FEATURE_UNITS`)
+- 関連 feedback memory: [[feedback_billing_4layer_classification]] (cron 経由の不当請求リスクと整合する設計判断) / [[feedback_unjust_billing_risk_cron]]
+- 開発者ガイド: [FAQ_AND_OWL_CHAT_GUIDE.md](../developer-guide/FAQ_AND_OWL_CHAT_GUIDE.md) §1.3 課金分類
+- KDD 関連: §5.X+188 (FAQ AI ハルシネーション対策、本 §189 と同 PR 由来)
