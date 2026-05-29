@@ -442,7 +442,7 @@ describe('listUsers', () => {
     vi.mocked(prisma.user.findMany).mockResolvedValue([]);
     await listUsers('tenant-A');
     const call = getMockCallArg(vi.mocked(prisma.user.findMany));
-    expect((call.where as { tenantId: string }).tenantId).toBe('tenant-A');
+    expect((call.where as unknown as { tenantId: string }).tenantId).toBe('tenant-A');
   });
 });
 

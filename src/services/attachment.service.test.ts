@@ -56,7 +56,7 @@ const row = (o: Record<string, unknown> = {}) => ({
   slot: 'general',
   displayName: 'ref',
   url: 'https://example.com/doc',
-  mimeHint: null,
+  mimeHint: undefined,
   addedBy: 'user-1',
   addedByUser: { name: 'Alice' },
   createdAt: now,
@@ -121,8 +121,8 @@ describe('createAttachment', () => {
         entityId: 'r1',
         displayName: 'n',
         url: 'https://a.b',
-        mimeHint: null,
-      },
+        mimeHint: undefined,
+      } as never,
       'user-1',
       'tenant-A',
     );
@@ -144,7 +144,7 @@ describe('createAttachment', () => {
         slot: 'primary',
         displayName: 'n',
         url: 'https://a.b',
-        mimeHint: null,
+        mimeHint: undefined,
       },
       'user-1',
       'tenant-A',
@@ -168,7 +168,7 @@ describe('updateAttachment / deleteAttachment', () => {
     vi.mocked(prisma.attachment.findFirst).mockResolvedValue({ id: 'att-1' } as never);
     vi.mocked(prisma.attachment.update).mockResolvedValue(row({ displayName: 'new' }) as never);
 
-    await updateAttachment('att-1', { displayName: 'new', url: 'https://x.y', mimeHint: null }, 'tenant-A');
+    await updateAttachment('att-1', { displayName: 'new', url: 'https://x.y', mimeHint: undefined }, 'tenant-A');
 
     expect(prisma.attachment.update).toHaveBeenCalled();
   });

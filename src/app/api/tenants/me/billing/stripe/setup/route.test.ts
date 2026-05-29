@@ -71,7 +71,7 @@ describe('認可', () => {
   });
 
   it('admin 以外は requireAdmin の 403 を返す', async () => {
-    vi.mocked(getAuthenticatedUser).mockResolvedValue({ ...ADMIN, systemRole: 'general' } as never);
+    vi.mocked(getAuthenticatedUser).mockResolvedValue({ ...(ADMIN as object), systemRole: 'general' } as never);
     vi.mocked(requireAdmin).mockReturnValue(
       NextResponse.json({ error: { code: 'FORBIDDEN' } }, { status: 403 }) as never,
     );

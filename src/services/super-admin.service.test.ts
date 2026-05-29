@@ -1684,7 +1684,7 @@ describe('getTenantDetail — テナント単位の詳細 (請求の根拠デー
     vi.mocked(prisma.riskIssue.count).mockResolvedValueOnce(3 as never);
     vi.mocked(prisma.retrospective.count).mockResolvedValueOnce(1 as never);
     vi.mocked(prisma.memo.count).mockResolvedValueOnce(4 as never);
-    vi.mocked(prisma.user.aggregate as never).mockResolvedValueOnce({
+    (vi.mocked(prisma.user.aggregate as never) as { mockResolvedValueOnce: (v: unknown) => unknown }).mockResolvedValueOnce({
       _max: { lastLoginAt: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000) },
     } as never);
 
@@ -1722,14 +1722,14 @@ describe('getTenantDetail — テナント単位の詳細 (請求の根拠デー
     vi.mocked(prisma.riskIssue.count).mockResolvedValueOnce(0 as never);
     vi.mocked(prisma.retrospective.count).mockResolvedValueOnce(0 as never);
     vi.mocked(prisma.memo.count).mockResolvedValueOnce(0 as never);
-    vi.mocked(prisma.user.aggregate as never).mockResolvedValueOnce({
+    (vi.mocked(prisma.user.aggregate as never) as { mockResolvedValueOnce: (v: unknown) => unknown }).mockResolvedValueOnce({
       _max: { lastLoginAt: null },
     } as never);
 
     await getTenantDetail('tenant-x');
 
     // すべての count クエリは tenantId='tenant-x' のみで絞り込み + 削除済み除外
-    const expectations: Array<[ReturnType<typeof vi.mocked>, string]> = [
+    const expectations: Array<[{ mock: { calls: ReadonlyArray<ReadonlyArray<unknown>> } }, string]> = [
       [vi.mocked(prisma.user.count), 'user'],
       [vi.mocked(prisma.project.count), 'project'],
       [vi.mocked(prisma.knowledge.count), 'knowledge'],
@@ -1738,7 +1738,7 @@ describe('getTenantDetail — テナント単位の詳細 (請求の根拠デー
       [vi.mocked(prisma.memo.count), 'memo'],
     ];
     for (const [mockFn, name] of expectations) {
-      const where = mockFn.mock.calls[0]![0].where;
+      const where = (mockFn.mock.calls[0]![0] as { where: unknown }).where;
       expect(where, `${name}.count where tenant isolation`).toMatchObject({
         tenantId: 'tenant-x',
         deletedAt: null,
@@ -1769,7 +1769,7 @@ describe('getTenantDetail — テナント単位の詳細 (請求の根拠デー
     vi.mocked(prisma.riskIssue.count).mockResolvedValueOnce(0 as never);
     vi.mocked(prisma.retrospective.count).mockResolvedValueOnce(0 as never);
     vi.mocked(prisma.memo.count).mockResolvedValueOnce(0 as never);
-    vi.mocked(prisma.user.aggregate as never).mockResolvedValueOnce({
+    (vi.mocked(prisma.user.aggregate as never) as { mockResolvedValueOnce: (v: unknown) => unknown }).mockResolvedValueOnce({
       _max: { lastLoginAt: null },
     } as never);
 

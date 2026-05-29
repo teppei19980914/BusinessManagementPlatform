@@ -85,7 +85,7 @@ describe('listMyMemos', () => {
     vi.mocked(prisma.memo.findMany).mockResolvedValue([]);
     await listMyMemos('user-1', 'tenant-A');
     const call = getMockCallArg(vi.mocked(prisma.memo.findMany));
-    expect((call.where as { tenantId: string }).tenantId).toBe('tenant-A');
+    expect((call.where as unknown as { tenantId: string }).tenantId).toBe('tenant-A');
   });
 });
 
@@ -113,7 +113,7 @@ describe('listPublicMemos', () => {
     vi.mocked(prisma.memo.findMany).mockResolvedValue([]);
     await listPublicMemos('user-1', 'tenant-A');
     const call = getMockCallArg(vi.mocked(prisma.memo.findMany));
-    expect((call.where as { tenantId: string }).tenantId).toBe('tenant-A');
+    expect((call.where as unknown as { tenantId: string }).tenantId).toBe('tenant-A');
   });
 });
 
@@ -449,7 +449,7 @@ describe('bulkUpdateMemosVisibilityFromList', () => {
       expect(r.embeddingsGenerated).toBe(2);
       expect(generateAndPersistBatchEmbeddings).toHaveBeenCalledTimes(1);
       const args = getMockCallArg(vi.mocked(generateAndPersistBatchEmbeddings));
-      expect(args.items.map((i) => i.rowId)).toEqual(['memo-1', 'memo-2']);
+      expect((args.items as unknown as Array<{ rowId: string }>).map((i) => i.rowId)).toEqual(['memo-1', 'memo-2']);
       expect(args.featureUnit).toBe('memo-embedding');
     });
   });

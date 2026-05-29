@@ -280,7 +280,7 @@ describe('setupPassword', () => {
     expect(r.recoveryCodes?.length).toBeGreaterThan(0);
     // $transaction 内で token.usedAt 設定 + user.isActive=true + recoveryCode.createMany
     expect(prisma.$transaction).toHaveBeenCalled();
-    const txCall = vi.mocked(prisma.$transaction).mock.calls[0][0] as unknown[];
+    const txCall = vi.mocked(prisma.$transaction).mock.calls[0][0] as unknown as unknown[];
     // 一般ユーザ用 transaction は 3 要素 (token update + user update + recoveryCode)
     expect(Array.isArray(txCall)).toBe(true);
     expect(txCall).toHaveLength(3);
@@ -312,7 +312,7 @@ describe('setupPassword', () => {
 
     // super_admin 用 transaction は 2 要素 (user update [isActive 設定しない] + recoveryCode)
     // token.usedAt は setupInitialMfa まで保持される
-    const txCall = vi.mocked(prisma.$transaction).mock.calls[0][0] as unknown[];
+    const txCall = vi.mocked(prisma.$transaction).mock.calls[0][0] as unknown as unknown[];
     expect(txCall).toHaveLength(2);
   });
 
@@ -338,7 +338,7 @@ describe('setupPassword', () => {
     expect(r.mfa).toBeUndefined();
     expect(r.recoveryCodes?.length).toBeGreaterThan(0);
     // 一般ユーザと同じ 3 要素 transaction (token.usedAt + user 有効化 + recoveryCode)
-    const txCall = vi.mocked(prisma.$transaction).mock.calls[0][0] as unknown[];
+    const txCall = vi.mocked(prisma.$transaction).mock.calls[0][0] as unknown as unknown[];
     expect(txCall).toHaveLength(3);
   });
 
@@ -456,7 +456,7 @@ describe('setupInitialMfa (PR #91)', () => {
 
     expect(r.success).toBe(true);
     expect(prisma.$transaction).toHaveBeenCalled();
-    const txCall = vi.mocked(prisma.$transaction).mock.calls[0][0] as unknown[];
+    const txCall = vi.mocked(prisma.$transaction).mock.calls[0][0] as unknown as unknown[];
     expect(txCall).toHaveLength(2); // token update + user update
   });
 });

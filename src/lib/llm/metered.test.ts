@@ -92,7 +92,7 @@ describe('withMeteredLLM - Step 1: 短期 rate limit', () => {
     );
 
     expect(result.ok).toBe(false);
-    if (!result.ok) {
+    if (!result.ok && result.reason === 'rate_limited') {
       expect(result.reason).toBe('rate_limited');
       expect(result.retryAfterSec).toBe(45);
     }

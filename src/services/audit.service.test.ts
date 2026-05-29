@@ -281,7 +281,7 @@ describe('recordBulkAuditLogs', () => {
     const call = getMockCallArg(vi.mocked(prisma.auditLog.createMany));
     expect(call.data).toHaveLength(3);
     // すべての行に tenantId が乗っていること
-    for (const row of call.data) {
+    for (const row of (call.data as unknown as Array<{ tenantId: string }>)) {
       expect(row.tenantId).toBe(TENANT_X);
     }
   });

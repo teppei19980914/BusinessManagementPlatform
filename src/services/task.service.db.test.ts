@@ -245,7 +245,7 @@ describe('createTask', () => {
           type: 'work_package',
           name: '設計',
           parentTaskId: null,
-        } as Parameters<typeof createTask>[1],
+        } as unknown as Parameters<typeof createTask>[1],
         'u-1',
         't-1',
       ),
@@ -522,7 +522,7 @@ describe('updateTask (主要分岐)', () => {
     ).rejects.toThrow('NOT_FOUND');
     // findFirst の where に project: { tenantId } が入っていることを検証
     const call = getMockCallArg(vi.mocked(prisma.task.findFirst));
-    expect((call.where as { project: { tenantId: string } }).project.tenantId).toBe('tenant-A');
+    expect((call.where as unknown as { project: { tenantId: string } }).project.tenantId).toBe('tenant-A');
   });
 });
 
@@ -732,7 +732,7 @@ describe('getAssigneeDailyWorkload (PR H / #7)', () => {
     const { getAssigneeDailyWorkload } = await import('./task.service');
     await getAssigneeDailyWorkload('p-1', 'tenant-A');
 
-    const callArg = vi.mocked(prisma.task.findMany).mock.calls.at(-1)![0];
+    const callArg = vi.mocked(prisma.task.findMany).mock.calls.at(-1)![0]!;
     expect(callArg.where).toEqual(
       expect.objectContaining({
         projectId: 'p-1',

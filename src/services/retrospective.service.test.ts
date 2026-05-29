@@ -746,7 +746,7 @@ describe('bulkUpdateRetrospectivesVisibilityFromList', () => {
       expect(r.embeddingsGenerated).toBe(1);
       expect(generateAndPersistBatchEmbeddings).toHaveBeenCalledTimes(1);
       const args = getMockCallArg(vi.mocked(generateAndPersistBatchEmbeddings));
-      expect(args.items.map((i) => i.rowId)).toEqual(['ret-1']);
+      expect((args.items as unknown as Array<{ rowId: string }>).map((i) => i.rowId)).toEqual(['ret-1']);
       expect(args.featureUnit).toBe('retrospective-embedding');
     });
   });

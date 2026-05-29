@@ -1011,7 +1011,7 @@ describe('bulkUpdateRisksVisibilityFromList', () => {
       expect(generateAndPersistBatchEmbeddings).toHaveBeenCalledTimes(1); // 1 ApiCallLog 集約
       const args = getMockCallArg(vi.mocked(generateAndPersistBatchEmbeddings));
       expect(args.items).toHaveLength(2);
-      expect(args.items.map((i) => i.rowId)).toEqual(['r-1', 'r-2']);
+      expect((args.items as unknown as Array<{ rowId: string }>).map((i) => i.rowId)).toEqual(['r-1', 'r-2']);
       expect(args.featureUnit).toBe('risk-issue-embedding');
       expect(args.tenantId).toBe(TEST_TENANT_ID);
     });
