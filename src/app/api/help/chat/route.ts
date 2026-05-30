@@ -56,6 +56,12 @@ import { applyRateLimit } from '@/lib/rate-limit';
 import { prisma } from '@/lib/db';
 import { getAnthropicClient } from '@/lib/llm/anthropic-client';
 import { recordError } from '@/services/error-log.service';
+
+// ★severity-1★ Node Runtime 必須 (Prisma + pg adapter + Anthropic SDK は Edge Runtime 非対応)。
+//   未指定だと Netlify Edge Functions に bundle され runtime crash で
+//   "edge function invocation failed" が出る (KDD §5.X+190 参照)。
+//   他の Prisma 利用 API route と同じパターン (例: /api/health, /api/memos/sync-import)。
+export const runtime = 'nodejs';
 import {
   buildFaqPromptSection,
   getFaqEntriesForRole,

@@ -18330,3 +18330,62 @@ const ALLOWLIST_EXACT = new Set<string>([
 - 関連 feedback memory: [[feedback_billing_4layer_classification]] (cron 経由の不当請求リスクと整合する設計判断) / [[feedback_unjust_billing_risk_cron]]
 - 開発者ガイド: [FAQ_AND_OWL_CHAT_GUIDE.md](../developer-guide/FAQ_AND_OWL_CHAT_GUIDE.md) §1.3 課金分類
 - KDD 関連: §5.X+188 (FAQ AI ハルシネーション対策、本 §189 と同 PR 由来)
+
+## §5.X+190 Prisma / Anthropic SDK を使う新規 API route には `export const runtime = 'nodejs'` を必ず明示 (PR #471 Netlify Edge Function crash)
+
+**問題**: ローカル `pnpm build` も CI (lint / tsc / test / build / E2E / security-check) もすべて PASS した状態で deploy preview を開いたら、以下のエラーで全画面崩壊した:
+
+```
+This edge function has crashed
+edge function invocation failed
+Console: SyntaxError: Unexpected token 'e', "edge funct"... is not valid JSON
+```
+
+CI も Netlify build も success のため、原因切り分けに時間がかかった。実は **新規 API route `/api/help/chat/route.ts` で `export const runtime = 'nodejs'` を明示し忘れた** のが直接原因。Next.js のデフォルト runtime 解決は環境依存で、Netlify では Prisma / Node.js SDK 依存があると意図せず Edge Function として bundle され、runtime 起動時に SDK 内部の Node.js API (例: `Buffer`, `process.versions`, native fs) を呼んだ瞬間にクラッシュする。
+
+**結論**: **Prisma / Anthropic SDK / Voyage SDK / Node.js 専用ライブラリを使う新規 API route には、ファイル先頭で `export const runtime = 'nodejs'` を必ず明示する**。これは既存の運用パターン (例: `/api/health/route.ts:23`、`/api/memos/sync-import/route.ts:30`) と完全に同じ。
+
+```ts
+// src/app/api/help/chat/route.ts (修正後)
+import { NextRequest, NextResponse } from 'next/server';
+import { prisma } from '@/lib/db';
+import { getAnthropicClient } from '@/lib/llm/anthropic-client';
+
+// ★severity-1★ Node Runtime 必須 (Prisma + Anthropic SDK は Edge Runtime 非対応)。
+//   未指定だと Netlify Edge Functions に bundle され runtime crash する。
+export const runtime = 'nodejs';
+
+export async function POST(req: NextRequest) { ... }
+```
+
+**設計上の留意点 (5 点)**:
+
+1. **CI / ローカル build では検知できない**: `pnpm build` は Edge runtime と Node runtime の両方の bundle を生成できるため成功する。runtime crash は **deploy 後の初回アクセス** で初めて発覚する。CI に手動テストを組み込んでいない PR で容易にすり抜ける。
+2. **エラーメッセージが汎用**: 「edge function invocation failed」は Netlify Edge Functions の汎用 wrapper エラー。crash 原因の特定には Netlify Functions log を別途確認する必要があり、特定に時間がかかる。
+3. **既存 route は全て明示済**: `grep -rn "export const runtime" src/app/` で既存 API route の慣習を確認できる。新規追加時は必ず同じパターンを踏襲する。
+4. **クライアント component の type-only import は問題ない**: `import type { HelpChatOutput } from '@/app/api/help/chat/route'` のような type-only import は TS / Next.js のバンドラーで完全に消えるため、`'use client'` component から型だけ import するのは安全。crash の原因にはならない。
+5. **対応する CI ガードを将来追加できる**: `scripts/check-llm-billing-bypass.ts` と同じパターンで「Prisma / @anthropic-ai/sdk を import している API route で `runtime = 'nodejs'` が無い場合は CI fail」というガードを追加することで、本事故の再発を構造的に防げる (将来の負債解消候補)。
+
+**何を避けるべきか**:
+
+- ❌ デフォルト runtime に任せる (Next.js のバージョン / 環境で挙動が変わる)
+- ❌ `export const runtime = 'edge'` を Prisma 使用 route で指定 (即クラッシュ)
+- ❌ CI が緑だから OK と判断してマージ (deploy preview / production で初発見しがち)
+- ❌ エラーログを見ずに「環境変数の問題かも」と推測で先に進む (Netlify Functions log を確認すれば一発で特定できる)
+
+**横展開チェックリスト**:
+
+- [ ] 新規 API route 追加時は `grep "export const runtime" src/app/api/<同じ階層の既存 route>` で慣習を確認
+- [ ] Prisma / Anthropic SDK / Voyage SDK / Node.js 専用ライブラリを使う route には `export const runtime = 'nodejs'` を必ず明示
+- [ ] PR push 後は CI 緑だけで安心せず、**Netlify deploy preview を実際にブラウザで開いて initial page が表示されるか必ず確認**
+- [ ] エラー発生時は推測せず、まず Netlify Dashboard → Deployments → 該当 deploy → Functions タブで Edge Functions log を確認
+- [ ] 将来的に「Prisma import あり + runtime 未指定」を検知する CI ガード (`scripts/check-nodejs-runtime-required.ts`) の追加を検討
+
+### 関連
+
+- 関連 PR: PR #471 (本事故の検出と修正)
+- 関連 commit: 修正コミット (本 §190 と同 PR で追加)
+- 関連 source: [src/app/api/help/chat/route.ts](../../src/app/api/help/chat/route.ts) (本修正対象) / [src/app/api/health/route.ts:22-23](../../src/app/api/health/route.ts) (参考実装) / [src/app/api/memos/sync-import/route.ts:30](../../src/app/api/memos/sync-import/route.ts) (参考実装)
+- 関連 ADR: [ADR-0027](../adr/0027-help-ai-concierge.md) (本 route の設計)
+- 関連 docs: [docs/operations/DEPLOYMENT.md](../operations/DEPLOYMENT.md) (Netlify deploy 関連)
+- KDD 関連: §5.X+189 (本 §190 と同 PR 由来、check-llm-billing-bypass ALLOWLIST 追加)
