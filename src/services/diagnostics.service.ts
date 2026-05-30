@@ -27,6 +27,8 @@
  */
 
 import { prisma } from '@/lib/db';
+// ADR-0030 (2026-05-30): Beginner Embedding 100 件試用上限の判定に使用
+import { BEGINNER_EMBEDDING_MONTHLY_LIMIT } from '@/config/embedding-pricing';
 import {
   reconcileAllTenantsApiUsage,
   type ApiUsageReconcileResult,
@@ -54,11 +56,30 @@ export type DegradedTenantSummary = {
   tenantId: string;
   tenantName: string;
   plan: string;
-  reason: 'beginner_limit_exceeded' | 'budget_exceeded';
+  /**
+   * 縮退モード理由。ADR-0030 (2026-05-30) で Embedding 系 2 reason を追加。
+   * - beginner_limit_exceeded: Beginner LLM 50 件 (ADR-0019)
+   * - budget_exceeded: Expert/Pro LLM 月次予算上限 (ADR-0019)
+   * - embedding_beginner_limit_exceeded: Beginner Embedding 100 件 (ADR-0030)
+   * - embedding_budget_exceeded: Expert/Pro Embedding 月次予算上限 (ADR-0030)
+   */
+  reason:
+    | 'beginner_limit_exceeded'
+    | 'budget_exceeded'
+    | 'embedding_beginner_limit_exceeded'
+    | 'embedding_budget_exceeded';
   currentMonthApiCallCount: number;
   currentMonthApiCostJpy: number;
+  /** ADR-0030: Embedding 系 reason の場合に内訳表示 */
+  currentMonthEmbeddingCallCount: number;
+  /** ADR-0030: Embedding 系 reason の場合に内訳表示 */
+  currentMonthEmbeddingCostJpy: number;
   beginnerMonthlyCallLimit: number | null;
+  /** ADR-0030: Beginner Embedding 100 件試用上限 */
+  beginnerEmbeddingMonthlyLimit: number | null;
   monthlyBudgetCapJpy: number | null;
+  /** ADR-0030: Expert/Pro Embedding 専用月次予算上限 */
+  monthlyEmbeddingBudgetCapJpy: number | null;
 };
 
 /**
@@ -322,13 +343,18 @@ export async function listDegradedTenants(): Promise<DegradedTenantSummary[]> {
       plan: true,
       currentMonthApiCallCount: true,
       currentMonthApiCostJpy: true,
+      // ADR-0030 (2026-05-30): Embedding 縮退検知の入力
+      currentMonthEmbeddingCallCount: true,
+      currentMonthEmbeddingCostJpy: true,
       beginnerMonthlyCallLimit: true,
       monthlyBudgetCapJpy: true,
+      monthlyEmbeddingBudgetCapJpy: true,
     },
   });
 
   const result: DegradedTenantSummary[] = [];
   for (const t of tenants) {
+    // LLM 系縮退判定 (既存)
     if (t.plan === 'beginner') {
       if (t.currentMonthApiCallCount >= t.beginnerMonthlyCallLimit) {
         result.push({
@@ -338,9 +364,14 @@ export async function listDegradedTenants(): Promise<DegradedTenantSummary[]> {
           reason: 'beginner_limit_exceeded',
           currentMonthApiCallCount: t.currentMonthApiCallCount,
           currentMonthApiCostJpy: t.currentMonthApiCostJpy,
+          currentMonthEmbeddingCallCount: t.currentMonthEmbeddingCallCount,
+          currentMonthEmbeddingCostJpy: t.currentMonthEmbeddingCostJpy,
           beginnerMonthlyCallLimit: t.beginnerMonthlyCallLimit,
+          beginnerEmbeddingMonthlyLimit: BEGINNER_EMBEDDING_MONTHLY_LIMIT,
           monthlyBudgetCapJpy: t.monthlyBudgetCapJpy,
+          monthlyEmbeddingBudgetCapJpy: t.monthlyEmbeddingBudgetCapJpy,
         });
+        continue;
       }
     } else if (t.monthlyBudgetCapJpy != null) {
       if (t.currentMonthApiCostJpy >= t.monthlyBudgetCapJpy) {
@@ -351,8 +382,49 @@ export async function listDegradedTenants(): Promise<DegradedTenantSummary[]> {
           reason: 'budget_exceeded',
           currentMonthApiCallCount: t.currentMonthApiCallCount,
           currentMonthApiCostJpy: t.currentMonthApiCostJpy,
+          currentMonthEmbeddingCallCount: t.currentMonthEmbeddingCallCount,
+          currentMonthEmbeddingCostJpy: t.currentMonthEmbeddingCostJpy,
           beginnerMonthlyCallLimit: null,
+          beginnerEmbeddingMonthlyLimit: null,
           monthlyBudgetCapJpy: t.monthlyBudgetCapJpy,
+          monthlyEmbeddingBudgetCapJpy: t.monthlyEmbeddingBudgetCapJpy,
+        });
+        continue;
+      }
+    }
+    // ADR-0030 (2026-05-30): Embedding 系縮退判定 (LLM 系が未発火の場合のみ評価、= metered.ts と同じ優先順位)
+    if (t.plan === 'beginner') {
+      if (t.currentMonthEmbeddingCallCount >= BEGINNER_EMBEDDING_MONTHLY_LIMIT) {
+        result.push({
+          tenantId: t.id,
+          tenantName: t.name,
+          plan: t.plan,
+          reason: 'embedding_beginner_limit_exceeded',
+          currentMonthApiCallCount: t.currentMonthApiCallCount,
+          currentMonthApiCostJpy: t.currentMonthApiCostJpy,
+          currentMonthEmbeddingCallCount: t.currentMonthEmbeddingCallCount,
+          currentMonthEmbeddingCostJpy: t.currentMonthEmbeddingCostJpy,
+          beginnerMonthlyCallLimit: t.beginnerMonthlyCallLimit,
+          beginnerEmbeddingMonthlyLimit: BEGINNER_EMBEDDING_MONTHLY_LIMIT,
+          monthlyBudgetCapJpy: t.monthlyBudgetCapJpy,
+          monthlyEmbeddingBudgetCapJpy: t.monthlyEmbeddingBudgetCapJpy,
+        });
+      }
+    } else if (t.monthlyEmbeddingBudgetCapJpy != null) {
+      if (t.currentMonthEmbeddingCostJpy >= t.monthlyEmbeddingBudgetCapJpy) {
+        result.push({
+          tenantId: t.id,
+          tenantName: t.name,
+          plan: t.plan,
+          reason: 'embedding_budget_exceeded',
+          currentMonthApiCallCount: t.currentMonthApiCallCount,
+          currentMonthApiCostJpy: t.currentMonthApiCostJpy,
+          currentMonthEmbeddingCallCount: t.currentMonthEmbeddingCallCount,
+          currentMonthEmbeddingCostJpy: t.currentMonthEmbeddingCostJpy,
+          beginnerMonthlyCallLimit: null,
+          beginnerEmbeddingMonthlyLimit: null,
+          monthlyBudgetCapJpy: t.monthlyBudgetCapJpy,
+          monthlyEmbeddingBudgetCapJpy: t.monthlyEmbeddingBudgetCapJpy,
         });
       }
     }

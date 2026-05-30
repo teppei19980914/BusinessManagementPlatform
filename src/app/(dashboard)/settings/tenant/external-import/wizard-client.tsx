@@ -677,22 +677,28 @@ function Step3Preview(props: {
           </div>
         </div>
 
-        {/* CSV インポートはコスト 0 円固定 (ADR-0019 / 2026-05-24)。
-            旧仕様は plan 単価 × N 行で課金していたが、external-import-embedding を全プラン
-            無料化したため、本セクションは「処理件数」と「無料化案内」のみを表示する。 */}
-        <div className="mt-4 rounded border border-emerald-300 bg-emerald-50 p-3 text-sm dark:border-emerald-700/40 dark:bg-emerald-900/20">
-          <p className="font-semibold">✓ CSV インポートは無料</p>
+        {/* CSV インポート課金 (ADR-0022/0029/0030):
+            - Beginner: 月 100 件 Embedding 試用上限まで無料 (ADR-0030)
+            - Expert/Pro: 1 取込操作 = ¥5 (ADR-0029、N 件取込でも 1 課金集約)
+            - 月次予算上限到達時はインポートできない (ADR-0030 Embedding 専用予算上限) */}
+        <div className={`mt-4 rounded border p-3 text-sm ${costEstimate.estimatedJpy === 0 ? 'border-emerald-300 bg-emerald-50 dark:border-emerald-700/40 dark:bg-emerald-900/20' : 'border-info bg-info/10'}`}>
+          <p className="font-semibold">
+            {costEstimate.estimatedJpy === 0
+              ? '✓ 本インポートは無料'
+              : `本インポート料金: ¥${costEstimate.estimatedJpy.toLocaleString()}`}
+          </p>
           <p>
-            embedding 生成 (無料): <strong>{costEstimate.voyageCalls} 回</strong>
+            embedding 生成: <strong>{costEstimate.voyageCalls} 件</strong>
+            {' '}(= 1 取込操作 = 1 課金単位、ADR-0022 集約)
           </p>
           <p className="mt-1 text-xs text-muted-foreground">
-            CSV インポートは ADR-0019 で全プラン無料化されました。プラン:{' '}
+            プラン:{' '}
             {costEstimate.plan === 'pro'
-              ? 'Pro'
+              ? 'Pro (Embedding ¥5/取込)'
               : costEstimate.plan === 'expert'
-                ? 'Expert'
-                : 'Beginner'}
-            。Beginner プランの月次上限 (プロジェクト作成/更新のみカウント) も本インポートでは消費されません。
+                ? 'Expert (Embedding ¥5/取込)'
+                : 'Beginner (Embedding 月 100 件まで無料、ADR-0030)'}
+            。Beginner プランの月次 LLM 上限 (プロジェクト作成/更新のみカウント) は本インポートでは消費されません。
           </p>
 
           {costEstimate.warningCode && (

@@ -28,12 +28,21 @@
 | 課金種別 | Beginner プラン | 根拠 ADR |
 |---|---|---|
 | LLM 呼出 (project-upsert / suggestion-explanation / auto-tag-extract) | **無料**、月 50 件上限 | ADR-0019 |
-| Embedding (knowledge / chat-semantic-search / 等 7 種) | **無料**、無制限 (Fair Use Limit 月 10,000 件で防御) | ADR-0022 |
+| Embedding (knowledge / chat-semantic-search / 等 7 種) | **無料**、**月 100 件試用上限** (ADR-0030)、Fair Use Limit 月 10,000 件は safety net で残置 | ADR-0022 / ADR-0030 |
 | DB 容量 (50MB 無料枠) | **無料**、超過時 write ブロック (overage 課金なし) | ADR-0020 §11 / ADR-0025 |
 | File Storage 容量 (100MB 無料枠) | **無料**、超過時 write ブロック (overage 課金なし) | ADR-0021 / ADR-0025 |
 | 「なぜ?」AI 説明 (suggestion-explanation) | 利用不可 (Pro プラン限定機能) | ADR-0019 |
 
 **根本原則**: Beginner プランでは、ユーザが明示的にアップグレードしない限り **一切の課金が発生しない**。これは LP / 公開ドキュメントの「90 日完全無料」訴求との整合性を構造的に保証するためである。
+
+### Embedding 月 100 件試用上限 (ADR-0030 / 2026-05-30)
+
+- 定数: `BEGINNER_EMBEDDING_MONTHLY_LIMIT = 100` (src/config/embedding-pricing.ts)
+- 対象: EMBEDDING_BILLABLE_FEATURE_UNITS 全 7 種 (knowledge / risk-issue / retrospective / memo-embedding + chat-semantic-search + external-import-embedding + attachment-embedding)
+- カウント: ApiCallLog SUM (= Tenant.currentMonthEmbeddingCallCount 真値) ベース、CSV 100 件取込でも 1 件として集約 (ADR-0022 §2.1 集約設計)
+- 到達時挙動: `withMeteredLLM` が `reason='embedding_beginner_limit_exceeded'` 縮退モード返却。新規 embedding 生成のみ停止、既存 embedding を使ったチャット意味検索・提案エンジンは継続利用可能、失敗分は月初 backfill cron で次月補填 (ADR-0026 非同期化 + ADR-0022 backfill との整合)
+- 復活経路: 月初リセット (テナント TZ で 1 日 00:00) または Expert/Pro へのアップグレード (¥5/回、ADR-0029)
+- Fair Use Limit (10,000 件) との関係: 100 件 < 10,000 件で Beginner cap が先に発火するため Fair Use Limit は通常運用では到達しない。コードバグへの safety net として残置
 
 ---
 

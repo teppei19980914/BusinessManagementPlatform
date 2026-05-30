@@ -20,6 +20,11 @@ import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/components/toast-provider';
 import { SUPPORTED_LOCALES, SELECTABLE_LOCALES } from '@/config';
+// ADR-0030 (2026-05-30): client-safe な定数なので直接 import (= embedding-pricing.ts は Prisma を import しない設計)。
+import {
+  BEGINNER_EMBEDDING_MONTHLY_LIMIT,
+  EMBEDDING_PRICE_JPY_BY_PLAN,
+} from '@/config/embedding-pricing';
 // PR-4 (2026-05-15): テナント TZ で日付を表示
 import { useFormatters } from '@/lib/use-formatters';
 // 2026-05-14: 自テナント DB 容量 + API 利用量の再集計ボタン + drift 警告
@@ -56,6 +61,8 @@ type TenantSelfInfo = {
   suspendReason: string | null;
   plan: 'beginner' | 'expert' | 'pro';
   monthlyBudgetCapJpy: number | null;
+  /** ADR-0030 (2026-05-30): Embedding 系専用の月次予算上限 (Expert/Pro 任意設定、Beginner は API 層で NULL 強制) */
+  monthlyEmbeddingBudgetCapJpy: number | null;
   beginnerMaxSeats: number;
   beginnerMonthlyCallLimit: number;
   currentMonthApiCallCount: number;
@@ -64,6 +71,10 @@ type TenantSelfInfo = {
   currentMonthEmbeddingCallCount: number;
   /** ADR-0022 (2026-06-01) / ADR-0029 (¥1→¥5 改定): Embedding 系の当月課金額 (Beginner=0 / Expert=Pro=件数×¥5) */
   currentMonthEmbeddingCostJpy: number;
+  /** ADR-0030 (2026-05-30): 当月 DB 容量超過想定額 (請求タブ「今月請求金額」セクション用) */
+  estimatedDbCapacityOverageJpy: number;
+  /** ADR-0030 (2026-05-30): 当月ファイルストレージ超過想定額 (請求タブ「今月請求金額」セクション用) */
+  estimatedFileStorageOverageJpy: number;
   scheduledPlanChangeAt: Date | string | null;
   scheduledNextPlan: string | null;
   activeUserCount: number;
@@ -169,11 +180,9 @@ export function TenantSettingsClient({
   const t = useTranslations('tenantSettings');
   const [info, setInfo] = useState(initialInfo);
   const [selectedPlan, setSelectedPlan] = useState(initialInfo.plan);
-  const [budgetCap, setBudgetCap] = useState<string>(
-    initialInfo.monthlyBudgetCapJpy != null ? String(initialInfo.monthlyBudgetCapJpy) : '',
-  );
-  const [budgetUnlimited, setBudgetUnlimited] = useState(initialInfo.monthlyBudgetCapJpy == null);
   const [submitting, setSubmitting] = useState(false);
+  // ADR-0030 (2026-05-30): 月次予算上限フォームは概要タブから「使用量タブ内の生成AI系セクション直下」に
+  //   移動。LLM 用 + Embedding 用の 2 つを独立フォーム化し、プラン変更フォームから state を分離。
 
   // feat/tenant-settings-tabs (2026-05-22): 3 タブ (概要/使用量/請求) 構成。
   //   URL クエリ ?tab= で active tab を持続させ、ブックマーク / Stripe Checkout 戻り後の
@@ -256,8 +265,6 @@ export function TenantSettingsClient({
     const json = await res.json();
     setInfo(json.data);
     setSelectedPlan(json.data.plan);
-    setBudgetCap(json.data.monthlyBudgetCapJpy != null ? String(json.data.monthlyBudgetCapJpy) : '');
-    setBudgetUnlimited(json.data.monthlyBudgetCapJpy == null);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -281,24 +288,8 @@ export function TenantSettingsClient({
     try {
       const body: Record<string, unknown> = {};
       if (planChanged) body.plan = selectedPlan;
-      // PR-2 (2026-05-15) / ADR-0019 (2026-05-24): Beginner プラン時は予算上限が常に null
-      //   (固定の月 50 回上限で運用、課金対象 call=project-upsert のみカウント)。
-      //   UI でフォーム自体は非表示だが、防御的に Beginner では送信内容から budgetCap を除外する。
-      //   さらに「Expert/Pro → Beginner」のダウングレード時 (現状仕様禁止) や、
-      //   現プランが Beginner なら予算を null に強制する。
-      const isBeginnerTarget = selectedPlan === 'beginner';
-      const parsedBudget = isBeginnerTarget
-        ? null
-        : budgetUnlimited
-          ? null
-          : Number(budgetCap);
-      if (
-        (parsedBudget === null && info.monthlyBudgetCapJpy !== null) ||
-        (parsedBudget !== null &&
-          (info.monthlyBudgetCapJpy === null || info.monthlyBudgetCapJpy !== parsedBudget))
-      ) {
-        body.monthlyBudgetCapJpy = parsedBudget;
-      }
+      // ADR-0030 (2026-05-30): 月次予算上限フォーム (LLM cap / Embedding cap) は UsageSection 内の
+      //   独立フォーム (BudgetCapForm) に移動したため、本フォームでは扱わない。プラン変更のみ送信。
 
       if (Object.keys(body).length === 0) {
         showError('変更内容がありません');
@@ -354,6 +345,14 @@ export function TenantSettingsClient({
   const budgetUsagePercent =
     info.monthlyBudgetCapJpy && info.monthlyBudgetCapJpy > 0
       ? Math.min(100, Math.round((info.currentMonthApiCostJpy / info.monthlyBudgetCapJpy) * 100))
+      : null;
+  // ADR-0030 (2026-05-30): Embedding 用予算消化率 (LLM 用と同パターン)
+  const embeddingBudgetUsagePercent =
+    info.monthlyEmbeddingBudgetCapJpy && info.monthlyEmbeddingBudgetCapJpy > 0
+      ? Math.min(
+          100,
+          Math.round((info.currentMonthEmbeddingCostJpy / info.monthlyEmbeddingBudgetCapJpy) * 100),
+        )
       : null;
 
   return (
@@ -492,38 +491,10 @@ export function TenantSettingsClient({
               )}
             </section>
 
-            {/* PR-2 (2026-05-15) / ADR-0019 (2026-05-24): Beginner プランでは月次予算上限
-                フォームを非表示。Beginner は固定の月 50 回上限で運用 (課金対象 call のみ) する
-                ため、テナント管理者が金額の上限を設定する余地がない。Expert/Pro のみ表示。 */}
-            {selectedPlan !== 'beginner' && (
-              <section className="rounded border p-4">
-                <h2 className="mb-2 font-semibold">月次予算上限</h2>
-                <p className="mb-3 text-xs text-muted-foreground">
-                  上限を超えそうな時に LLM 呼出を停止します (金額ベース)。
-                </p>
-                <label className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={budgetUnlimited}
-                    onChange={(e) => setBudgetUnlimited(e.target.checked)}
-                  />
-                  <span>予算上限を設定しない (無制限)</span>
-                </label>
-                {!budgetUnlimited && (
-                  <div className="mt-2">
-                    <input
-                      type="number"
-                      min={0}
-                      value={budgetCap}
-                      onChange={(e) => setBudgetCap(e.target.value)}
-                      className="w-48 rounded border p-2"
-                      placeholder="例: 5000"
-                    />
-                    <span className="ml-2 text-sm text-muted-foreground">円 / 月</span>
-                  </div>
-                )}
-              </section>
-            )}
+            {/* ADR-0030 (2026-05-30): 月次予算上限フォーム (LLM 用 / Embedding 用) は使用量タブ内の
+                各セクション (当月 LLM 実行回数 / Embedding 生成回数) 直下に移動した。
+                プラン変更フォームから分離して独立 form 化することで、設定対象と表示の co-location を
+                実現 (= 使用量を見ながら上限調整できる UX)。実装は UsageSection 内 BudgetCapForm 参照。 */}
 
             <Button type="submit" disabled={submitting || beginnerSeatsExceeded}>
               {submitting ? '更新中...' : '変更を保存'}
@@ -565,26 +536,40 @@ export function TenantSettingsClient({
           {/* Q5(3) (2026-05-14): 縮退モード起動中バナー + embedding 未生成件数 */}
           {degradedMode && <DegradedModeSection state={degradedMode} />}
 
-          {/* 当月使用量 (PR-2 / 2026-05-15: plan 別タイル構成) */}
-          <UsageSection
-            info={info}
-            budgetUsagePercent={budgetUsagePercent}
-            apiReconcile={apiReconcile}
-          />
+          {/* ADR-0030 (2026-05-30): 2 大セクション構造化。「生成AI系利用量」(= LLM + Embedding) と
+              「DB系利用量」(= DB 容量 + ファイルストレージ) を視覚的に分離し、課金軸の理解を助ける。
+              月次予算上限フォームは LLM 系 / Embedding 系のそれぞれに co-located (= 概要タブから移動)。 */}
+          <div className="space-y-4" data-testid="generative-ai-usage-group">
+            <h2 className="text-lg font-bold border-b pb-1">生成AI系利用量</h2>
+            <UsageSection
+              info={info}
+              budgetUsagePercent={budgetUsagePercent}
+              embeddingBudgetUsagePercent={embeddingBudgetUsagePercent}
+              apiReconcile={apiReconcile}
+              onUpdate={refreshInfo}
+            />
+          </div>
 
-          {/* fix/list-export-import-bugs (2026-05-26): DB 容量 / ファイルストレージ セクションを
-              使用量タブ内に集約。旧 page.tsx ではタブの上にあったが、UX 改善のため使用量タブに移動。
-              いずれも async server component の出力を ReactNode prop で受領。
-              storage_addon_plan の Standard/Plus/Pro/Enterprise 4 段階プラン UI は廃止
-              (ADR-0020 + ADR-0021 で DB / ファイルストレージとも完全従量課金化済)。 */}
-          {/* ADR-0020 (2026-05-25): DB 容量従量課金 */}
-          {dbCapacitySection}
-          {/* ADR-0021 (2026-05-26): ファイルストレージ従量課金 */}
-          {fileStorageSection}
+          <div className="space-y-4" data-testid="db-usage-group">
+            <h2 className="text-lg font-bold border-b pb-1">DB系利用量</h2>
+            {/* fix/list-export-import-bugs (2026-05-26): DB 容量 / ファイルストレージ セクションを
+                使用量タブ内に集約。旧 page.tsx ではタブの上にあったが、UX 改善のため使用量タブに移動。
+                いずれも async server component の出力を ReactNode prop で受領。
+                ADR-0030 (2026-05-30): DB系には予算上限を設けない (= 「データはたすきばの命」)。要望出たら別 ADR で検討。 */}
+            {/* ADR-0020 (2026-05-25): DB 容量従量課金 */}
+            {dbCapacitySection}
+            {/* ADR-0021 (2026-05-26): ファイルストレージ従量課金 */}
+            {fileStorageSection}
+          </div>
         </TabsContent>
 
         {/* --- 請求タブ --- */}
         <TabsContent value="billing" className="mt-4 space-y-6">
+          {/* ADR-0030 (2026-05-30): 「今月請求金額」セクション。
+              billing invariant (feedback_billing_invariant): LLM + Embedding + DB 超過 + Storage 超過
+              = 表示合計 = 月末請求書根拠 = ApiCallLog SUM。月末 cron で確定、DB / Storage は月中 peak ベースの想定。 */}
+          <MonthlyBillingTotalSection info={info} />
+
           {/* P-G (2026-05-08): 請求先情報の編集
               PR #425 (2026-05-22) ★severity-1★: paymentMethod 変更後に Client state (info) を
               即座に再取得しないと、StripePaymentMethodSection の活性条件 (info.paymentMethod) が
@@ -750,42 +735,77 @@ function DegradedModeSection({ state }: { state: DegradedModeState }) {
   if (!state.active && nullEmbeddings.total === 0) return null;
 
   if (state.active) {
-    // ADR-0019 (2026-05-24): Beginner 上限は課金対象 call (プロジェクト作成/更新) のみカウント。
-    //   無料機能 (資産入力・チャット検索・自動インポート) は上限到達後も継続実行可能。
-    const reasonText =
-      state.reason === 'beginner_limit_exceeded'
-        ? `Beginner プランの月間プロジェクト作成/更新上限 (${state.beginnerMonthlyCallLimit} 回) に達しました。`
-        : state.reason === 'budget_exceeded'
-          ? `月次予算上限 (¥${state.monthlyBudgetCapJpy?.toLocaleString() ?? '?'}) に達しました。`
-          : 'API 呼び出しが停止しています。';
+    // ADR-0019 (2026-05-24): Beginner LLM 上限は課金対象 call (プロジェクト作成/更新) のみカウント。
+    //   ADR-0030 (2026-05-30): Embedding 系 2 reason を追加。Embedding ブロック中も既存 embedding での
+    //   チャット意味検索は継続、新規 embedding 生成のみ停止、失敗分は月初 backfill cron で次月補填。
+    const isEmbeddingReason =
+      state.reason === 'embedding_budget_exceeded' ||
+      state.reason === 'embedding_beginner_limit_exceeded';
+    const reasonText = (() => {
+      switch (state.reason) {
+        case 'beginner_limit_exceeded':
+          return `Beginner プランの月間プロジェクト作成/更新上限 (${state.beginnerMonthlyCallLimit} 回) に達しました。`;
+        case 'budget_exceeded':
+          return `LLM 月次予算上限 (¥${state.monthlyBudgetCapJpy?.toLocaleString() ?? '?'}) に達しました。`;
+        case 'embedding_beginner_limit_exceeded':
+          return `Beginner プランの Embedding 月間試用上限 (${state.beginnerEmbeddingMonthlyLimit ?? '?'} 件) に達しました。`;
+        case 'embedding_budget_exceeded':
+          return `Embedding 月次予算上限 (¥${state.monthlyEmbeddingBudgetCapJpy?.toLocaleString() ?? '?'}) に達しました。`;
+        default:
+          return 'API 呼び出しが停止しています。';
+      }
+    })();
 
     return (
       <section className="rounded border border-destructive/40 bg-destructive/10 p-4 text-sm">
         <p className="font-semibold text-destructive">⚠ 縮退モード起動中</p>
         <p className="mt-1">{reasonText}</p>
         <ul className="mt-2 list-disc space-y-0.5 pl-5 text-muted-foreground">
-          <li>
-            プロジェクト作成・更新は停止していますが、
-            <strong>各資産 (ナレッジ / リスク・課題 / 振り返り / メモ) の作成・更新</strong>と
-            <strong>チャット検索</strong>は **無料・無制限**で継続できます (ADR-0019)。
-          </li>
-          <li>
-            提案エンジンは <strong>タグ：テキスト = 5：5</strong> の縮退モード重み再配分で動作します。
-          </li>
-          <li>
-            embedding 未生成件数:{' '}
-            <strong className="text-foreground">{nullEmbeddings.total} 件</strong>{' '}
-            (Project {nullEmbeddings.projects} / Knowledge {nullEmbeddings.knowledges}
-            {' / '}Risk・Issue {nullEmbeddings.risksIssues} / Retrospective{' '}
-            {nullEmbeddings.retrospectives})
-          </li>
-          <li>
-            月初 (テナント TZ) に embedding 補完バッチが自動実行され、来月分の枠で順次生成されます。
-            {state.reason === 'budget_exceeded' &&
-              '月次予算上限の引き上げで即時復活できます。'}
-            {state.reason === 'beginner_limit_exceeded' &&
-              ' Expert / Pro プランへのアップグレードで即時復活できます。'}
-          </li>
+          {isEmbeddingReason ? (
+            <>
+              <li>
+                <strong>新規 embedding 生成 (資産の embedding 化・チャット検索クエリの embedding 化等) のみ停止</strong>しています。
+                既存 embedding を使ったチャット意味検索・提案エンジンは <strong>継続利用可能</strong>です。
+              </li>
+              <li>
+                生成失敗となった embedding は <strong>月初 (テナント TZ) の backfill cron で次月分の枠で自動補填</strong>されます (ADR-0022 / ADR-0026)。
+              </li>
+              <li>
+                {state.reason === 'embedding_budget_exceeded' &&
+                  '月次予算上限の引き上げで即時復活できます (使用量タブ → Embedding 生成回数 → 月次予算上限)。'}
+                {state.reason === 'embedding_beginner_limit_exceeded' &&
+                  ' Expert / Pro プランへのアップグレードで即時復活できます (Embedding 単価 ¥5/回、ADR-0029)。'}
+              </li>
+              <li>
+                LLM 系 (プロジェクト作成・更新・なぜ?機能) は <strong>独立判定</strong>のため影響を受けません (ADR-0030)。
+              </li>
+            </>
+          ) : (
+            <>
+              <li>
+                プロジェクト作成・更新は停止していますが、
+                <strong>各資産 (ナレッジ / リスク・課題 / 振り返り / メモ) の作成・更新</strong>と
+                <strong>チャット検索</strong>は **無料・無制限**で継続できます (ADR-0019)。
+              </li>
+              <li>
+                提案エンジンは <strong>タグ：テキスト = 5：5</strong> の縮退モード重み再配分で動作します。
+              </li>
+              <li>
+                embedding 未生成件数:{' '}
+                <strong className="text-foreground">{nullEmbeddings.total} 件</strong>{' '}
+                (Project {nullEmbeddings.projects} / Knowledge {nullEmbeddings.knowledges}
+                {' / '}Risk・Issue {nullEmbeddings.risksIssues} / Retrospective{' '}
+                {nullEmbeddings.retrospectives})
+              </li>
+              <li>
+                月初 (テナント TZ) に embedding 補完バッチが自動実行され、来月分の枠で順次生成されます。
+                {state.reason === 'budget_exceeded' &&
+                  '月次予算上限の引き上げで即時復活できます。'}
+                {state.reason === 'beginner_limit_exceeded' &&
+                  ' Expert / Pro プランへのアップグレードで即時復活できます。'}
+              </li>
+            </>
+          )}
         </ul>
       </section>
     );
@@ -812,12 +832,18 @@ function DegradedModeSection({ state }: { state: DegradedModeState }) {
 function UsageSection({
   info,
   budgetUsagePercent,
+  embeddingBudgetUsagePercent,
   apiReconcile,
+  onUpdate,
 }: {
   info: TenantSelfInfo;
   budgetUsagePercent: number | null;
+  /** ADR-0030 (2026-05-30): Embedding 用予算消化率 */
+  embeddingBudgetUsagePercent: number | null;
   /** 2026-05-14: ApiCallLog SUM との drift 結果。整合性検証用 */
   apiReconcile: ApiUsageReconcileResult | null;
+  /** ADR-0030 (2026-05-30): BudgetCapForm から更新したときの再取得コールバック */
+  onUpdate: () => Promise<void>;
 }) {
   const isBeginner = info.plan === 'beginner';
   // ★ PR-V8.1 (2026-05-19) 請求 invariant: ApiCallLog SUM (真値) を優先表示。
@@ -833,123 +859,157 @@ function UsageSection({
     0,
     info.beginnerMonthlyCallLimit - displayCallCount,
   );
+  // ADR-0030 (2026-05-30): Beginner Embedding 100 件試用上限の残数 (= 上限 - 現在の Embedding 呼出件数)
+  const beginnerEmbeddingCallsRemaining = Math.max(
+    0,
+    BEGINNER_EMBEDDING_MONTHLY_LIMIT - info.currentMonthEmbeddingCallCount,
+  );
 
   return (
-    <section
-      className="rounded border p-4"
-      title="本テナントの当月使用量。月初 (テナント TZ) にリセット"
-    >
-      <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
-        <h2 className="font-semibold">
-          当月使用量
-          <UsageDriftBadge reconcile={apiReconcile} />
-        </h2>
-        <div className="flex items-center gap-2">
-          <RecalculateButton
-            endpoint="/api/tenants/me/recalculate"
-            label="API 利用量を再集計"
-          />
-          {/* PR-V8.1: drift 検知時のみ修復ボタンを表示 */}
-          {apiReconcile?.hasDrift && <RepairOwnDriftButton />}
-        </div>
-      </div>
-      <div
-        className={
-          isBeginner
-            ? 'grid grid-cols-1 gap-3 sm:grid-cols-2'
-            : 'grid grid-cols-1 gap-3 sm:grid-cols-3'
-        }
+    <>
+      {/* ============================================================
+          当月 LLM 実行回数 セクション (旧「当月使用量」、ADR-0030 でリネーム)
+          ============================================================ */}
+      <section
+        className="rounded border p-4"
+        title="本テナントの当月 LLM 実行回数。月初 (テナント TZ) にリセット"
+        data-testid="usage-llm-section"
       >
-        <div
-          className="cursor-help"
-          title="当月の LLM/Embedding 呼出回数 (ApiCallLog 集計 = 請求書根拠と同じ真値)"
-        >
-          <p className="text-xs text-muted-foreground">API 呼出</p>
-          <p className="text-xl font-bold">
-            {displayCallCount.toLocaleString()}
-            {isBeginner && (
-              <span className="ml-1 text-sm font-normal text-muted-foreground">
-                / {info.beginnerMonthlyCallLimit}
-              </span>
-            )}
-          </p>
+        <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
+          <h2 className="font-semibold">
+            当月 LLM 実行回数
+            <span className="ml-2 text-xs font-normal text-muted-foreground">
+              (= プロジェクト作成/更新 + なぜ?機能)
+            </span>
+            <UsageDriftBadge reconcile={apiReconcile} />
+          </h2>
+          <div className="flex items-center gap-2">
+            <RecalculateButton
+              endpoint="/api/tenants/me/recalculate"
+              label="API 利用量を再集計"
+            />
+            {/* PR-V8.1: drift 検知時のみ修復ボタンを表示 */}
+            {apiReconcile?.hasDrift && <RepairOwnDriftButton />}
+          </div>
         </div>
-
-        {isBeginner ? (
+        <div
+          className={
+            isBeginner
+              ? 'grid grid-cols-1 gap-3 sm:grid-cols-2'
+              : 'grid grid-cols-1 gap-3 sm:grid-cols-3'
+          }
+        >
           <div
             className="cursor-help"
-            title="Beginner プランはプロジェクト作成/更新が月 50 回まで無料です (ADR-0019)。資産入力・チャット検索は無料・無制限。残数が 0 になると当月はプロジェクト作成/更新が停止します"
+            title="当月の LLM 呼出回数 (ApiCallLog 集計 = 請求書根拠と同じ真値)"
           >
-            <p className="text-xs text-muted-foreground">月次API呼出 残数</p>
-            <p
-              className={`text-xl font-bold ${
-                beginnerCallsRemaining === 0
-                  ? 'text-destructive'
-                  : beginnerCallsRemaining <= 10
-                    ? 'text-amber-600'
-                    : ''
-              }`}
-            >
-              {beginnerCallsRemaining.toLocaleString()}
-              <span className="ml-1 text-sm font-normal text-muted-foreground">回</span>
+            <p className="text-xs text-muted-foreground">LLM 実行回数</p>
+            <p className="text-xl font-bold">
+              {displayCallCount.toLocaleString()}
+              {isBeginner && (
+                <span className="ml-1 text-sm font-normal text-muted-foreground">
+                  / {info.beginnerMonthlyCallLimit}
+                </span>
+              )}
             </p>
           </div>
-        ) : (
-          <>
-            <div
-              className="cursor-help"
-              title="当月の内部請求額 (ApiCallLog 集計 = 請求書根拠と同じ真値)。Expert ¥10/call / Pro ¥15/call の固定単価で計算 (ADR-0019 / 2026-05-24 改定後)。課金対象はプロジェクト作成/更新 + なぜ機能 (Pro のみ)。資産入力・チャット検索・自動インポートは無料"
-            >
-              <p className="text-xs text-muted-foreground">API 費用</p>
-              <p className="text-xl font-bold">
-                ¥{displayCostJpy.toLocaleString()}
-              </p>
-            </div>
-            <div
-              className="cursor-help"
-              title="自分で設定した月次予算上限。超過時は LLM 呼び出しが自動ブロックされる"
-            >
-              <p className="text-xs text-muted-foreground">月次予算上限</p>
-              <p className="text-xl font-bold">
-                {info.monthlyBudgetCapJpy != null
-                  ? `¥${info.monthlyBudgetCapJpy.toLocaleString()}`
-                  : '無制限'}
-              </p>
-            </div>
-          </>
-        )}
-      </div>
-      {!isBeginner && budgetUsagePercent !== null && (
-        <div className="mt-3">
-          <div className="h-2 w-full overflow-hidden rounded bg-muted">
-            <div
-              className={`h-full ${
-                budgetUsagePercent >= 100
-                  ? 'bg-destructive'
-                  : budgetUsagePercent >= 80
-                    ? 'bg-amber-500'
-                    : 'bg-info'
-              }`}
-              style={{ width: `${budgetUsagePercent}%` }}
-            />
-          </div>
-          <p className="mt-1 text-xs text-muted-foreground">
-            予算消化率: {budgetUsagePercent}% (= プロジェクト作成・更新 / なぜ?機能のみ。Embedding は予算対象外)
-          </p>
-        </div>
-      )}
 
-      {/* ADR-0022 (2026-06-01): Embedding 利用量 内訳セクション */}
-      <div className="mt-4 border-t pt-3">
-        <h3 className="text-sm font-semibold">
-          Embedding 利用量
-          <span className="ml-2 text-xs font-normal text-muted-foreground">
-            (= 資産入力・チャット意味検索・添付ファイル本文索引化)
-          </span>
-        </h3>
-        <p className="mt-1 text-xs text-muted-foreground">
+          {isBeginner ? (
+            <div
+              className="cursor-help"
+              title="Beginner プランはプロジェクト作成/更新が月 50 回まで無料です (ADR-0019)。残数が 0 になると当月はプロジェクト作成/更新が停止します"
+            >
+              <p className="text-xs text-muted-foreground">月次 LLM 実行 残数</p>
+              <p
+                className={`text-xl font-bold ${
+                  beginnerCallsRemaining === 0
+                    ? 'text-destructive'
+                    : beginnerCallsRemaining <= 10
+                      ? 'text-amber-600'
+                      : ''
+                }`}
+              >
+                {beginnerCallsRemaining.toLocaleString()}
+                <span className="ml-1 text-sm font-normal text-muted-foreground">回</span>
+              </p>
+            </div>
+          ) : (
+            <>
+              <div
+                className="cursor-help"
+                title="当月の LLM 内部請求額 (ApiCallLog 集計 = 請求書根拠と同じ真値)。Expert ¥10/call / Pro ¥15/call の固定単価で計算 (ADR-0019)"
+              >
+                <p className="text-xs text-muted-foreground">LLM 費用</p>
+                <p className="text-xl font-bold">
+                  ¥{displayCostJpy.toLocaleString()}
+                </p>
+              </div>
+              <div
+                className="cursor-help"
+                title="自分で設定した LLM 用月次予算上限。超過時は LLM 呼び出しが自動ブロックされる (ADR-0019)"
+              >
+                <p className="text-xs text-muted-foreground">月次予算上限</p>
+                <p className="text-xl font-bold">
+                  {info.monthlyBudgetCapJpy != null
+                    ? `¥${info.monthlyBudgetCapJpy.toLocaleString()}`
+                    : '無制限'}
+                </p>
+              </div>
+            </>
+          )}
+        </div>
+        {!isBeginner && budgetUsagePercent !== null && (
+          <div className="mt-3">
+            <div className="h-2 w-full overflow-hidden rounded bg-muted">
+              <div
+                className={`h-full ${
+                  budgetUsagePercent >= 100
+                    ? 'bg-destructive'
+                    : budgetUsagePercent >= 80
+                      ? 'bg-amber-500'
+                      : 'bg-info'
+                }`}
+                style={{ width: `${budgetUsagePercent}%` }}
+              />
+            </div>
+            <p className="mt-1 text-xs text-muted-foreground">
+              予算消化率: {budgetUsagePercent}% (= プロジェクト作成・更新 / なぜ?機能のみ)
+            </p>
+          </div>
+        )}
+
+        {/* ADR-0030 (2026-05-30): LLM 用月次予算上限フォーム (= 概要タブから移動、co-located)。
+            Beginner は固定の月 50 回上限のため非表示 (= 既存仕様継承)。 */}
+        {!isBeginner && (
+          <BudgetCapForm
+            kind="llm"
+            currentValueJpy={info.monthlyBudgetCapJpy}
+            unitPriceJpy={info.plan === 'pro' ? info.pricePerCallSonnet : info.pricePerCallHaiku}
+            unitPriceLabel={info.plan === 'pro' ? 'Pro ¥15/call' : 'Expert ¥10/call'}
+            onUpdate={onUpdate}
+          />
+        )}
+      </section>
+
+      {/* ============================================================
+          Embedding 生成回数 セクション (旧「Embedding 利用量」、ADR-0030 でリネーム)
+          ============================================================ */}
+      <section
+        className="rounded border p-4"
+        title="本テナントの当月 Embedding 生成回数。月初 (テナント TZ) にリセット"
+        data-testid="usage-embedding-section"
+      >
+        <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
+          <h2 className="font-semibold">
+            Embedding 生成回数
+            <span className="ml-2 text-xs font-normal text-muted-foreground">
+              (= 資産入力・チャット意味検索・インポート・ファイル添付)
+            </span>
+          </h2>
+        </div>
+        <p className="mb-2 text-xs text-muted-foreground">
           {isBeginner
-            ? 'Beginner プランは Embedding 機能も完全無料です (= 件数のみ記録)'
+            ? `Beginner プランは Embedding 月 ${BEGINNER_EMBEDDING_MONTHLY_LIMIT} 件まで無料 (ADR-0030)。資産 100 件 CSV 取込でも 1 件としてカウントされる集約設計 (ADR-0022 §2.1)。`
             : `${info.plan === 'pro' ? 'Pro' : 'Expert'} プランは 1 業務操作あたり ¥5 の従量課金 (ADR-0029)。資産 100 件 CSV 取込でも ¥5 で済む集約設計。`}
         </p>
         {/*
@@ -957,36 +1017,284 @@ function UsageSection({
           counter 対象外であることを明示。UI 上から判別できない混乱を防ぐため必須注記。
           関連: KDD §5.X+201 / PER_CALL_COST_BREAKDOWN.md §1.5
         */}
-        <p className="mt-1 text-xs text-muted-foreground">
+        <p className="mb-2 text-xs text-muted-foreground">
           ※ たすきフクロウ AI ヘルプ・ガイドチャットの embedding は学習支援機能 (全プラン無料) のため、本カウンタには **含まれません** (ADR-0028)。
         </p>
-        <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <div
+          className={
+            isBeginner
+              ? 'grid grid-cols-1 gap-3 sm:grid-cols-2'
+              : 'grid grid-cols-1 gap-3 sm:grid-cols-3'
+          }
+        >
           <div
             className="cursor-help"
             title="当月の Embedding 系呼出 (= 資産作成/更新・チャット検索・添付索引化等)。ヘルプ・ガイドチャット (LEARNING_FREE) は対象外。ApiCallLog SUM 真値ベース"
           >
-            <p className="text-xs text-muted-foreground">Embedding 呼出</p>
+            <p className="text-xs text-muted-foreground">Embedding 生成回数</p>
             <p className="text-xl font-bold">
               {info.currentMonthEmbeddingCallCount.toLocaleString()}
-              <span className="ml-1 text-sm font-normal text-muted-foreground">件</span>
+              <span className="ml-1 text-sm font-normal text-muted-foreground">
+                {isBeginner ? ` / ${BEGINNER_EMBEDDING_MONTHLY_LIMIT}` : '件'}
+              </span>
             </p>
           </div>
-          <div
-            className="cursor-help"
-            title={
-              isBeginner
-                ? 'Beginner プランは無料 (= 90 日完全無料訴求)。Expert/Pro 切替で件数×¥5 課金が始まります'
-                : '当月の Embedding 内部請求額。Beginner=¥0 維持 / Expert=Pro=件数×¥5 (ADR-0029)'
-            }
-          >
-            <p className="text-xs text-muted-foreground">Embedding 費用</p>
-            <p className="text-xl font-bold">
-              ¥{info.currentMonthEmbeddingCostJpy.toLocaleString()}
-              {isBeginner && (
-                <span className="ml-1 text-sm font-normal text-muted-foreground">(無料)</span>
-              )}
+
+          {isBeginner ? (
+            <div
+              className="cursor-help"
+              title="Beginner プランは Embedding 月 100 件まで無料 (ADR-0030)。残数が 0 になると新規 embedding 生成のみ停止、既存 embedding 検索は継続 + 月初 backfill で次月補填"
+            >
+              <p className="text-xs text-muted-foreground">月次 Embedding 残数</p>
+              <p
+                className={`text-xl font-bold ${
+                  beginnerEmbeddingCallsRemaining === 0
+                    ? 'text-destructive'
+                    : beginnerEmbeddingCallsRemaining <= 10
+                      ? 'text-amber-600'
+                      : ''
+                }`}
+              >
+                {beginnerEmbeddingCallsRemaining.toLocaleString()}
+                <span className="ml-1 text-sm font-normal text-muted-foreground">回</span>
+              </p>
+            </div>
+          ) : (
+            <>
+              <div
+                className="cursor-help"
+                title="当月の Embedding 内部請求額。Beginner=¥0 維持 / Expert=Pro=件数×¥5 (ADR-0029)"
+              >
+                <p className="text-xs text-muted-foreground">Embedding 費用</p>
+                <p className="text-xl font-bold">
+                  ¥{info.currentMonthEmbeddingCostJpy.toLocaleString()}
+                </p>
+              </div>
+              <div
+                className="cursor-help"
+                title="自分で設定した Embedding 用月次予算上限。超過時は新規 embedding 生成のみ自動ブロック、既存 embedding 検索は継続 + 月初 backfill で次月補填 (ADR-0030)"
+              >
+                <p className="text-xs text-muted-foreground">月次予算上限</p>
+                <p className="text-xl font-bold">
+                  {info.monthlyEmbeddingBudgetCapJpy != null
+                    ? `¥${info.monthlyEmbeddingBudgetCapJpy.toLocaleString()}`
+                    : '無制限'}
+                </p>
+              </div>
+            </>
+          )}
+        </div>
+        {!isBeginner && embeddingBudgetUsagePercent !== null && (
+          <div className="mt-3">
+            <div className="h-2 w-full overflow-hidden rounded bg-muted">
+              <div
+                className={`h-full ${
+                  embeddingBudgetUsagePercent >= 100
+                    ? 'bg-destructive'
+                    : embeddingBudgetUsagePercent >= 80
+                      ? 'bg-amber-500'
+                      : 'bg-info'
+                }`}
+                style={{ width: `${embeddingBudgetUsagePercent}%` }}
+              />
+            </div>
+            <p className="mt-1 text-xs text-muted-foreground">
+              予算消化率: {embeddingBudgetUsagePercent}% (= Embedding 生成のみ)
             </p>
           </div>
+        )}
+
+        {/* ADR-0030 (2026-05-30): Embedding 用月次予算上限フォーム (新設)。
+            Beginner は固定の月 100 件試用上限のため非表示。 */}
+        {!isBeginner && (
+          <BudgetCapForm
+            kind="embedding"
+            currentValueJpy={info.monthlyEmbeddingBudgetCapJpy}
+            unitPriceJpy={EMBEDDING_UNIT_PRICE_JPY}
+            unitPriceLabel={`¥${EMBEDDING_UNIT_PRICE_JPY}/回 (ADR-0029)`}
+            onUpdate={onUpdate}
+          />
+        )}
+      </section>
+    </>
+  );
+}
+
+// ADR-0030 (2026-05-30): Embedding 単価は EMBEDDING_PRICE_JPY_BY_PLAN.expert を採用 (= Pro と同単価)。
+//   embedding-pricing.ts は Prisma を import しない client-safe モジュールのため直接 import 可。
+const EMBEDDING_UNIT_PRICE_JPY = EMBEDDING_PRICE_JPY_BY_PLAN.expert; // ADR-0029 (= 5)
+
+/**
+ * ADR-0030 (2026-05-30): 月次予算上限フォーム (LLM 用 / Embedding 用 で再利用)。
+ *
+ * Beginner は固定上限で運用されるため呼出側で非表示にする想定 (= props 渡し前にガード)。
+ * 独立フォーム + PATCH /api/tenants/me 経由で即時反映、成功時に onUpdate で親 state を再取得。
+ * 金額入力時は単価で除算した「約 N 回」換算を併記し、ユーザの予算感覚を補助する。
+ */
+function BudgetCapForm({
+  kind,
+  currentValueJpy,
+  unitPriceJpy,
+  unitPriceLabel,
+  onUpdate,
+}: {
+  kind: 'llm' | 'embedding';
+  currentValueJpy: number | null;
+  unitPriceJpy: number;
+  unitPriceLabel: string;
+  onUpdate: () => Promise<void>;
+}) {
+  const { showSuccess, showError } = useToast();
+  const [unlimited, setUnlimited] = useState(currentValueJpy == null);
+  const [value, setValue] = useState<string>(currentValueJpy != null ? String(currentValueJpy) : '');
+  const [submitting, setSubmitting] = useState(false);
+  // React docs「prop 変化時に state をリセット」パターンで currentValueJpy 外部更新を反映 (= refreshInfo 後の同期)。
+  //   useEffect + setState ではなく render 中の同期更新で cascading render を避ける (react-hooks/set-state-in-effect)。
+  const [prevCurrentValueJpy, setPrevCurrentValueJpy] = useState(currentValueJpy);
+  if (prevCurrentValueJpy !== currentValueJpy) {
+    setPrevCurrentValueJpy(currentValueJpy);
+    setUnlimited(currentValueJpy == null);
+    setValue(currentValueJpy != null ? String(currentValueJpy) : '');
+  }
+
+  const fieldName = kind === 'llm' ? 'monthlyBudgetCapJpy' : 'monthlyEmbeddingBudgetCapJpy';
+  const headingSuffix = kind === 'llm' ? '(LLM 用)' : '(Embedding 用)';
+  const description =
+    kind === 'llm'
+      ? '上限を超えそうな時に LLM 呼出 (プロジェクト作成/更新・なぜ?機能) を停止します (金額ベース、ADR-0019)。'
+      : '上限を超えそうな時に Embedding 生成 (資産入力・チャット意味検索・インポート・添付索引化) を停止します。既存 embedding での検索は継続、月初 backfill で次月補填されます (ADR-0030 + ADR-0022 + ADR-0026)。';
+
+  const parsedNumber = Number(value);
+  const isValidNumber = !unlimited && value !== '' && Number.isFinite(parsedNumber) && parsedNumber >= 0;
+  const approxCalls = isValidNumber && unitPriceJpy > 0 ? Math.floor(parsedNumber / unitPriceJpy) : null;
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!unlimited && !isValidNumber) {
+      showError('0 以上の整数を入力してください');
+      return;
+    }
+    const nextValue = unlimited ? null : parsedNumber;
+    if (nextValue === currentValueJpy) {
+      showError('変更内容がありません');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const res = await fetch('/api/tenants/me', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ [fieldName]: nextValue }),
+      });
+      if (!res.ok) {
+        const json = await res.json().catch(() => null);
+        showError(json?.error?.message ?? '更新に失敗しました');
+        return;
+      }
+      showSuccess('月次予算上限を更新しました');
+      await onUpdate();
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <form
+      onSubmit={handleSubmit}
+      className="mt-4 border-t pt-3 space-y-2"
+      data-testid={`budget-cap-form-${kind}`}
+    >
+      <h3 className="text-sm font-semibold">
+        月次予算上限 {headingSuffix}
+      </h3>
+      <p className="text-xs text-muted-foreground">{description}</p>
+      <label className="flex items-center gap-2">
+        <input
+          type="checkbox"
+          checked={unlimited}
+          onChange={(e) => setUnlimited(e.target.checked)}
+          data-testid={`budget-cap-unlimited-${kind}`}
+        />
+        <span>予算上限を設定しない (無制限)</span>
+      </label>
+      {!unlimited && (
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            type="number"
+            min={0}
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            className="w-48 rounded border p-2"
+            placeholder="例: 5000"
+            data-testid={`budget-cap-value-${kind}`}
+          />
+          <span className="text-sm text-muted-foreground">円 / 月</span>
+          {approxCalls !== null && (
+            <span className="text-xs text-muted-foreground">
+              ≈ 約 {approxCalls.toLocaleString()} 回 ({unitPriceLabel})
+            </span>
+          )}
+        </div>
+      )}
+      <div>
+        <Button type="submit" size="sm" disabled={submitting}>
+          {submitting ? '更新中...' : '上限を保存'}
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+/**
+ * ADR-0030 (2026-05-30): 請求タブ「今月請求金額」セクション。
+ *
+ * 請求 invariant ([[feedback_billing_invariant]]):
+ *   LLM + Embedding + DB 容量超過想定 + Storage 超過想定 = 表示合計 = 月末請求書根拠。
+ *   月末 cron で DB / Storage 超過を ApiCallLog INSERT して確定するまでの暫定値 (= 月中 peak ベース)。
+ */
+function MonthlyBillingTotalSection({ info }: { info: TenantSelfInfo }) {
+  const llm = info.currentMonthApiCostJpy;
+  const embedding = info.currentMonthEmbeddingCostJpy;
+  const dbOverage = info.estimatedDbCapacityOverageJpy;
+  const storageOverage = info.estimatedFileStorageOverageJpy;
+  const total = llm + embedding + dbOverage + storageOverage;
+
+  return (
+    <section
+      className="rounded border p-4"
+      title="本テナントの当月想定請求金額 (税抜)。月末 cron で確定"
+      data-testid="monthly-billing-total-section"
+    >
+      <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
+        <h2 className="font-semibold">今月請求金額</h2>
+        <span className="text-xs text-muted-foreground">
+          月末 cron で確定 / DB 容量・ファイルストレージは月中 peak ベースの想定 (税抜)
+        </span>
+      </div>
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div className="cursor-help" title="当月の LLM 実行 (プロジェクト作成/更新・なぜ?機能) の課金額 (ADR-0019)">
+          <p className="text-xs text-muted-foreground">LLM 費用</p>
+          <p className="text-lg font-semibold">¥{llm.toLocaleString()}</p>
+        </div>
+        <div className="cursor-help" title="当月の Embedding 生成 (資産入力・チャット意味検索・インポート・添付索引化) の課金額 (ADR-0022/0029)">
+          <p className="text-xs text-muted-foreground">Embedding 費用</p>
+          <p className="text-lg font-semibold">¥{embedding.toLocaleString()}</p>
+        </div>
+        <div className="cursor-help" title="当月の DB 容量超過の想定請求額。月中 peak ベース、月末 cron で確定 (ADR-0020)">
+          <p className="text-xs text-muted-foreground">DB 容量超過 (想定)</p>
+          <p className="text-lg font-semibold">¥{dbOverage.toLocaleString()}</p>
+        </div>
+        <div className="cursor-help" title="当月のファイルストレージ超過の想定請求額。月中 peak ベース、月末 cron で確定 (ADR-0021)">
+          <p className="text-xs text-muted-foreground">Storage 超過 (想定)</p>
+          <p className="text-lg font-semibold">¥{storageOverage.toLocaleString()}</p>
+        </div>
+      </div>
+      <div className="mt-4 border-t pt-3">
+        <div className="flex items-baseline justify-between">
+          <span className="text-sm text-muted-foreground">合計 (税抜)</span>
+          <span className="text-2xl font-bold" data-testid="monthly-billing-total">
+            ¥{total.toLocaleString()}
+          </span>
         </div>
       </div>
     </section>

@@ -95,6 +95,8 @@ export type TenantSummaryRow = {
   /** ADR-0022/0029: Embedding 系の当月課金額 (Beginner=0 / Expert=Pro=件数×¥5) */
   currentMonthEmbeddingCostJpy: number;
   monthlyBudgetCapJpy: number | null;
+  /** ADR-0030 (2026-05-30): Embedding 系専用の月次予算上限 (Expert/Pro 任意設定) */
+  monthlyEmbeddingBudgetCapJpy: number | null;
   activeUserCount: number;
   createdAt: Date;
   /** 2026-05-14: 解約日 (null = アクティブ、Date = 解約済)。請求対象期間の判別に使用 */
@@ -159,6 +161,8 @@ export async function listAllTenants(
       currentMonthEmbeddingCallCount: true,
       currentMonthEmbeddingCostJpy: true,
       monthlyBudgetCapJpy: true,
+      // ADR-0030 (2026-05-30): Embedding 月次予算上限
+      monthlyEmbeddingBudgetCapJpy: true,
       createdAt: true,
       // 2026-05-14: 解約済テナント識別 (月途中解約の請求漏れ検知用)
       deletedAt: true,
@@ -208,6 +212,8 @@ export async function listAllTenants(
     currentMonthEmbeddingCallCount: t.currentMonthEmbeddingCallCount,
     currentMonthEmbeddingCostJpy: t.currentMonthEmbeddingCostJpy,
     monthlyBudgetCapJpy: t.monthlyBudgetCapJpy,
+    // ADR-0030 (2026-05-30): Embedding 月次予算上限
+    monthlyEmbeddingBudgetCapJpy: t.monthlyEmbeddingBudgetCapJpy,
     activeUserCount: userCountByTenant.get(t.id) ?? 0,
     createdAt: t.createdAt,
     // 2026-05-14: 解約日 (請求対象期間の判別用)
@@ -334,6 +340,8 @@ export async function getTenantDetail(tenantId: string): Promise<TenantDetail | 
     currentMonthEmbeddingCallCount: t.currentMonthEmbeddingCallCount,
     currentMonthEmbeddingCostJpy: t.currentMonthEmbeddingCostJpy,
     monthlyBudgetCapJpy: t.monthlyBudgetCapJpy,
+    // ADR-0030 (2026-05-30): Embedding 月次予算上限
+    monthlyEmbeddingBudgetCapJpy: t.monthlyEmbeddingBudgetCapJpy,
     activeUserCount,
     createdAt: t.createdAt,
     // 2026-05-14: TenantSummaryRow 継承のため必須。getTenantDetail は deletedAt: null

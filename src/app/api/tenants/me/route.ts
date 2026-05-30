@@ -27,6 +27,8 @@ import {
 const updateBodySchema = z.object({
   plan: z.enum(['beginner', 'expert', 'pro']).optional(),
   monthlyBudgetCapJpy: z.number().int().nonnegative().nullable().optional(),
+  // ADR-0030 (2026-05-30): Embedding 専用の月次予算上限。null = 無制限、undefined = 変更なし
+  monthlyEmbeddingBudgetCapJpy: z.number().int().nonnegative().nullable().optional(),
   // 2026-05-09 (PR G / #24): シードデータ参照 toggle
   seedDataEnabled: z.boolean().optional(),
 });
@@ -94,6 +96,19 @@ export async function PATCH(req: NextRequest) {
             code: 'BEGINNER_BUDGET_NOT_ALLOWED',
             message:
               'Beginner プランは固定のプロジェクト作成/更新 月 50 回まで無料で運用されるため (ADR-0019)、月次予算上限は設定できません。Expert または Pro プランへのアップグレード後に設定してください。',
+          },
+        },
+        { status: 400 },
+      );
+    }
+    // ADR-0030 (2026-05-30): Beginner プランは Embedding 月次予算上限を設定不可 (固定 100 件試用上限)
+    if (result.error === 'BEGINNER_EMBEDDING_BUDGET_NOT_ALLOWED') {
+      return NextResponse.json(
+        {
+          error: {
+            code: 'BEGINNER_EMBEDDING_BUDGET_NOT_ALLOWED',
+            message:
+              'Beginner プランは固定の Embedding 月 100 件まで無料で運用されるため (ADR-0030)、月次予算上限は設定できません。Expert または Pro プランへのアップグレード後に設定してください。',
           },
         },
         { status: 400 },

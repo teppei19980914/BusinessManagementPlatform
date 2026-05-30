@@ -70,3 +70,26 @@ export const EMBEDDING_PRICE_JPY_BY_PLAN: Record<TenantPlan, number> = {
 export function resolveEmbeddingCostJpy(plan: TenantPlan): number {
   return EMBEDDING_PRICE_JPY_BY_PLAN[plan];
 }
+
+/**
+ * Beginner プランの Embedding 月次試用上限 (件/月)。ADR-0030 (2026-05-30) で導入。
+ *
+ * 設計判断:
+ *   - **LLM 50 件 / Embedding 100 件の非対称設計**: Embedding は LLM (Claude) より単価桁違いに低い
+ *     (Voyage 実コスト ¥0.036/call × 100 件 = ¥3.6/月/Beginner テナント) ため、試用範囲を 2 倍に取れる。
+ *   - **LP「90 日完全無料」訴求との整合**: 「無制限」訴求は本上限導入で「月 100 件まで」に修正。
+ *     通常利用ペース (月数十件) を踏まえると 100 件は試用範囲として十分。
+ *   - **Fair Use Limit (10,000 件) との階層**: Beginner cap (100 件) が先に発火、Fair Use Limit は
+ *     Voyage 無料枠保護の safety net として残置 (= 不慮の cap bypass バグへの保険)。
+ *   - **到達時の挙動**: `withMeteredLLM` が `reason: 'embedding_beginner_limit_exceeded'` で
+ *     縮退モード返却。チャット意味検索は既存 embedding で継続、新規 embedding は月初 backfill cron
+ *     で次月補填 (= ADR-0026 非同期化 + ADR-0022 backfill の多層フォールバック)。
+ *
+ * 関連:
+ *   - ADR: docs/adr/0030-embedding-monthly-budget-cap.md
+ *   - 課金エンジン: src/lib/llm/metered.ts Step 3 (LLM 50 件と並列で判定追加)
+ *   - 仕様: docs/specification/BEGINNER_PLAN.md §3
+ *   - 公開 doc: docs/public/api-usage-guide.md §6 / docs/public/plan-guide.md
+ *   - Memory: feedback_billing_invariant (ApiCallLog SUM = 表示 = 請求 invariant)
+ */
+export const BEGINNER_EMBEDDING_MONTHLY_LIMIT = 100;

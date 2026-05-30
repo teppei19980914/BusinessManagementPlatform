@@ -86,6 +86,10 @@ export interface ExplainSuggestionDegraded {
     // ADR-0019 (2026-05-24): suggestion-explanation は billable のため通常は発火しないが、
     //   withMeteredLLM の reason union 整合のため列挙する。
     | 'fair_use_limit_exceeded'
+    // ADR-0030 (2026-05-30): Embedding 系 2 reason は LLM_BILLABLE の suggestion-explanation では
+    //   発火しないが、withMeteredLLM の reason union を完全網羅するため列挙 (exhaustive type 安全側)。
+    | 'embedding_budget_exceeded'
+    | 'embedding_beginner_limit_exceeded'
     | 'llm_error'
     | 'project_not_found'
     | 'candidate_not_found'

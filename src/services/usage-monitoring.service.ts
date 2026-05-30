@@ -65,6 +65,12 @@ export interface Anomaly {
 export interface BudgetAlert {
   tenantId: string;
   tenantName: string;
+  /**
+   * 予算種別。ADR-0030 (2026-05-30) で `embedding` を追加。
+   * - llm: 月次予算上限 (LLM = project-upsert / suggestion-explanation / auto-tag-extract)
+   * - embedding: Embedding 月次予算上限 (EMBEDDING_BILLABLE_FEATURE_UNITS 7 種)
+   */
+  kind: 'llm' | 'embedding';
   /** 当月累積課金額 */
   currentMonthCostJpy: number;
   /** 月次予算上限 (円) */
@@ -247,43 +253,73 @@ export async function detectAnomalies(date: Date): Promise<Anomaly[]> {
 // ================================================================
 
 /**
- * 月次予算 (`monthlyBudgetCapJpy`) を設定しているテナントについて、
- * 当月累積コスト (`currentMonthApiCostJpy`) が閾値 (80% / 100% / 150%) を超えていれば
- * アラート行を返す。閾値未到達のテナント・予算未設定 (NULL) のテナントは無視。
+ * 月次予算上限を設定しているテナントについて、当月累積コストが閾値 (80% / 100% / 150%) を
+ * 超えていればアラート行を返す。閾値未到達・予算未設定 (NULL) のテナントは無視。
+ *
+ * ADR-0030 (2026-05-30): LLM 用 (`monthlyBudgetCapJpy`) と Embedding 用 (`monthlyEmbeddingBudgetCapJpy`)
+ * の **2 軸** を独立に判定し、それぞれを `kind` フィールドで区別したアラートを返す。
+ * 1 つのテナントが両軸で閾値超過した場合は 2 件のアラートが返る。
  */
 export async function detectBudgetAlerts(): Promise<BudgetAlert[]> {
   const tenants = await prisma.tenant.findMany({
     where: {
       deletedAt: null,
-      monthlyBudgetCapJpy: { not: null },
+      // LLM 用 OR Embedding 用のいずれかが設定済のテナント
+      OR: [
+        { monthlyBudgetCapJpy: { not: null } },
+        { monthlyEmbeddingBudgetCapJpy: { not: null } },
+      ],
     },
     select: {
       id: true,
       name: true,
       currentMonthApiCostJpy: true,
+      currentMonthEmbeddingCostJpy: true,
       monthlyBudgetCapJpy: true,
+      monthlyEmbeddingBudgetCapJpy: true,
     },
   });
 
   const alerts: BudgetAlert[] = [];
   for (const t of tenants) {
-    if (!t.monthlyBudgetCapJpy || t.monthlyBudgetCapJpy === 0) continue;
-    const rate = t.currentMonthApiCostJpy / t.monthlyBudgetCapJpy;
+    // LLM 軸の判定
+    if (t.monthlyBudgetCapJpy && t.monthlyBudgetCapJpy > 0) {
+      const rate = t.currentMonthApiCostJpy / t.monthlyBudgetCapJpy;
+      let level: BudgetAlert['level'] | null = null;
+      if (rate >= BUDGET_THRESHOLDS.overage) level = 'overage_150';
+      else if (rate >= BUDGET_THRESHOLDS.critical) level = 'critical_100';
+      else if (rate >= BUDGET_THRESHOLDS.warning) level = 'warning_80';
+      if (level) {
+        alerts.push({
+          tenantId: t.id,
+          tenantName: t.name,
+          kind: 'llm',
+          currentMonthCostJpy: t.currentMonthApiCostJpy,
+          monthlyBudgetCapJpy: t.monthlyBudgetCapJpy,
+          utilizationRate: Math.round(rate * 1000) / 1000,
+          level,
+        });
+      }
+    }
 
-    let level: BudgetAlert['level'] | null = null;
-    if (rate >= BUDGET_THRESHOLDS.overage) level = 'overage_150';
-    else if (rate >= BUDGET_THRESHOLDS.critical) level = 'critical_100';
-    else if (rate >= BUDGET_THRESHOLDS.warning) level = 'warning_80';
-
-    if (level) {
-      alerts.push({
-        tenantId: t.id,
-        tenantName: t.name,
-        currentMonthCostJpy: t.currentMonthApiCostJpy,
-        monthlyBudgetCapJpy: t.monthlyBudgetCapJpy,
-        utilizationRate: Math.round(rate * 1000) / 1000,
-        level,
-      });
+    // ADR-0030 (2026-05-30): Embedding 軸の判定 (LLM とは独立に評価)
+    if (t.monthlyEmbeddingBudgetCapJpy && t.monthlyEmbeddingBudgetCapJpy > 0) {
+      const rate = t.currentMonthEmbeddingCostJpy / t.monthlyEmbeddingBudgetCapJpy;
+      let level: BudgetAlert['level'] | null = null;
+      if (rate >= BUDGET_THRESHOLDS.overage) level = 'overage_150';
+      else if (rate >= BUDGET_THRESHOLDS.critical) level = 'critical_100';
+      else if (rate >= BUDGET_THRESHOLDS.warning) level = 'warning_80';
+      if (level) {
+        alerts.push({
+          tenantId: t.id,
+          tenantName: t.name,
+          kind: 'embedding',
+          currentMonthCostJpy: t.currentMonthEmbeddingCostJpy,
+          monthlyBudgetCapJpy: t.monthlyEmbeddingBudgetCapJpy,
+          utilizationRate: Math.round(rate * 1000) / 1000,
+          level,
+        });
+      }
     }
   }
   return alerts;

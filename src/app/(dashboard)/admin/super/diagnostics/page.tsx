@@ -195,24 +195,54 @@ export default async function DiagnosticsPage() {
               <Stat label="プラン" value={t.plan} />
               <Stat
                 label="理由"
-                value={
-                  t.reason === 'beginner_limit_exceeded'
-                    ? 'Beginner 上限到達'
-                    : '月額予算超過'
-                }
+                value={(() => {
+                  // ADR-0030 (2026-05-30): Embedding 系 2 reason を追加
+                  switch (t.reason) {
+                    case 'beginner_limit_exceeded':
+                      return 'Beginner LLM 上限到達';
+                    case 'budget_exceeded':
+                      return 'LLM 月額予算超過';
+                    case 'embedding_beginner_limit_exceeded':
+                      return 'Beginner Embedding 100 件試用上限到達 (ADR-0030)';
+                    case 'embedding_budget_exceeded':
+                      return 'Embedding 月額予算超過 (ADR-0030)';
+                  }
+                })()}
                 emphasis
               />
-              <Stat label="当月 API 呼出" value={t.currentMonthApiCallCount.toLocaleString()} />
-              <Stat
-                label={t.plan === 'beginner' ? '上限' : '予算上限'}
-                value={
-                  t.plan === 'beginner'
-                    ? (t.beginnerMonthlyCallLimit?.toLocaleString() ?? '-')
-                    : t.monthlyBudgetCapJpy != null
-                      ? `¥${t.monthlyBudgetCapJpy.toLocaleString()}`
-                      : '-'
-                }
-              />
+              {/* ADR-0030: LLM / Embedding の縮退理由で表示する数値タイルを切替 */}
+              {t.reason === 'beginner_limit_exceeded' || t.reason === 'budget_exceeded' ? (
+                <>
+                  <Stat label="当月 LLM 呼出" value={t.currentMonthApiCallCount.toLocaleString()} />
+                  <Stat
+                    label={t.plan === 'beginner' ? 'LLM 上限' : 'LLM 予算上限'}
+                    value={
+                      t.plan === 'beginner'
+                        ? (t.beginnerMonthlyCallLimit?.toLocaleString() ?? '-')
+                        : t.monthlyBudgetCapJpy != null
+                          ? `¥${t.monthlyBudgetCapJpy.toLocaleString()}`
+                          : '-'
+                    }
+                  />
+                </>
+              ) : (
+                <>
+                  <Stat
+                    label="当月 Embedding 生成"
+                    value={t.currentMonthEmbeddingCallCount.toLocaleString()}
+                  />
+                  <Stat
+                    label={t.plan === 'beginner' ? 'Embedding 試用上限' : 'Embedding 予算上限'}
+                    value={
+                      t.plan === 'beginner'
+                        ? (t.beginnerEmbeddingMonthlyLimit?.toLocaleString() ?? '-')
+                        : t.monthlyEmbeddingBudgetCapJpy != null
+                          ? `¥${t.monthlyEmbeddingBudgetCapJpy.toLocaleString()}`
+                          : '-'
+                    }
+                  />
+                </>
+              )}
             </dl>
           </div>
         ))}

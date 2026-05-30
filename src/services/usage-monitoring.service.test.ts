@@ -209,6 +209,78 @@ describe('detectBudgetAlerts', () => {
     const alerts = await detectBudgetAlerts();
     expect(alerts).toHaveLength(0);
   });
+
+  // ADR-0030 (2026-05-30): Embedding 専用予算上限の閾値判定
+  it('ADR-0030: Embedding cap 80% / 100% / 150% で kind=embedding アラートを発火', async () => {
+    vi.mocked(prisma.tenant.findMany).mockResolvedValue([
+      {
+        id: 't-emb-warn',
+        name: 'EmbWarn',
+        currentMonthApiCostJpy: 0,
+        currentMonthEmbeddingCostJpy: 800,
+        monthlyBudgetCapJpy: null,
+        monthlyEmbeddingBudgetCapJpy: 1000,
+      },
+      {
+        id: 't-emb-crit',
+        name: 'EmbCrit',
+        currentMonthApiCostJpy: 0,
+        currentMonthEmbeddingCostJpy: 1000,
+        monthlyBudgetCapJpy: null,
+        monthlyEmbeddingBudgetCapJpy: 1000,
+      },
+      {
+        id: 't-emb-overage',
+        name: 'EmbOverage',
+        currentMonthApiCostJpy: 0,
+        currentMonthEmbeddingCostJpy: 1500,
+        monthlyBudgetCapJpy: null,
+        monthlyEmbeddingBudgetCapJpy: 1000,
+      },
+    ] as never);
+
+    const alerts = await detectBudgetAlerts();
+    expect(alerts).toHaveLength(3);
+    expect(alerts.every((a) => a.kind === 'embedding')).toBe(true);
+    expect(alerts.find((a) => a.tenantId === 't-emb-warn')?.level).toBe('warning_80');
+    expect(alerts.find((a) => a.tenantId === 't-emb-crit')?.level).toBe('critical_100');
+    expect(alerts.find((a) => a.tenantId === 't-emb-overage')?.level).toBe('overage_150');
+  });
+
+  it('ADR-0030: 1 テナントが LLM + Embedding 両軸で閾値超過した場合は 2 アラート返却', async () => {
+    vi.mocked(prisma.tenant.findMany).mockResolvedValue([
+      {
+        id: 't-both',
+        name: 'BothExceeded',
+        currentMonthApiCostJpy: 900, // LLM 90% → warning
+        currentMonthEmbeddingCostJpy: 1200, // Embedding 120% → critical
+        monthlyBudgetCapJpy: 1000,
+        monthlyEmbeddingBudgetCapJpy: 1000,
+      },
+    ] as never);
+
+    const alerts = await detectBudgetAlerts();
+    expect(alerts).toHaveLength(2);
+    const llmAlert = alerts.find((a) => a.kind === 'llm');
+    const embAlert = alerts.find((a) => a.kind === 'embedding');
+    expect(llmAlert?.level).toBe('warning_80');
+    expect(embAlert?.level).toBe('critical_100');
+  });
+
+  it('ADR-0030: Embedding cap が 0 のテナントは ZeroDivision を避けてスキップ', async () => {
+    vi.mocked(prisma.tenant.findMany).mockResolvedValue([
+      {
+        id: 't1',
+        name: 'T1',
+        currentMonthApiCostJpy: 0,
+        currentMonthEmbeddingCostJpy: 100,
+        monthlyBudgetCapJpy: null,
+        monthlyEmbeddingBudgetCapJpy: 0,
+      },
+    ] as never);
+    const alerts = await detectBudgetAlerts();
+    expect(alerts).toHaveLength(0);
+  });
 });
 
 // notifyAdminsOfAlerts は 2026-05-14 に廃止されたためテスト削除。

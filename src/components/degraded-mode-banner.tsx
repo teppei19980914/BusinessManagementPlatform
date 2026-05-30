@@ -12,23 +12,48 @@ import Link from 'next/link';
 import type { SystemRole } from '@/config/master-data';
 
 export interface DegradedModeBannerProps {
-  reason: 'beginner_limit_exceeded' | 'budget_exceeded' | null;
+  /**
+   * 縮退モードの理由。ADR-0030 (2026-05-30) で Embedding 系 2 reason を追加。
+   * 詳細: src/lib/degraded-error-messages.ts DegradedReason
+   */
+  reason:
+    | 'beginner_limit_exceeded'
+    | 'budget_exceeded'
+    | 'embedding_beginner_limit_exceeded'
+    | 'embedding_budget_exceeded'
+    | null;
   systemRole: SystemRole;
 }
 
 export function DegradedModeBanner({ reason, systemRole }: DegradedModeBannerProps) {
   const isAdminLike = systemRole === 'admin' || systemRole === 'super_admin';
+  const isEmbeddingReason =
+    reason === 'embedding_budget_exceeded' || reason === 'embedding_beginner_limit_exceeded';
 
-  const headline =
-    reason === 'beginner_limit_exceeded'
-      ? 'Beginner プランの API 呼び出し上限に達しています'
-      : reason === 'budget_exceeded'
-        ? '月次予算上限に達しています'
-        : 'API 呼び出しが一時停止しています';
+  const headline = (() => {
+    switch (reason) {
+      case 'beginner_limit_exceeded':
+        return 'Beginner プランの LLM 呼び出し上限に達しています';
+      case 'budget_exceeded':
+        return 'LLM 月次予算上限に達しています';
+      case 'embedding_beginner_limit_exceeded':
+        return 'Beginner プランの Embedding 月次試用上限に達しています';
+      case 'embedding_budget_exceeded':
+        return 'Embedding 月次予算上限に達しています';
+      default:
+        return 'API 呼び出しが一時停止しています';
+    }
+  })();
 
-  const detail = isAdminLike
-    ? '提案機能はタグ:テキスト=5:5 で動作中。embedding 生成は停止しています。「設定 → テナント」から復活できます。'
-    : '提案機能はタグ:テキスト=5:5 で動作中。embedding 生成は停止しています。早期復活が必要な場合はテナント管理者にご相談ください。';
+  // ADR-0030 (2026-05-30): Embedding 縮退時は「新規 embedding 生成のみ停止、既存検索は継続、月初 backfill で次月補填」
+  //   を明示。LLM 縮退時は従来通り提案エンジンの縮退モード重み再配分を明示。
+  const detail = isEmbeddingReason
+    ? isAdminLike
+      ? '新規 embedding 生成のみ停止、既存 embedding でのチャット検索・提案エンジンは継続。月初 backfill で次月補填されます。「設定 → テナント → 使用量タブ」から復活できます。'
+      : '新規 embedding 生成のみ停止、既存検索は継続しています。早期復活が必要な場合はテナント管理者にご相談ください。'
+    : isAdminLike
+      ? '提案機能はタグ:テキスト=5:5 で動作中。embedding 生成は停止しています。「設定 → テナント」から復活できます。'
+      : '提案機能はタグ:テキスト=5:5 で動作中。embedding 生成は停止しています。早期復活が必要な場合はテナント管理者にご相談ください。';
 
   return (
     <div

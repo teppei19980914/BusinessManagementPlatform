@@ -44,7 +44,11 @@ import { randomUUID } from 'crypto';
 import { parse as parseCsv } from 'csv-parse/sync';
 import { prisma } from '@/lib/db';
 // PR-V8.2 (2026-05-19) ★請求 invariant★: 予算 gate は counter ではなく ApiCallLog SUM (真値) で判定
-import { reconcileTenantApiUsage } from './api-usage-recalc.service';
+import {
+  reconcileTenantApiUsage,
+  // ADR-0030 (2026-05-30): Embedding 系の真値を import cost estimate / apply gate で参照
+  reconcileTenantEmbeddingUsage,
+} from './api-usage-recalc.service';
 // PR #357 (2026-05-14): 旧 generateAndPersistEntityEmbedding (= N 件で N ApiCallLog) を
 //   バッチ版 generateAndPersistBatchEmbeddings (= 1 ApiCallLog) に置換してコスト最適化。
 import { generateAndPersistBatchEmbeddings } from '@/services/embedding.service';
@@ -119,11 +123,16 @@ export type CostEstimate = {
   beginnerCallLimit: number | null;
   /** 当月既呼出 */
   currentMonthCallCount: number;
-  /** 警告コード (null=問題なし、apply 不可なら apply 拒否) */
+  /**
+   * 警告コード (null=問題なし、apply 不可なら apply 拒否)。
+   * ADR-0030 (2026-05-30) で Embedding 系 2 コード追加。
+   */
   warningCode:
     | null
     | 'BEGINNER_CALL_LIMIT_EXCEEDED'
     | 'BUDGET_CAP_EXCEEDED'
+    | 'EMBEDDING_BEGINNER_LIMIT_EXCEEDED'
+    | 'EMBEDDING_BUDGET_CAP_EXCEEDED'
     | 'TOO_MANY_ROWS';
   warningMessage: string | null;
 };
@@ -177,6 +186,9 @@ export type ApplyResult =
         | 'PREVIEW_NOT_OWNED' // 別ユーザの preview を他人が apply しようとした
         | 'BEGINNER_CALL_LIMIT'
         | 'BUDGET_CAP_EXCEEDED'
+        // ADR-0030 (2026-05-30): Embedding 系 cap apply 拒否
+        | 'EMBEDDING_BEGINNER_LIMIT'
+        | 'EMBEDDING_BUDGET_CAP_EXCEEDED'
         // PR-3 (2026-05-15): 取込後の容量が Storage プラン上限超過 → 全件ロールバック
         | 'STORAGE_LIMIT_EXCEEDED';
       message: string;
@@ -289,9 +301,15 @@ export async function previewImport(input: PreviewInput): Promise<PreviewResult>
   //   (counter < SUM) に予算超過 import が gate を通過 = 過剰請求発生のリスクがあった。
   const voyageCalls = validKnowledge.length + validRisksIssues.length;
   const reconcileForGate = await reconcileTenantApiUsage(tenant.id).catch(() => null);
+  // ADR-0030 (2026-05-30): Embedding 系の真値も並行取得 (= billing invariant: 表示=請求の整合性)
+  const embeddingReconcileForGate = await reconcileTenantEmbeddingUsage(tenant.id).catch(() => null);
   const gateCallCount =
     reconcileForGate?.reconciledCallCount ?? tenant.currentMonthApiCallCount;
   const gateCostJpy = reconcileForGate?.reconciledCostJpy ?? tenant.currentMonthApiCostJpy;
+  const gateEmbeddingCallCount =
+    embeddingReconcileForGate?.reconciledCallCount ?? tenant.currentMonthEmbeddingCallCount;
+  const gateEmbeddingCostJpy =
+    embeddingReconcileForGate?.reconciledCostJpy ?? tenant.currentMonthEmbeddingCostJpy;
   const costEstimate = computeCostEstimate({
     plan: tenant.plan as 'beginner' | 'expert' | 'pro',
     voyageCalls,
@@ -301,6 +319,10 @@ export async function previewImport(input: PreviewInput): Promise<PreviewResult>
     beginnerCallLimit: tenant.beginnerMonthlyCallLimit,
     pricePerCallHaiku: tenant.pricePerCallHaiku,
     pricePerCallSonnet: tenant.pricePerCallSonnet,
+    // ADR-0030: Embedding cap 判定のため真値ベースで渡す
+    currentMonthEmbeddingCallCount: gateEmbeddingCallCount,
+    currentMonthEmbeddingCostJpy: gateEmbeddingCostJpy,
+    monthlyEmbeddingBudgetCapJpy: tenant.monthlyEmbeddingBudgetCapJpy,
   });
 
   // preview 保存 (TTL 24h)
@@ -391,11 +413,17 @@ export async function applyImport(input: {
 
   // 二重防御: apply 直前で再度コストチェック
   // ★ PR-V8.2 (2026-05-19) 請求 invariant: apply 直前でも ApiCallLog SUM (真値) で gate
+  // ★ ADR-0030 (2026-05-30): Embedding 側も真値ベースで gate (= preview と同じ judging)
   const reEstimateReconcile = await reconcileTenantApiUsage(tenant.id).catch(() => null);
+  const reEstimateEmbeddingReconcile = await reconcileTenantEmbeddingUsage(tenant.id).catch(() => null);
   const reGateCallCount =
     reEstimateReconcile?.reconciledCallCount ?? tenant.currentMonthApiCallCount;
   const reGateCostJpy =
     reEstimateReconcile?.reconciledCostJpy ?? tenant.currentMonthApiCostJpy;
+  const reGateEmbeddingCallCount =
+    reEstimateEmbeddingReconcile?.reconciledCallCount ?? tenant.currentMonthEmbeddingCallCount;
+  const reGateEmbeddingCostJpy =
+    reEstimateEmbeddingReconcile?.reconciledCostJpy ?? tenant.currentMonthEmbeddingCostJpy;
   const reEstimate = computeCostEstimate({
     plan: tenant.plan as 'beginner' | 'expert' | 'pro',
     voyageCalls,
@@ -405,6 +433,10 @@ export async function applyImport(input: {
     beginnerCallLimit: tenant.beginnerMonthlyCallLimit,
     pricePerCallHaiku: tenant.pricePerCallHaiku,
     pricePerCallSonnet: tenant.pricePerCallSonnet,
+    // ADR-0030: Embedding cap apply 時 gate
+    currentMonthEmbeddingCallCount: reGateEmbeddingCallCount,
+    currentMonthEmbeddingCostJpy: reGateEmbeddingCostJpy,
+    monthlyEmbeddingBudgetCapJpy: tenant.monthlyEmbeddingBudgetCapJpy,
   });
   if (reEstimate.warningCode === 'BEGINNER_CALL_LIMIT_EXCEEDED') {
     return {
@@ -418,6 +450,21 @@ export async function applyImport(input: {
       ok: false,
       error: 'BUDGET_CAP_EXCEEDED',
       message: reEstimate.warningMessage ?? '月次予算上限を超えるためインポートできません',
+    };
+  }
+  // ADR-0030 (2026-05-30): Embedding 系 cap も apply 直前で gate
+  if (reEstimate.warningCode === 'EMBEDDING_BEGINNER_LIMIT_EXCEEDED') {
+    return {
+      ok: false,
+      error: 'EMBEDDING_BEGINNER_LIMIT',
+      message: reEstimate.warningMessage ?? 'Beginner プランの Embedding 月間試用上限 (100 件) を超えるためインポートできません',
+    };
+  }
+  if (reEstimate.warningCode === 'EMBEDDING_BUDGET_CAP_EXCEEDED') {
+    return {
+      ok: false,
+      error: 'EMBEDDING_BUDGET_CAP_EXCEEDED',
+      message: reEstimate.warningMessage ?? 'Embedding 月次予算上限を超えるためインポートできません',
     };
   }
 
@@ -916,17 +963,57 @@ function computeCostEstimate(args: {
   beginnerCallLimit: number;
   pricePerCallHaiku: number;
   pricePerCallSonnet: number;
+  // ADR-0030 (2026-05-30) 追加: Embedding 系の現在状態 + 上限 (CSV import = external-import-embedding は EMBEDDING_BILLABLE)
+  currentMonthEmbeddingCallCount: number;
+  currentMonthEmbeddingCostJpy: number;
+  monthlyEmbeddingBudgetCapJpy: number | null;
 }): CostEstimate {
-  // ADR-0019 (2026-05-24): CSV インポート (featureUnit=`external-import-embedding`) は
-  //   全プラン無料化された。見込課金は常に 0、Beginner 上限 / 月次予算上限の判定も発火しない。
-  //   大量行による暴走防止は別途 fair-use-limit.service.ts (Phase 6) + TOO_MANY_ROWS gate で
-  //   対応する。pricePerCallHaiku / pricePerCallSonnet / beginnerCallLimit の引数は本関数では
-  //   使わなくなったが、シグネチャは互換性のため維持 (caller が変更不要)。
-  const estimatedJpy = 0;
+  // ADR-0019 (2026-05-24) → ADR-0022 (2026-06-01) → ADR-0029 (2026-05-30):
+  //   CSV インポート (featureUnit=`external-import-embedding`) は **bulk 集約** で
+  //   N 件取込でも 1 ApiCallLog = 1 課金単位。単価は plan 別:
+  //     - Beginner: ¥0 (無料維持、ADR-0030 で月 100 件試用上限の判定対象)
+  //     - Expert/Pro: ¥5 / 取込操作 (ADR-0029)
+  //   LLM 系の monthlyBudgetCap は **判定対象外** (= external-import-embedding は LLM_BILLABLE
+  //   ではないため Step 4 で skip)。ADR-0030 で Embedding 専用の monthlyEmbeddingBudgetCapJpy が
+  //   判定対象になったため、本 estimate で Embedding 側を gate 判定する。
+  const embeddingUnitCost = args.plan === 'beginner' ? 0 : 5; // EMBEDDING_PRICE_JPY_BY_PLAN
+  // bulk 集約: 知識テーブル + リスク/課題テーブルそれぞれが 1 ApiCallLog (= 最大 2 課金)。
+  // 1 ApiCallLog = 1 業務操作なので、両方インポートする場合は ¥5×2 = ¥10 (Expert/Pro)。
+  // (現状は preview/apply で table 別の voyageCalls 合算しているため、本関数では合計 1 課金として扱う)
+  const bulkOperationCount = args.voyageCalls > 0 ? 1 : 0;
+  const estimatedJpy = embeddingUnitCost * bulkOperationCount;
+
+  // 当月の投影値 (= 現在 + 本 import 分)
+  const projectedEmbeddingCallCount = args.currentMonthEmbeddingCallCount + bulkOperationCount;
+  const projectedEmbeddingCostJpy = args.currentMonthEmbeddingCostJpy + estimatedJpy;
+  // 互換性のため LLM 系 projectedMonthJpy は現状維持 (= LLM 経路ではないので増えない)
   const projectedMonthJpy = args.currentMonthCostJpy;
-  // BEGINNER_CALL_LIMIT_EXCEEDED / BUDGET_CAP_EXCEEDED warning は発火しない (無料化のため)。
-  const warningCode: CostEstimate['warningCode'] = null;
-  const warningMessage: string | null = null;
+
+  // ADR-0030 (2026-05-30): Embedding cap 判定。
+  //   Beginner: 100 件試用上限 (BEGINNER_EMBEDDING_MONTHLY_LIMIT)
+  //   Expert/Pro: 任意設定の monthlyEmbeddingBudgetCapJpy (NULL=無制限)
+  let warningCode: CostEstimate['warningCode'] = null;
+  let warningMessage: string | null = null;
+
+  if (args.plan === 'beginner') {
+    // Beginner: 100件試用上限 (= BEGINNER_EMBEDDING_MONTHLY_LIMIT、metered.ts Step 3.1 と同じ判定)
+    if (projectedEmbeddingCallCount > 100) {
+      warningCode = 'EMBEDDING_BEGINNER_LIMIT_EXCEEDED';
+      warningMessage =
+        `本インポートで Beginner プランの Embedding 月間試用上限 (100 件) を超えます。` +
+        `現在 ${args.currentMonthEmbeddingCallCount} 件、追加 ${bulkOperationCount} 件で上限超過します。` +
+        `月初リセットを待つか、Expert/Pro プランへのアップグレードをご検討ください。`;
+    }
+  } else if (args.monthlyEmbeddingBudgetCapJpy != null) {
+    // Expert/Pro: Embedding 専用予算上限 (= metered.ts Step 4.1 と同じ判定: `current + predicted > cap`)
+    if (projectedEmbeddingCostJpy > args.monthlyEmbeddingBudgetCapJpy) {
+      warningCode = 'EMBEDDING_BUDGET_CAP_EXCEEDED';
+      warningMessage =
+        `本インポートで Embedding 月次予算上限 (¥${args.monthlyEmbeddingBudgetCapJpy.toLocaleString()}) を超えます。` +
+        `現在 ¥${args.currentMonthEmbeddingCostJpy.toLocaleString()}、追加 ¥${estimatedJpy.toLocaleString()} で予算超過します。` +
+        `予算上限の引き上げ、または翌月のインポートをご検討ください。`;
+    }
+  }
 
   return {
     voyageCalls: args.voyageCalls,

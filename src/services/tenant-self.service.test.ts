@@ -392,6 +392,78 @@ describe('updateTenantSelf', () => {
     });
   });
 
+  // ADR-0030 (2026-05-30): Embedding 月次予算上限の CRUD + Beginner 拒否テスト
+  it('ADR-0030: monthlyEmbeddingBudgetCapJpy が負数なら INVALID_BUDGET', async () => {
+    const r = await updateTenantSelf(TENANT_ID, { monthlyEmbeddingBudgetCapJpy: -1 });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toBe('INVALID_BUDGET');
+    expect(prisma.tenant.findFirstOrThrow).not.toHaveBeenCalled();
+  });
+
+  it('ADR-0030: plan 未指定 + monthlyEmbeddingBudgetCapJpy 指定: 即時反映する', async () => {
+    vi.mocked(prisma.tenant.findFirstOrThrow).mockResolvedValueOnce({
+      ...baseTenant,
+      plan: 'expert',
+    } as never);
+
+    const r = await updateTenantSelf(TENANT_ID, { monthlyEmbeddingBudgetCapJpy: 3000 });
+
+    expect(r.ok).toBe(true);
+    expect(prisma.tenant.update).toHaveBeenCalledWith({
+      where: { id: TENANT_ID },
+      data: { monthlyEmbeddingBudgetCapJpy: 3000 },
+    });
+  });
+
+  it('ADR-0030: 現プラン Beginner で Embedding budget (非 null) 指定: BEGINNER_EMBEDDING_BUDGET_NOT_ALLOWED', async () => {
+    vi.mocked(prisma.tenant.findFirstOrThrow).mockResolvedValueOnce({
+      ...baseTenant,
+      plan: 'beginner',
+      beginnerEverUpgraded: false,
+    } as never);
+
+    const r = await updateTenantSelf(TENANT_ID, { monthlyEmbeddingBudgetCapJpy: 3000 });
+
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toBe('BEGINNER_EMBEDDING_BUDGET_NOT_ALLOWED');
+    expect(prisma.tenant.update).not.toHaveBeenCalled();
+  });
+
+  it('ADR-0030: 現プラン Beginner で Embedding budget=null 指定: 通る (残値クリアの救済)', async () => {
+    vi.mocked(prisma.tenant.findFirstOrThrow).mockResolvedValueOnce({
+      ...baseTenant,
+      plan: 'beginner',
+      beginnerEverUpgraded: false,
+      monthlyEmbeddingBudgetCapJpy: 1000,
+    } as never);
+
+    const r = await updateTenantSelf(TENANT_ID, { monthlyEmbeddingBudgetCapJpy: null });
+
+    expect(r.ok).toBe(true);
+    expect(prisma.tenant.update).toHaveBeenCalledWith({
+      where: { id: TENANT_ID },
+      data: { monthlyEmbeddingBudgetCapJpy: null },
+    });
+  });
+
+  it('ADR-0030: LLM cap + Embedding cap 同時指定で両方反映', async () => {
+    vi.mocked(prisma.tenant.findFirstOrThrow).mockResolvedValueOnce({
+      ...baseTenant,
+      plan: 'pro',
+    } as never);
+
+    const r = await updateTenantSelf(TENANT_ID, {
+      monthlyBudgetCapJpy: 5000,
+      monthlyEmbeddingBudgetCapJpy: 3000,
+    });
+
+    expect(r.ok).toBe(true);
+    expect(prisma.tenant.update).toHaveBeenCalledWith({
+      where: { id: TENANT_ID },
+      data: { monthlyBudgetCapJpy: 5000, monthlyEmbeddingBudgetCapJpy: 3000 },
+    });
+  });
+
   it('PR-2: Expert で budget 指定: 従来通り通る', async () => {
     vi.mocked(prisma.tenant.findFirstOrThrow).mockResolvedValueOnce({
       ...baseTenant,

@@ -21,7 +21,7 @@
  *   - Content-Type: text/csv; charset=utf-8
  *   - UTF-8 BOM 付き (Excel で日本語を文字化けさせないため)
  *   - 列: テナント連番 / テナント名 / プラン / API 呼出回数 / API 課金額 (円) /
- *         アクティブユーザ数 / 月次予算上限 (空欄=無制限) / 解約日 (空欄=アクティブ)
+ *         アクティブユーザ数 / 月次予算上限_LLM (空欄=無制限) / 月次予算上限_Embedding (空欄=無制限、ADR-0030) / 解約日 (空欄=アクティブ)
  *   - ファイル名: tenant-usage-{yearMonth}.csv
  *
  * 関連:
@@ -140,7 +140,9 @@ const HEADERS_CURRENT = [
   'Embedding呼出回数(counter)',
   'Embedding課金額(counter, 円)',
   'アクティブユーザ数',
-  '月次予算上限(円)',
+  '月次予算上限_LLM(円)',
+  // ADR-0030 (2026-05-30): Embedding 専用月次予算上限 (LLM 用と独立カラム)
+  '月次予算上限_Embedding(円)',
   // chore/storage-addon-backend-removal (2026-05-26): 旧 4 段階プラン Storage 列は撤去
   'Storage使用量(バイト)',
   // ADR-0021 (2026-05-26): ファイルストレージ peak + 想定請求額 (= 当月 cron 確定前の予測値)
@@ -221,6 +223,8 @@ function buildCurrentMonthCsv(
         t.currentMonthEmbeddingCostJpy.toString(),
         t.activeUserCount.toString(),
         t.monthlyBudgetCapJpy?.toString() ?? '',
+        // ADR-0030 (2026-05-30): Embedding 月次予算上限 (空欄=無制限、Beginner は常に空欄)
+        t.monthlyEmbeddingBudgetCapJpy?.toString() ?? '',
         // chore/storage-addon-backend-removal (2026-05-26): 旧 4 段階プラン列は撤去
         t.storageBytesUsed.toString(),
         // ADR-0021 (2026-05-26): ファイルストレージ peak + 想定請求額 (cron 確定前の予測)

@@ -120,7 +120,11 @@ beforeEach(() => {
     plan: 'expert',
     currentMonthApiCallCount: 10,
     currentMonthApiCostJpy: 100,
+    // ADR-0022/0029/0030: Embedding counter + cap も明示 (mock 漏れで NaN を踏まない)
+    currentMonthEmbeddingCallCount: 5,
+    currentMonthEmbeddingCostJpy: 25,
     monthlyBudgetCapJpy: 5000,
+    monthlyEmbeddingBudgetCapJpy: null,
     beginnerMonthlyCallLimit: 50,
     pricePerCallHaiku: 10,
     pricePerCallSonnet: 15,
@@ -193,9 +197,10 @@ describe('previewImport', () => {
       expect(r.summary.knowledge.totalRows).toBe(2);
       expect(r.summary.knowledge.validRows).toBe(2);
       expect(r.summary.knowledge.errorRows).toBe(0);
-      // ADR-0019 (2026-05-24): CSV インポート (external-import-embedding) は全プラン無料化された
-      //   ため、estimatedJpy は常に 0。
-      expect(r.costEstimate.estimatedJpy).toBe(0);
+      // ADR-0022 (2026-06-01) / ADR-0029 (2026-05-30) / ADR-0030 (2026-05-30):
+      //   CSV インポートは Beginner 無料 / Expert・Pro ¥5 (= 1 取込操作 = 1 課金集約)
+      //   Expert plan + 5000円cap で current=100、追加=5なので projected=105 で cap内
+      expect(r.costEstimate.estimatedJpy).toBe(5);
       expect(r.costEstimate.warningCode).toBeNull();
     }
   });
@@ -226,18 +231,22 @@ describe('previewImport', () => {
       expect(r.summary.knowledge.validRows).toBe(1);
       expect(r.summary.knowledge.errorRows).toBe(1);
       expect(r.errors[0]?.field).toBe('title');
-      // ADR-0019 (2026-05-24): CSV インポートは無料化されたため、有効行数に関わらず estimatedJpy=0
-      expect(r.costEstimate.estimatedJpy).toBe(0);
+      // ADR-0022/0029 (2026-05-30 改定): Expert プランは Embedding ¥5/取込 (= 1 業務操作 = 1 課金集約)
+      expect(r.costEstimate.estimatedJpy).toBe(5);
     }
   });
 
-  it('ADR-0019: Beginner プランで月次上限超過状態でも CSV インポートは warning 発火せず (= 無料化のため)', async () => {
+  it('ADR-0019: Beginner プランで LLM 月次上限超過状態でも CSV インポートは warning 発火せず (= LLM 上限とは独立)', async () => {
     vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce({
       id: TENANT_ID,
       plan: 'beginner',
       currentMonthApiCallCount: 95,
       currentMonthApiCostJpy: 0,
+      // ADR-0030: Embedding 件数は未到達 (= 100 件以下) なので warning 発火せず
+      currentMonthEmbeddingCallCount: 5,
+      currentMonthEmbeddingCostJpy: 0,
       monthlyBudgetCapJpy: null,
+      monthlyEmbeddingBudgetCapJpy: null,
       beginnerMonthlyCallLimit: 50,
       pricePerCallHaiku: 10,
       pricePerCallSonnet: 15,
@@ -270,21 +279,25 @@ describe('previewImport', () => {
     });
     expect(r.ok).toBe(true);
     if (r.ok) {
-      // ADR-0019: 既 95 + 7 = 102 > 100 でも、CSV インポートは Beginner 上限を消費しないため
-      //   warningCode=null。fair-use-limit (Phase 6) が別途暴走防止を担当する。
+      // ADR-0030 (2026-05-30): CSV インポートは Beginner 50 LLM 上限を消費しないため warningCode=null。
+      //   Beginner Embedding 100 件試用上限の判定は currentMonthEmbeddingCallCount=5 + 1 = 6 件で未達のため発火せず。
       expect(r.costEstimate.warningCode).toBeNull();
       expect(r.costEstimate.estimatedJpy).toBe(0);
     }
   });
 
-  it('ADR-0019: Expert プランで月次予算超過状態でも CSV インポートは warning 発火せず (= 無料化のため)', async () => {
-    // ADR-0019: CSV インポートは無料化されたため、予算超過状態でも warning は出ない。
+  it('ADR-0030: Expert プランで LLM 予算超過状態でも CSV インポートは LLM 側 warning 発火せず (= CSV は EMBEDDING_BILLABLE で独立判定)', async () => {
+    // ADR-0019/0030: CSV インポートは external-import-embedding (EMBEDDING_BILLABLE) のため、
+    //   LLM 用 monthlyBudgetCapJpy 判定は対象外。Embedding 専用 monthlyEmbeddingBudgetCapJpy は別途判定。
     vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce({
       id: TENANT_ID,
       plan: 'expert',
       currentMonthApiCallCount: 0,
       currentMonthApiCostJpy: 4980,
+      currentMonthEmbeddingCallCount: 0,
+      currentMonthEmbeddingCostJpy: 0,
       monthlyBudgetCapJpy: 5000,
+      monthlyEmbeddingBudgetCapJpy: null,
       beginnerMonthlyCallLimit: 50,
       pricePerCallHaiku: 10,
       pricePerCallSonnet: 15,
@@ -316,10 +329,85 @@ describe('previewImport', () => {
     });
     expect(r.ok).toBe(true);
     if (r.ok) {
-      // ADR-0019: 旧仕様では ¥4980 + ¥5×6 = ¥5010 > ¥5000 で BUDGET_CAP_EXCEEDED 発火だったが、
-      //   CSV インポート無料化により estimatedJpy=0 となり予算判定もスキップされる。
+      // ADR-0022/0029/0030: Expert/Pro は Embedding ¥5/取込 (= bulk 集約 1 課金単位)。
+      //   LLM 予算上限 ¥5000 (LLM cap) は本 import (EMBEDDING_BILLABLE) では判定対象外なので warningCode=null。
+      //   monthlyEmbeddingBudgetCapJpy=null なので Embedding 予算 cap も発火せず。
       expect(r.costEstimate.warningCode).toBeNull();
-      expect(r.costEstimate.estimatedJpy).toBe(0);
+      expect(r.costEstimate.estimatedJpy).toBe(5);
+    }
+  });
+
+  // ADR-0030 (2026-05-30) 新規: Embedding 専用予算上限超過テナントは BUDGET_CAP_EXCEEDED 相当の警告を返す
+  it('ADR-0030: Expert で Embedding 予算上限超過なら EMBEDDING_BUDGET_CAP_EXCEEDED warning', async () => {
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce({
+      id: TENANT_ID,
+      plan: 'expert',
+      currentMonthApiCallCount: 0,
+      currentMonthApiCostJpy: 0,
+      currentMonthEmbeddingCallCount: 199,
+      currentMonthEmbeddingCostJpy: 995, // ¥995 + ¥5 = ¥1000 (= cap) > cap 1000 で発火 (current + 5 > 1000)
+      monthlyBudgetCapJpy: null,
+      monthlyEmbeddingBudgetCapJpy: 996, // 995 + 5 = 1000 > 996 で発火
+      beginnerMonthlyCallLimit: 50,
+      pricePerCallHaiku: 10,
+      pricePerCallSonnet: 15,
+      deletedAt: null,
+    } as never);
+
+    const r = await previewImport({
+      tenantId: TENANT_ID,
+      userId: USER_ID,
+      fileBuffer: buildKnowledgeCsv([
+        { title: 'T1', background: 'B1', content: 'C1', result: 'R1' },
+      ]),
+      mappings: [
+        {
+          entity: 'knowledge',
+          fieldMapping: { title: 'title', background: 'background', content: 'content', result: 'result' },
+        },
+      ],
+    });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.costEstimate.warningCode).toBe('EMBEDDING_BUDGET_CAP_EXCEEDED');
+      expect(r.costEstimate.estimatedJpy).toBe(5);
+    }
+  });
+
+  // ADR-0030 (2026-05-30) 新規: Beginner Embedding 100 件試用上限を超えるなら EMBEDDING_BEGINNER_LIMIT_EXCEEDED warning
+  it('ADR-0030: Beginner で Embedding 100 件試用上限超過なら EMBEDDING_BEGINNER_LIMIT_EXCEEDED warning', async () => {
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce({
+      id: TENANT_ID,
+      plan: 'beginner',
+      currentMonthApiCallCount: 0,
+      currentMonthApiCostJpy: 0,
+      currentMonthEmbeddingCallCount: 100, // 100 + 1 = 101 > 100 で発火
+      currentMonthEmbeddingCostJpy: 0,
+      monthlyBudgetCapJpy: null,
+      monthlyEmbeddingBudgetCapJpy: null,
+      beginnerMonthlyCallLimit: 50,
+      pricePerCallHaiku: 10,
+      pricePerCallSonnet: 15,
+      deletedAt: null,
+    } as never);
+
+    const r = await previewImport({
+      tenantId: TENANT_ID,
+      userId: USER_ID,
+      fileBuffer: buildKnowledgeCsv([
+        { title: 'T1', background: 'B1', content: 'C1', result: 'R1' },
+      ]),
+      mappings: [
+        {
+          entity: 'knowledge',
+          fieldMapping: { title: 'title', background: 'background', content: 'content', result: 'result' },
+        },
+      ],
+    });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.costEstimate.warningCode).toBe('EMBEDDING_BEGINNER_LIMIT_EXCEEDED');
+      expect(r.costEstimate.estimatedJpy).toBe(0); // Beginner は ¥0
     }
   });
 
