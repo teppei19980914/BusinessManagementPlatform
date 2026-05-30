@@ -92,6 +92,58 @@ function checkEnv(dryRun: boolean): void {
   }
 }
 
+/**
+ * Prisma エラーをユーザガイダンス付きで wrap (ADR-0028 PR #471 2 巡目検証 / 2026-05-30).
+ *
+ * ECONNREFUSED 等の典型エラーは「.env.local がローカル DB を指している vs 本番 DB に
+ * 接続したい」のシナリオ取り違えが多いため、修正手順をエラー出力に含める。
+ */
+function explainPrismaError(err: unknown): string {
+  const target = process.env.DATABASE_URL?.match(/@([^/?]+)/)?.[1] ?? '(URL 解析不可)';
+  const isLocalhost = target.startsWith('localhost') || target.includes('127.0.0.1');
+  const message = err instanceof Error ? err.message : String(err);
+
+  if (message.includes('ECONNREFUSED')) {
+    if (isLocalhost) {
+      return [
+        '',
+        '❌ ローカル PostgreSQL (' + target + ') に接続できません。',
+        '',
+        '   解決方法:',
+        '   (A) ローカル DB を起動: docker compose up -d postgres (もしくは pg を起動)',
+        '   (B) 本番 / staging DB に対して実行したい場合は、.env.local の DATABASE_URL を',
+        '       本番接続文字列に **一時的に書き換えてから** 再実行してください。',
+        '       書き換え後、必ず .env.local を元に戻す事 (ローカル開発に影響しないため)。',
+        '',
+        '   参考: docs/operations/DEPLOYMENT.md §4.4 ─ FAQ embedding 生成 SOP',
+      ].join('\n');
+    }
+    return [
+      '',
+      '❌ DB (' + target + ') に接続できません (ECONNREFUSED)。',
+      '',
+      '   - DATABASE_URL の URL は正しいですか?',
+      '   - VPN / Firewall で DB host への接続がブロックされていませんか?',
+      '   - Supabase Pooler の場合、IP 制限 (= Supabase Dashboard → Network) で',
+      '     現在の IP が許可されているか確認してください。',
+      '',
+    ].join('\n');
+  }
+
+  if (message.includes('does not exist') && message.includes('relation')) {
+    return [
+      '',
+      '❌ テーブル faq_embeddings / guide_embeddings が DB に存在しません。',
+      '',
+      '   原因: migration 20260604_help_chat_rag_embeddings が未適用です。',
+      '   解決: pnpm prisma migrate deploy を先に実行してください。',
+      '',
+    ].join('\n');
+  }
+
+  return '\n❌ Prisma エラー: ' + message + '\n';
+}
+
 async function embedOne(text: string, label: string): Promise<number[] | null> {
   try {
     const result = await voyageEmbed({ texts: [text], inputType: 'document' });
@@ -383,7 +435,13 @@ async function main(): Promise<void> {
 
 if (require.main === module) {
   main().catch((e) => {
-    console.error(e);
+    // ADR-0028 PR #471 2 巡目検証 (2026-05-30): ECONNREFUSED 等の典型エラーは
+    //   ユーザガイダンス付きメッセージに wrap して提示する (= raw stack trace のみより親切)。
+    console.error(explainPrismaError(e));
+    if (process.env.DEBUG === '1') {
+      console.error('--- raw error stack (DEBUG=1) ---');
+      console.error(e);
+    }
     process.exit(1);
   });
 }

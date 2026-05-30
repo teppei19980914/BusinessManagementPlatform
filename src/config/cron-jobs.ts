@@ -57,7 +57,9 @@ export const CRON_JOBS: Record<string, CronJobMetadata> = {
     description:
       '最終ログインから 30 日経過した非管理者ユーザを一括で isActive=false にロックする。'
       + 'ナレッジ参照のためアカウント自体は残し、ログインのみ不可にする。',
-    schedule: '日次 21:00 JST',
+    // PR #471 (2026-05-30) 実態同期: cron-job.org 設定 `0 12 * * *` に合わせて 12:00 へ補正。
+    //   旧 metadata は「21:00」だったが cron-job.org 真実源と乖離していたため修正。
+    schedule: '日次 12:00 JST',
     endpoint: '/api/admin/users/lock-inactive',
     expectedMaxGapHours: 25,
   },
@@ -134,7 +136,8 @@ export const CRON_JOBS: Record<string, CronJobMetadata> = {
     description:
       'BillingHistory.payment_due_date + 5日 超過の pending 行を検知し、super_admin にメール送信。'
       + ' 24h 以内の重複送信を抑制 (overdueAlertSentAt で dedup)。',
-    schedule: '日次 10:00 JST',
+    // PR #471 (2026-05-30) 実態同期: cron-job.org 設定 `0 17 * * *` に合わせて 17:00 へ補正。
+    schedule: '日次 17:00 JST',
     endpoint: '/api/cron/billing-overdue-alert',
     expectedMaxGapHours: 25,
   },
@@ -162,9 +165,13 @@ export const CRON_JOBS: Record<string, CronJobMetadata> = {
       + ' Supabase Storage から download → file-text-extraction (PDF/Excel/CSV/text/docx)'
       + ' → Voyage embedding 生成 → contentEmbedding カラム更新。指数 backoff (1/5min)'
       + ' で 3 回までリトライ、それ以降は failed 確定。per-tenant=5 / global=50 throttle。',
-    schedule: '15 分毎 (00:00,15,30,45 JST)',
+    // PR #471 (2026-05-30) 実態同期: cron-job.org に 2 つ重複登録あり (10 分毎 + 15 分毎)。
+    //   どちらも同 endpoint を叩くが advisory lock (cron-execution-log.ts) で同時実行防止済。
+    //   ★要整理★ docs/design/CRON_JOBS.md §6.1 で重複解消推奨。
+    //   metadata 上は実質「10 分毎 (= 短い方の周期)」として記録。
+    schedule: '10 分毎 (cron-job.org に 15 分毎の重複登録もあり、docs §6.1)',
     endpoint: '/api/cron/attachment-embedding',
-    expectedMaxGapHours: 2, // 15min 間隔 + 余裕 (= 2h 経過なら異常)
+    expectedMaxGapHours: 2, // 10-15min 間隔 + 余裕 (= 2h 経過なら異常)
   },
 } as const;
 

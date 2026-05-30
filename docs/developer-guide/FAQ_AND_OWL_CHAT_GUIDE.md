@@ -424,23 +424,23 @@ messages: [
 
 ## 7. FAQ 追加チェックリスト (実務手順)
 
-### 7.0 ★最重要★ FAQ ライフサイクル SOP (ADR-0028 RAG 版) — ★たすきば存続の生命線★
+### 7.0 ★最重要★ FAQ ライフサイクル SOP (ADR-0028 RAG 版、★build hook 自動化済★)
 
-> ADR-0027 の full-context 方式から **ADR-0028 RAG 方式へ移行** しました (2026-05-30)。
-> 旧版の「Embedding 生成は不要」記述は撤回されています。
+> **2026-05-30 更新**: ADR-0027 の full-context 方式から ADR-0028 RAG 方式へ移行 + **Netlify build hook で deploy 時自動生成**。
 >
-> **本節の手順を守らないと「DB の FAQ embedding が古い → 新 FAQ の質問にフクロウが答えられない」現象が発生し、ヘルプチャット品質が静かに劣化します**。FAQ/使い方ガイドの追加・更新・削除を行う開発者は **必ず** 本節を読んでください。
+> 旧版の「Embedding 生成は不要」記述は撤回 / 旧版の「手動 SOP 必須」も撤回。**通常運用では開発者は何も意識しなくて OK** ─ `faq-content.ts` を編集して push するだけで、deploy 時に自動で embedding が生成されます。
 
-#### 7.0.1 全体フロー
+#### 7.0.1 全体フロー (自動化済)
 
 ```
 [開発者] faq-content.ts / guide-content.ts を編集
    ↓ commit + push
 [CI] pnpm check:faq-embeddings-sync で構造健全性チェック (DB アクセスなし)
    ↓
-[CI/CD] main マージ → Netlify deploy
+[CI/CD] main マージ
    ↓
-[★必須★ deploy 後] pnpm generate:faq-embeddings (1 回だけ実行)
+[Netlify build] prisma generate && prisma migrate deploy && next build &&
+                tsx scripts/generate-faq-embeddings.ts (★★build hook で自動実行★★)
    ↓
 [ユーザ] /help でチャット質問
    ↓
@@ -449,14 +449,17 @@ messages: [
 [Claude Haiku] RAG 結果のみを参照して回答生成
 ```
 
-#### 7.0.2 4 層防御
+> 開発者が手動で `pnpm generate:faq-embeddings` を実行する必要は **通常ありません**。build hook が失敗した時のみ、§7.0.4 の緊急時手順を実行。
+
+#### 7.0.2 5 層防御 (= build hook 自動化が追加)
 
 | 層 | 守る仕組み | 失敗時 |
 |---|---|---|
 | 1. CI 構造ガード | `pnpm check:faq-embeddings-sync` が PR CI で実行され、`faq-content.ts` の構造異常 (id 重複 / 文字数超過 / visibleTo 不正) を検知 | PR が red になりマージ不可 |
 | 2. CI drift ガード (オプション) | `DATABASE_URL` を渡せば DB と config の hash 突合を行う | drift があれば fail、deploy SOP の実行を促す |
-| 3. 手動 SOP | 本節 §7.0.3 / §7.0.4 の手順 | 開発者が忘れると 4 層目で吸収 |
-| 4. DEPLOYMENT.md SOP | [docs/operations/DEPLOYMENT.md](../operations/DEPLOYMENT.md) の Netlify deploy checklist に明記 | reviewer が deploy PR に対し generate 実行を確認 |
+| **3. ★Netlify build hook (自動)★** | **package.json:build:netlify の最後に `tsx scripts/generate-faq-embeddings.ts` を fail-safe で組込、deploy 時に自動実行** | **build log に WARN、§7.0.4 の緊急時手動実行へエスカレート** |
+| 4. 手動 SOP (緊急時) | 本節 §7.0.4 の手順 (= build hook 失敗時のみ) | 開発者が修正 |
+| 5. KDD documentation | [KDD §5.X+193](../knowledge/KDD_PATTERNS.md) (drift 検知) / [§5.X+196](../knowledge/KDD_PATTERNS.md) (build hook 自動化) | 後継開発者への引継ぎ材料 |
 
 #### 7.0.3 generate-faq-embeddings.ts の役割
 
@@ -484,15 +487,38 @@ messages: [
 - [ ] `pnpm test src/config/faq-content.test.ts src/services/help-search.service.test.ts` で権限 + RAG ロジックのテスト PASS
 - [ ] `pnpm lint && pnpm tsc --noEmit && pnpm build` で品質ゲート PASS
 
-**PR + deploy フェーズ**:
+**PR + deploy フェーズ** (★通常ほぼ全自動★):
 
-- [ ] PR 説明に「★FAQ/Guide 編集を含む。deploy 後に `pnpm generate:faq-embeddings` を実行★」と明記
-- [ ] PR がマージされ Netlify deploy が完了するまで待つ
-- [ ] **★必須★** ローカル `.env.local` に **本番 (または staging)** の `DATABASE_URL` と `VOYAGE_API_KEY` を設定し、`pnpm generate:faq-embeddings` を実行
-- [ ] 出力で「+N 追加 / ~N 更新 / -N 削除」が想定どおりであることを確認
-- [ ] (任意) `pnpm check:faq-embeddings-sync` を本番 DATABASE_URL で再実行し drift ゼロを確認
+- [ ] PR をマージ
+- [ ] Netlify deploy 完了を待つ (build hook が自動で `tsx scripts/generate-faq-embeddings.ts` を実行)
+- [ ] (任意) deploy 完了後、ヘルプチャットに新 FAQ について質問して反映されているか確認
+- [ ] (任意) `pnpm check:faq-embeddings-sync` を本番 DATABASE_URL で再実行し drift ゼロを確認 (`.env.local` の DATABASE_URL を一時書換 → 確認後元に戻す)
+- [ ] build log に `[WARN] post-build FAQ embedding sync skipped or failed` が出ていないことを確認
+  - 出ていたら §7.0.4 緊急時手順を実行
 - [ ] docs/public/*.md (account-setup-guide / chat-semantic-search-guide 等) に同じ情報があれば同期
 - [ ] LP (HomePage repo) に同じ情報があれば別 PR で同期
+
+#### 7.0.4 緊急時の手動実行 (= build hook が失敗した時のみ)
+
+```bash
+# 1. .env.local の DATABASE_URL を **本番接続文字列に一時書換**
+#    (書換後、必ず元に戻してローカル開発に影響しないようにする)
+DATABASE_URL='postgresql://...本番接続...'
+VOYAGE_API_KEY='pa-xxx...'
+
+# 2. dry-run で実行計画を確認 (Voyage API 呼出ゼロ、安全)
+pnpm generate:faq-embeddings --dry-run
+
+# 3. 想定どおりであることを確認したら実 generate を実行
+pnpm generate:faq-embeddings
+
+# 4. .env.local の DATABASE_URL を **ローカル DB 接続に戻す**
+
+# 5. (任意) drift ゼロを確認
+pnpm check:faq-embeddings-sync
+```
+
+エラーメッセージは ECONNREFUSED / `relation does not exist` 等の典型ケースに対し **対処方法付きで自動表示** されます (= `scripts/generate-faq-embeddings.ts:explainPrismaError`)。raw stack trace を見たい場合は `DEBUG=1 pnpm generate:faq-embeddings`。
 
 #### 7.0.5 トラブルシューティング
 

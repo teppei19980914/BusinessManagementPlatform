@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "next dev --turbopack",
     "build": "prisma generate && next build",
-    "build:netlify": "prisma generate && prisma migrate deploy && next build",
+    "build:netlify": "prisma generate && prisma migrate deploy && next build && (tsx scripts/generate-faq-embeddings.ts || echo '[WARN] post-build FAQ embedding sync skipped or failed - run `pnpm generate:faq-embeddings` manually (詳細: docs/operations/DEPLOYMENT.md §4.4)')",
     "start": "next start",
     "lint": "eslint",
     "format": "prettier --write \"src/**/*.{ts,tsx,js,jsx}\"",

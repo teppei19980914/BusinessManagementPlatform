@@ -306,7 +306,12 @@ async function handlePost(req: NextRequest): Promise<NextResponse> {
   let output: HelpChatOutput;
   let llmInputTokens = 0;
   let llmOutputTokens = 0;
+  // ADR-0028 PR #471 2 巡目検証 (2026-05-30): 503 真因確定のため raw output / phase を
+  //   catch ブロックで context に詳細記録できるよう、ローカル変数で保持する。
+  let llmPhase: 'init' | 'anthropic_call' | 'parse_text' | 'parse_json' | 'validate_schema' = 'init';
+  let llmRawText: string | null = null;
   try {
+    llmPhase = 'anthropic_call';
     const client = getAnthropicClient();
     const message = await client.messages.create({
       model: MODEL_NAME,
@@ -335,19 +340,49 @@ async function handlePost(req: NextRequest): Promise<NextResponse> {
     });
     llmInputTokens = message.usage.input_tokens;
     llmOutputTokens = message.usage.output_tokens;
+    llmPhase = 'parse_text';
     const textBlock = message.content.find((b) => b.type === 'text');
     const rawText = textBlock?.text ?? '';
+    llmRawText = rawText; // catch でも参照できるよう保持
     // strip ```json ... ``` fence if present (model が json fence を付けることがある)
     const cleaned = rawText.replace(/^```json\s*/i, '').replace(/```\s*$/, '').trim();
+    llmPhase = 'parse_json';
     const parsed = JSON.parse(cleaned) as unknown;
+    llmPhase = 'validate_schema';
     output = HelpChatOutputSchema.parse(parsed);
   } catch (e) {
+    // ADR-0028 PR #471 2 巡目検証 (2026-05-30): 503 の真因確定のため context を詳細化。
+    //   - llmPhase: どの段階で throw したか (anthropic_call / parse_text / parse_json / validate_schema)
+    //   - errorName / errorMessage: error の type と message
+    //   - rawOutputSnippet: zod / JSON.parse 失敗時に AI の生 output 先頭 500 字を残す
+    //   - ragHitsCount: RAG 結果数 (= 0 件で fallback 出力されている可能性確認)
+    //   - ragDegraded: RAG 縮退状況
+    //   - inputTokens / outputTokens: Anthropic が応答を返した段階まで進んだかの指標
+    const isError = e instanceof Error;
+    const errorName = isError ? e.name : typeof e;
+    const errorMessage = isError ? e.message : String(e);
+    const rawOutputSnippet = llmRawText != null ? llmRawText.slice(0, 500) : null;
+
     await recordError({
       severity: 'warn',
       source: 'server',
-      message: `[help-chat] LLM call failed: ${e instanceof Error ? e.message : String(e)}`,
-      stack: e instanceof Error ? e.stack : undefined,
-      context: { kind: 'help_chat_llm_error', tenantId: user.tenantId, userId: user.id, requestId },
+      message: `[help-chat] LLM call failed at phase=${llmPhase}: ${errorName}: ${errorMessage}`,
+      stack: isError ? e.stack : undefined,
+      context: {
+        kind: 'help_chat_llm_error',
+        tenantId: user.tenantId,
+        userId: user.id,
+        requestId,
+        llmPhase,
+        errorName,
+        errorMessage,
+        rawOutputSnippet,
+        ragHitsCount: ragResult.hits.length,
+        ragDegraded: ragResult.degraded,
+        ragDegradedReason: ragResult.degradedReason ?? null,
+        llmInputTokens,
+        llmOutputTokens,
+      },
     });
     return NextResponse.json(
       {

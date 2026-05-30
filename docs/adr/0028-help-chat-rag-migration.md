@@ -76,14 +76,17 @@ ADR-0027 の「RAG 不採用」判断は、リリース時点の **FAQ 42 件規
   - ユーザ質問時の質問 embedding 化
   - すべて運営が学習コストとして吸収 (= ユーザ無料維持)
 
-### 4. ★最重要★ FAQ ライフサイクル SOP (生命線対策)
+### 4. ★最重要★ FAQ ライフサイクル SOP (生命線対策、★build hook 自動化★)
 
 FAQ や使い方ガイドの追加・更新・削除を行った場合、対応する embedding を再生成しない限りフクロウは古い情報を返し続け、**ユーザ信頼が崩壊する** = サービス存続の生命線。よって以下を多重防御で対策する:
 
-1. **手動 SOP の明文化**: `docs/developer-guide/FAQ_AND_OWL_CHAT_GUIDE.md §7` を「FAQ ライフサイクル SOP」として再構成し、追加 / 更新 / 削除 ごとの手順を明示
-2. **CI ガード**: `scripts/check-faq-embeddings-sync.ts` を新設し、`faq-content.ts` / `guide-content.ts` のハッシュと DB の embedding 状態を比較。drift があれば CI fail
-3. **deploy 連携**: `docs/operations/DEPLOYMENT.md` に「prisma migration 実行時に併せて `pnpm generate:faq-embeddings` を実行する」を SOP 化
-4. **KDD §5.X+193 として記録**: 同期 drift 検知パターンを横展開可能なナレッジに昇格
+1. **CI 構造ガード**: `scripts/check-faq-embeddings-sync.ts` を新設し、`faq-content.ts` / `guide-content.ts` の構造健全性を機械検証 (DB 不要)。PR CI で実行され構造異常があれば fail
+2. **CI drift ガード (optional)**: DATABASE_URL が設定されていれば DB と config の hash 突合
+3. **★Netlify build hook 自動実行 (2026-05-30 追加、KDD §5.X+196)★**: `package.json:build:netlify` の最後に `tsx scripts/generate-faq-embeddings.ts` を fail-safe で組込。**deploy 時に自動で embedding 生成**、開発者は手動実行不要
+4. **手動 SOP (緊急時のみ)**: build hook 失敗時の fallback として `docs/developer-guide/FAQ_AND_OWL_CHAT_GUIDE.md §7.0.4` に明示
+5. **KDD documentation**: §5.X+193 (drift 検知 4 層) + §5.X+196 (build hook 自動化) として記録、横展開可能なナレッジに昇格
+
+> 2026-05-30 PR #471 では当初「手動 SOP のみ」で運用しようとしたが、ユーザ環境で「SOP の存在を知らない」「.env.local の本番接続書換手順が不明瞭」等の脆弱性が顕在化したため、**build hook 自動化** に方針転換 (= [[feedback_human_handoff]]「人間が忘れる前提で設計する」原則に整合)。冪等性により FAQ 変更なし deploy は Voyage 呼出ゼロ ¥0、年運用コスト試算 1.34M tokens / 200M 無料枠 = 0.7% で完全無料。
 
 ### 5. Prompt Caching の再設計
 

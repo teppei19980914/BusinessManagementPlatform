@@ -18746,3 +18746,247 @@ embedding: z.array(z.number().finite()),
 - 関連 test: [src/app/api/help/chat/route.test.ts](../../src/app/api/help/chat/route.test.ts) (7 層 invariant 保護) / [src/lib/llm/voyage-client.test.ts](../../src/lib/llm/voyage-client.test.ts) (NaN/Infinity 拒否)
 - 関連 memory: [feedback_billing_invariant.md](../../C:/Users/SF02512/.claude/projects/c--Users-SF02512-GitHub-Private-BusinessManagementPlatform/memory/feedback_billing_invariant.md) (counter invariant の重要性)
 - KDD 関連: §5.X+191 (Prompt Caching、同 PR で確立) / §5.X+193 (drift 4 層防御、同じ「複層 hard cap」パターン)
+
+## §5.X+195 ★severity-medium (DX/開発体験)★ Netlify deploy preview の Netlify Drawer は `app.netlify.com` を iframe 化するため CSP `frame-src` 未定義だと block される (PR #471 / 2026-05-30)
+
+### 何が起きたか
+
+ADR-0028 RAG 移行 PR (#471) の deploy preview をブラウザで開いた際、Console に以下のエラーが繰り返し出力された:
+
+```
+Framing 'https://app.netlify.com/' violates the following Content Security Policy
+directive: "default-src 'self'". The request has been blocked. Note that
+'frame-src' was not explicitly set, so 'default-src' is used as a fallback.
+```
+
+リロードのたびに発生 + 機能的な障害はないが、Console ノイズで他の真因 (例: 503 デバッグ) が埋もれる。
+
+### 原因
+
+Netlify deploy preview / branch deploy では、Netlify が自動で **Netlify Drawer** (= deploy 情報を表示する小さな UI overlay) を inject する。Drawer は `<iframe src="https://app.netlify.com/...">` で実装されているため、本サイト側の CSP に `frame-src` ディレクティブが含まれていないと:
+
+1. CSP 仕様により `default-src 'self'` に fallback
+2. `'self'` (= 同一 origin) のみ許可 → `app.netlify.com` は別 origin
+3. iframe が block される → Console error
+
+本サービスの `next.config.ts` securityHeaders の CSP は以下のみ定義していた:
+
+```
+default-src 'self'
+script-src 'self' 'unsafe-inline'
+style-src 'self' 'unsafe-inline'
+img-src 'self' data:
+font-src 'self'
+connect-src 'self'
+frame-ancestors 'none'  ← 本サイトを他サイトから iframe 化されることを禁止
+base-uri 'self'
+form-action 'self'
+```
+
+`frame-src` 未定義のため default-src fallback で `'self'` 限定 → Netlify Drawer が block。
+
+### 対策
+
+next.config.ts の CSP に `frame-src 'self' https://app.netlify.com` を明示追加:
+
+```ts
+{
+  key: 'Content-Security-Policy',
+  value: [
+    "default-src 'self'",
+    // ... 他 directives ...
+    "frame-src 'self' https://app.netlify.com",  // ← 追加
+    "frame-ancestors 'none'",                     // ← 維持 (= 本サイトが iframe 化されることは引き続き禁止)
+    // ...
+  ].join('; '),
+}
+```
+
+### 設計判断 (なぜ全 context で許可するか)
+
+- **本番では Netlify Drawer は注入されない** (= 独自ドメイン tasukiba.com の場合、Netlify が自動 inject しないため Drawer 表示なし)
+- 本番でも `frame-src 'self' https://app.netlify.com` を許可しても、本番で iframe される対象がないため **実害なし**
+- context 別に CSP を分けるのは複雑度が高い (Next.js の static header API は context override しにくい)
+- **DX 改善 (Console ノイズ除去) を取り、CSP は寛容化** という判断
+
+### セキュリティ評価
+
+- `frame-src` は **本サイト内に他オリジンを iframe で埋め込める** ディレクティブ (= 我々が読み込む側)
+- `frame-ancestors` は **本サイトが他サイトから iframe される** のを禁止するディレクティブ (= 我々が埋め込まれる側)
+- **clickjacking 対策に重要な `frame-ancestors 'none'` は維持** したまま、`frame-src` だけ Netlify を許可
+- `app.netlify.com` は Netlify 公式 UI で、信頼できる第三者
+- → セキュリティ低下なし
+
+### 何を避けるべきか
+
+- ❌ `frame-src 'none'` で全 iframe を拒否 → Netlify Drawer が常時 block、DX 劣化
+- ❌ `frame-src *` で全許可 → 任意の悪意ある iframe (例: malicious 広告) の埋め込みリスク
+- ❌ context 別に CSP を分ける middleware を書く → 複雑度過剰、保守負債
+- ❌ `frame-ancestors` を緩和する → clickjacking 脆弱性
+
+### 横展開チェックリスト (新規 CSP 設定時)
+
+- [ ] `default-src` を厳しく設定したら、各 directive (`frame-src` / `connect-src` / `media-src` 等) を明示しないと default-src へ fallback して意図せず block されることを認識
+- [ ] Netlify / Vercel 等の hosting provider が deploy preview で inject する UI (= drawer / banner / analytics) の origin を allowlist
+- [ ] `frame-src` vs `frame-ancestors` の意味の違いを正確に理解 (= 埋め込む側 / 埋め込まれる側)
+- [ ] CSP 変更時は **本番 + preview 両方** で動作確認 (= preview だけで動いて本番で別エラーが出る罠を避ける)
+
+### 関連
+
+- 関連 PR: PR #471 (本 KDD の発端)
+- 関連 source: [next.config.ts:46-67](../../next.config.ts) (securityHeaders / CSP 定義)
+- 関連 MDN: [Content-Security-Policy: frame-src](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Content-Security-Policy/frame-src)
+- 関連 MDN: [Content-Security-Policy: frame-ancestors](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Content-Security-Policy/frame-ancestors) (= 別概念、混同注意)
+- KDD 関連: なし (本サービス初の CSP frame-src ナレッジ)
+
+## §5.X+196 ★severity-medium (運用負債)★ FAQ embedding 生成は手動 SOP ではなく Netlify build hook で自動化する (PR #471 / 2026-05-30、§5.X+193 続報)
+
+### 何が起きたか
+
+ADR-0028 RAG 移行で `scripts/generate-faq-embeddings.ts` を新設し、developer-guide §7 + DEPLOYMENT.md §4.4 で「deploy 後に手動実行する」SOP として運用しようとした。
+
+ユーザの実環境で 1 回目の deploy 後、ヘルプチャットで質問しても **「該当 FAQ なし」回答 + 503 fallback** が発生。原因は:
+
+1. 「deploy 後に `pnpm generate:faq-embeddings` を実行する」SOP がユーザに通知されていなかった
+2. ユーザがコマンドの存在を知ったが、`.env.local` のローカル DB 接続 (localhost:5433) に対して実行 → ECONNREFUSED で失敗
+3. 本番 DB に対して実行するには `.env.local` の DATABASE_URL を一時書換が必要だったが、それも明確化されていなかった
+
+結果として **★生命線★ と謳いつつ手動 SOP に依存する設計** が脆弱性となった。
+
+### 対策
+
+[`package.json:build:netlify`](../../package.json) の最後に `tsx scripts/generate-faq-embeddings.ts` を **fail-safe** で組み込み、Netlify build 時に自動実行する:
+
+```jsonc
+"build:netlify": "prisma generate && prisma migrate deploy && next build && (tsx scripts/generate-faq-embeddings.ts || echo '[WARN] post-build FAQ embedding sync skipped or failed - run pnpm generate:faq-embeddings manually')"
+```
+
+### 設計判断のキーポイント
+
+#### A. fail-safe (`|| echo ... WARN`) で build を壊さない
+
+- `tsx scripts/generate-faq-embeddings.ts` が Voyage 一時障害 / DB 接続失敗で fail しても **Netlify deploy 自体は成功扱い**
+- 失敗時は build log に WARN が出るので運用者が気付ける
+- これにより「FAQ embedding 生成失敗 → deploy 全体失敗 → サービス全機能停止」の最悪シナリオを回避
+
+#### B. 冪等性によるコスト保護
+
+- `scripts/generate-faq-embeddings.ts` は SHA-256 hash 一致なら Voyage 呼出 skip
+- **deploy のたび実行されるが、FAQ 変更なし deploy では Voyage 呼出ゼロ = ¥0**
+- FAQ 全件初回生成 = 約 28K tokens 消費 (Voyage 200M 無料枠の 0.014%)
+- 年間試算: 月 4 回 full sync × 12 ヶ月 = 1.34M tokens (200M 無料枠の 0.7%) → 完全無料
+
+#### C. 「手動 SOP は緊急時のみ」に格下げ
+
+- 通常運用: build hook で自動実行 (= 開発者は意識不要)
+- build hook 失敗時: 手動で `pnpm generate:faq-embeddings` 実行 (= 緊急時の fallback)
+- これにより「人間が SOP を忘れる」リスクが構造的に消える ([[feedback_human_handoff]] 整合)
+
+### 5 層防御の更新 (= §5.X+193 の 4 層 + 自動化を加えた)
+
+| 層 | 守る仕組み |
+|---|---|
+| 1. CI 構造ガード | `pnpm check:faq-embeddings-sync` で構造健全性チェック |
+| 2. CI drift ガード (optional) | DATABASE_URL 設定時に DB vs config の hash 突合 |
+| 3. **★Netlify build hook (自動)★** | **新規追加**: deploy 時に generate-faq-embeddings を fail-safe 実行 |
+| 4. 手動 SOP (緊急時) | build hook 失敗時のみ、developer-guide §7.0.4 の手順で実行 |
+| 5. KDD §5.X+193 / §5.X+196 documentation | 設計判断とパターンの永続化 |
+
+### 何を避けるべきか
+
+- ❌ build hook を `&&` で組む (= fail で build 全体が壊れる) → fail-safe `||` で吸収
+- ❌ build:netlify から DATABASE_URL を context override する → 本番 DB へ書き込む経路を増やすリスク、現状は ENV_VARS.md §2.2 で全 context 共通
+- ❌ 「手動 SOP のみ」で運用 → 開発者の SOP 忘れが本番障害に直結 ([[feedback_human_handoff]] 違反)
+
+### 横展開チェックリスト (新規「config + DB sync」機能を追加するとき)
+
+- [ ] generate スクリプトを scripts/ 配下に作る
+- [ ] `build:netlify` script の最後に fail-safe (`|| echo ...`) で組み込む
+- [ ] developer-guide に「自動実行されている + 緊急時手動実行手順」両方を記載
+- [ ] 冪等性を確保 (= hash 一致で skip、re-run で常に正解状態)
+- [ ] 失敗時のコスト影響を試算 (= 無料枠 or 上限内に収まるか)
+
+### 関連
+
+- 関連 PR: PR #471 (本 KDD の発端)
+- 関連 source: [package.json:build:netlify](../../package.json) / [scripts/generate-faq-embeddings.ts](../../scripts/generate-faq-embeddings.ts) / [scripts/check-faq-embeddings-sync.ts](../../scripts/check-faq-embeddings-sync.ts)
+- 関連 docs: [DEPLOYMENT.md §4.4](../operations/DEPLOYMENT.md) / [developer-guide §7](../developer-guide/FAQ_AND_OWL_CHAT_GUIDE.md)
+- 関連 memory: [feedback_human_handoff.md](../../C:/Users/SF02512/.claude/projects/c--Users-SF02512-GitHub-Private-BusinessManagementPlatform/memory/feedback_human_handoff.md)
+- KDD 関連: §5.X+193 (drift 検知 4 層、本 §196 で 5 層に拡張) / §5.X+194 (7 層 hard cap、同じ「複層防御」パターン)
+
+## §5.X+197 ★severity-medium★ cron-job.org 設定と CRON_JOBS metadata の drift は実態同期で潰す + 重複登録は advisory lock で防御されるが運用整理推奨 (PR #471 / 2026-05-30)
+
+### 何が起きたか
+
+PR #471 で `docs/design/CRON_JOBS.md` を新設する際、ユーザから「cron-job.org に登録されている cron を確認してほしい」要請を受けて実設定を共有してもらった結果、以下の **3 件の時刻乖離** + **1 件の重複登録** が顕在化:
+
+| cron | metadata (`src/config/cron-jobs.ts`) | cron-job.org 真実源 | 乖離 |
+|---|---|---|---|
+| `lock-inactive-users` | 日次 **21:00** | 日次 **12:00** (`0 12 * * *`) | 9 時間ズレ |
+| `attachment-embedding` | **15 分毎** | **10 分毎** (`*/10 * * * *`) | 周期短縮 |
+| `billing-overdue-alert` | 日次 **10:00** | 日次 **17:00** (`0 17 * * *`) | 7 時間ズレ |
+| `attachment-embedding` (重複) | (なし) | `tasukiba attachment-embedding` (`*/15 * * * *`) で重複登録 | 同 endpoint を 2 名で登録 |
+
+drift の原因はおそらく、運用中にスケジュール調整を行った際、cron-job.org だけ変更して metadata 更新を忘れた。
+
+### 影響度
+
+- **時刻乖離 (3 件)**: severity-low ─ 実害はないが、ドキュメント (CRON_JOBS.md / 運用 SOP) が誤情報を含む状態。新規開発者が「21:00 に動く」前提で他処理を組むと混乱
+- **重複登録 (1 件)**: severity-low ─ advisory lock ([cron-execution-log.ts:withCronExecutionLogging](../../src/lib/cron-execution-log.ts)) で同時実行は防御済 (= KDD §5.X+181)。ただし無駄な空振り 409 ログが定常的に発生
+
+### 採用した対策
+
+#### A. 即時補正
+
+1. `src/config/cron-jobs.ts:CRON_JOBS` の 3 件の schedule を実態に合わせて補正
+2. `docs/design/CRON_JOBS.md` のタイムライン + 個別 §2.x 表を実態に合わせて補正
+3. CRON_JOBS.md §6 に「cron-job.org 運用注意」セクションを新設
+
+#### B. 同期保持ルールの明文化 (CRON_JOBS.md §6.2)
+
+cron 操作時に **両方を同時更新** することをチェックリスト化:
+
+| 操作 | 必要な手順 |
+|---|---|
+| cron 新規追加 | (1) metadata 追加 → (2) cron-job.org 登録 → (3) docs §2.x 追記 |
+| スケジュール変更 | (1) cron-job.org 変更 → (2) metadata.schedule 更新 → (3) docs 更新 |
+| cron 削除 | (1) cron-job.org 削除 → (2) metadata 削除 → (3) docs マーク |
+| 名前変更 | (1) cron-job.org 変更 → (2) metadata + `withCronExecutionLogging` 呼出側を **同時変更** (= ロギング紐付けが切れるため) → (3) docs 更新 |
+
+#### C. 重複登録の整理推奨
+
+cron-job.org 管理画面で `tasukiba attachment-embedding` (15 分毎の方) を **手動削除** することを推奨。理由:
+- `attachment-embedding` (10 分毎) の方が周期が短く処理頻度が十分
+- 命名規則の一貫性 (他 cron は prefix なし)
+- 409 空振りログの定常発生を解消
+
+### 何を避けるべきか
+
+- ❌ **cron-job.org だけ変更して metadata を更新しない** → ドキュメント drift、新規開発者の誤解
+- ❌ **metadata だけ変更して cron-job.org を更新しない** → 実態と乖離、cron-history 画面で「未登録の cron」表示 / 期待時刻と実行時刻のズレ
+- ❌ **同一 endpoint を複数 cron で登録** → advisory lock で動作は安全だが、409 空振りログ + monitor 誤検知のリスク
+- ❌ **重複登録の片方を「念のため残す」** → 周期が異なる重複は monitor 上で「最終成功時刻」の判定混乱を招く
+
+### 横展開チェックリスト (cron 操作時)
+
+- [ ] cron-job.org 変更時、必ず `src/config/cron-jobs.ts` の対応 entry を確認
+- [ ] schedule を変えたら expectedMaxGapHours も妥当か再確認 (= 周期短縮で gap 閾値が大きすぎないか / 周期延長で短すぎないか)
+- [ ] 削除時は `withCronExecutionLogging(name, ...)` の呼出元 (route ファイル) も検索して整合性確認
+- [ ] 新規 cron の場合: `CRON_JOBS` metadata 登録 → cron-job.org 登録 → CRON_JOBS.md §2.x 追記 → §3 severity 表に追加 の 4 step 必須
+- [ ] 重複登録は **必ず片方削除** ─「念のため」「保険として」は禁止
+
+### 将来課題: cron-job.org API による drift 自動検知
+
+cron-job.org は公開 API を提供しているため、CI で以下を実装可能:
+1. `GET https://api.cron-job.org/jobs` で全登録 cron を取得
+2. `CRON_JOBS` metadata と diff (name / url / schedule)
+3. 不一致があれば CI fail + 一覧出力
+
+現状は手動 SOP に依存しているが、運用負債が増えてきたら自動化を検討。
+
+### 関連
+
+- 関連 PR: PR #471 (本 KDD の発端、ユーザ要請による cron 設定 docs 化)
+- 関連 source: [src/config/cron-jobs.ts](../../src/config/cron-jobs.ts) (metadata 真実源) / [src/lib/cron-execution-log.ts](../../src/lib/cron-execution-log.ts) (advisory lock)
+- 関連 docs: [docs/design/CRON_JOBS.md](../design/CRON_JOBS.md) (人間向け解説、§6 運用注意)
+- KDD 関連: §5.X+70 (cron route 追加・移行時の checklist) / §5.X+181 (cron 運用 3 つの罠、本 KDD の前駆体)

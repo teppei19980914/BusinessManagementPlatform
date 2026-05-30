@@ -51,6 +51,16 @@ const securityHeaders = [
       "img-src 'self' data:",
       "font-src 'self'",
       "connect-src 'self'",
+      // ADR-0028 PR #471 (2026-05-30): frame-src を 'self' + app.netlify.com に明示。
+      //   未指定だと default-src 'self' に fallback し、Netlify deploy preview / branch
+      //   deploy で Netlify が自動注入する **Netlify Drawer** (= deploy 情報を表示する
+      //   小さな iframe、app.netlify.com を src とする) が CSP で block され Console に
+      //   "Framing 'https://app.netlify.com/' violates CSP" エラーが出る。
+      //   本番 (= 独自ドメイン tasukiba.com) では Netlify Drawer は注入されないため
+      //   実害なし、開発体験 (preview での Console ノイズ) を優先して許可する。
+      //   ★frame-ancestors 'none' は維持★ (= 本サイトが他サイトから iframe 化されるのは引き続き禁止)。
+      //   詳細: KDD §5.X+195
+      "frame-src 'self' https://app.netlify.com",
       "frame-ancestors 'none'",
       "base-uri 'self'",
       "form-action 'self'",
