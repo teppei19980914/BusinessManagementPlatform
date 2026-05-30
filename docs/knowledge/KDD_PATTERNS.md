@@ -19289,3 +19289,76 @@ grep -rn "prisma\.tenant\.\(findUnique\|findFirst\|findMany\|update\|updateMany\
 - 関連 memory: [feedback_test_rule.md](../../C:/Users/SF02512/.claude/projects/c--Users-SF02512-GitHub-Private-BusinessManagementPlatform/memory/feedback_test_rule.md) (テストコード必須ルール、本 KDD で integration test の重要性が再確認された)
 - 関連 memory: [feedback_design_comment_vs_impl_drift.md](../../C:/Users/SF02512/.claude/projects/c--Users-SF02512-GitHub-Private-BusinessManagementPlatform/memory/feedback_design_comment_vs_impl_drift.md) (コメント vs 実装の乖離、本 KDD で「コードが書かれた = 動く」と思い込む罠の典型)
 - KDD 関連: §5.X+198 (recordError + console 併出し、本 KDD の真因即特定を可能にした前提条件) / §5.X+163 (Prisma XOR 型が tsc を通り抜ける別パターン、同根「Prisma 型の信頼性限界」)
+
+## §5.X+201 ★severity-low (UX 期待値ズレ)★ LEARNING_FREE featureUnit は UI counter に表示されない仕様 ─ UI 上で必ず注記する (PR #471 / 2026-05-30)
+
+### 何が起きたか
+
+PR #471 ADR-0028 RAG 移行後、ユーザがヘルプ・ガイドチャットを 1 回送信したが、テナント設定画面の「Embedding 利用量」セクションの **「Embedding 呼出」「Embedding 費用」が増えていない** ことに気付いて疑問:
+
+> 私の想定では、どちらも 1 インクリメントされると認識しています
+
+これは ★仕様通り★ だが、UI からは判別できず混乱の原因。
+
+### 仕様 (= 意図された設計)
+
+| featureUnit | 課金分類 | UI counter inc | ApiCallLog 記録 | 課金 |
+|---|---|---|---|---|
+| `chat-semantic-search` (過去資産検索) | EMBEDDING_BILLABLE | ✅ inc | ✅ 記録 | Expert/Pro ¥1/回 |
+| `knowledge-embedding` 等 (資産入力) | EMBEDDING_BILLABLE | ✅ inc | ✅ 記録 | 同上 |
+| **`help-chat-embedding`** (ヘルプ・ガイド) | **LEARNING_FREE** | ❌ **不変** | ✅ 記録 | **全プラン無料** |
+
+`metered.ts:385-405` の 4 階層分岐:
+```ts
+if (isLlmBillable) {
+  // currentMonthApi* を inc
+} else if (isEmbeddingBillable) {
+  // currentMonthEmbedding* を inc
+}
+// isLearningFree (= help-chat / help-chat-embedding) はここに到達しないため counter 不変
+```
+
+これは ADR-0028 / KDD §5.X+196 で明文化された設計で、「LEARNING_FREE は意図的に未知扱い分岐に落として counter / Stripe / 課金すべてを safe-side で迂回する」のが目的。
+
+### 何故この設計か
+
+1. **学習支援機能の無料訴求**: ヘルプ・ガイドチャットは初心者の使い方学習のための機能、Beginner/Expert/Pro いずれも完全無料を訴求
+2. **counter 混在防止**: もし LEARNING_FREE を EMBEDDING_BILLABLE counter に inc させると、画面の「Embedding 呼出 X 件 × ¥1 = ¥X」の計算が破綻 (= 一部 ¥0、一部 ¥1 で計算式が成立しない)
+3. **Stripe 誤投入リスク回避**: Stripe queue は cost > 0 のときのみ投入する設計だが、counter inc は別経路なため誤投入の温床になりやすい → counter 不変の方が安全
+
+### UX 改善 (本 PR で実施)
+
+`src/app/(dashboard)/settings/tenant/tenant-settings-client.tsx` の Embedding 利用量セクションに **明示注記** を追加:
+
+```tsx
+<p className="mt-1 text-xs text-muted-foreground">
+  ※ たすきフクロウ AI ヘルプ・ガイドチャットの embedding は学習支援機能 (全プラン無料) のため、本カウンタには **含まれません** (ADR-0028)。
+</p>
+```
+
+これにより:
+- ユーザが「ヘルプ・ガイドチャットを使ったのに数字が増えない」と疑問を持った時に画面で即解消
+- 「Embedding 呼出 X 件」が「= 課金対象 embedding のみ」であることを明示
+
+### 何を避けるべきか
+
+- ❌ LEARNING_FREE を EMBEDDING_BILLABLE 配列に追加して counter inc させる → 課金計算式破綻、Stripe 誤投入リスク
+- ❌ UI 注記なしで「LEARNING_FREE は counter 対象外」を運用 → 同質問が反復発生、サポート工数増
+- ❌ ApiCallLog 自体を記録しない → 監査・Voyage 利用枠監視ができなくなる (= 記録は必須、counter 不変だけが正解)
+
+### 横展開チェックリスト
+
+新規 LEARNING_FREE featureUnit を追加するとき:
+- [ ] `billing-feature-units.ts:LEARNING_FREE_FEATURE_UNITS` に追加
+- [ ] `metered.ts` には判定を追加しない (= 未知扱い分岐で counter 不変)
+- [ ] UI counter を表示している画面 (例: `tenant-settings-client.tsx` 使用量タブ) に「★ 含まれません」注記を追加
+- [ ] PER_CALL_COST_BREAKDOWN.md の課金表に該当行を追加
+- [ ] KDD §5.X+196 / 本 §201 を参照して同設計を踏襲
+
+### 関連
+
+- 関連 PR: PR #471 (本 KDD の発端、ユーザ質問契機)
+- 関連 source: [src/lib/llm/metered.ts:385-405](../../src/lib/llm/metered.ts) (counter 分岐) / [src/app/(dashboard)/settings/tenant/tenant-settings-client.tsx:942-955](../../src/app/\(dashboard\)/settings/tenant/tenant-settings-client.tsx) (UI 注記追加箇所)
+- 関連 ADR: [ADR-0028](../adr/0028-help-chat-rag-migration.md) §6 (課金分類)
+- 関連 docs: [PER_CALL_COST_BREAKDOWN.md §1.5](../business/PER_CALL_COST_BREAKDOWN.md) (ヘルプ・ガイドのコスト試算)
+- KDD 関連: §5.X+196 (build hook 自動化、LEARNING_FREE 設計の前駆) / §5.X+198 (recordError 罠、本 §201 と同様「実装と UI 表記の乖離が混乱を生む」パターン)
