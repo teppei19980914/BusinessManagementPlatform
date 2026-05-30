@@ -252,7 +252,20 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     const message = await client.messages.create({
       model: MODEL_NAME,
       max_tokens: MAX_OUTPUT_TOKENS,
-      system: systemPrompt,
+      // ★コスト最適化★ Anthropic Prompt Caching (5 分 TTL) を有効化。
+      //   system プロンプトには FAQ + ガイド全文 (~10K tokens、将来 ~50K まで増加見込み) を
+      //   含むため、cache_control なしだと 1 query あたり input cost が線形に増大する。
+      //   cache hit 時は input cost が ~10% (90% off) で、cache write 時は 125% (25% premium)。
+      //   テナント運用では 5 分以内に複数 query が来るケースが多く、平均 70-80% off を想定。
+      //   既存実装 (auto-tag.service.ts:251-256 / suggestion-explanation.service.ts:248-253)
+      //   と同じパターン。詳細は KDD §5.X+191 / FAQ_AND_OWL_CHAT_GUIDE.md §5。
+      system: [
+        {
+          type: 'text' as const,
+          text: systemPrompt,
+          cache_control: { type: 'ephemeral' as const },
+        },
+      ],
       messages: [
         {
           role: 'user',

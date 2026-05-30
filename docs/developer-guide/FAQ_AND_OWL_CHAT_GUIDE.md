@@ -346,10 +346,52 @@ RAG 移行は ADR-0028 (将来) で正式に決定する。
 
 - テナント数: 10 社想定 (β / 初期商用フェーズ)
 - 平均利用: 30 回/月/テナント (~ 上限 100 回の 30%)
-- 1 query コスト: ¥0.5 (Haiku + ~10K tokens system + ~500 output)
+- 1 query コスト: ¥0.5 (Haiku + ~10K tokens system + ~500 output、cache hit 時)
 - **月間運営コスト: ¥150 (10 社 × 30 回 × ¥0.5)**
 
 全プラン無料で吸収。Beginner プランの無料試用機能としても無理がない範囲。
+
+### 5.5 ★重要★ Anthropic Prompt Caching によるコスト構造
+
+「FAQ を増やすほど 1 query のコストが膨れるのでは?」というご指摘は **素朴な計算では正しい** が、Anthropic の **Prompt Caching (5 分 TTL)** を使うことで実運用コストは大きく抑制されます。
+
+#### コスト単価 (Claude Haiku 4.5、2026 年時点)
+
+| 種別 | 単価 (USD / 1M tokens) | 日本円換算 (¥/1M) |
+|---|---|---|
+| Input (cache miss、毎回課金) | $1.00 | ~¥150 |
+| **Input (cache hit、5 分以内の再アクセス)** | **$0.10 (90% off)** | **~¥15** |
+| Input (cache write、初回登録) | $1.25 (25% premium) | ~¥190 |
+| Output | $5.00 | ~¥750 |
+
+#### FAQ 規模別の 1 query コスト試算 (出力 500 tokens 固定)
+
+| FAQ 規模 | system tokens | Cache miss | Cache hit | 50% cache 平均 |
+|---|---|---|---|---|
+| **現状 42 件** | ~10K | ¥2.0 | ¥0.5 | ¥1.25 |
+| 100 件 | ~25K | ¥4.5 | ¥0.75 | ¥2.6 |
+| 300 件 | ~50K | ¥8.5 | ¥1.1 | ¥4.8 |
+| 600 件 (RAG 移行閾値) | ~100K | ¥17 | ¥1.9 | ¥9.5 |
+
+つまり **cache hit 時は FAQ がいくら増えても 1 query ¥1〜2 程度に抑えられる**。実運用では「業務開始時にユーザが連続質問する」など 5 分以内の連続アクセスが多く、平均 50-70% の cache hit を見込めます。
+
+#### 実装上のポイント (`src/app/api/help/chat/route.ts`)
+
+```ts
+system: [
+  {
+    type: 'text' as const,
+    text: systemPrompt,           // FAQ + ガイド全文 (~10K〜100K tokens)
+    cache_control: { type: 'ephemeral' as const },  // ★必須★ 5 分 TTL の prompt cache
+  },
+],
+```
+
+`cache_control` を **付け忘れると cache が効かず、毎回 input tokens 全額課金** となります。新規 LLM 機能を追加するときは既存実装 (`auto-tag.service.ts:251-256` / `suggestion-explanation.service.ts:248-253`) と同じパターンを必ず踏襲してください (KDD §5.X+191 参照)。
+
+#### ユーザ料金への影響
+
+**ゼロ**。たすきフクロウは全プラン無料 (LEARNING_FREE) で、コストは運営が学習コストとして吸収します ([ADR-0027 §1.3.1](../adr/0027-help-ai-concierge.md))。テナント月 100 回上限 (`HELP_CHAT_MONTHLY_LIMIT_PER_TENANT = 100`) と 100K tokens で RAG 移行する閾値設計により、運営コストの上限も予測可能になっています。
 
 ---
 

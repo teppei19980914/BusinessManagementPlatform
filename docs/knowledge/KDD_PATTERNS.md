@@ -18389,3 +18389,75 @@ export async function POST(req: NextRequest) { ... }
 - 関連 ADR: [ADR-0027](../adr/0027-help-ai-concierge.md) (本 route の設計)
 - 関連 docs: [docs/operations/DEPLOYMENT.md](../operations/DEPLOYMENT.md) (Netlify deploy 関連)
 - KDD 関連: §5.X+189 (本 §190 と同 PR 由来、check-llm-billing-bypass ALLOWLIST 追加)
+
+## §5.X+191 Anthropic SDK で system プロンプトに `cache_control` を付け忘れる罠 (PR #471 / full-context FAQ コスト爆発防止)
+
+**問題**: 新規 LLM 機能 (`/api/help/chat/route.ts`) を実装する際、`client.messages.create` の `system` フィールドを **plain string** で渡してしまうと、Anthropic Prompt Caching が無効化される。
+
+```ts
+// ❌ NG: prompt caching が無効化される (毎回 input tokens 全額課金)
+const message = await client.messages.create({
+  system: systemPrompt,  // ← string で渡すと cache されない
+  messages: [...],
+});
+
+// ✅ OK: 5 分 TTL の prompt cache が有効化 (cache hit 時 input cost ~10%)
+const message = await client.messages.create({
+  system: [
+    {
+      type: 'text' as const,
+      text: systemPrompt,
+      cache_control: { type: 'ephemeral' as const },
+    },
+  ],
+  messages: [...],
+});
+```
+
+PR #471 の help-chat 実装で本罠を踏んだ。レビュー時に「FAQ が増えるほど 1 query コストが線形に膨れる」とユーザから指摘を受けて発覚。FAQ 全文を毎回プロンプトに同梱する full-context 方式 (ADR-0027) では、Prompt Caching が無効だと FAQ 規模に応じて運営コストが線形増大する致命的構造になる。
+
+**Anthropic Prompt Caching の経済学** (Haiku 4.5 / 2026 年時点):
+
+| 種別 | 単価 | 効果 |
+|---|---|---|
+| Input (cache miss) | $1.00 / 1M tokens | 通常価格 |
+| Input (cache hit) | $0.10 / 1M tokens | **90% off** |
+| Input (cache write) | $1.25 / 1M tokens | 25% premium (初回のみ) |
+| Output | $5.00 / 1M tokens | 影響なし |
+
+→ 5 分以内の再アクセスで input cost が ~10% になるため、テナント運用 (連続質問パターンあり) では平均 50-70% off が見込める。
+
+**結論**: **Anthropic Claude を使う新規 API route / service では、必ず system プロンプトに `cache_control: { type: 'ephemeral' }` を付与する。** 既存実装 (`src/services/auto-tag.service.ts:251-256` / `src/services/suggestion-explanation.service.ts:248-253`) が参考実装としてそのまま踏襲できる。
+
+**設計上の留意点 (5 点)**:
+
+1. **見落としやすい**: tsc / lint / build はすべて PASS する。動作も正しい (回答品質は同じ)。違いは「コストが約 4 倍」だけで、CI / ローカルでは検知できない。
+2. **長いプロンプトほど cache 効果が大きい**: 1024 tokens 以上の system プロンプトでのみ Prompt Caching が有効化される。FAQ + ガイド全文 (~10K〜100K tokens) は cache に乗せる典型例。
+3. **動的に変わる部分は cache しない**: viewer のロール別フィルタは system プロンプトに含まれるが、ロールが切り替わると cache miss する (= 別 cache キーになる)。FAQ 本文は権限フィルタ後の全文を 1 つの cache_control ブロックで囲んで OK。
+4. **5 分 TTL**: 5 分間アクセスが無いと cache 失効。テナント運用 (1 ユーザが連続質問) では平均 50-70% cache hit、夜間散発アクセスでは cache miss が増える。
+5. **`message.usage.cache_read_input_tokens` / `cache_creation_input_tokens` で実績確認可能**: 将来運営 KPI として「cache hit 率」を可視化し、ROI モニタリングできる (現実装では未収集、将来課題)。
+
+**何を避けるべきか**:
+
+- ❌ system を plain string で渡す (cache が効かず、毎回 input cost 全額)
+- ❌ 短すぎる system プロンプト (< 1024 tokens) で cache_control を付ける (cache 機構が動かないが loss なし、誤解のもと)
+- ❌ ロール別の動的部分と FAQ 本文を 1 つの cache_control にまとめる (cache miss が増える。実装によっては FAQ 本文と動的部分を別ブロックに分けて cache hit 率を上げる発展形あり)
+- ❌ コスト構造を ADR / developer-guide に記載しない (将来「FAQ を 600 件まで増やしたら年間予算が…」のような誤算につながる)
+
+**横展開チェックリスト**:
+
+- [ ] 新規 Anthropic Claude を使う route / service を作るときは `system: [{ type: 'text', text: ..., cache_control: { type: 'ephemeral' } }]` パターンを必ず使う (auto-tag.service / suggestion-explanation.service を参考)
+- [ ] system プロンプトの token 数を意識して、~1024 tokens 以上であることを確認 (発火条件)
+- [ ] ロール別の動的部分があれば、cache を効かせやすい構造に分ける (動的部分を最後に置く)
+- [ ] developer-guide / ADR / KDD にコスト構造表を記載 (FAQ / プロンプト規模別の 1 query コスト試算)
+- [ ] PR レビュー時に「`cache_control` 付与あり?」を確認するチェックリスト項目を追加
+- [ ] 将来: `message.usage.cache_read_input_tokens` を ApiCallLog に記録 (cache hit 率の可視化)
+
+### 関連
+
+- 関連 PR: PR #471 (本罠の検出と修正)
+- 関連 source: [src/app/api/help/chat/route.ts:252-262](../../src/app/api/help/chat/route.ts) (修正対象) / [src/services/auto-tag.service.ts:251-256](../../src/services/auto-tag.service.ts) (参考実装) / [src/services/suggestion-explanation.service.ts:248-253](../../src/services/suggestion-explanation.service.ts) (参考実装)
+- 関連 ADR: [ADR-0027 §1.2](../adr/0027-help-ai-concierge.md) (full-context 方式の採用、RAG 不採用)
+- 関連 docs: [FAQ_AND_OWL_CHAT_GUIDE.md §5.5](../developer-guide/FAQ_AND_OWL_CHAT_GUIDE.md) (Prompt Caching のコスト構造解説)
+- 公式リファレンス: Anthropic API Docs - Prompt Caching (https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching)
+- KDD 関連: §5.X+188 (FAQ AI ハルシネーション対策、本 §191 と同 PR 由来) / §5.X+189 (check-llm-billing-bypass ALLOWLIST) / §5.X+190 (runtime='nodejs' 明示)
