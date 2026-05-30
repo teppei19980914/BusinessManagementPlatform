@@ -258,3 +258,61 @@ export function isBillableFeatureUnit(
 ): featureUnit is BillableFeatureUnit {
   return (BILLABLE_FEATURE_UNITS as readonly string[]).includes(featureUnit);
 }
+
+/**
+ * 学習支援 (たすきフクロウ AI ヘルプチャット) 用の **明示的 free** featureUnit。
+ * ADR-0027 (2026-05-29) で導入、ADR-0028 (2026-05-30) で RAG 用 embedding を追加。
+ *
+ * 設計判断:
+ *   - 初心者ユーザがたすきばの使い方を学習するための機能で、運営側が学習コストとして
+ *     吸収する想定。Beginner プラン (試用) でも気軽に質問できるよう全プラン無料とする
+ *     ([[project_faq_drives_ai_accuracy]] / ADR-0027 / ADR-0028)。
+ *   - withMeteredLLM 経由ではなく `/api/help/chat` route 内で直接 ApiCallLog INSERT し、
+ *     Tenant.currentMonthHelpChatCount (新規カラム) で月次回数を独自管理する。
+ *     既存の 4 階層分類 (LLM/EMBEDDING/STORAGE_OVERAGE/BACKFILL_FREE) には含めず、
+ *     `BILLABLE_FEATURE_UNITS` union にも入れない (= 集計対象外)。
+ *   - テナント単位月 100 回上限 (route 内で判定)。超過時は HTTP 429 +
+ *     `fallbackToAccordion: true` を返し、UI が FAQ アコーディオン誘導にフォールバック。
+ *   - 月次リセット (currentMonthHelpChatCount = 0) は tenant-monthly-reset.service.ts に
+ *     PR6 以降で組み込む。PR5 時点では未実装 (TODO: ADR-0027 §関連参照)。
+ *
+ * featureUnit 一覧:
+ *   - 'help-chat': ヘルプチャット 1 問答 (= LLM Claude Haiku 呼出)
+ *   - 'help-chat-embedding' (ADR-0028 / 2026-05-30): RAG 用 query embedding 生成
+ *      および FAQ/Guide コンテンツ embedding 生成 (Voyage AI 呼出)。テナント横断
+ *      生成バッチ (scripts/generate-faq-embeddings.ts) も同 featureUnit で記録し、
+ *      Voyage 200M tokens 無料枠の利用状況監視に使用する。
+ *
+ * 関連:
+ *   - src/app/api/help/chat/route.ts (本 featureUnit を使う唯一の経路)
+ *   - src/services/help-search.service.ts (RAG 検索本体)
+ *   - scripts/generate-faq-embeddings.ts (FAQ/Guide embedding 一括生成、ADR-0028)
+ *   - prisma/schema.prisma Tenant.currentMonthHelpChatCount
+ *   - docs/developer-guide/FAQ_AND_OWL_CHAT_GUIDE.md §1.3
+ *   - docs/adr/0028-help-chat-rag-migration.md
+ */
+export const LEARNING_FREE_FEATURE_UNITS = [
+  'help-chat',
+  'help-chat-embedding',
+] as const;
+
+export type LearningFreeFeatureUnit = (typeof LEARNING_FREE_FEATURE_UNITS)[number];
+
+/**
+ * 学習支援 featureUnit (= help-chat 等) かを判定。
+ * 本関数が true の featureUnit は:
+ *   - cost = 0 (全プラン無料)
+ *   - BILLABLE_FEATURE_UNITS union に含まれない (= 集計対象外)
+ *   - 専用 Counter (currentMonthHelpChatCount) で月次上限管理
+ */
+export function isLearningFreeFeatureUnit(
+  featureUnit: string,
+): featureUnit is LearningFreeFeatureUnit {
+  return (LEARNING_FREE_FEATURE_UNITS as readonly string[]).includes(featureUnit);
+}
+
+/**
+ * テナント単位月次上限 (help-chat の運営コスト管理用)。
+ * ¥0.5/query × 100 回 = ¥50/月/テナント の運営コスト想定。
+ */
+export const HELP_CHAT_MONTHLY_LIMIT_PER_TENANT = 100;

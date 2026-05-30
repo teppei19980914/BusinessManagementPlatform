@@ -543,6 +543,101 @@ END $$;
 - migration 自体は冪等 (= 再実行で WARNING も再出力される)
 - 該当行が 0 件なら DO ブロックは何も出力しない (= 通常運用時のノイズなし)
 
+### 4.4 ★生命線★ FAQ / Guide 編集の deploy 反映 (ADR-0028 RAG)
+
+> **2026-05-30 更新**: 本機能は **Netlify build hook で自動化済** です (= deploy 時に
+> 自動で embedding 生成)。**手動 SOP は緊急時のみ必要**。
+
+#### 4.4.1 全体フロー (自動化済)
+
+```
+[開発者] faq-content.ts / guide-content.ts を編集
+   ↓ commit + push
+[CI] pnpm check:faq-embeddings-sync で構造健全性チェック (DB 不要)
+   ↓
+[CI/CD] main マージ
+   ↓
+[Netlify build] prisma migrate deploy && next build &&
+                tsx scripts/generate-faq-embeddings.ts (★自動実行★)
+   ↓
+[Netlify publish] deploy 完了、ユーザは新 FAQ で質問可能
+```
+
+`package.json:build:netlify` の最後に `tsx scripts/generate-faq-embeddings.ts` が組み込まれています。**deploy のたびに自動で実行** されますが、hash 一致なら Voyage 呼出はスキップされるため:
+
+- FAQ 変更なし deploy: **Voyage 呼出ゼロ = ¥0**
+- FAQ 1 件追加 deploy: **該当 1 件のみ Voyage 呼出 ≈ ¥0.001 相当** (200M 無料枠内なら ¥0)
+- FAQ 全件初回生成: **約 28K tokens 消費** (200M 無料枠の 0.014% = 完全無料)
+
+#### 4.4.2 fail-safe 設計
+
+`build:netlify` script は以下のように **`|| echo` で失敗を吸収** します:
+
+```jsonc
+"build:netlify": "... && next build && (tsx scripts/generate-faq-embeddings.ts || echo '[WARN] post-build FAQ embedding sync skipped or failed - run `pnpm generate:faq-embeddings` manually')"
+```
+
+つまり:
+- generate スクリプトが Voyage 一時障害 / DB 接続失敗で fail しても、**Netlify deploy 自体は成功扱い**
+- 失敗時は build log に WARN が出るので、運用者は気付いて手動実行可能
+- これによりヘルプチャットが「FAQ 古いまま」になるリスクはあるが、**deploy 全体を巻き込まない安全側設計**
+
+#### 4.4.3 deploy 後の動作確認 (任意)
+
+deploy 完了後、念のため drift がないか確認したい場合:
+
+```bash
+# .env.local に本番 DB の DATABASE_URL を一時設定して実行
+pnpm check:faq-embeddings-sync
+# → "DB embedding は config と完全同期しています" が出れば OK
+# → drift エラーが出たら build log を確認、手動で pnpm generate:faq-embeddings 再実行
+```
+
+#### 4.4.4 緊急時の手動実行 (= build hook が失敗した時)
+
+build hook が失敗した場合 (= deploy 後ヘルプチャットが「該当 FAQ なし」を返すと判明した場合):
+
+```bash
+# 1. .env.local の DATABASE_URL を **本番接続文字列に一時的に書き換え**
+#    (注: 書き換え後、必ず元に戻してローカル開発に影響しないようにする)
+DATABASE_URL='postgresql://...本番接続...'
+VOYAGE_API_KEY='pa-xxx...'
+
+# 2. dry-run で実行計画を確認 (Voyage API 呼出ゼロ、安全)
+pnpm generate:faq-embeddings --dry-run
+
+# 3. 想定どおりであることを確認したら実 generate を実行
+pnpm generate:faq-embeddings
+
+# 4. .env.local の DATABASE_URL を **ローカル DB 接続に戻す**
+```
+
+#### 4.4.5 失敗時のエラーメッセージ (改善済)
+
+`scripts/generate-faq-embeddings.ts` は典型エラーを **ユーザガイダンス付きで** 表示します:
+
+| エラー | 原因 | 自動表示メッセージ |
+|---|---|---|
+| ECONNREFUSED (localhost) | ローカル DB 未起動 / 本番接続したいが .env.local がローカル指定 | 「(A) ローカル DB 起動 or (B) .env.local を本番に書き換え」を案内 |
+| ECONNREFUSED (remote) | URL 誤り / VPN / Supabase IP 制限 | チェック項目を案内 |
+| `relation does not exist` | migration 未適用 | `pnpm prisma migrate deploy` を案内 |
+
+raw stack trace を見たい場合は `DEBUG=1 pnpm generate:faq-embeddings` で実行。
+
+#### 4.4.6 ★生命線★ 4 層防御の更新 (KDD §5.X+193)
+
+ADR-0028 RAG 化と build hook 自動化により、drift 防御は以下の **5 層** になりました:
+
+| 層 | 守る仕組み | 失敗時の影響 |
+|---|---|---|
+| 1. CI 構造ガード | `pnpm check:faq-embeddings-sync` が PR CI で実行、構造異常を検知 | PR が red、マージ不可 |
+| 2. CI drift ガード (optional) | DB と config の hash 突合 | drift があれば fail、SOP 実行を促す |
+| 3. **★Netlify build hook (自動)★** | deploy 時に `tsx scripts/generate-faq-embeddings.ts` を自動実行 | build log に WARN、手動対応へエスカレート |
+| 4. 手動 SOP | 本節 §4.4.4 の手順 | (= build hook 失敗時のみ必要) |
+| 5. KDD §5.X+193 documentation | 設計判断とパターンの永続化 | (= 後継開発者への引継ぎ材料) |
+
+> 3 が新規追加。2026-05-30 時点では手動 SOP (4) は緊急時のフォールバックの位置づけで、通常運用では完全に自動化されています。
+
 ---
 
 ## 5. Locked Deploy (本番事故防止)

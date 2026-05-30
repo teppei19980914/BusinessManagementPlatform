@@ -122,6 +122,86 @@ describe('resetTenantMonthlyCounters', () => {
     const count = await resetTenantMonthlyCounters();
     expect(count).toBe(0);
   });
+
+  // ADR-0027 (2026-05-29): たすきフクロウ AI ヘルプチャット Counter (currentMonthHelpChatCount)
+  //   も同時リセットされることを担保。リセット漏れがあると翌月以降ユーザがチャットを使えなくなる
+  //   重要 invariant (テナント月 100 回上限の判定軸)。
+  it('★ADR-0027★ currentMonthHelpChatCount=0 と systemUser ありの監査ログを同 transaction で記録 (リリース前必須)', async () => {
+    vi.mocked(prisma.tenant.findMany).mockResolvedValue([
+      {
+        id: 'tenant-x',
+        timezone: 'Asia/Tokyo',
+        lastResetAt: new Date('2026-04-01T00:00:00Z'),
+        currentMonthApiCallCount: 12,
+        currentMonthApiCostJpy: 150,
+        currentMonthEmbeddingCallCount: 5,
+        currentMonthEmbeddingCostJpy: 5,
+        currentMonthHelpChatCount: 42,
+      },
+    ] as never);
+    vi.mocked(prisma.user.findFirst).mockResolvedValue({ id: 'sys-user' } as never);
+    vi.mocked(prisma.$transaction).mockResolvedValue([] as never);
+
+    const count = await resetTenantMonthlyCounters(new Date('2026-05-15T08:00:00Z'));
+    expect(count).toBe(1);
+
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    const txCalls = vi.mocked(prisma.$transaction).mock.calls[0]![0];
+    // tenant.update の呼出引数の data に currentMonthHelpChatCount: 0 が含まれること
+    expect(prisma.tenant.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'tenant-x' },
+        data: expect.objectContaining({
+          currentMonthApiCallCount: 0,
+          currentMonthEmbeddingCallCount: 0,
+          currentMonthHelpChatCount: 0, // ★ADR-0027★ 本コミットの target invariant
+        }),
+      }),
+    );
+    // auditLog.create の beforeValue / afterValue に currentMonthHelpChatCount が含まれること
+    const auditCall = vi.mocked(prisma.auditLog.create).mock.calls.find((c) => {
+      const data = c[0]?.data as { entityId?: string } | undefined;
+      return data?.entityId === 'tenant-x';
+    });
+    expect(auditCall).toBeDefined();
+    const auditData = auditCall![0].data as {
+      beforeValue: { currentMonthHelpChatCount?: number };
+      afterValue: { currentMonthHelpChatCount?: number };
+    };
+    expect(auditData.beforeValue.currentMonthHelpChatCount).toBe(42);
+    expect(auditData.afterValue.currentMonthHelpChatCount).toBe(0);
+    // tx 引数自体は配列で渡されることを確認
+    expect(txCalls).toHaveLength(2);
+  });
+
+  it('★ADR-0027★ systemUser 不在経路 (初回 seed 直後) でも currentMonthHelpChatCount=0 を含む', async () => {
+    vi.mocked(prisma.tenant.findMany).mockResolvedValue([
+      {
+        id: 'tenant-y',
+        timezone: 'UTC',
+        lastResetAt: null,
+        currentMonthApiCallCount: 0,
+        currentMonthApiCostJpy: 0,
+        currentMonthEmbeddingCallCount: 0,
+        currentMonthEmbeddingCostJpy: 0,
+        currentMonthHelpChatCount: 7,
+      },
+    ] as never);
+    vi.mocked(prisma.user.findFirst).mockResolvedValue(null);
+    vi.mocked(prisma.tenant.update).mockResolvedValue({} as never);
+
+    const count = await resetTenantMonthlyCounters(new Date('2026-05-15T08:00:00Z'));
+    expect(count).toBe(1);
+
+    expect(prisma.tenant.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'tenant-y' },
+        data: expect.objectContaining({
+          currentMonthHelpChatCount: 0,
+        }),
+      }),
+    );
+  });
 });
 
 describe('applyScheduledPlanChanges', () => {

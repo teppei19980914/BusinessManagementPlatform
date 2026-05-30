@@ -268,3 +268,152 @@ describe('ChatPanel フクロウの会話文言 invariant (人間味調整)', ()
     expect(source).toMatch(/機微情報の入力はお控えください/);
   });
 });
+
+/**
+ * ADR-0028 (2026-05-30): mode タブ (search / help) 統合
+ *
+ * 担保対象:
+ *   - PanelMode 型 + sessionStorage 永続化 helpers
+ *   - WAI-ARIA tab pattern (role="tablist" / role="tab" / aria-selected /
+ *     aria-controls / role="tabpanel" / aria-labelledby)
+ *   - HelpChatInput を panel variant で組み込み
+ *   - mode='search' default、誤った保存値は 'search' に fail-safe
+ *   - mode='help' 時は ChatPanel のクリアボタンは隠す (HelpChatInput が独自に持つ)
+ */
+describe('ChatPanel mode タブ統合 (ADR-0028)', () => {
+  it('HelpChatInput を @/components/help-chat/help-chat-input から import している', () => {
+    expect(source).toMatch(
+      /import\s*\{\s*HelpChatInput\s*\}\s*from\s*'@\/components\/help-chat\/help-chat-input'/,
+    );
+  });
+
+  it('PanelMode 型を search | help で定義している', () => {
+    expect(source).toMatch(/type\s+PanelMode\s*=\s*'search'\s*\|\s*'help'/);
+  });
+
+  it('sessionStorage 用 key を tasukiba_chat_panel_mode_v1 として定義', () => {
+    expect(source).toMatch(/PANEL_MODE_STORAGE_KEY\s*=\s*'tasukiba_chat_panel_mode_v1'/);
+  });
+
+  it('loadPanelMode / savePanelMode helper が定義されている', () => {
+    expect(source).toMatch(/function loadPanelMode\(/);
+    expect(source).toMatch(/function savePanelMode\(/);
+  });
+
+  it("loadPanelMode は不正値 / 未設定時に 'search' へ fail-safe", () => {
+    // 'help' | 'search' のいずれでもなければ 'search' に倒す実装になっている
+    expect(source).toMatch(
+      /raw === 'help' \|\| raw === 'search'[\s\S]{0,30}?return raw[\s\S]{0,30}?return 'search'/,
+    );
+  });
+
+  it('WAI-ARIA tablist + tab + tabpanel を備える', () => {
+    expect(source).toMatch(/role="tablist"/);
+    expect(source).toMatch(/role="tab"/);
+    expect(source).toMatch(/role="tabpanel"/);
+    expect(source).toMatch(/aria-selected=\{mode === 'search'\}/);
+    expect(source).toMatch(/aria-selected=\{mode === 'help'\}/);
+    expect(source).toMatch(/aria-controls="chat-panel-panel-search"/);
+    expect(source).toMatch(/aria-controls="chat-panel-panel-help"/);
+    expect(source).toMatch(/aria-labelledby="chat-panel-tab-search"/);
+    expect(source).toMatch(/aria-labelledby="chat-panel-tab-help"/);
+  });
+
+  it('タブボタンに data-testid を付与してテストから参照可能', () => {
+    expect(source).toMatch(/data-testid="chat-panel-tab-search"/);
+    expect(source).toMatch(/data-testid="chat-panel-tab-help"/);
+  });
+
+  it('mode==="help" 時は HelpChatInput を variant="panel" + hideHeader + onTurnsCountChange + key で描画 (★UI 完全一致★)', () => {
+    // ★severity-high★ UI 一致原則 (feedback_sibling_ui_pattern_horizontal_rollout):
+    //   - hideHeader: ChatPanel ヘッダで一元化 (二重ヘッダ撤廃)
+    //   - onTurnsCountChange: ChatPanel 側でクリアボタン disabled 判定
+    //   - key={helpResetKey}: クリア時の再 mount で内部 state 破棄
+    expect(source).toMatch(/<HelpChatInput[\s\S]*?variant="panel"[\s\S]*?\/>/);
+    expect(source).toMatch(/<HelpChatInput[\s\S]*?hideHeader[\s\S]*?\/>/);
+    expect(source).toMatch(/<HelpChatInput[\s\S]*?onTurnsCountChange=\{setHelpTurnsCount\}[\s\S]*?\/>/);
+    expect(source).toMatch(/<HelpChatInput[\s\S]*?key=\{helpResetKey\}[\s\S]*?\/>/);
+  });
+
+  it('クリアボタンは mode 共通で常に表示 (★UI 完全一致★ ゴミ箱位置も統一)', () => {
+    // クリアボタンは header 内に 1 つだけ存在し、mode='search' 条件分岐で隠されない
+    expect(source).toMatch(/data-testid="chat-panel-clear-history"/);
+    // 旧仕様 {mode === 'search' && (...クリアボタン...)} は撤去
+    expect(source).not.toMatch(
+      /\{mode === 'search' &&[\s\S]{0,400}?data-testid="chat-panel-clear-history"/,
+    );
+  });
+
+  it('クリアボタン disabled は現 mode の turns 数で判定 (search:turns / help:helpTurnsCount)', () => {
+    expect(source).toMatch(
+      /disabled=\{mode === 'search' \? turns\.length === 0 : helpTurnsCount === 0\}/,
+    );
+  });
+
+  it('help mode のクリアは sessionStorage 直接削除 + helpResetKey インクリメントで remount', () => {
+    expect(source).toMatch(/tasukiba_help_chat_history_v1/);
+    expect(source).toMatch(/setHelpResetKey\(\(k\) => k \+ 1\)/);
+  });
+
+  it('help mode の tabpanel は search mode と同じ flex flex-col className (★UI 完全一致★)', () => {
+    // 旧 `flex-1 min-h-0 overflow-hidden p-2` を撤去 (search と異なる padding/overflow)
+    // 2 巡目検証 (2026-05-30): hidden パターンに移行したため className は条件式
+    //   `className={mode === 'help' ? 'flex flex-1 min-h-0 flex-col' : ''}` の形式
+    const helpPanelMatch = source.match(
+      /<div\s+role="tabpanel"\s+id="chat-panel-panel-help"[\s\S]{0,400}?className=\{mode === 'help' \? '([^']+)' : ''\}/,
+    );
+    expect(helpPanelMatch).not.toBeNull();
+    expect(helpPanelMatch![1]).toContain('flex');
+    expect(helpPanelMatch![1]).toContain('flex-col');
+    expect(helpPanelMatch![1]).not.toContain('p-2');
+    expect(helpPanelMatch![1]).not.toContain('overflow-hidden');
+  });
+
+  it('サブタイトルは mode に応じて切替 (検索 / ヘルプ・ガイド)', () => {
+    expect(source).toMatch(/mode === 'search' \? '過去資産を意味検索' : 'FAQ・使い方ガイド'/);
+  });
+
+  it('tabIndex は roving tab index pattern (active=0、inactive=-1)', () => {
+    expect(source).toMatch(/tabIndex=\{mode === 'search' \? 0 : -1\}/);
+    expect(source).toMatch(/tabIndex=\{mode === 'help' \? 0 : -1\}/);
+  });
+});
+
+/**
+ * ADR-0028 PR #471 2 巡目検証 (2026-05-30) 追加担保:
+ *   - タブ切替で state 消失を防ぐため両 tabpanel を常時 mount + hidden 属性で表示制御
+ *   - クリアボタン aria-label / title を mode 別に動的化 (a11y)
+ */
+describe('ChatPanel 2 巡目検証 (state 保持 + a11y 強化)', () => {
+  it('両 tabpanel を常時 mount し hidden 属性で表示制御 (WAI-ARIA tab pattern 標準)', () => {
+    expect(source).toMatch(/hidden=\{mode !== 'search'\}/);
+    expect(source).toMatch(/hidden=\{mode !== 'help'\}/);
+    // 旧: `{mode === 'help' ? (... HelpChatInput ...) : (... SearchModeBody ...)}` の三項排他レンダリングを撤去
+    expect(source).not.toMatch(/\{mode === 'help' \?[\s\S]{0,300}?<HelpChatInput/);
+  });
+
+  it('HelpChatInput は条件付き mount ではなく常時 mount (タブ切替で state 保持)', () => {
+    const helpPanelBlock = source.match(
+      /<div\s+role="tabpanel"\s+id="chat-panel-panel-help"[\s\S]+?<HelpChatInput[\s\S]+?\/>/,
+    );
+    expect(helpPanelBlock).not.toBeNull();
+    // {mode === 'help' && <HelpChatInput ...>} 形式 (= 条件 mount) ではないこと
+    expect(helpPanelBlock![0]).not.toMatch(/\{mode === 'help' && <HelpChatInput/);
+  });
+
+  it("SearchModeBody は mode==='search' 時のみ描画 (search タブ非表示時は無駄な useEffect 抑制)", () => {
+    expect(source).toMatch(/\{mode === 'search' && \(\s*<SearchModeBody/);
+  });
+
+  it('クリアボタン aria-label を mode 別動的化 (a11y screen reader 区別)', () => {
+    expect(source).toMatch(
+      /aria-label=\{[\s\S]{0,30}?mode === 'search'[\s\S]{0,200}?'過去資産検索の会話履歴をクリア'[\s\S]{0,200}?'ヘルプ・ガイドの会話履歴をクリア'/,
+    );
+  });
+
+  it('クリアボタン title (tooltip) も mode 別動的化 (aria-label と同文言)', () => {
+    expect(source).toMatch(
+      /title=\{[\s\S]{0,30}?mode === 'search'[\s\S]{0,200}?'過去資産検索の会話履歴をクリア'/,
+    );
+  });
+});

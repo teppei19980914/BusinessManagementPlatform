@@ -57,6 +57,7 @@ export const CRON_JOBS: Record<string, CronJobMetadata> = {
     description:
       '最終ログインから 30 日経過した非管理者ユーザを一括で isActive=false にロックする。'
       + 'ナレッジ参照のためアカウント自体は残し、ログインのみ不可にする。',
+    // PR #471 (2026-05-30) 実態同期: cron-job.org 設定 `0 21 * * *` (夜にロック処理を実行)。
     schedule: '日次 21:00 JST',
     endpoint: '/api/admin/users/lock-inactive',
     expectedMaxGapHours: 25,
@@ -84,7 +85,9 @@ export const CRON_JOBS: Record<string, CronJobMetadata> = {
       '月初にテナントの API 呼出カウンタ + 課金額を 0 にリセット。リセット直前スナップショット保存、'
       + ' ストレージアドオン適用、Beginner プラン期限超過テナントの物理削除、'
       + ' 月初 embedding 補完バッチも実行。',
-    schedule: '月初 1 日 09:00 JST',
+    // PR #471 (2026-05-30) 実態同期: cron-job.org 設定 `0 0 1 * *` (= 月初 1 日 00:00)。
+    //   月またぎ直後に counter リセット → 今月 / 前月 の API 課金額混同を防止。
+    schedule: '月初 1 日 00:00 JST',
     endpoint: '/api/cron/tenant-monthly-reset',
     // 月 1 回 → 35 日 (= 約 5 週) 以内に動いていなければ異常。
     // 例: 月末解約・cron 失敗等で 1 ヶ月飛んでも次月で復旧できる猶予。
@@ -124,7 +127,10 @@ export const CRON_JOBS: Record<string, CronJobMetadata> = {
       'invoice / bank_transfer 払いテナントの月次請求を集計し BillingHistory に upsert する。'
       + ' credit_card は Stripe Webhook で自動同期されるため対象外。'
       + ' 失敗テナントは per-tenant try/catch で errors[] に蓄積、cron 全体は止めない。',
-    schedule: '月初 2 日 09:00 JST',
+    // PR #471 (2026-05-30) 実態同期: cron-job.org 設定 `0 0 2 * *` (= 月初 2 日 00:00)。
+    //   ★前提依存★ tenant-monthly-reset (月初 1 日 00:00) が確実に終了していることが前提。
+    //   1 日空けることで万一 reset が失敗していても気付ける + 集計データが安定する。
+    schedule: '月初 2 日 00:00 JST',
     endpoint: '/api/cron/billing-monthly-aggregation',
     // 月 1 回 → 35 日以内に動いていなければ異常。月末解約・cron 失敗等で 1 ヶ月飛んでも次月で復旧できる猶予。
     expectedMaxGapHours: 35 * 24,
@@ -134,7 +140,10 @@ export const CRON_JOBS: Record<string, CronJobMetadata> = {
     description:
       'BillingHistory.payment_due_date + 5日 超過の pending 行を検知し、super_admin にメール送信。'
       + ' 24h 以内の重複送信を抑制 (overdueAlertSentAt で dedup)。',
-    schedule: '日次 10:00 JST',
+    // PR #471 (2026-05-30) 実態同期: cron-job.org 設定 `0 7 * * *` (= 朝 07:00)。
+    //   運営者が朝のメールチェックで未払いに気付きやすい + ユーザにも午前中の通知で
+    //   その日のうちにアクションを取ってもらいやすい設計。
+    schedule: '日次 07:00 JST',
     endpoint: '/api/cron/billing-overdue-alert',
     expectedMaxGapHours: 25,
   },
@@ -162,9 +171,12 @@ export const CRON_JOBS: Record<string, CronJobMetadata> = {
       + ' Supabase Storage から download → file-text-extraction (PDF/Excel/CSV/text/docx)'
       + ' → Voyage embedding 生成 → contentEmbedding カラム更新。指数 backoff (1/5min)'
       + ' で 3 回までリトライ、それ以降は failed 確定。per-tenant=5 / global=50 throttle。',
-    schedule: '15 分毎 (00:00,15,30,45 JST)',
+    // PR #471 (2026-05-30) 実態同期: cron-job.org 設定 `*/10 * * * *` (= 10 分毎)。
+    //   重複登録 (`tasukiba attachment-embedding`、15 分毎) は 2026-05-30 にユーザが手動削除済。
+    //   詳細: docs/design/CRON_JOBS.md §6.1 (履歴セクション)。
+    schedule: '10 分毎',
     endpoint: '/api/cron/attachment-embedding',
-    expectedMaxGapHours: 2, // 15min 間隔 + 余裕 (= 2h 経過なら異常)
+    expectedMaxGapHours: 2, // 10-15min 間隔 + 余裕 (= 2h 経過なら異常)
   },
 } as const;
 

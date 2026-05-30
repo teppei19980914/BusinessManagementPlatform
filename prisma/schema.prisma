@@ -83,6 +83,14 @@ model Tenant {
   ///   billing-aggregation.service が invoice/bank_transfer テナントの請求書を作るときの源泉。
   ///   feedback_billing_invariant: ApiCallLog SUM (真値) = 本カラム = 画面表示 = CSV = 請求書 の整合性必須。
   currentMonthEmbeddingCostJpy         Int       @default(0) @map("current_month_embedding_cost_jpy")
+  /// ADR-0027 (2026-05-29): たすきフクロウ AI ヘルプチャット (LEARNING_FREE) の当月呼出回数。
+  ///   全プラン無料 (学習コストとして運営吸収)、テナント単位月 100 回上限
+  ///   (HELP_CHAT_MONTHLY_LIMIT_PER_TENANT)。/api/help/chat route が直接 increment、
+  ///   超過時は HTTP 429 + fallbackToAccordion フラグを返す。
+  ///   BILLABLE_FEATURE_UNITS / EMBEDDING_BILLABLE_FEATURE_UNITS いずれにも含まれない
+  ///   (= 課金集計対象外、ApiCallLog にのみ featureUnit='help-chat' で記録)。
+  ///   月次リセット (= 0) は tenant-monthly-reset.service.ts に PR6 で組み込む。
+  currentMonthHelpChatCount            Int       @default(0) @map("current_month_help_chat_count")
   /// ユーザ自己設定の月次予算上限 (円)。NULL = 無制限。withMeteredLLM が予測コスト超過チェックで参照。
   ///   ADR-0022: 判定対象は LLM_BILLABLE のみ (= Embedding はチャット検索/資産入力に必須のため予算上限とは独立)。
   monthlyBudgetCapJpy                  Int?      @map("monthly_budget_cap_jpy")
@@ -1897,4 +1905,84 @@ model TenantConsentLog {
   @@unique([tenantId, consentType, version])
   @@index([tenantId], map: "idx_tenant_consent_logs_tenant")
   @@map("tenant_consent_logs")
+}
+
+// ============================================================
+// Help Chat (たすきフクロウ AI) RAG Embeddings
+// ============================================================
+
+/// ADR-0028: ヘルプチャット RAG 検索基盤 (FAQ embedding).
+///
+/// `src/config/faq-content.ts` の各 FAQ エントリに対して Voyage AI で生成した
+/// embedding を保持し、ヘルプチャット (`/api/help/chat`) の質問文と pgvector
+/// Cosine 類似度で上位 K 件を抽出して LLM プロンプトに注入する。
+///
+/// **設計判断**:
+/// - **テナント横断**: FAQ 本文はサービス全体で共有 (`src/config` に source-of-truth)
+///   のため tenant_id を持たない。chat-search.service.ts と異なり tenant 境界
+///   フィルタは不要。
+/// - **権限デノーマライズ**: `requires_admin` / `requires_project_pm` を denormalize
+///   して SQL 段で top-K を権限フィルタする。defense-in-depth として
+///   `getFaqEntriesForRole(viewer)` で TS 側でも再検証する (ADR-0028 §6)。
+/// - **drift 検知**: `content_hash` は `src/config/faq-content.ts` の本文 SHA-256。
+///   scripts/check-faq-embeddings-sync.ts が CI で DB 側と config 側を突合し
+///   差分があれば fail させる (★生命線★ 4 層防御の 1 つ)。
+/// - **content_snapshot**: LLM RAG 入力に使う本文。source-of-truth は `src/config`
+///   だが、デプロイ瞬間に config と DB が乖離する瞬間でも回答品質を維持するため
+///   DB 側にも snapshot を保持する。
+/// - **NOT NULL**: embedding 生成失敗時は row 自体を作らない (= row が存在する
+///   ことが embedding 完了の証跡)。chat-search.service.ts の `IS NOT NULL` ガード
+///   と同じ意図。
+model FaqEmbedding {
+  id                String                      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// FAQ エントリ ID (`src/config/faq-content.ts` の `FaqEntry.id` と一致)。
+  /// 例: 'csv-import-external-wizard-4steps-detail'
+  entryId           String                      @unique @map("entry_id") @db.VarChar(150)
+  /// embedding 生成元テキスト (question + answer + keywords を結合) の SHA-256。
+  /// scripts/check-faq-embeddings-sync.ts の drift 検知に使用。
+  contentHash       String                      @map("content_hash") @db.VarChar(64)
+  /// RAG プロンプトに注入する本文 snapshot。source-of-truth は `src/config`。
+  contentSnapshot   String                      @map("content_snapshot") @db.Text
+  /// Voyage AI embedding (1024 次元、voyage-4-lite)。NOT NULL = 生成完了の証跡。
+  contentEmbedding  Unsupported("vector(1024)") @map("content_embedding")
+  /// 権限フィルタ (SQL 段で top-K を絞り込む。defense-in-depth で TS 側でも再検証)。
+  requiresAdmin     Boolean                     @default(false) @map("requires_admin")
+  /// 権限フィルタ (Tenant Admin OR Project PM 限定 FAQ かどうか)。
+  requiresProjectPm Boolean                     @default(false) @map("requires_project_pm")
+  /// FAQ カテゴリ (filter / debug 用)。例: 'plan' | 'csv' | 'mfa' | 'role'
+  category          String                      @db.VarChar(50)
+  /// embedding 生成時刻 (drift 確認 / 監査)。
+  generatedAt       DateTime                    @default(now()) @map("generated_at") @db.Timestamptz
+  createdAt         DateTime                    @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt         DateTime                    @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@index([category], map: "idx_faq_embeddings_category")
+  @@index([requiresAdmin, requiresProjectPm], map: "idx_faq_embeddings_permission")
+  @@map("faq_embeddings")
+}
+
+/// ADR-0028: ヘルプチャット RAG 検索基盤 (使い方ガイド embedding).
+///
+/// `src/config/guide-content.ts` の各ステップに対して Voyage AI で生成した
+/// embedding を保持する。設計は [[FaqEmbedding]] と同型。
+///
+/// 差分: `step_order` を持ち、回答時にステップ順を保ったまま LLM に渡す。
+model GuideEmbedding {
+  id                String                      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// ガイドステップ ID (`src/config/guide-content.ts` の `GuideStep.id` と一致)。
+  entryId           String                      @unique @map("entry_id") @db.VarChar(150)
+  contentHash       String                      @map("content_hash") @db.VarChar(64)
+  contentSnapshot   String                      @map("content_snapshot") @db.Text
+  contentEmbedding  Unsupported("vector(1024)") @map("content_embedding")
+  requiresAdmin     Boolean                     @default(false) @map("requires_admin")
+  requiresProjectPm Boolean                     @default(false) @map("requires_project_pm")
+  /// 表示順 (使い方ガイドはステップ順で意味を持つ)。
+  stepOrder         Int                         @map("step_order")
+  generatedAt       DateTime                    @default(now()) @map("generated_at") @db.Timestamptz
+  createdAt         DateTime                    @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt         DateTime                    @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@index([stepOrder], map: "idx_guide_embeddings_step_order")
+  @@index([requiresAdmin, requiresProjectPm], map: "idx_guide_embeddings_permission")
+  @@map("guide_embeddings")
 }

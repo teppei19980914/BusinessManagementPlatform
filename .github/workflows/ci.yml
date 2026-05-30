@@ -80,6 +80,15 @@ jobs:
         # 詳細: docs/adr/0019-billable-feature-units-and-free-tier-expansion.md §LLM 暴走防止
         run: pnpm check:llm-billing-bypass
 
+      - name: FAQ embeddings sync check (★生命線★ ADR-0028 / 2026-05-30)
+        # ADR-0028 (RAG 移行) の 4 層防御の Layer 1。
+        # src/config/faq-content.ts / guide-content.ts の構造健全性 (id 重複 / 文字数超過 /
+        # visibleTo 不正値 / Voyage MAX_INPUT_CHARS 超過 等) を機械的に検出。
+        # 本ガードが PASS することは scripts/generate-faq-embeddings.ts が安全に走る
+        # 前提条件。FAQ/Guide が肥大化しても deploy 後の embedding 生成が破綻しない。
+        # 詳細: docs/knowledge/KDD_PATTERNS.md §5.X+193 / docs/developer-guide/FAQ_AND_OWL_CHAT_GUIDE.md §7
+        run: pnpm check:faq-embeddings-sync
+
       - name: Test (vitest + coverage)
         # PR #83: --coverage で v8 プロバイダが coverage-final.json / coverage-summary.json
         # / lcov.info を coverage/ 配下に出力する。

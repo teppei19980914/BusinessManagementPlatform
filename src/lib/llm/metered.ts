@@ -226,7 +226,7 @@ export async function withMeteredLLM<T>(
 
   const modelName = resolveModelForPlan(plan);
 
-  // ADR-0022 (2026-06-01) 4 階層分類で featureUnit を判定:
+  // ADR-0022 (2026-06-01) 4 階層分類 + ADR-0027/0028 LEARNING_FREE で featureUnit を判定:
   //   1. LLM_BILLABLE (project-upsert / suggestion-explanation / auto-tag-extract):
   //      plan 別単価、currentMonthApi* counter、Beginner 50 / budget cap 判定対象、
   //      Stripe queue は haiku/sonnet event。
@@ -236,7 +236,12 @@ export async function withMeteredLLM<T>(
   //      判定対象外 (= 既存上限ロジック不変)、Stripe queue は cost > 0 のみ embedding event。
   //   3. EMBEDDING_BACKFILL (cron 自動リカバリ): 全プラン ¥0 維持、counter 不変、Stripe queue 不投入。
   //      ユーザ非起動の処理での課金は「不当請求」 = UX/信頼関係に直接影響するため明示的 free。
-  //   4. その他 (= 未知 / 想定外): cost=0、counter 不変、Stripe queue 不投入 (安全側)。
+  //   4. LEARNING_FREE (help-chat / help-chat-embedding、ADR-0027 / ADR-0028):
+  //      下記 4 番目「その他」分岐に **意図的に落ちる** ことで cost=0 / counter 不変 / Stripe 不投入
+  //      の安全側挙動を得る。LEARNING_FREE_FEATURE_UNITS は明示判定せず、未追加なのが正解。
+  //      `help-chat` は元々 withMeteredLLM を経由しないが、`help-chat-embedding` (RAG query embedding)
+  //      は generateBatchEmbeddings 経由で本関数を通る。
+  //   5. その他 (= 未知 / 想定外 / LEARNING_FREE): cost=0、counter 不変、Stripe queue 不投入 (安全側)。
   const isLlmBillable = isLlmBillableFeatureUnit(options.featureUnit);
   const isEmbeddingBillable = isEmbeddingBillableFeatureUnit(options.featureUnit);
   const isEmbeddingBackfill = isEmbeddingBackfillFeatureUnit(options.featureUnit);
@@ -244,7 +249,7 @@ export async function withMeteredLLM<T>(
   // cost 計算: featureUnit カテゴリで分岐。
   //   LLM → resolveCostForPlan(plan): Beginner=0 / Expert=¥10 / Pro=¥15
   //   Embedding → resolveEmbeddingCostJpy(plan): Beginner=0 / Expert=¥1 / Pro=¥1
-  //   Backfill / 未知 → 0 (明示的 free)
+  //   Backfill / 未知 / LEARNING_FREE (help-chat-embedding 等) → 0 (明示的 free)
   const costJpy = isLlmBillable
     ? resolveCostForPlan(plan, {
         pricePerCallHaiku: tenant.pricePerCallHaiku,

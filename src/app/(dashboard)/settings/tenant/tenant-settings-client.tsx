@@ -952,10 +952,18 @@ function UsageSection({
             ? 'Beginner プランは Embedding 機能も完全無料です (= 件数のみ記録)'
             : `${info.plan === 'pro' ? 'Pro' : 'Expert'} プランは 1 業務操作あたり ¥1 の従量課金 (ADR-0022)。資産 100 件 CSV 取込でも ¥1 で済む集約設計。`}
         </p>
+        {/*
+          ADR-0028 PR #471 (2026-05-30): ヘルプ・ガイドチャットの embedding (LEARNING_FREE) は
+          counter 対象外であることを明示。UI 上から判別できない混乱を防ぐため必須注記。
+          関連: KDD §5.X+201 / PER_CALL_COST_BREAKDOWN.md §1.5
+        */}
+        <p className="mt-1 text-xs text-muted-foreground">
+          ※ たすきフクロウ AI ヘルプ・ガイドチャットの embedding は学習支援機能 (全プラン無料) のため、本カウンタには **含まれません** (ADR-0028)。
+        </p>
         <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div
             className="cursor-help"
-            title="当月の Embedding 系呼出 (= 資産作成/更新・チャット検索・添付索引化等)。ApiCallLog SUM 真値ベース"
+            title="当月の Embedding 系呼出 (= 資産作成/更新・チャット検索・添付索引化等)。ヘルプ・ガイドチャット (LEARNING_FREE) は対象外。ApiCallLog SUM 真値ベース"
           >
             <p className="text-xs text-muted-foreground">Embedding 呼出</p>
             <p className="text-xl font-bold">

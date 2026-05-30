@@ -18120,3 +18120,1245 @@ return k;  // ユーザには即返却、embedding は response 後に裏で生�
 - 関連 feedback memory: [[feedback_billing_invariant]] / [[feedback_billing_4layer_classification]] / [[project_suggestion_engine_priority]]
 - 関連 source: [src/services/knowledge.service.ts](../../src/services/knowledge.service.ts) / [risk.service.ts](../../src/services/risk.service.ts) / [retrospective.service.ts](../../src/services/retrospective.service.ts) / [memo.service.ts](../../src/services/memo.service.ts) / [project.service.ts](../../src/services/project.service.ts)
 - 関連 backfill: [src/services/embedding-backfill.service.ts](../../src/services/embedding-backfill.service.ts)
+
+## §5.X+187 FAQ 文言と実装の drift 検知パターン (feat/faq-revamp PR1)
+
+**問題**: `src/app/(dashboard)/help/help-client.tsx` の FAQ 文言は、機能リリース時にコピペで作られたあと、実装側 (ADR / service / config) が改修されても **文言だけ古いまま放置** されるリスクが高い。実例として、PR1 着手時に「退会するとデータはどうなりますか？」の回答が **「30 日間の Grace 期間を経て物理削除」** と記述されていたが、実装は `beginner-expiry.service.ts` の **180 日ルール (試用 90 日 + 読み取り専用 90 日)** に置き換わって 6 ヶ月以上経過していた。ユーザに誤情報を提示し、運営側はサポート問合せで気づくまで検知できない。
+
+**結論**: FAQ 文言の drift を **再現性のある source-pattern test** で機械的に防ぐ。
+
+```ts
+// help-client.test.ts (vitest, environment: 'node')
+import { readFileSync } from 'node:fs';
+const source = readFileSync('src/app/(dashboard)/help/help-client.tsx', 'utf8');
+
+describe('退会 FAQ 実装一致 invariant', () => {
+  it('プラン別の正確な期間 (Beginner 180 日 / Expert・Pro セルフ解約) を含む', () => {
+    expect(source).toMatch(/q="退会するとデータはどうなりますか？"/);
+    expect(source).toMatch(/180 日/);
+    expect(source).toMatch(/セルフ解約/);
+    // 旧誤記の再混入防止
+    expect(source).not.toMatch(/30 日間の Grace/);
+  });
+});
+```
+
+**設計上の留意点 (4 点)**:
+
+1. **再混入防止 (`not.toMatch`) を必ず併用**: 「新しい正しい文言があるか」だけでなく「古い間違いが消えたか」を両方担保する。後者がないとリファクタ時に元に戻る (Git revert 後に test が pass してしまう)。
+2. **数値・期間は test で固定**: 90 日 / 180 日 / 25 日 / ¥15 など、ユーザに見える数値はすべて test の正規表現に明示する。実装の数値が変わった瞬間に test が落ち、FAQ 修正もれが検知できる。
+3. **FaqCategory タイトル + Q 文言は構造化アサーション**: 「請求と支払いについて」「権限とロールについて」など FaqCategory の存在自体と、その下にあるべき Q 件数を担保。カテゴリ削除や Q の見落としを防ぐ。
+4. **「使ったぶんだけ」「○○できません」など宣言的な業務ルール文言も担保**: 例えば「Pro/Expert → Beginner 戻せない」「日割り計算なし」など、後で実装が変わった場合に FAQ 更新が必要となる宣言は test に固定する。
+
+**何を避けるべきか**:
+
+- ❌ FAQ 文言を実装変更時に手動でレビューする運用 (1〜2 回は対応できるが体制崩壊で漏れる)
+- ❌ E2E spec で UI レンダリング後の文字列を assertion (Playwright wait 必要で遅い、source 直 grep の方が CI で早い)
+- ❌ 「ユーザが気づいたら直す」運用 (誤情報の期間中にサポート負荷が増え、信頼低下)
+- ❌ docs/public/*.md の手動同期だけ (FAQ コンテンツが実装変更で乖離する根本対策にならない)
+
+**横展開チェックリスト**:
+
+- [ ] 実装変更時に FAQ にも記述があるか grep (`grep -r "数値" src/app/\(dashboard\)/help/`)
+- [ ] 新規 FAQ 追加時に Q 文言 + 重要数値の assertion を test に追加したか
+- [ ] FAQ で参照している ADR/config が改訂された場合、文言更新と test 更新の両方が必要
+- [ ] docs/public/*.md にも同じ事実が書かれている場合は併せて同期 (4 軸 grep: 数値 / 表示文字列 / 自然文 / アサーション)
+
+### 関連
+
+- 関連 ADR: [ADR-0013](../adr/0013-beginner-downgrade-prohibition.md) (戻せない仕様) / [ADR-0019](../adr/0019-billable-feature-units-and-free-tier-expansion.md) (課金 featureUnit) / [ADR-0025](../adr/0025-beginner-write-guard.md) (Beginner write block) / [ADR-0026](../adr/0026-embedding-async-generation.md) (embedding 非同期 タイムラグ)
+- 関連 PR: feat/faq-pr1-urgent-billing-fix (40a919c0) / feat/faq-pr2-clarity-rewrite (b7b6bb02) / feat/faq-pr3-medium-priority (176e6e78) / feat/faq-pr4-low-priority-and-docs (本 PR)
+- 関連 feedback memory: [[feedback_design_comment_vs_impl_drift]] (3 巡目検証で同種事例を検出) / [[feedback_repeated_verification_request.md]] (深堀り検証の重要性)
+- 関連 source: [src/app/(dashboard)/help/help-client.tsx](../../src/app/(dashboard)/help/help-client.tsx) / [src/app/(dashboard)/help/help-client.test.ts](../../src/app/(dashboard)/help/help-client.test.ts) / [src/services/beginner-expiry.service.ts](../../src/services/beginner-expiry.service.ts)
+
+## §5.X+188 FAQ AI チャット ハルシネーション対策 5 点セット (feat/faq-revamp PR5-7 / ADR-0027)
+
+**問題**: たすきフクロウ AI ヘルプチャット (`/api/help/chat`) で Claude Haiku に自然文質問を投げる際、何の対策もしないと AI が以下のハルシネーションを起こすリスクがある:
+
+1. **存在しない機能の説明** (例: 「メール送信機能があります」と返すが実装なし)
+2. **数値の創作** (例: 「請求は毎月 1 日です」と返すが実装は 25 日)
+3. **権限外情報の漏洩** (例: 一般メンバーに料金体系を回答してしまう)
+4. **業務データへの推論** (例: 「あなたのプロジェクトは順調です」と意味のない断定)
+5. **不存在 API へのリンク誘導** (例: 「`/settings/billing-export` から DL できます」と返すがそのパスはない)
+
+これらは ユーザの誤操作 / 誤った期待値 / セキュリティ事故 に直結する。FAQ AI チャットの「**何でも知っているが正確に答える**」設計思想 ([[project_faq_drives_ai_accuracy]] / [[project_mascot_owl]]) を維持するには、AI に任せきりにせず構造的な制約を入れる必要がある。
+
+**結論**: 5 点セットの組み合わせで構造的にハルシネーションを抑制する。
+
+### 5 点対策
+
+#### 1. 知識源を FAQ/ガイド全文に限定 (system prompt 同梱)
+
+```ts
+const systemPrompt = `あなたは...「下記の許可された FAQ と使い方ガイドに含まれる情報のみを根拠に回答し、それ以外の推測は禁止です」
+
+【許可された FAQ】
+${buildFaqPromptSection(viewer)}
+
+【許可された使い方ガイド】
+${buildGuidePromptSection(viewer)}
+`;
+```
+
+RAG ではなく **全文同梱** にする理由: FAQ 50 件規模では Voyage embedding 検索でカバーすべき内容を取り逃すリスクがあり、全文同梱の方が確実 (~10K tokens / Haiku 200K window の 5%)。
+
+#### 2. 出典 ID を JSON 出力で必須化
+
+```ts
+const HelpChatOutputSchema = z.object({
+  answer: z.string().min(1).max(2000),
+  answerType: z.enum(['faq', 'guide-walkthrough', 'out-of-scope', 'permission-denied']),
+  sourceFaqIds: z.array(z.string()).max(10),       // ← 出典 FAQ id (必須)
+  sourceGuideStepIds: z.array(z.string()).max(5),  // ← 出典ガイド step id (必須)
+  suggestSemanticSearch: z.boolean(),
+});
+```
+
+AI が「どの FAQ から答えたか」を明示する義務を負うことで、根拠なしの推測を抑制する。UI 側で「📖 FAQ: billing-cycle」リンクを表示し、ユーザが原文を確認できる経路も提供する。
+
+#### 3. FAQ/ガイドにない内容は固定文で誘導 (推測禁止)
+
+system prompt で明示:
+> 該当する内容が許可された FAQ/ガイドにない場合は:
+> - answerType="out-of-scope"
+> - answer="うーん、その内容は FAQ や使い方ガイドにまだありません…画面右上のアカウントメニューから Discord にアクセスして開発者にお尋ねください。"
+
+「分からない時はそう言う」が AI には難しいため、出力スキーマと固定文で強制する。
+
+#### 4. 業務データ質問は chat-semantic-search へ誘導
+
+system prompt で明示:
+> 業務データの質問 (「プロジェクト X の進捗は?」など特定プロジェクト/ナレッジの中身) は:
+> - answerType="out-of-scope" + suggestSemanticSearch=true
+> - answer="📊 そのご質問は『過去資産の意味検索』機能の方が得意です。画面右下のチャットアイコンから検索してみてください。"
+
+ヘルプチャットと業務データチャットは別機能 (前者は静的 FAQ ベース、後者は動的データ検索) なので、誤って業務データを推論しないよう明示的に誘導する。
+
+#### 5. ★severity-1★ サーバ側で sourceFaqIds の権限再検証 (defense-in-depth)
+
+```ts
+// AI 出力後、サーバ側で再フィルタ (AI hallucination で許可外 id が返っても安全)
+const allowedFaqIds = new Set(getFaqEntriesForRole(viewer).map((e) => e.id));
+const sourceFaqIds = output.sourceFaqIds.filter((id) => allowedFaqIds.has(id));
+```
+
+system prompt で権限制限を伝えても、AI は確率的に許可外の id を返す可能性がある。サーバ側で必ず viewer の権限スコープ内にあるかを再検証する (defense-in-depth)。これが「フクロウ = 情報流出を防ぐ鍵」コンセプトの実装核 ([[project_mascot_owl]])。
+
+### 何を避けるべきか
+
+- ❌ system prompt の指示だけに頼る (確率的モデルは指示違反する。出力スキーマ + サーバ側検証の二段構えが必須)
+- ❌ FAQ にない質問に AI が独自に推論で答えるのを許容 (誤情報の温床)
+- ❌ ユーザの自然文質問に「業務データ取得」「コマンド実行」を AI から指示させる (権限境界が崩れる)
+- ❌ 出典 ID 表示なし (ユーザが原文を確認できず、信頼性が低下する)
+- ❌ 権限フィルタを UI 表示にだけ依存する (API 直叩きで漏洩する)
+
+### 横展開チェックリスト
+
+- [ ] 新規 AI チャット機能を作る時、知識源を明示的に system prompt に含めているか
+- [ ] 出力スキーマで出典 (sourceXXXIds) を必須化しているか
+- [ ] 「知らない時の固定文」を system prompt で強制しているか
+- [ ] AI の知識源外質問に対する誘導先 (Discord / 別機能) を明示しているか
+- [ ] サーバ側で AI 出力の権限再検証 (defense-in-depth) を実装しているか
+- [ ] 上記すべてを test で機械的に担保しているか (snapshot test / 権限フィルタ test)
+
+### 関連
+
+- 関連 ADR: [ADR-0027](../adr/0027-help-ai-concierge.md) (本決定の根拠)
+- 関連 PR: feat/faq-pr5-ai-concierge-core (`251bf7fb` AI コア + 権限制御) / feat/faq-pr6-ai-ui-minimal (`405f3aef` HelpChatInput 統合)
+- 関連 feedback memory: [[feedback_unjust_billing_risk_cron]] / [[project_faq_drives_ai_accuracy]] / [[project_mascot_owl]]
+- 関連 source: [src/app/api/help/chat/route.ts](../../src/app/api/help/chat/route.ts) / [src/config/faq-content.ts](../../src/config/faq-content.ts) / [src/config/guide-content.ts](../../src/config/guide-content.ts)
+- 関連 test: [src/config/faq-content.test.ts](../../src/config/faq-content.test.ts) (権限フィルタ 14 ケース) / [src/config/guide-content.test.ts](../../src/config/guide-content.test.ts) (横展開 7 ケース)
+- 開発者ガイド: [FAQ_AND_OWL_CHAT_GUIDE.md](../developer-guide/FAQ_AND_OWL_CHAT_GUIDE.md) §6
+- 仕様書: [HELP_CHAT.md](../specification/HELP_CHAT.md) §5
+
+## §5.X+189 LEARNING_FREE 等の「意図的に withMeteredLLM を経由しない」LLM 経路は check-llm-billing-bypass の ALLOWLIST_EXACT に追加必須 (PR #471 CI fail / ADR-0027)
+
+**問題**: 新規 LLM 機能をローカルで `pnpm lint && tsc && test && build` がすべて PASS する状態で push したが、CI ジョブ「LLM billing bypass check」だけが失敗した。エラー:
+
+```
+[check-llm-billing-bypass] ❌ 課金バイパス検出
+  src/app/api/help/chat/route.ts:57 — import { getAnthropicClient } from '@/lib/llm/anthropic-client'
+    getAnthropicClient の直接 import は禁止です。withMeteredLLM 経由のラッパー (auto-tag.service / suggestion-explanation.service) を使ってください。
+  src/app/api/help/chat/route.ts:245 — getAnthropicClient()
+    getAnthropicClient() を直接呼んでいます。withMeteredLLM の callback 内で呼ぶか、auto-tag.service.ts / suggestion-explanation.service.ts 経由で使ってください。
+```
+
+この CI ガード (`scripts/check-llm-billing-bypass.ts`) は ADR-0019 (BILLABLE_FEATURE_UNITS 設計) で「Anthropic / Voyage の直叩きは ApiCallLog 記録 / Stripe queue / rate limit / fair use limit のすべてをバイパスしてしまう」ことを構造的に防ぐためのもので、ローカルの 4 点セット (lint / tsc / test / build) には含まれない **CI 専用ガード**。
+
+**結論**: 「ADR で正当化された LEARNING_FREE 等の独立経路」は **設計判断として正当な例外** のため、`scripts/check-llm-billing-bypass.ts` の `ALLOWLIST_EXACT` に追加して CI を PASS させる。
+
+```ts
+// scripts/check-llm-billing-bypass.ts
+const ALLOWLIST_EXACT = new Set<string>([
+  'src/lib/llm/anthropic-client.ts',
+  // ...既存
+  // ADR-0027 (2026-05-29): たすきフクロウ AI ヘルプチャットは LEARNING_FREE 分類で
+  //   意図的に withMeteredLLM を経由しない独立経路 (cost=0 全プラン無料、
+  //   Tenant.currentMonthHelpChatCount で月次回数を独自管理)。
+  'src/app/api/help/chat/route.ts',
+]);
+```
+
+**設計上の留意点 (3 点)**:
+
+1. **ALLOWLIST 追加には必ず ADR で正当化された設計判断が必要**: 「ちょっと試したいから」「面倒だから」での追加は禁止。ADR-0027 のように、「なぜ withMeteredLLM を経由しないか」「代替の課金/制限機構は何か」を文書化することが必須。help-chat の場合は (a) cost=0 全プラン無料 (b) `Tenant.currentMonthHelpChatCount` で独自カウント (c) `applyRateLimit('help-chat', 10/min)` + テナント月 100 回上限の二重ガード で代替を担保している。
+
+2. **コメントで ADR への参照を必ず付ける**: ALLOWLIST_EXACT への追記行と、スクリプト上部のコメントブロック (Allowlist 一覧) の両方に「ADR-XXXX」を明記する。将来の保守者が「なぜここに入っているか」を即座に追跡可能にする。
+
+3. **行末 `// llm-billing-allow:` パターンは一時的・限定的な許可向け**: スクリプトは行末コメント `// llm-billing-allow:` を含む行を読み飛ばす設計だが、これは「ADR でまだ正当化されていないが緊急対応で必要」など短期例外向け。ADR で正式に設計された経路は ALLOWLIST_EXACT に登録する方が、将来の意図伝達と grep 追跡性に優れる。
+
+**何を避けるべきか**:
+
+- ❌ CI fail を見て「`withMeteredLLM` 経由に書き直さなきゃ」と反射的にリファクタする (LEARNING_FREE 等の cost=0 独立経路には不要かつ余計な複雑性を持ち込む)
+- ❌ `// llm-billing-allow: temporary` で長期間放置する (ADR 化の動機を失う)
+- ❌ ALLOWLIST_EXACT 追記時に ADR/コメント無しで PR を出す (レビュー観点が「なぜここを許可してよいか」に集中できない)
+- ❌ ローカルで lint + tsc + test + build のみ実行して push する (LLM 機能を新規追加する PR では CI 固有ガード を踏まえ、push 前に `pnpm check:llm-billing-bypass` も明示的に実行する)
+
+**横展開チェックリスト**:
+
+- [ ] 新規 LLM 機能を追加する PR では、commit 前に `pnpm check:llm-billing-bypass` を必ず実行
+- [ ] 直叩きが必要な設計判断 (LEARNING_FREE / その他 cost=0 経路) は ADR で文書化されているか
+- [ ] ALLOWLIST_EXACT 追記時に該当 ADR への参照コメントを付与
+- [ ] 同じ判断は `scripts/check-llm-billing-bypass.ts` 上部の Allowlist 説明ブロックにも反映
+- [ ] 開発者ガイド (例: FAQ_AND_OWL_CHAT_GUIDE.md) に「課金ゲートウェイの設計判断」セクションがあれば併記
+
+### 関連
+
+- 関連 ADR: [ADR-0019](../adr/0019-billable-feature-units-and-free-tier-expansion.md) (BILLABLE_FEATURE_UNITS、本ガードの趣旨) / [ADR-0027](../adr/0027-help-ai-concierge.md) (LEARNING_FREE で独立経路を正当化)
+- 関連 PR: PR #471 (本 CI fail / 修正の事例) / PR5 `251bf7fb` (LEARNING_FREE_FEATURE_UNITS の新設) / PR9 `2f2a5692` (rate limit 追加)
+- 関連 source: [scripts/check-llm-billing-bypass.ts](../../scripts/check-llm-billing-bypass.ts) (本ガード本体) / [src/app/api/help/chat/route.ts](../../src/app/api/help/chat/route.ts) (ALLOWLIST に追加した route) / [src/config/billing-feature-units.ts](../../src/config/billing-feature-units.ts) (`LEARNING_FREE_FEATURE_UNITS`)
+- 関連 feedback memory: [[feedback_billing_4layer_classification]] (cron 経由の不当請求リスクと整合する設計判断) / [[feedback_unjust_billing_risk_cron]]
+- 開発者ガイド: [FAQ_AND_OWL_CHAT_GUIDE.md](../developer-guide/FAQ_AND_OWL_CHAT_GUIDE.md) §1.3 課金分類
+- KDD 関連: §5.X+188 (FAQ AI ハルシネーション対策、本 §189 と同 PR 由来)
+
+## §5.X+190 Prisma / Anthropic SDK を使う新規 API route には `export const runtime = 'nodejs'` を必ず明示 (PR #471 Netlify Edge Function crash)
+
+**問題**: ローカル `pnpm build` も CI (lint / tsc / test / build / E2E / security-check) もすべて PASS した状態で deploy preview を開いたら、以下のエラーで全画面崩壊した:
+
+```
+This edge function has crashed
+edge function invocation failed
+Console: SyntaxError: Unexpected token 'e', "edge funct"... is not valid JSON
+```
+
+CI も Netlify build も success のため、原因切り分けに時間がかかった。実は **新規 API route `/api/help/chat/route.ts` で `export const runtime = 'nodejs'` を明示し忘れた** のが直接原因。Next.js のデフォルト runtime 解決は環境依存で、Netlify では Prisma / Node.js SDK 依存があると意図せず Edge Function として bundle され、runtime 起動時に SDK 内部の Node.js API (例: `Buffer`, `process.versions`, native fs) を呼んだ瞬間にクラッシュする。
+
+**結論**: **Prisma / Anthropic SDK / Voyage SDK / Node.js 専用ライブラリを使う新規 API route には、ファイル先頭で `export const runtime = 'nodejs'` を必ず明示する**。これは既存の運用パターン (例: `/api/health/route.ts:23`、`/api/memos/sync-import/route.ts:30`) と完全に同じ。
+
+```ts
+// src/app/api/help/chat/route.ts (修正後)
+import { NextRequest, NextResponse } from 'next/server';
+import { prisma } from '@/lib/db';
+import { getAnthropicClient } from '@/lib/llm/anthropic-client';
+
+// ★severity-1★ Node Runtime 必須 (Prisma + Anthropic SDK は Edge Runtime 非対応)。
+//   未指定だと Netlify Edge Functions に bundle され runtime crash する。
+export const runtime = 'nodejs';
+
+export async function POST(req: NextRequest) { ... }
+```
+
+**設計上の留意点 (5 点)**:
+
+1. **CI / ローカル build では検知できない**: `pnpm build` は Edge runtime と Node runtime の両方の bundle を生成できるため成功する。runtime crash は **deploy 後の初回アクセス** で初めて発覚する。CI に手動テストを組み込んでいない PR で容易にすり抜ける。
+2. **エラーメッセージが汎用**: 「edge function invocation failed」は Netlify Edge Functions の汎用 wrapper エラー。crash 原因の特定には Netlify Functions log を別途確認する必要があり、特定に時間がかかる。
+3. **既存 route は全て明示済**: `grep -rn "export const runtime" src/app/` で既存 API route の慣習を確認できる。新規追加時は必ず同じパターンを踏襲する。
+4. **クライアント component の type-only import は問題ない**: `import type { HelpChatOutput } from '@/app/api/help/chat/route'` のような type-only import は TS / Next.js のバンドラーで完全に消えるため、`'use client'` component から型だけ import するのは安全。crash の原因にはならない。
+5. **対応する CI ガードを将来追加できる**: `scripts/check-llm-billing-bypass.ts` と同じパターンで「Prisma / @anthropic-ai/sdk を import している API route で `runtime = 'nodejs'` が無い場合は CI fail」というガードを追加することで、本事故の再発を構造的に防げる (将来の負債解消候補)。
+
+**何を避けるべきか**:
+
+- ❌ デフォルト runtime に任せる (Next.js のバージョン / 環境で挙動が変わる)
+- ❌ `export const runtime = 'edge'` を Prisma 使用 route で指定 (即クラッシュ)
+- ❌ CI が緑だから OK と判断してマージ (deploy preview / production で初発見しがち)
+- ❌ エラーログを見ずに「環境変数の問題かも」と推測で先に進む (Netlify Functions log を確認すれば一発で特定できる)
+
+**横展開チェックリスト**:
+
+- [ ] 新規 API route 追加時は `grep "export const runtime" src/app/api/<同じ階層の既存 route>` で慣習を確認
+- [ ] Prisma / Anthropic SDK / Voyage SDK / Node.js 専用ライブラリを使う route には `export const runtime = 'nodejs'` を必ず明示
+- [ ] PR push 後は CI 緑だけで安心せず、**Netlify deploy preview を実際にブラウザで開いて initial page が表示されるか必ず確認**
+- [ ] エラー発生時は推測せず、まず Netlify Dashboard → Deployments → 該当 deploy → Functions タブで Edge Functions log を確認
+- [ ] 将来的に「Prisma import あり + runtime 未指定」を検知する CI ガード (`scripts/check-nodejs-runtime-required.ts`) の追加を検討
+
+### 関連
+
+- 関連 PR: PR #471 (本事故の検出と修正)
+- 関連 commit: 修正コミット (本 §190 と同 PR で追加)
+- 関連 source: [src/app/api/help/chat/route.ts](../../src/app/api/help/chat/route.ts) (本修正対象) / [src/app/api/health/route.ts:22-23](../../src/app/api/health/route.ts) (参考実装) / [src/app/api/memos/sync-import/route.ts:30](../../src/app/api/memos/sync-import/route.ts) (参考実装)
+- 関連 ADR: [ADR-0027](../adr/0027-help-ai-concierge.md) (本 route の設計)
+- 関連 docs: [docs/operations/DEPLOYMENT.md](../operations/DEPLOYMENT.md) (Netlify deploy 関連)
+- KDD 関連: §5.X+189 (本 §190 と同 PR 由来、check-llm-billing-bypass ALLOWLIST 追加)
+
+## §5.X+191 Anthropic SDK で system プロンプトに `cache_control` を付け忘れる罠 (PR #471 / full-context FAQ コスト爆発防止)
+
+**問題**: 新規 LLM 機能 (`/api/help/chat/route.ts`) を実装する際、`client.messages.create` の `system` フィールドを **plain string** で渡してしまうと、Anthropic Prompt Caching が無効化される。
+
+```ts
+// ❌ NG: prompt caching が無効化される (毎回 input tokens 全額課金)
+const message = await client.messages.create({
+  system: systemPrompt,  // ← string で渡すと cache されない
+  messages: [...],
+});
+
+// ✅ OK: 5 分 TTL の prompt cache が有効化 (cache hit 時 input cost ~10%)
+const message = await client.messages.create({
+  system: [
+    {
+      type: 'text' as const,
+      text: systemPrompt,
+      cache_control: { type: 'ephemeral' as const },
+    },
+  ],
+  messages: [...],
+});
+```
+
+PR #471 の help-chat 実装で本罠を踏んだ。レビュー時に「FAQ が増えるほど 1 query コストが線形に膨れる」とユーザから指摘を受けて発覚。FAQ 全文を毎回プロンプトに同梱する full-context 方式 (ADR-0027) では、Prompt Caching が無効だと FAQ 規模に応じて運営コストが線形増大する致命的構造になる。
+
+**Anthropic Prompt Caching の経済学** (Haiku 4.5 / 2026 年時点):
+
+| 種別 | 単価 | 効果 |
+|---|---|---|
+| Input (cache miss) | $1.00 / 1M tokens | 通常価格 |
+| Input (cache hit) | $0.10 / 1M tokens | **90% off** |
+| Input (cache write) | $1.25 / 1M tokens | 25% premium (初回のみ) |
+| Output | $5.00 / 1M tokens | 影響なし |
+
+→ 5 分以内の再アクセスで input cost が ~10% になるため、テナント運用 (連続質問パターンあり) では平均 50-70% off が見込める。
+
+**結論**: **Anthropic Claude を使う新規 API route / service では、必ず system プロンプトに `cache_control: { type: 'ephemeral' }` を付与する。** 既存実装 (`src/services/auto-tag.service.ts:251-256` / `src/services/suggestion-explanation.service.ts:248-253`) が参考実装としてそのまま踏襲できる。
+
+**設計上の留意点 (5 点)**:
+
+1. **見落としやすい**: tsc / lint / build はすべて PASS する。動作も正しい (回答品質は同じ)。違いは「コストが約 4 倍」だけで、CI / ローカルでは検知できない。
+2. **長いプロンプトほど cache 効果が大きい**: 1024 tokens 以上の system プロンプトでのみ Prompt Caching が有効化される。FAQ + ガイド全文 (~10K〜100K tokens) は cache に乗せる典型例。
+3. **動的に変わる部分は cache しない**: viewer のロール別フィルタは system プロンプトに含まれるが、ロールが切り替わると cache miss する (= 別 cache キーになる)。FAQ 本文は権限フィルタ後の全文を 1 つの cache_control ブロックで囲んで OK。
+4. **5 分 TTL**: 5 分間アクセスが無いと cache 失効。テナント運用 (1 ユーザが連続質問) では平均 50-70% cache hit、夜間散発アクセスでは cache miss が増える。
+5. **`message.usage.cache_read_input_tokens` / `cache_creation_input_tokens` で実績確認可能**: 将来運営 KPI として「cache hit 率」を可視化し、ROI モニタリングできる (現実装では未収集、将来課題)。
+
+**何を避けるべきか**:
+
+- ❌ system を plain string で渡す (cache が効かず、毎回 input cost 全額)
+- ❌ 短すぎる system プロンプト (< 1024 tokens) で cache_control を付ける (cache 機構が動かないが loss なし、誤解のもと)
+- ❌ ロール別の動的部分と FAQ 本文を 1 つの cache_control にまとめる (cache miss が増える。実装によっては FAQ 本文と動的部分を別ブロックに分けて cache hit 率を上げる発展形あり)
+- ❌ コスト構造を ADR / developer-guide に記載しない (将来「FAQ を 600 件まで増やしたら年間予算が…」のような誤算につながる)
+
+**横展開チェックリスト**:
+
+- [ ] 新規 Anthropic Claude を使う route / service を作るときは `system: [{ type: 'text', text: ..., cache_control: { type: 'ephemeral' } }]` パターンを必ず使う (auto-tag.service / suggestion-explanation.service を参考)
+- [ ] system プロンプトの token 数を意識して、~1024 tokens 以上であることを確認 (発火条件)
+- [ ] ロール別の動的部分があれば、cache を効かせやすい構造に分ける (動的部分を最後に置く)
+- [ ] developer-guide / ADR / KDD にコスト構造表を記載 (FAQ / プロンプト規模別の 1 query コスト試算)
+- [ ] PR レビュー時に「`cache_control` 付与あり?」を確認するチェックリスト項目を追加
+- [ ] 将来: `message.usage.cache_read_input_tokens` を ApiCallLog に記録 (cache hit 率の可視化)
+
+### 関連
+
+- 関連 PR: PR #471 (本罠の検出と修正)
+- 関連 source: [src/app/api/help/chat/route.ts:252-262](../../src/app/api/help/chat/route.ts) (修正対象) / [src/services/auto-tag.service.ts:251-256](../../src/services/auto-tag.service.ts) (参考実装) / [src/services/suggestion-explanation.service.ts:248-253](../../src/services/suggestion-explanation.service.ts) (参考実装)
+- 関連 ADR: [ADR-0027 §1.2](../adr/0027-help-ai-concierge.md) (full-context 方式の採用、RAG 不採用)
+- 関連 docs: [FAQ_AND_OWL_CHAT_GUIDE.md §5.5](../developer-guide/FAQ_AND_OWL_CHAT_GUIDE.md) (Prompt Caching のコスト構造解説)
+- 公式リファレンス: Anthropic API Docs - Prompt Caching (https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching)
+- KDD 関連: §5.X+188 (FAQ AI ハルシネーション対策、本 §191 と同 PR 由来) / §5.X+189 (check-llm-billing-bypass ALLOWLIST) / §5.X+190 (runtime='nodejs' 明示)
+
+## §5.X+192 ★severity-high 設計判断ミス★ 既存資産流用を検討せず短期最適化で full-context を選んだ罠 ─ ユーザの長期構想を見落とすと撤回コストが大きい (PR #471 / ADR-0027 → ADR-0028)
+
+### 何が起きたか
+
+PR #471 でたすきフクロウ AI ヘルプチャットを実装する際、設計判断として **「現状 FAQ 42 件 / ~10K tokens なら Anthropic Prompt Caching + full-context で十分」** と判断し、ADR-0027 として正式化して実装まで進めた。しかしユーザから:
+
+> 「FAQ の量が多くなればなるほど credit が膨大になりますか? cache が hit する場合は線形にはならないと思いますが…」
+> 「案 B (RAG = Voyage embedding) であれば、固定コストは発生せず、むしろ FAQ 拡張をしてもコストは削減できるという認識であっていますか?」
+> 「★推奨: 案 B (RAG) への設計変更が良いと思います。私のその想定で作業を依頼していました。**なぜ案 A (full-context) にしたのでしょうか？**」
+
+と指摘を受け、ADR-0027 を **撤回** し ADR-0028 (RAG) に移行することになった。
+
+### なぜ起きたか (判断の根本原因)
+
+1. **現時点 (42 件 / ~10K tokens)** を起点にコスト試算した。「Prompt Caching で 90% off」が効くことを根拠に full-context を正当化したが、これは **短期最適化**。
+2. ユーザ memory `[[project_faq_drives_ai_accuracy]]` には「FAQ 50→300 件まで Haiku 1 query で対応可、100K tokens 超で RAG 化検討」と書かれており、本来は **長期で 300 件以上を見込む構想** だった。これを十分に読み込まずに「現状 42 件で快適」を起点にしてしまった。
+3. **既存資産 (Voyage AI + pgvector 基盤)** が成熟しているのに、それを「次フェーズの検討対象」と切り捨てた。chat-search.service.ts の `pgvectorSearch` パターンや embedding.service.ts の `generateBatchEmbeddings` は本機能にそのまま流用可能だった。
+4. **ADR 内に「既存実装の流用検討」が欠落** していた。ADR-0027 には full-context のメリット ("Prompt Caching でコスト最適化可能") は書いてあったが、RAG (= 既存資産) との明示的なトレードオフ比較表がなかった。
+
+### 撤回コスト
+
+- ADR-0027 を「Superseded」に変更、ADR-0028 を新規作成
+- route / service / schema / migration / scripts / tests / docs (FAQ_AND_OWL_CHAT_GUIDE.md, HELP_CHAT.md 等) を全面書き換え
+- 開発時間: 約 2 セッション分の作業を ADR-0028 への移行に再投資
+- 幸い「実装範囲が PR 内で完結」していたため、本番リリース前に撤回できた (本番リリース後の撤回だったら DB migration / Counter リセット等で更にコスト増)
+
+### 対策・教訓
+
+#### 1. **既存資産流用を検討するのを ADR 内で必須項目化**
+
+ADR テンプレートに「既存実装の流用検討」セクションを必ず含める:
+
+```markdown
+## 既存実装の流用検討
+
+| 既存資産 | 流用可否 | 不採用理由 (もし不採用なら) |
+|---|---|---|
+| 〇〇 service | 採用 | (採用するメリット記載) |
+| ✕✕ パターン | 不採用 | (本機能には合わない具体的理由) |
+```
+
+新規設計を選ぶときは「既存流用 vs 新規設計」のトレードオフ表を提示し、新規が将来保守者にとって明確に優れている根拠を提示する。
+
+#### 2. **長期構想 (memory / ユーザ発言) を必ず読み込んでから設計判断**
+
+実装着手前に以下を行う:
+
+- `memory/project_*.md` を全件読む (特にプロジェクト方針系)
+- ユーザの過去発言を grep する (`grep -r "FAQ" memory/`)
+- 「現状 N 件で快適だから」を起点にせず、「ユーザが想定している将来規模」を起点にする
+
+#### 3. **設計判断時の自問チェックリスト**
+
+- [ ] この機能のユーザの長期ビジョンは何か? (memory / ADR を遡る)
+- [ ] 既存資産で同じ機能を実現する方法はあるか? (grep で同種機能を探す)
+- [ ] 既存資産を流用した場合の欠点は何か? それは本機能にとって致命的か?
+- [ ] 短期最適 vs 長期最適のトレードオフを明示できるか?
+- [ ] ADR 内に「既存流用検討と不採用理由」を書いたか?
+
+#### 4. **ユーザ memory として feedback 化**
+
+本ケースの教訓は memory として永続化:
+
+- `feedback_reuse_existing_design_first.md` — ★最優先★ 既存資産流用を最初に検討
+- `feedback_ui_completion_is_default_scope.md` — UI 完成までを 1 スコープ単位とする
+
+### 関連
+
+- 関連 PR: PR #471 (本 KDD の発端)
+- 関連 ADR: [ADR-0027 (Superseded)](../adr/0027-help-ai-concierge.md) / [ADR-0028 (Current)](../adr/0028-help-chat-rag-migration.md)
+- 関連 memory: [feedback_reuse_existing_design_first.md](../../C:/Users/SF02512/.claude/projects/c--Users-SF02512-GitHub-Private-BusinessManagementPlatform/memory/feedback_reuse_existing_design_first.md) / [feedback_ui_completion_is_default_scope.md](../../C:/Users/SF02512/.claude/projects/c--Users-SF02512-GitHub-Private-BusinessManagementPlatform/memory/feedback_ui_completion_is_default_scope.md) / [project_faq_drives_ai_accuracy.md](../../C:/Users/SF02512/.claude/projects/c--Users-SF02512-GitHub-Private-BusinessManagementPlatform/memory/project_faq_drives_ai_accuracy.md)
+- KDD 関連: §5.X+188 〜 §5.X+191 (本 PR で発覚した別罠) / §5.X+167 (docs drift 整合性 cleanup と同根「既存資産の扱いを軽視」)
+
+## §5.X+193 ★severity-1 (静かな品質劣化)★ FAQ embedding 同期 drift 検知の 4 層防御パターン ─ deploy 後の generate スクリプト実行漏れを構造的に潰す (ADR-0028 RAG 移行)
+
+### 何が起きたか
+
+ADR-0028 で full-context → RAG に移行した結果、`src/config/faq-content.ts` (source-of-truth) と `faq_embeddings` テーブル (RAG 検索の検索対象) の **2 つの状態** を同期保つ必要が生まれた。両者が乖離 (drift) すると以下が発生:
+
+- 新 FAQ を config に追加 → deploy しても **DB に embedding がない** → フクロウは検索結果ゼロ → 「該当する FAQ がありません」と答える
+- FAQ を config から削除 → deploy しても **DB に orphan 行が残る** → フクロウは古い情報を答え続ける
+- FAQ を config で更新 → deploy しても **DB の embedding は旧本文の意味** → 古い意味で検索する
+
+これらの drift は **コードレビュー / tsc / lint / test では検知できない** (config 側だけ見れば正しいため)。本番 UX 劣化が静かに進む severity-1 級の罠。
+
+### 採用した 4 層防御パターン
+
+drift を構造的に防ぐため、以下 4 層を組合せた:
+
+```
+[Layer 1] CI 構造ガード (PR 時に毎回)
+   ↓ structure_check_only=true, DATABASE_URL なし
+   ↓ id 重複 / 文字数超過 / visibleTo 不正値を検出
+[Layer 2] CI drift ガード (オプション)
+   ↓ DATABASE_URL あり、本番 DB と config を SHA-256 hash で突合
+   ↓ deploy 前の本番 / staging での実行を想定
+[Layer 3] 手動 deploy SOP (開発者の checklist)
+   ↓ developer-guide §7 + DEPLOYMENT.md に明示
+   ↓ deploy 後に `pnpm generate:faq-embeddings` を 1 回実行
+[Layer 4] 冪等 generate スクリプト (再実行で常に正解状態)
+   ↓ scripts/generate-faq-embeddings.ts は add / update / delete を 1 経路で処理
+   ↓ hash 一致なら Voyage API 呼出ゼロ (低コスト + 高速)
+```
+
+### 設計のキーポイント
+
+#### A. 同じ compose 関数を「DB 書込側 + RAG 検索側 + drift 検知側」で共有
+
+scripts/generate-faq-embeddings.ts (DB 書込) と src/services/help-search.service.ts (RAG 検索 / drift 検知) で同じ `composeFaqContentText(entry)` / `composeGuideContentText(step)` を使う:
+
+```ts
+// src/services/help-search.service.ts (single source of truth)
+export function composeFaqContentText(entry: FaqEntry): string {
+  return `Q: ${entry.q}\n\nA: ${entry.a}`;
+}
+export function computeContentHash(text: string): string {
+  return createHash('sha256').update(text, 'utf8').digest('hex');
+}
+
+// scripts/generate-faq-embeddings.ts
+import { composeFaqContentText, computeContentHash } from '../src/services/help-search.service';
+// → 同じ関数を使うので、hash は config の実体変更とだけ連動する
+```
+
+重複定義してしまうと、片方を変えるだけで全件の hash が変わり「全件再生成」が起きる罠 (= 大量の Voyage API コスト + 一時的 UX 劣化)。
+
+#### B. content_hash カラムを DB に持ち、hash 比較だけで drift 判定
+
+DB の `faq_embeddings.content_hash` (SHA-256) と config 側の `computeContentHash(composeFaqContentText(entry))` を比較するだけで:
+
+- 一致 → 変更なし、skip
+- 不一致 → embedding 再生成 + upsert
+- 一致しない `entry_id` が config に存在しない → DELETE
+
+Voyage embedding ベクトル本体を比較する必要がない (= 高速 + 確実)。
+
+#### C. `--dry-run` モードを持つ generate スクリプト + check スクリプトから呼出
+
+`pnpm check:faq-embeddings-sync` (Layer 2) は内部で `pnpm generate:faq-embeddings --dry-run` を呼び、出力の「+N 追加 / ~N 更新 / -N 削除」を抽出して 0 件かを判定する。重複ロジックを書かず実装一本化。
+
+#### D. content_snapshot を DB にも保持 (deploy 直後の乖離瞬間で UX 維持)
+
+config と DB の SHA-256 同期が崩れる瞬間 (= deploy 直後で generate 未実行) でも、DB に保持した snapshot で **古い** が答えられる状態を維持する。完全失敗 (= 「該当 FAQ なし」回答) よりも縮退動作の方が UX 上ベター。source-of-truth は config だが、運用継続性のために DB 側にも本文を redundantly 保持する設計。
+
+### 何を避けるべきか
+
+- ❌ 「全 FAQ embedding 生成を deploy 時 cron で毎回走らせる」(大量 Voyage コスト、deploy 失敗時の整合性破綻)
+- ❌ 「FAQ 追加時に手動で SQL INSERT」(error-prone、cleanup 経路がない)
+- ❌ check スクリプトを CI に含めない (drift が本番で初めて発覚する)
+- ❌ developer-guide / DEPLOYMENT.md に SOP を書かない (新規メンバーが SOP を知らずに deploy する)
+
+### 横展開チェックリスト
+
+新規の「config + DB embedding を持つ機能」を実装する際、以下 4 層が揃っているかチェック:
+
+- [ ] Layer 1: CI 構造ガード (config 単体の健全性チェック)
+- [ ] Layer 2: CI drift ガード (DB との突合、optional / DATABASE_URL あり時のみ実行)
+- [ ] Layer 3: 開発者 SOP (developer-guide + DEPLOYMENT.md にチェックリスト形式で記載)
+- [ ] Layer 4: 冪等 generate スクリプト (add / update / delete を 1 経路で、hash 一致なら skip)
+- [ ] compose 関数 + hash 関数を service 側に集約 (重複定義禁止)
+- [ ] content_snapshot を DB にも保持 (deploy 直後の乖離瞬間の UX 維持)
+
+### 関連
+
+- 関連 PR: PR #471 (ADR-0028 RAG 移行で本パターン確立)
+- 関連 ADR: [ADR-0028](../adr/0028-help-chat-rag-migration.md)
+- 関連 docs: [developer-guide §7](../developer-guide/FAQ_AND_OWL_CHAT_GUIDE.md) (FAQ ライフサイクル SOP) / [DEPLOYMENT.md](../operations/DEPLOYMENT.md) (deploy 時 SOP)
+- 関連 source: [scripts/generate-faq-embeddings.ts](../../scripts/generate-faq-embeddings.ts) / [scripts/check-faq-embeddings-sync.ts](../../scripts/check-faq-embeddings-sync.ts) / [src/services/help-search.service.ts](../../src/services/help-search.service.ts)
+- 関連 memory: [feedback_drift_detection_design.md](../../C:/Users/SF02512/.claude/projects/c--Users-SF02512-GitHub-Private-BusinessManagementPlatform/memory/feedback_drift_detection_design.md) (drift 検知 4 点セットの一般化)
+- KDD 関連: §5.X+187 (FAQ 文言 drift 検知、同根「config と他層の同期」) / §5.X+172 (コメント vs 実装 drift) / §5.X+192 (ADR-0028 移行の判断ミス)
+
+## §5.X+194 ★severity-medium★ 外部 LLM 系 API の暴走防止は「認証 + IP rate limit + 月次 hard cap + race condition guard + 入力 validation + 出力 size cap + 応答値 validation」の 7 層パターン (PR #471 フルスキャン検証 / ADR-0028)
+
+### 何が起きたか
+
+PR #471 ADR-0028 RAG 移行後のフルスキャン検証で、help-chat (LLM + RAG embedding) の暴走防止について以下の隙間を発見した:
+
+1. **race condition (★severity-medium★)**: route の pre-check (`tenant.findUnique` → `if count >= 100`) と increment (`tenant.update`) の間に lock がなく、同一テナント並列 request で counter overshoot が発生
+2. **API 応答値 validation (★severity-1★)**: voyage-client.ts の zod schema `z.array(z.number())` は NaN/Infinity を許容、pgvector に `[NaN,...]::vector` を投げると DB exception で全 RAG 経路ダウン
+
+両方とも tsc / lint / test では検知できず、本番 runtime でのみ顕在化する罠。
+
+### 採用した 7 層 hard cap パターン
+
+外部 LLM (Anthropic / Voyage) を呼ぶ API endpoint には以下の 7 層を必ず実装する:
+
+| 層 | 防御内容 | 実装例 (help-chat) |
+|---|---|---|
+| 1. 認証 | 未認証 → 401 | `getAuthenticatedUser()` (route 先頭) |
+| 2. IP/user rate limit | 短期暴走 → 429 | `applyRateLimit({ key, max:10, windowMs:60000 })` |
+| 3. テナント月次 hard cap (pre-check) | 月間予算超過 → 429 | `if (tenant.currentMonthHelpChatCount >= LIMIT) return 429` |
+| 4. **race condition guard (★最重要★)** | 並列 request の overshoot 防止 | `updateMany({ where: { id, count: { lt: LIMIT } }, data: { count: { increment: 1 } }})` で **conditional increment**、`updated.count === 0` で warn ログ |
+| 5. 入力 validation | 巨大 / 不正入力 → 400 | `z.string().min(1).max(2000)` |
+| 6. 出力 size cap | LLM 暴走出力の防止 | `max_tokens: 1024` (Anthropic) / `HELP_SEARCH_DEFAULT_LIMIT: 5` (RAG top-K 固定) |
+| 7. **API 応答値 validation (★severity-1★)** | 異常値で後段 DB / システムを破壊しない | Voyage zod を `z.array(z.number().finite())` (NaN/Infinity 拒否) |
+
+### 設計のキーポイント
+
+#### A. race condition guard は `updateMany` + WHERE 条件で実装
+
+❌ **NG**: 
+```ts
+// 100 並列 read で全部 99 を見て、全部通る → counter 199 まで overshoot
+const tenant = await prisma.tenant.findUnique({ where, select: { count: true } });
+if (tenant.count >= LIMIT) return 429;
+// ... LLM 呼出 ...
+await prisma.tenant.update({ where, data: { count: { increment: 1 } } });
+```
+
+✅ **OK**:
+```ts
+const tenant = await prisma.tenant.findUnique({ where, select: { count: true } });
+if (tenant.count >= LIMIT) return 429;  // pre-check (UX 上 LLM 呼出前に弾く)
+// ... LLM 呼出 ...
+const [updated] = await prisma.$transaction([
+  prisma.tenant.updateMany({
+    where: { id, count: { lt: LIMIT } },  // ★ ここで conditional
+    data: { count: { increment: 1 } },
+  }),
+  prisma.apiCallLog.create({ ... }),  // ApiCallLog は overshoot しても記録 (監査用)
+]);
+if (updated.count === 0) {
+  // race condition で先行 request が上限到達。LLM は呼んでしまったので response は返す
+  // (UX 優先)、warn ログで overshoot を可視化 (= bot 攻撃検知材料)
+  await recordError({ ... });
+}
+```
+
+**設計判断**:
+- pre-check は **UX 上必須** (LLM 呼出前に 429 を返す方が早い)
+- conditional increment は **invariant 維持必須** (counter は LIMIT を絶対超えない)
+- LLM 呼出後の overshoot 検知では **response は返す** (= ユーザ視点では成功、課金は本来発生しないので実害なし)
+- ApiCallLog は **常に記録** (Voyage 利用量監視 + 監査のため)
+
+#### B. 外部 API zod schema は finite / 数値範囲を必ず check
+
+`z.number()` だけだと NaN / Infinity / -Infinity が通る。embedding ベクトルに混入すると:
+- pgvector v0.5+ では `[NaN,...]::vector` が parse error → DB exception
+- 計算系 (Cosine similarity 等) で NaN/Infinity 伝播
+- 後段の集計 (SUM / AVG) で全件破損
+
+修正パターン:
+```ts
+embedding: z.array(z.number().finite()),
+// または範囲制約: z.array(z.number().gte(-2).lte(2))
+```
+
+#### C. 多層防御の優先順位
+
+新規 LLM endpoint を実装するときの優先順位 (left-to-right で深い層を後で追加):
+
+1. **必須 (リリース時から)**: 1 認証, 2 IP rate limit, 3 月次 cap, 5 入力 validation, 6 出力 cap, 7 応答 validation
+2. **後追い OK (フルスキャンで気付く)**: 4 race condition guard (= 実害が低いため初期実装で見落としやすいが、`updateMany` への置換で防御可能)
+
+層 4 を後追いで足すコストは小さいが、層 7 を後追いで足すと本番で DB 障害が発生してから気付く可能性大 → 7 層チェックリストを **新規 LLM endpoint 実装時に必ず参照** すること。
+
+### 何を避けるべきか
+
+- ❌ `findUnique` で read → if 判定 → `update` で increment の素朴な実装 (race condition で overshoot 確実)
+- ❌ Pre-check のみで増分操作の conditional WHERE 句なし
+- ❌ Race condition で overshoot 時に 5XX エラーを返す (= LLM コストは発生済、ユーザ視点で失敗 = UX 二重損)
+- ❌ 外部 API zod schema を `z.array(z.number())` だけで済ます (NaN/Infinity が通る)
+- ❌ MAX_OUTPUT_TOKENS / top-K を環境変数経由にして本番で誤って巨大値設定
+
+### 横展開チェックリスト
+
+新規 LLM endpoint を作るときの 7 層 hard cap チェックリスト:
+
+- [ ] 1. 認証: `getAuthenticatedUser()` 又は同等
+- [ ] 2. IP/user rate limit: `applyRateLimit` (適切な key / max / windowMs)
+- [ ] 3. 月次 / 日次 hard cap pre-check: `tenant.currentMonth*Count >= LIMIT` で 429
+- [ ] 4. **race condition guard**: `updateMany` + WHERE 条件で conditional increment、`updated.count === 0` で warn
+- [ ] 5. 入力 validation: zod で min/max + 個別フィールド型制約
+- [ ] 6. 出力 size cap: LLM の `max_tokens` / RAG の `top-K` を const で固定
+- [ ] 7. **API 応答 validation**: 外部 API レスポンスの zod schema に `finite()` / 範囲制約
+
+### 関連
+
+- 関連 PR: PR #471 (本パターン確立、フルスキャン検証で 2 件発見)
+- 関連 ADR: [ADR-0028](../adr/0028-help-chat-rag-migration.md)
+- 関連 source: [src/app/api/help/chat/route.ts](../../src/app/api/help/chat/route.ts) (7 層実装の参考実装) / [src/lib/llm/voyage-client.ts](../../src/lib/llm/voyage-client.ts) (zod finite 強化) / [src/lib/llm/rate-limiter.ts](../../src/lib/llm/rate-limiter.ts)
+- 関連 test: [src/app/api/help/chat/route.test.ts](../../src/app/api/help/chat/route.test.ts) (7 層 invariant 保護) / [src/lib/llm/voyage-client.test.ts](../../src/lib/llm/voyage-client.test.ts) (NaN/Infinity 拒否)
+- 関連 memory: [feedback_billing_invariant.md](../../C:/Users/SF02512/.claude/projects/c--Users-SF02512-GitHub-Private-BusinessManagementPlatform/memory/feedback_billing_invariant.md) (counter invariant の重要性)
+- KDD 関連: §5.X+191 (Prompt Caching、同 PR で確立) / §5.X+193 (drift 4 層防御、同じ「複層 hard cap」パターン)
+
+## §5.X+195 ★severity-medium (DX/開発体験)★ Netlify deploy preview の Netlify Drawer は `app.netlify.com` を iframe 化するため CSP `frame-src` 未定義だと block される (PR #471 / 2026-05-30)
+
+### 何が起きたか
+
+ADR-0028 RAG 移行 PR (#471) の deploy preview をブラウザで開いた際、Console に以下のエラーが繰り返し出力された:
+
+```
+Framing 'https://app.netlify.com/' violates the following Content Security Policy
+directive: "default-src 'self'". The request has been blocked. Note that
+'frame-src' was not explicitly set, so 'default-src' is used as a fallback.
+```
+
+リロードのたびに発生 + 機能的な障害はないが、Console ノイズで他の真因 (例: 503 デバッグ) が埋もれる。
+
+### 原因
+
+Netlify deploy preview / branch deploy では、Netlify が自動で **Netlify Drawer** (= deploy 情報を表示する小さな UI overlay) を inject する。Drawer は `<iframe src="https://app.netlify.com/...">` で実装されているため、本サイト側の CSP に `frame-src` ディレクティブが含まれていないと:
+
+1. CSP 仕様により `default-src 'self'` に fallback
+2. `'self'` (= 同一 origin) のみ許可 → `app.netlify.com` は別 origin
+3. iframe が block される → Console error
+
+本サービスの `next.config.ts` securityHeaders の CSP は以下のみ定義していた:
+
+```
+default-src 'self'
+script-src 'self' 'unsafe-inline'
+style-src 'self' 'unsafe-inline'
+img-src 'self' data:
+font-src 'self'
+connect-src 'self'
+frame-ancestors 'none'  ← 本サイトを他サイトから iframe 化されることを禁止
+base-uri 'self'
+form-action 'self'
+```
+
+`frame-src` 未定義のため default-src fallback で `'self'` 限定 → Netlify Drawer が block。
+
+### 対策
+
+next.config.ts の CSP に `frame-src 'self' https://app.netlify.com` を明示追加:
+
+```ts
+{
+  key: 'Content-Security-Policy',
+  value: [
+    "default-src 'self'",
+    // ... 他 directives ...
+    "frame-src 'self' https://app.netlify.com",  // ← 追加
+    "frame-ancestors 'none'",                     // ← 維持 (= 本サイトが iframe 化されることは引き続き禁止)
+    // ...
+  ].join('; '),
+}
+```
+
+### 設計判断 (なぜ全 context で許可するか)
+
+- **本番では Netlify Drawer は注入されない** (= 独自ドメイン tasukiba.com の場合、Netlify が自動 inject しないため Drawer 表示なし)
+- 本番でも `frame-src 'self' https://app.netlify.com` を許可しても、本番で iframe される対象がないため **実害なし**
+- context 別に CSP を分けるのは複雑度が高い (Next.js の static header API は context override しにくい)
+- **DX 改善 (Console ノイズ除去) を取り、CSP は寛容化** という判断
+
+### セキュリティ評価
+
+- `frame-src` は **本サイト内に他オリジンを iframe で埋め込める** ディレクティブ (= 我々が読み込む側)
+- `frame-ancestors` は **本サイトが他サイトから iframe される** のを禁止するディレクティブ (= 我々が埋め込まれる側)
+- **clickjacking 対策に重要な `frame-ancestors 'none'` は維持** したまま、`frame-src` だけ Netlify を許可
+- `app.netlify.com` は Netlify 公式 UI で、信頼できる第三者
+- → セキュリティ低下なし
+
+### 何を避けるべきか
+
+- ❌ `frame-src 'none'` で全 iframe を拒否 → Netlify Drawer が常時 block、DX 劣化
+- ❌ `frame-src *` で全許可 → 任意の悪意ある iframe (例: malicious 広告) の埋め込みリスク
+- ❌ context 別に CSP を分ける middleware を書く → 複雑度過剰、保守負債
+- ❌ `frame-ancestors` を緩和する → clickjacking 脆弱性
+
+### 横展開チェックリスト (新規 CSP 設定時)
+
+- [ ] `default-src` を厳しく設定したら、各 directive (`frame-src` / `connect-src` / `media-src` 等) を明示しないと default-src へ fallback して意図せず block されることを認識
+- [ ] Netlify / Vercel 等の hosting provider が deploy preview で inject する UI (= drawer / banner / analytics) の origin を allowlist
+- [ ] `frame-src` vs `frame-ancestors` の意味の違いを正確に理解 (= 埋め込む側 / 埋め込まれる側)
+- [ ] CSP 変更時は **本番 + preview 両方** で動作確認 (= preview だけで動いて本番で別エラーが出る罠を避ける)
+
+### 関連
+
+- 関連 PR: PR #471 (本 KDD の発端)
+- 関連 source: [next.config.ts:46-67](../../next.config.ts) (securityHeaders / CSP 定義)
+- 関連 MDN: [Content-Security-Policy: frame-src](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Content-Security-Policy/frame-src)
+- 関連 MDN: [Content-Security-Policy: frame-ancestors](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Content-Security-Policy/frame-ancestors) (= 別概念、混同注意)
+- KDD 関連: なし (本サービス初の CSP frame-src ナレッジ)
+
+## §5.X+196 ★severity-medium (運用負債)★ FAQ embedding 生成は手動 SOP ではなく Netlify build hook で自動化する (PR #471 / 2026-05-30、§5.X+193 続報)
+
+### 何が起きたか
+
+ADR-0028 RAG 移行で `scripts/generate-faq-embeddings.ts` を新設し、developer-guide §7 + DEPLOYMENT.md §4.4 で「deploy 後に手動実行する」SOP として運用しようとした。
+
+ユーザの実環境で 1 回目の deploy 後、ヘルプチャットで質問しても **「該当 FAQ なし」回答 + 503 fallback** が発生。原因は:
+
+1. 「deploy 後に `pnpm generate:faq-embeddings` を実行する」SOP がユーザに通知されていなかった
+2. ユーザがコマンドの存在を知ったが、`.env.local` のローカル DB 接続 (localhost:5433) に対して実行 → ECONNREFUSED で失敗
+3. 本番 DB に対して実行するには `.env.local` の DATABASE_URL を一時書換が必要だったが、それも明確化されていなかった
+
+結果として **★生命線★ と謳いつつ手動 SOP に依存する設計** が脆弱性となった。
+
+### 対策
+
+[`package.json:build:netlify`](../../package.json) の最後に `tsx scripts/generate-faq-embeddings.ts` を **fail-safe** で組み込み、Netlify build 時に自動実行する:
+
+```jsonc
+"build:netlify": "prisma generate && prisma migrate deploy && next build && (tsx scripts/generate-faq-embeddings.ts || echo '[WARN] post-build FAQ embedding sync skipped or failed - run pnpm generate:faq-embeddings manually')"
+```
+
+### 設計判断のキーポイント
+
+#### A. fail-safe (`|| echo ... WARN`) で build を壊さない
+
+- `tsx scripts/generate-faq-embeddings.ts` が Voyage 一時障害 / DB 接続失敗で fail しても **Netlify deploy 自体は成功扱い**
+- 失敗時は build log に WARN が出るので運用者が気付ける
+- これにより「FAQ embedding 生成失敗 → deploy 全体失敗 → サービス全機能停止」の最悪シナリオを回避
+
+#### B. 冪等性によるコスト保護
+
+- `scripts/generate-faq-embeddings.ts` は SHA-256 hash 一致なら Voyage 呼出 skip
+- **deploy のたび実行されるが、FAQ 変更なし deploy では Voyage 呼出ゼロ = ¥0**
+- FAQ 全件初回生成 = 約 28K tokens 消費 (Voyage 200M 無料枠の 0.014%)
+- 年間試算: 月 4 回 full sync × 12 ヶ月 = 1.34M tokens (200M 無料枠の 0.7%) → 完全無料
+
+#### C. 「手動 SOP は緊急時のみ」に格下げ
+
+- 通常運用: build hook で自動実行 (= 開発者は意識不要)
+- build hook 失敗時: 手動で `pnpm generate:faq-embeddings` 実行 (= 緊急時の fallback)
+- これにより「人間が SOP を忘れる」リスクが構造的に消える ([[feedback_human_handoff]] 整合)
+
+### 5 層防御の更新 (= §5.X+193 の 4 層 + 自動化を加えた)
+
+| 層 | 守る仕組み |
+|---|---|
+| 1. CI 構造ガード | `pnpm check:faq-embeddings-sync` で構造健全性チェック |
+| 2. CI drift ガード (optional) | DATABASE_URL 設定時に DB vs config の hash 突合 |
+| 3. **★Netlify build hook (自動)★** | **新規追加**: deploy 時に generate-faq-embeddings を fail-safe 実行 |
+| 4. 手動 SOP (緊急時) | build hook 失敗時のみ、developer-guide §7.0.4 の手順で実行 |
+| 5. KDD §5.X+193 / §5.X+196 documentation | 設計判断とパターンの永続化 |
+
+### 何を避けるべきか
+
+- ❌ build hook を `&&` で組む (= fail で build 全体が壊れる) → fail-safe `||` で吸収
+- ❌ build:netlify から DATABASE_URL を context override する → 本番 DB へ書き込む経路を増やすリスク、現状は ENV_VARS.md §2.2 で全 context 共通
+- ❌ 「手動 SOP のみ」で運用 → 開発者の SOP 忘れが本番障害に直結 ([[feedback_human_handoff]] 違反)
+
+### 横展開チェックリスト (新規「config + DB sync」機能を追加するとき)
+
+- [ ] generate スクリプトを scripts/ 配下に作る
+- [ ] `build:netlify` script の最後に fail-safe (`|| echo ...`) で組み込む
+- [ ] developer-guide に「自動実行されている + 緊急時手動実行手順」両方を記載
+- [ ] 冪等性を確保 (= hash 一致で skip、re-run で常に正解状態)
+- [ ] 失敗時のコスト影響を試算 (= 無料枠 or 上限内に収まるか)
+
+### 関連
+
+- 関連 PR: PR #471 (本 KDD の発端)
+- 関連 source: [package.json:build:netlify](../../package.json) / [scripts/generate-faq-embeddings.ts](../../scripts/generate-faq-embeddings.ts) / [scripts/check-faq-embeddings-sync.ts](../../scripts/check-faq-embeddings-sync.ts)
+- 関連 docs: [DEPLOYMENT.md §4.4](../operations/DEPLOYMENT.md) / [developer-guide §7](../developer-guide/FAQ_AND_OWL_CHAT_GUIDE.md)
+- 関連 memory: [feedback_human_handoff.md](../../C:/Users/SF02512/.claude/projects/c--Users-SF02512-GitHub-Private-BusinessManagementPlatform/memory/feedback_human_handoff.md)
+- KDD 関連: §5.X+193 (drift 検知 4 層、本 §196 で 5 層に拡張) / §5.X+194 (7 層 hard cap、同じ「複層防御」パターン)
+
+## §5.X+197 ★severity-medium★ cron-job.org 設定と CRON_JOBS metadata の drift は実態同期で潰す + 重複登録は advisory lock で防御されるが運用整理推奨 (PR #471 / 2026-05-30)
+
+### 何が起きたか
+
+PR #471 で `docs/design/CRON_JOBS.md` を新設する際、ユーザから「cron-job.org に登録されている cron を確認してほしい」要請を受けて実設定を共有してもらった結果、以下の **3 件の時刻乖離** + **1 件の重複登録** が顕在化:
+
+| cron | metadata (`src/config/cron-jobs.ts`) | cron-job.org 真実源 | 乖離 |
+|---|---|---|---|
+| `lock-inactive-users` | 日次 **21:00** | 日次 **12:00** (`0 12 * * *`) | 9 時間ズレ |
+| `attachment-embedding` | **15 分毎** | **10 分毎** (`*/10 * * * *`) | 周期短縮 |
+| `billing-overdue-alert` | 日次 **10:00** | 日次 **17:00** (`0 17 * * *`) | 7 時間ズレ |
+| `attachment-embedding` (重複) | (なし) | `tasukiba attachment-embedding` (`*/15 * * * *`) で重複登録 | 同 endpoint を 2 名で登録 |
+
+drift の原因はおそらく、運用中にスケジュール調整を行った際、cron-job.org だけ変更して metadata 更新を忘れた。
+
+### 影響度
+
+- **時刻乖離 (3 件)**: severity-low ─ 実害はないが、ドキュメント (CRON_JOBS.md / 運用 SOP) が誤情報を含む状態。新規開発者が「21:00 に動く」前提で他処理を組むと混乱
+- **重複登録 (1 件)**: severity-low ─ advisory lock ([cron-execution-log.ts:withCronExecutionLogging](../../src/lib/cron-execution-log.ts)) で同時実行は防御済 (= KDD §5.X+181)。ただし無駄な空振り 409 ログが定常的に発生
+
+### 採用した対策
+
+#### A. 即時補正
+
+1. `src/config/cron-jobs.ts:CRON_JOBS` の 3 件の schedule を実態に合わせて補正
+2. `docs/design/CRON_JOBS.md` のタイムライン + 個別 §2.x 表を実態に合わせて補正
+3. CRON_JOBS.md §6 に「cron-job.org 運用注意」セクションを新設
+
+#### B. 同期保持ルールの明文化 (CRON_JOBS.md §6.2)
+
+cron 操作時に **両方を同時更新** することをチェックリスト化:
+
+| 操作 | 必要な手順 |
+|---|---|
+| cron 新規追加 | (1) metadata 追加 → (2) cron-job.org 登録 → (3) docs §2.x 追記 |
+| スケジュール変更 | (1) cron-job.org 変更 → (2) metadata.schedule 更新 → (3) docs 更新 |
+| cron 削除 | (1) cron-job.org 削除 → (2) metadata 削除 → (3) docs マーク |
+| 名前変更 | (1) cron-job.org 変更 → (2) metadata + `withCronExecutionLogging` 呼出側を **同時変更** (= ロギング紐付けが切れるため) → (3) docs 更新 |
+
+#### C. 重複登録の整理推奨
+
+cron-job.org 管理画面で `tasukiba attachment-embedding` (15 分毎の方) を **手動削除** することを推奨。理由:
+- `attachment-embedding` (10 分毎) の方が周期が短く処理頻度が十分
+- 命名規則の一貫性 (他 cron は prefix なし)
+- 409 空振りログの定常発生を解消
+
+### 何を避けるべきか
+
+- ❌ **cron-job.org だけ変更して metadata を更新しない** → ドキュメント drift、新規開発者の誤解
+- ❌ **metadata だけ変更して cron-job.org を更新しない** → 実態と乖離、cron-history 画面で「未登録の cron」表示 / 期待時刻と実行時刻のズレ
+- ❌ **同一 endpoint を複数 cron で登録** → advisory lock で動作は安全だが、409 空振りログ + monitor 誤検知のリスク
+- ❌ **重複登録の片方を「念のため残す」** → 周期が異なる重複は monitor 上で「最終成功時刻」の判定混乱を招く
+
+### 横展開チェックリスト (cron 操作時)
+
+- [ ] cron-job.org 変更時、必ず `src/config/cron-jobs.ts` の対応 entry を確認
+- [ ] schedule を変えたら expectedMaxGapHours も妥当か再確認 (= 周期短縮で gap 閾値が大きすぎないか / 周期延長で短すぎないか)
+- [ ] 削除時は `withCronExecutionLogging(name, ...)` の呼出元 (route ファイル) も検索して整合性確認
+- [ ] 新規 cron の場合: `CRON_JOBS` metadata 登録 → cron-job.org 登録 → CRON_JOBS.md §2.x 追記 → §3 severity 表に追加 の 4 step 必須
+- [ ] 重複登録は **必ず片方削除** ─「念のため」「保険として」は禁止
+
+### 将来課題: cron-job.org API による drift 自動検知
+
+cron-job.org は公開 API を提供しているため、CI で以下を実装可能:
+1. `GET https://api.cron-job.org/jobs` で全登録 cron を取得
+2. `CRON_JOBS` metadata と diff (name / url / schedule)
+3. 不一致があれば CI fail + 一覧出力
+
+現状は手動 SOP に依存しているが、運用負債が増えてきたら自動化を検討。
+
+### 関連
+
+- 関連 PR: PR #471 (本 KDD の発端、ユーザ要請による cron 設定 docs 化)
+- 関連 source: [src/config/cron-jobs.ts](../../src/config/cron-jobs.ts) (metadata 真実源) / [src/lib/cron-execution-log.ts](../../src/lib/cron-execution-log.ts) (advisory lock)
+- 関連 docs: [docs/design/CRON_JOBS.md](../design/CRON_JOBS.md) (人間向け解説、§6 運用注意)
+- KDD 関連: §5.X+70 (cron route 追加・移行時の checklist) / §5.X+181 (cron 運用 3 つの罠、本 KDD の前駆体)
+
+## §5.X+198 ★severity-1 (デバッグ不能化)★ recordError は DB の systemErrorLog にのみ書込み Function logs に出ない ─ 真因確定が必要な catch には console.warn 併出し必須 (PR #471 / 2026-05-30)
+
+### 何が起きたか
+
+PR #471 ADR-0028 RAG 移行で `/api/help/chat` route に root-level try-catch を追加し、503 真因確定のため詳細 context (llmPhase / rawOutputSnippet / ragHitsCount 等) を `recordError` で記録するように強化した。
+
+しかし本番 deploy preview で 503 が再現した際、ユーザが Netlify Function logs を確認しても `[help-chat]` 文言が **一切見当たらない** 状況になった。私 (Claude) も「真因確定にはサーバログ確認が必要」とユーザに案内していたが、ログ確認できない設計だった。
+
+### 原因
+
+[`src/services/error-log.service.ts:75-99`](../../src/services/error-log.service.ts) の `recordError` 実装:
+
+```ts
+export async function recordError(input: RecordErrorInput): Promise<void> {
+  try {
+    await prisma.systemErrorLog.create({  // ← DB INSERT のみ
+      data: { ... },
+    });
+  } catch {
+    // silent fail — エラーログ自体の失敗はユーザ体験を阻害させない
+  }
+}
+```
+
+コメントに明示: 「本サービス自身の失敗は silent (console にも出さない、**再帰ログ防止**)」
+
+この設計意図は妥当 (recordError 自身の throw が無限ログループを起こさないため) だが、結果として:
+- ❌ Netlify Function logs に出ない (= ユーザは grep できない)
+- ✅ DB `systemErrorLog` テーブルには記録される
+- ❌ ただし「`/admin/super/system-errors` 画面で確認」を案内しないと、運用者は気付けない
+
+### 対策
+
+#### A. 真因確定が必要な catch には `console.warn` を併出し
+
+```ts
+} catch (e) {
+  const errorMessage = e instanceof Error ? e.message : String(e);
+  const errorStack = e instanceof Error ? e.stack : undefined;
+
+  // ★Function logs で grep 可能にする (recordError は DB のみのため)
+  console.warn(`[help-chat] uncaught error: ${errorMessage}`, errorStack);
+
+  await recordError({  // DB 監査記録 (構造化 context)
+    severity: 'warn',
+    source: 'server',
+    message: `[help-chat] uncaught error: ${errorMessage}`,
+    stack: errorStack,
+    context: { kind: '...', ... },
+  });
+
+  return NextResponse.json({ ... }, { status: 503 });
+}
+```
+
+#### B. なぜ二重記録か (= console + recordError 両方)
+
+| 経路 | 用途 | アクセス方法 |
+|---|---|---|
+| `console.warn` (Function logs) | **即時調査用** ─ ユーザ / 開発者がリアルタイムに grep 可能 | Netlify Dashboard → Logs → Functions、または `netlify functions:log` CLI |
+| `recordError` (DB systemErrorLog) | **構造化監査用** ─ 時系列分析 / context 詳細 / 履歴保存 | `/admin/super/system-errors` 画面、または SQL 直接 |
+
+両方記録する理由:
+- console のみ: Netlify のログ保持期間制限 (= 過去ログ消失)、検索の構造化が弱い
+- DB のみ: リアルタイム調査が困難、運用者が画面を開く必要
+
+#### C. 「再帰ログ防止」との両立
+
+`recordError` 自身が DB 失敗で throw する経路は依然として silent (内部 try-catch)。`console.warn` は recordError とは独立に出力されるため、recordError が失敗してもログは出る。再帰ログのリスクは増えない。
+
+### 横展開チェックリスト
+
+新規 catch ブロックで recordError を使う際:
+- [ ] そのエラーが起きた時に **ユーザ / 開発者が Function logs を見て真因を即特定したい** か?
+  - **YES** → `console.warn(message, stack)` を併出し (本パターン適用)
+  - **NO (= 単に監査記録のみで OK)** → recordError 単独で OK
+- [ ] 既存 catch ブロックでも 503 / 500 を返すものは原則 console.warn 併出し対象
+- [ ] WARN レベル (= UX に影響なし) でも、デバッグ性を上げるため出力推奨
+- [ ] 個人情報・API キーを context / message に含めない (= Function logs は外部漏洩リスクある)
+
+### 関連
+
+- 関連 PR: PR #471 (本 KDD の発端)
+- 関連 source: [src/services/error-log.service.ts:75-99](../../src/services/error-log.service.ts) (recordError 実装) / [src/app/api/help/chat/route.ts](../../src/app/api/help/chat/route.ts) (本パターン適用例)
+- 関連 docs: [docs/operations/INCIDENT_RESPONSE.md](../operations/INCIDENT_RESPONSE.md) (障害対応 SOP、Function logs 確認手順を含む)
+
+## §5.X+199 ★severity-low (SEO/SNS 影響)★ Next.js `metadata.metadataBase` 未設定で OG image / Twitter card の絶対 URL が `http://localhost:3000` フォールバック (PR #471 / 2026-05-30)
+
+### 何が起きたか
+
+PR #471 deploy preview の Netlify Function logs に下記 WARN が **毎リクエスト** 出力されていた:
+
+```
+WARN ⚠ metadataBase property in metadata export is not set for resolving social
+open graph or twitter images, using "http://localhost:3000".
+See https://nextjs.org/docs/app/api-reference/functions/generate-metadata#metadatabase
+```
+
+これは Next.js 16 で `generateMetadata()` が relative URL の OG image (`'/og-image.png'`) を絶対 URL に解決する際、基準 URL (= `metadataBase`) が未設定だと **`http://localhost:3000` フォールバック** することへの警告。
+
+### 影響度
+
+- ✅ **機能影響なし** (= サイト本体・ヘルプチャット等は正常動作)
+- ⚠ **SEO / SNS シェア影響あり** (= 本番で URL を Twitter / Facebook / Discord / Slack 等にシェアした際、プレビュー画像が `http://localhost:3000/og-image.png` を参照しようとして 404、プレビューが壊れる)
+- ⚠ Console / Function logs ノイズ (= 他の真因 debug 時に埋もれる)
+
+### 対策
+
+[`src/app/layout.tsx:generateMetadata()`](../../src/app/layout.tsx) で `metadataBase` を明示:
+
+```ts
+export async function generateMetadata(): Promise<Metadata> {
+  // NEXTAUTH_URL を優先、未設定なら production URL でフォールバック
+  const baseUrl = process.env.NEXTAUTH_URL?.trim() || 'https://tasukiba.com';
+  return {
+    metadataBase: new URL(baseUrl),  // ← 追加
+    title, description,
+    openGraph: { ..., images: [{ url: '/og-image.png', ... }] },
+    twitter: { ..., images: ['/og-image.png'] },
+  };
+}
+```
+
+### 設計判断
+
+#### A. なぜ `NEXTAUTH_URL` を優先?
+
+- 本番: `NEXTAUTH_URL = https://tasukiba.com` で OG image が `https://tasukiba.com/og-image.png` に解決
+- deploy preview: `NEXTAUTH_URL` が context override で preview URL になっているなら preview URL ベース
+- ローカル開発: `NEXTAUTH_URL = http://localhost:3000` で localhost ベース (= SNS シェア対象外、warning も出なくなる)
+
+`NEXTAUTH_URL` は既存の auth 配線で常に環境別に設定済 (= [ENV_VARS.md §2.3](../operations/ENV_VARS.md))、新規 env 追加不要。
+
+#### B. なぜ default fallback を hardcode の `https://tasukiba.com` にしたか
+
+- 万一 `NEXTAUTH_URL` が未設定でも、production URL がフォールバックされれば OG image は valid
+- 本番運用では `NEXTAUTH_URL` は必ず設定されているため、fallback は防衛的措置
+
+### 横展開チェックリスト
+
+新規 metadata を扱う page / layout を追加するとき:
+- [ ] `metadataBase` を root layout で 1 度だけ設定 (= 子 page で個別設定不要)
+- [ ] OG image / Twitter card は relative URL (= `/path/to/image.png`) で書く (= metadataBase に依存)
+- [ ] dev preview で Console に `metadataBase property ... not set` warning が出ないか確認
+
+### 関連
+
+- 関連 PR: PR #471 (本 KDD の発端)
+- 関連 source: [src/app/layout.tsx:36-63](../../src/app/layout.tsx) (生成 metadata 設定)
+- 関連 docs (Next.js 公式): https://nextjs.org/docs/app/api-reference/functions/generate-metadata#metadatabase
+
+## §5.X+200 ★severity-1 (本番 runtime 障害)★ Prisma `select: { 存在しないフィールド: true }` は tsc / lint で検出されず、本番 runtime で初めて throw する罠 (PR #471 / 2026-05-30 / commit 251bf7fb で混入、6 ヶ月以上未検知)
+
+### 何が起きたか
+
+PR #471 ADR-0028 RAG 移行の本番 deploy preview でヘルプチャットが 503 を返し続けた。原因は [`src/app/api/help/chat/route.ts:252`](../../src/app/api/help/chat/route.ts) で `Tenant` モデルに **存在しないフィールド `status`** を select していたこと:
+
+```ts
+const tenant = await prisma.tenant.findUnique({
+  where: { id: user.tenantId },
+  select: { currentMonthHelpChatCount: true, status: true },  // ← status は存在しない
+});
+if (tenant.status !== 'active') { ... }  // ← 同じく
+```
+
+本サービスの `Tenant` モデルにはそもそも `status` フィールドが存在せず、テナント状態は **`suspendedAt` (= 停止時刻) と `deletedAt` (= 削除時刻)** で表現する設計。
+
+### Prisma runtime エラー (本番 Function logs に出力)
+
+```
+PrismaClientValidationError:
+Invalid `prisma.tenant.findUnique()` invocation:
+{
+  where: { id: "00000000-0000-0000-0000-000000000001" },
+  select: {
+    currentMonthHelpChatCount: true,
+    status: true,
+    ~~~~~~
+    ?   id?: true, slug?: true, name?: true, ...
+  }
+}
+Unknown field `status` for select statement on model `Tenant`.
+Available options are marked with ?.
+```
+
+→ root-level try-catch (KDD §5.X+198) でキャッチされ 503 + fallback。**ヘルプチャット完全 unavailable**。
+
+### 混入と未検知の経緯 (★6 ヶ月以上★)
+
+- **2026-05-29 commit 251bf7fb**: `feat(help-chat): たすきフクロウ AI コア + 権限制御 (PR5)` で初回追加 (= ADR-0027 実装時)
+- **以降の 4 PR**: PR5 (ADR-0027 コア) → PR9 (Prompt Caching) → PR #471 (ADR-0028 RAG) と複数開発者が route.ts を編集したが **誰も気付かず**
+- **本番 deploy 後**: ユーザがヘルプチャットを使った瞬間 503 が起きた
+- **発見契機**: 私 (Claude) が KDD §5.X+198 で導入した `console.warn` 併出しにより、Netlify Function logs に Prisma エラー全文が表示され即座に判明
+
+### なぜ tsc が検出しなかったのか (★最重要原因仮説★)
+
+`Prisma.TenantSelect` 型は generated 型で **field 名を厳密に列挙** するはず。`select: { status: true }` を書けば tsc error で検出されるべき。にもかかわらず通った理由として最有力:
+
+#### 仮説 A: ローカル prisma client が古い schema の generated 型を保持
+
+- 過去のある時点で `Tenant` に `status` field があった (= ADR-0019 以前の旧設計?)
+- 後の migration で削除され schema から消えた
+- しかし開発者ローカルの `src/generated/prisma` を再 generate しないまま route コードを書いた
+- ローカル tsc は古い型で PASS、CI でも `pnpm prisma generate` 後の tsc PASS したと **誤認** (= 実は新型でも何らかの理由で通った)
+- 6 ヶ月放置
+
+#### 仮説 B: Prisma generated 型の strict 検証バグ / 限界
+
+- `Prisma.TenantSelect` が `Record<string, boolean>` 的に緩く生成されている
+- 任意の string key を許容してしまう
+- → 本仮説検証は時間コスト高いため未実施 (修正優先)、後日別 PR で `select: { thisDoesNotExist: true }` を一時的に書いて tsc 反応を実証する価値あり
+
+#### 仮説 C: tsc が build:netlify 経由でしか実体検証されていない
+
+- `pnpm tsc --noEmit` 単独実行では prisma generate を経由しないため、ローカル client がそのまま使われる
+- CI でも同様に古い generated を使った可能性
+- `pnpm build:netlify` (= prisma generate を先に走らせる) を pre-merge で必ず実行する運用ルール化が必要
+
+### 対策
+
+#### A. 即時修正 (本 PR で実施)
+
+既存パターン (billing-aggregation.service / stripe-webhook-handlers.service / email-verification.service 等) に合わせて修正:
+
+```ts
+const tenant = await prisma.tenant.findUnique({
+  where: { id: user.tenantId },
+  select: {
+    currentMonthHelpChatCount: true,
+    deletedAt: true,
+    suspendedAt: true,
+  },
+});
+if (tenant.deletedAt !== null || tenant.suspendedAt !== null) {
+  return NextResponse.json({ ... }, { status: 403 });
+}
+```
+
+#### B. tsc 信頼性の検証 (将来課題)
+
+- `pnpm tsc --noEmit` の前に **必ず** `pnpm prisma generate` を走らせる pre-tsc hook を追加検討
+- CI で `pnpm build:netlify --build-only` のような「generate + tsc」をセットで実行するコマンド整備
+- もしくは local `.husky/pre-commit` で同様の保証
+
+#### C. 横展開 grep (本 PR で実施済 / ★他に罠なし★)
+
+PR #471 で `tenant.status` / `Tenant select.status` の利用箇所を grep でフルスキャンした結果:
+
+| ファイル | 内容 | 判定 |
+|---|---|---|
+| `src/app/api/help/chat/route.ts:252` | `prisma.tenant.findUnique({ select: { ..., status: true } })` | ❌ **罠 (本 PR で修正)** |
+| `src/lib/permissions/membership.ts:70` | `prisma.project.findUnique({ select: { status: true, ... } })` | ✅ Project.status (valid) |
+| `src/services/billing-aggregation.service.ts:125` | `prisma.billingHistory.findUnique({ select: { status: true } })` | ✅ BillingHistory.status (valid) |
+| `src/services/billing-integrity.service.ts:92` | (= BillingHistory.status) | ✅ valid |
+| `src/services/billing-management.service.ts:106` | (= BillingHistory.status) | ✅ valid |
+| `src/services/cron-history.service.ts:68/79` | `prisma.cronExecutionLog.findFirst({ select: { status: true, ... } })` | ✅ CronExecutionLog.status (valid) |
+| `src/services/task-sync-import.service.ts:364` | (= Task.status) | ✅ valid |
+| `src/services/task.service.ts:818/1411/1454` | (= Task.status) | ✅ valid |
+
+→ **Tenant モデルで `select.status: true` を指定している経路は route.ts のみ**、本 PR の修正で完全解消。
+
+将来同様の罠を発見した場合の grep コマンド:
+
+```bash
+grep -rn "prisma\.tenant\.\(findUnique\|findFirst\|findMany\|update\|updateMany\)" src/ --include="*.ts" | xargs -I{} grep -A5 {} | grep "status: true"
+```
+
+### なぜ 6 ヶ月未検知だったか
+
+- 元 ADR-0027 では `if (tenant.status !== 'active')` のためのテストを vitest mock で書いていた
+- vitest mock は実 Prisma を呼ばないため、`status` 不存在は実行されない
+- ★severity-1 罠を vitest だけでは検出できない実例★ — [`feedback_test_rule`](../../C:/Users/SF02512/.claude/projects/c--Users-SF02512-GitHub-Private-BusinessManagementPlatform/memory/feedback_test_rule.md) の「テスト密度向上」が **integration test (= 実 DB or 実 schema 検証) でないと意味がない** ことを示す
+
+### 何を避けるべきか
+
+- ❌ `pnpm prisma generate` をローカルで明示実行せずに route コードを書く
+- ❌ Prisma の `select` を「ユニットテスト (vitest mock)」だけで verify する (= 実 schema 検証不可)
+- ❌ tsc PASS = 安全と過信する (= Prisma generated 型の信頼性に限界がある可能性)
+- ❌ コードレビューで「既存実装からコピペした」コードを無条件で信頼する (= 元コードに罠が混入している可能性)
+
+### 横展開チェックリスト
+
+新規 Prisma クエリを書くとき、または既存コードをコピペするとき:
+
+- [ ] `pnpm prisma generate` を実行してから tsc 検証
+- [ ] `select` / `where` のフィールド名は schema.prisma の model 定義と **目視で 1 つずつ突合**
+- [ ] 重要パス (= 認可 / 課金) は **実 DB integration test** を vitest mock とは別に書く (= 罠検出の最終防衛線)
+- [ ] route 内の throw 経路は **root-level catch + console.warn 併出し** (KDD §5.X+198) で本番 runtime 障害時に即診断可能にする
+- [ ] PR レビュー時に「`select` のフィールド名は schema と一致するか」を明示的チェック項目に追加
+
+### 関連
+
+- 関連 PR: PR #471 (本 KDD の発見契機)、原因混入 commit: 251bf7fb (PR5 / ADR-0027 / 2026-05-29)
+- 関連 source: [src/app/api/help/chat/route.ts:249-265](../../src/app/api/help/chat/route.ts) (修正対象)
+- 関連 source: [src/services/billing-aggregation.service.ts:114](../../src/services/billing-aggregation.service.ts) / [src/services/stripe-webhook-handlers.service.ts:161](../../src/services/stripe-webhook-handlers.service.ts) (= 既存の正しい判定パターン参考実装)
+- 関連 memory: [feedback_test_rule.md](../../C:/Users/SF02512/.claude/projects/c--Users-SF02512-GitHub-Private-BusinessManagementPlatform/memory/feedback_test_rule.md) (テストコード必須ルール、本 KDD で integration test の重要性が再確認された)
+- 関連 memory: [feedback_design_comment_vs_impl_drift.md](../../C:/Users/SF02512/.claude/projects/c--Users-SF02512-GitHub-Private-BusinessManagementPlatform/memory/feedback_design_comment_vs_impl_drift.md) (コメント vs 実装の乖離、本 KDD で「コードが書かれた = 動く」と思い込む罠の典型)
+- KDD 関連: §5.X+198 (recordError + console 併出し、本 KDD の真因即特定を可能にした前提条件) / §5.X+163 (Prisma XOR 型が tsc を通り抜ける別パターン、同根「Prisma 型の信頼性限界」)
+
+## §5.X+201 ★severity-low (UX 期待値ズレ)★ LEARNING_FREE featureUnit は UI counter に表示されない仕様 ─ UI 上で必ず注記する (PR #471 / 2026-05-30)
+
+### 何が起きたか
+
+PR #471 ADR-0028 RAG 移行後、ユーザがヘルプ・ガイドチャットを 1 回送信したが、テナント設定画面の「Embedding 利用量」セクションの **「Embedding 呼出」「Embedding 費用」が増えていない** ことに気付いて疑問:
+
+> 私の想定では、どちらも 1 インクリメントされると認識しています
+
+これは ★仕様通り★ だが、UI からは判別できず混乱の原因。
+
+### 仕様 (= 意図された設計)
+
+| featureUnit | 課金分類 | UI counter inc | ApiCallLog 記録 | 課金 |
+|---|---|---|---|---|
+| `chat-semantic-search` (過去資産検索) | EMBEDDING_BILLABLE | ✅ inc | ✅ 記録 | Expert/Pro ¥1/回 |
+| `knowledge-embedding` 等 (資産入力) | EMBEDDING_BILLABLE | ✅ inc | ✅ 記録 | 同上 |
+| **`help-chat-embedding`** (ヘルプ・ガイド) | **LEARNING_FREE** | ❌ **不変** | ✅ 記録 | **全プラン無料** |
+
+`metered.ts:385-405` の 4 階層分岐:
+```ts
+if (isLlmBillable) {
+  // currentMonthApi* を inc
+} else if (isEmbeddingBillable) {
+  // currentMonthEmbedding* を inc
+}
+// isLearningFree (= help-chat / help-chat-embedding) はここに到達しないため counter 不変
+```
+
+これは ADR-0028 / KDD §5.X+196 で明文化された設計で、「LEARNING_FREE は意図的に未知扱い分岐に落として counter / Stripe / 課金すべてを safe-side で迂回する」のが目的。
+
+### 何故この設計か
+
+1. **学習支援機能の無料訴求**: ヘルプ・ガイドチャットは初心者の使い方学習のための機能、Beginner/Expert/Pro いずれも完全無料を訴求
+2. **counter 混在防止**: もし LEARNING_FREE を EMBEDDING_BILLABLE counter に inc させると、画面の「Embedding 呼出 X 件 × ¥1 = ¥X」の計算が破綻 (= 一部 ¥0、一部 ¥1 で計算式が成立しない)
+3. **Stripe 誤投入リスク回避**: Stripe queue は cost > 0 のときのみ投入する設計だが、counter inc は別経路なため誤投入の温床になりやすい → counter 不変の方が安全
+
+### UX 改善 (本 PR で実施)
+
+`src/app/(dashboard)/settings/tenant/tenant-settings-client.tsx` の Embedding 利用量セクションに **明示注記** を追加:
+
+```tsx
+<p className="mt-1 text-xs text-muted-foreground">
+  ※ たすきフクロウ AI ヘルプ・ガイドチャットの embedding は学習支援機能 (全プラン無料) のため、本カウンタには **含まれません** (ADR-0028)。
+</p>
+```
+
+これにより:
+- ユーザが「ヘルプ・ガイドチャットを使ったのに数字が増えない」と疑問を持った時に画面で即解消
+- 「Embedding 呼出 X 件」が「= 課金対象 embedding のみ」であることを明示
+
+### 何を避けるべきか
+
+- ❌ LEARNING_FREE を EMBEDDING_BILLABLE 配列に追加して counter inc させる → 課金計算式破綻、Stripe 誤投入リスク
+- ❌ UI 注記なしで「LEARNING_FREE は counter 対象外」を運用 → 同質問が反復発生、サポート工数増
+- ❌ ApiCallLog 自体を記録しない → 監査・Voyage 利用枠監視ができなくなる (= 記録は必須、counter 不変だけが正解)
+
+### 横展開チェックリスト
+
+新規 LEARNING_FREE featureUnit を追加するとき:
+- [ ] `billing-feature-units.ts:LEARNING_FREE_FEATURE_UNITS` に追加
+- [ ] `metered.ts` には判定を追加しない (= 未知扱い分岐で counter 不変)
+- [ ] UI counter を表示している画面 (例: `tenant-settings-client.tsx` 使用量タブ) に「★ 含まれません」注記を追加
+- [ ] PER_CALL_COST_BREAKDOWN.md の課金表に該当行を追加
+- [ ] KDD §5.X+196 / 本 §201 を参照して同設計を踏襲
+
+### 関連
+
+- 関連 PR: PR #471 (本 KDD の発端、ユーザ質問契機)
+- 関連 source: [src/lib/llm/metered.ts:385-405](../../src/lib/llm/metered.ts) (counter 分岐) / [src/app/(dashboard)/settings/tenant/tenant-settings-client.tsx:942-955](../../src/app/\(dashboard\)/settings/tenant/tenant-settings-client.tsx) (UI 注記追加箇所)
+- 関連 ADR: [ADR-0028](../adr/0028-help-chat-rag-migration.md) §6 (課金分類)
+- 関連 docs: [PER_CALL_COST_BREAKDOWN.md §1.5](../business/PER_CALL_COST_BREAKDOWN.md) (ヘルプ・ガイドのコスト試算)
+- KDD 関連: §5.X+196 (build hook 自動化、LEARNING_FREE 設計の前駆) / §5.X+198 (recordError 罠、本 §201 と同様「実装と UI 表記の乖離が混乱を生む」パターン)

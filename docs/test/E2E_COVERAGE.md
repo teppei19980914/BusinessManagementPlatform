@@ -63,7 +63,7 @@
 - [x] `/settings` — e2e/specs/01-admin-and-member-setup.spec.ts (PR #92 / パスワード変更 + MFA 有効化) + e2e/specs/04-personal-features.spec.ts (PR #94 / テーマ変更)
 - [x] `/settings/about` — e2e/specs/15-version-and-announcements.spec.ts (feat/app-version-changelog-footer / 2026-05-23 / サービス情報セクション + バージョン表示 + 運営者名 + 法定リンク href 値)
 - [ ] `/guide` — skip: PR I (2026-05-09 / #1) 静的 + tab 切替のみの使い方ガイド。auth リダイレクト + ロール別 initialTab は src/app/(dashboard)/guide/page.test.ts で担保。視覚回帰 + tab 切替の E2E は v1.x で検討
-- [ ] `/help` — skip: PR I (2026-05-09 / #2) 静的 + accordion のみの FAQ。auth リダイレクト + tenant admin セクション条件分岐は src/app/(dashboard)/help/page.test.ts で担保。E2E は v1.x で検討
+- [ ] `/help` — skip: 静的 + accordion の FAQ 画面 (2026-05-29 feat/faq-revamp PR1-4 で 30+ 件に大幅拡充済)。auth リダイレクト + tenant admin セクション条件分岐は src/app/(dashboard)/help/page.test.ts、FAQ 文言と実装の drift invariant (Grace 30 日誤記再混入防止 / Phase 2 削除 / 新規 8 件 + 12 件 + 4 件の存在担保) は help-client.test.ts で担保。E2E は PR6 (FAQ AI チャット導入) で help-chat.spec.ts として追加予定 (KDD §5.X+187 ドリフト検知パターン参照)
 
 ### admin 専用
 - [x] `/admin/users` — e2e/specs/01-admin-and-member-setup.spec.ts (PR #92 / Step 3 招待)
@@ -161,6 +161,9 @@
 
 ### チャット意味検索 (PR #373 仕様 / 本機能で新設)
 - [ ] `/api/chat/search` (POST) — skip: PR feat/chat-semantic-search (2026-05-23) で新設。5 資産横断意味検索の API。認証・seedDataEnabled・縮退モード・visibility フィルタは単体テスト src/services/chat-search.service.test.ts + src/app/api/chat/search/route.test.ts で担保 (10 ケース)。E2E は FAB クリック → サイドパネル展開 → 検索結果 tier 表示の経路を後続 PR で追加検討 (UI 動作は src/components/chat-semantic-search/* で別途検証想定)
+
+### たすきフクロウ AI ヘルプチャット (ADR-0027 / 2026-05-29 PR5 で新設)
+- [ ] `/api/help/chat` (POST) — skip: feat/faq-pr5-ai-concierge-core で新設。FAQ + 使い方ガイドを Claude Haiku に同梱する learning-free 機能。権限フィルタ (一般メンバー / PM/PL / tenant_admin で開示 FAQ を厳密に分別) は src/config/faq-content.test.ts + src/config/guide-content.test.ts で担保 (21 ケース)。E2E は PR6 (UI 実装) で help-chat.spec.ts として追加予定。本 route は monthly cap (100 回/テナント) と LLM call の統合動作のため、PR7 で E2E に組み込む
 
 ### メモ
 - [x] `/api/memos` (GET/POST) — e2e/specs/04-personal-features.spec.ts (PR #94 / POST 作成 + GET は /memos と /all-memos の画面経由)

@@ -188,6 +188,36 @@ describe('voyageEmbed - 出力検証', () => {
 
     await expect(voyageEmbed({ texts: ['x'] })).rejects.toThrow();
   });
+
+  /**
+   * ★severity-1★ ADR-0028 PR #471 フルスキャン検証 (2026-05-30) 追加:
+   *   API 応答に NaN / Infinity が混入した時、後段の pgvector に
+   *   `[NaN,...]::vector` を投げると DB exception (pgvector v0.5+ は NaN 非許容)。
+   *   zod schema 段で finite() でフィルタして RAG 経路全体を保護する。
+   */
+  it('embedding に NaN が混入すると zod (finite チェック) で throw', async () => {
+    const withNaN = Array.from({ length: 1024 }, (_, i) => (i === 0 ? NaN : 0.1));
+    const fetcher = vi.fn().mockResolvedValue(makeOkResponse([withNaN]));
+    _setVoyageFetcherForTest(fetcher as unknown as typeof globalThis.fetch);
+
+    await expect(voyageEmbed({ texts: ['x'] })).rejects.toThrow();
+  });
+
+  it('embedding に Infinity が混入すると zod (finite チェック) で throw', async () => {
+    const withInf = Array.from({ length: 1024 }, (_, i) => (i === 0 ? Infinity : 0.1));
+    const fetcher = vi.fn().mockResolvedValue(makeOkResponse([withInf]));
+    _setVoyageFetcherForTest(fetcher as unknown as typeof globalThis.fetch);
+
+    await expect(voyageEmbed({ texts: ['x'] })).rejects.toThrow();
+  });
+
+  it('embedding に -Infinity が混入すると zod (finite チェック) で throw', async () => {
+    const withNegInf = Array.from({ length: 1024 }, (_, i) => (i === 0 ? -Infinity : 0.1));
+    const fetcher = vi.fn().mockResolvedValue(makeOkResponse([withNegInf]));
+    _setVoyageFetcherForTest(fetcher as unknown as typeof globalThis.fetch);
+
+    await expect(voyageEmbed({ texts: ['x'] })).rejects.toThrow();
+  });
 });
 
 describe('VoyageConfigError / VoyageApiError', () => {

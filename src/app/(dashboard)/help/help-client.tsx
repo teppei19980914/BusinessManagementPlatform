@@ -22,6 +22,7 @@ import {
   GUIDE_ROUTE,
   getFeatureRequestUrl,
 } from '@/config';
+import { HelpChatInput } from '@/components/help-chat/help-chat-input';
 
 type Props = {
   isTenantAdmin: boolean;
@@ -30,6 +31,8 @@ type Props = {
 export function HelpClient({ isTenantAdmin }: Props) {
   // 2026-05-11: Discord / LP は AccountMenu (画面右上) に集約したため当画面の末尾 CTA から削除。
   //   機能要望リンクのみ /help 末尾に残す (= 機能改善依頼は FAQ 文脈で発生しやすいため)。
+  // ADR-0027 (2026-05-29 PR6): ページ上部にたすきフクロウ AI チャット入力を追加。
+  //   下部の FAQ アコーディオンは継続表示し、「チャットで聞く / 一覧から探す」の 2 経路を並列提供。
   const tNav = useTranslations('nav');
   const featureRequest = getFeatureRequestUrl();
 
@@ -43,9 +46,12 @@ export function HelpClient({ isTenantAdmin }: Props) {
           <Link href={GUIDE_ROUTE} className="text-primary underline">
             使い方ガイド
           </Link>{' '}
-          を先に読むのがおすすめです。ここでは個別の「困った」に答えます。
+          を先に読むのがおすすめです。下のフクロウチャットでも質問できますし、一覧から個別の「困った」も探せます。
         </p>
       </header>
+
+      {/* たすきフクロウ AI ヘルプチャット (ADR-0027) */}
+      <HelpChatInput variant="page" />
 
       {/* サービスについて (マスコット紹介) */}
       <FaqCategory title="サービスについて">
@@ -81,6 +87,14 @@ export function HelpClient({ isTenantAdmin }: Props) {
             </div>
           }
         />
+        <FaqItem
+          q="推奨ブラウザは何ですか？スマートフォンでも使えますか？"
+          a={
+            <p>
+              <strong>Chrome / Edge / Safari / Firefox</strong> の最新版を推奨します。スマートフォンのブラウザでも閲覧・操作可能 (レスポンシブ対応) ですが、CSV 取込やプロジェクト編集などの集中作業はパソコン推奨です。
+            </p>
+          }
+        />
       </FaqCategory>
 
       {/* 業務利用に関する FAQ */}
@@ -88,14 +102,9 @@ export function HelpClient({ isTenantAdmin }: Props) {
         <FaqItem
           q="リスクと課題の違いは何ですか？"
           a={
-            <>
-              <p>
-                <strong>リスク</strong> は「まだ発生していない潜在的な不確実性」、
-                <strong>課題</strong> は「すでに発生したブロッカー・要対処事項」です。
-                リスクが顕在化したら同じレコードを課題に変換するのではなく、課題として新規起票することを推奨します
-                (リスク側に「対策で抑えられた」記録が残るため)。
-              </p>
-            </>
+            <p>
+              <strong>リスク</strong> は「まだ起きていない、起きるかもしれない問題」、<strong>課題</strong> は「すでに起きていて対応が必要な問題」です。リスクが実際に起こったら、そのリスクは触らず別途「課題」として新規登録するのがおすすめ (リスク側に「警戒した結果」が記録として残り、後の振り返りに役立つため)。
+            </p>
           }
         />
         <FaqItem
@@ -103,13 +112,10 @@ export function HelpClient({ isTenantAdmin }: Props) {
           a={
             <>
               <p>
-                <strong>WP (作業パッケージ)</strong> は集約タスクで、子を持つ「枠」です。
-                <strong>Activity</strong> は実作業の末端で、人が手を動かす単位。
-                予定工数・担当者・期間は <strong>Activity に</strong> 設定します
-                (WP は子 Activity の合計として自動表示)。
+                <strong>WP (作業パッケージ)</strong> は「大きなまとまり」、<strong>Activity</strong> はその中の「実際に手を動かす作業 1 単位」です。担当者・予定工数・期間は <strong>Activity に</strong> 設定します (WP には子 Activity の合計が自動表示されます)。
               </p>
               <p className="mt-2 text-muted-foreground">
-                目安: 1 つの Activity は 0.5〜5 人日程度に収めると進捗管理しやすくなります。
+                例: 営業企画プロジェクトで「提案資料作成 (WP)」の中に「スライド設計 / グラフ作成 / 校正 (各 Activity)」を入れる、といった使い方です。1 つの Activity は <strong>半日〜1 週間</strong> 程度に収めると進捗が見やすくなります。
               </p>
             </>
           }
@@ -118,9 +124,7 @@ export function HelpClient({ isTenantAdmin }: Props) {
           q="ナレッジと振り返りはどう使い分けますか？"
           a={
             <p>
-              <strong>振り返り</strong> はプロジェクト/イテレーション末尾で「特定の経験」をまとめる KPT 形式。
-              <strong>ナレッジ</strong> は「再利用される業務知識」を独立した文書にしたもの。
-              振り返りで Try に挙がった項目のうち、汎用化できるものをナレッジに昇格させる流れがおすすめです。
+              <strong>振り返り</strong> はプロジェクト終了時などに <strong>Keep (続けたい) / Problem (困った) / Try (次は工夫する)</strong> の 3 視点で経験を整理する場所です。<strong>ナレッジ</strong> は他のプロジェクトでも再利用できそうな業務知識を独立した文書として残す場所です。振り返りの Try で出た工夫のうち、他チームでも使えそうなものをナレッジに切り出すと、組織の財産が貯まります。
             </p>
           }
         />
@@ -129,13 +133,13 @@ export function HelpClient({ isTenantAdmin }: Props) {
           a={
             <>
               <p>
-                プロジェクトの内容に <strong>類似した過去のリスク・課題・ナレッジ・振り返り</strong> が、
-                AI による意味的類似度ベースで自動抽出されます。
-                自テナント内のデータ + 管理テナント (運営提供のシードデータ) を横断検索します
-                (シード参照はテナント設定で OFF も可能)。
+                今のプロジェクトと <strong>内容が似ている過去のリスク・課題・ナレッジ・振り返り</strong> を AI が自動で探して並べます。自社内のデータと、運営が用意した参考事例 (シードデータ) の両方を検索します (シード参照はテナント設定で OFF にできます)。
               </p>
               <p className="mt-2">
-                Pro プランでは「なぜ参考になるか」の説明文 (Claude Sonnet 生成) も付与されます。
+                Pro プランでは <strong>「なぜ参考になるか」</strong> の説明文も付きます (より高機能な AI を使用)。
+              </p>
+              <p className="mt-2 text-muted-foreground">
+                ※ 新しく登録したデータが提案に出てくるまで <strong>数秒〜のタイムラグ</strong> が発生します (AI が内容を読み取って検索用データを作るため)。
               </p>
             </>
           }
@@ -150,20 +154,17 @@ export function HelpClient({ isTenantAdmin }: Props) {
             </p>
           }
         />
-        {/* PR-9 / ADR-0026 (2026-05-29): embedding 非同期化に伴う「保存直後の反映遅延」案内 */}
+        {/* PR-9 / ADR-0026 (2026-05-29): embedding 非同期化に伴う「保存直後の反映遅延」案内。
+            PR2 (feat/faq-pr2-clarity-rewrite): 「特徴量」「private」「全○○一覧」などの専門表現を平易化。 */}
         <FaqItem
           q="登録したナレッジ／メモ／振り返り／プロジェクトが提案や一覧に出てきません"
           a={
             <>
               <p>
-                まず <strong>「公開範囲」が「全メンバー（公開）」になっているか</strong> を確認してください。
-                「自分のみ（下書き / private）」は提案エンジン・全○○一覧の対象外です。
+                まず <strong>「公開範囲」が「全メンバー (公開)」になっているか</strong> を確認してください。「自分のみ (下書き)」のデータは、提案エンジンや全メンバー向け一覧画面には出ません。
               </p>
               <p className="mt-2">
-                公開設定済の場合、保存ボタンを押してから提案エンジンに反映されるまで{' '}
-                <strong>数秒〜のタイムラグ</strong> が発生します
-                (内部で AI が意味検索用の特徴量を生成しているため)。「保存しました」直後に
-                別画面で確認した際に最新データが見えない場合は、数十秒待ってから再読み込みしてください。
+                公開設定済の場合は、保存ボタンを押してから提案エンジンに表示されるまで <strong>数秒〜のタイムラグ</strong> が発生します (AI が内容を読み取って検索用データを作っているため)。「保存しました」直後に表示されない場合は、数十秒待ってからページを再読み込みしてください。
               </p>
             </>
           }
@@ -173,11 +174,11 @@ export function HelpClient({ isTenantAdmin }: Props) {
           a={
             <>
               <p>
-                課題・リスクは以下の <strong>2 条件を両方</strong>満たした場合のみ提案候補になります:
+                課題・リスクは次の <strong>2 つの条件を両方</strong> 満たしたときだけ提案候補になります:
               </p>
               <ul className="mt-2 ml-4 list-disc space-y-1">
-                <li><strong>状態：解消</strong>（解消前の課題・リスクは提案対象外）</li>
-                <li><strong>公開範囲：全メンバー（公開）</strong></li>
+                <li><strong>状態が「解消」</strong> (解消前のものは対象外)</li>
+                <li><strong>公開範囲が「全メンバー (公開)」</strong></li>
               </ul>
               <p className="mt-2">
                 両方を満たしてから <strong>数秒〜のタイムラグ</strong> で順次反映されます。
@@ -190,14 +191,155 @@ export function HelpClient({ isTenantAdmin }: Props) {
           a={
             <>
               <p>
-                テキスト編集後、内部で <strong>意味検索用の特徴量を再生成</strong> しています。
-                反映までに <strong>数秒〜のタイムラグ</strong> が発生します。
+                テキスト編集後、AI が内容を読み直して <strong>検索用データを作り直す</strong> ため、反映までに <strong>数秒〜のタイムラグ</strong> が発生します。
               </p>
               <p className="mt-2 text-muted-foreground">
-                ※ タイトル・本文以外の項目（タグ・優先度・期日など）の編集では再生成は走りません
-                （提案エンジンが使う特徴量は意味検索用テキスト列のみのため）。
+                ※ タイトル・本文以外の項目 (タグ・優先度・期日など) の編集では作り直しは走りません (提案に使うのは本文テキストだけのため)。
               </p>
             </>
+          }
+        />
+        <FaqItem
+          q="プロジェクトを誤って削除しました、復元できますか？"
+          a={
+            <p>
+              削除後 <strong>30 日以内</strong> なら、テナント管理者経由で運営側にお問い合わせください (内部的にはまだ残っており復元可能)。30 日経過後は完全に削除され、復元できません。誤削除予防のため、削除確認ダイアログでは慎重にご判断ください。
+            </p>
+          }
+        />
+        <FaqItem
+          q="終了 (closed) したプロジェクトは編集できますか？"
+          a={
+            <p>
+              <strong>編集できます</strong> (権限があれば)。「終了」は表示用のステータスで、編集ロックではありません。終了後の振り返り追記やナレッジ整理などにご活用ください。
+            </p>
+          }
+        />
+        <FaqItem
+          q="プロジェクトをテンプレートから複製できますか？"
+          a={
+            <p>
+              プロジェクト全体のテンプレート機能は現時点で未実装です。<strong>WBS (作業構造) 単位の複製</strong> はプロジェクト内の WBS 画面 (タスク一覧) から実行できます。
+            </p>
+          }
+        />
+        <FaqItem
+          q="チャット検索で結果が 0 件になります"
+          a={
+            <p>
+              キーワード単体ではなく <strong>50〜200 字程度の文章で、業務文脈や専門用語を含める</strong> とヒットしやすくなります。例:「決済」だけより「クレジットカード決済の API 連携で発生したエラー対応」のように具体的に書くのがコツです。
+            </p>
+          }
+        />
+        <FaqItem
+          q="「下書き / 自分のみ」のデータも提案に出てきますか？"
+          a={
+            <p>
+              出てきません。<strong>「下書き / 自分のみ」状態のデータは提案エンジンの対象外</strong> です (検索用データも作られないため、コスト面でも無駄が発生しない設計)。提案に出したい場合は公開範囲を「プロジェクト内公開」または「全メンバー (公開)」に変更してください。
+            </p>
+          }
+        />
+        <FaqItem
+          q="「なぜ参考になる?」ボタンは押すたびに ¥15 課金されますか？"
+          a={
+            <p>
+              いいえ、<strong>同じ組み合わせ (今のプロジェクト × 参考候補) で 2 回目以降はキャッシュから表示され、追加課金は発生しません</strong>。組み合わせが変わったとき (別の候補で押す / 元データの本文が編集された後) のみ ¥15 が発生します。
+            </p>
+          }
+        />
+      </FaqCategory>
+
+      {/* 権限とロール */}
+      <FaqCategory title="権限とロールについて">
+        <FaqItem
+          q="運営者 / テナント管理者 / 一般メンバーの違いは？"
+          a={
+            <div className="mt-2 overflow-x-auto rounded-md border">
+              <table className="w-full border-collapse text-sm">
+                <thead className="bg-muted/40">
+                  <tr>
+                    <th className="border-b p-2 text-left">操作</th>
+                    <th className="border-b p-2 text-left">運営者</th>
+                    <th className="border-b p-2 text-left">テナント管理者</th>
+                    <th className="border-b p-2 text-left">一般メンバー</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr><td className="border-b p-2">テナント作成・削除・課金管理</td><td className="border-b p-2">○</td><td className="border-b p-2">○ (自社のみ)</td><td className="border-b p-2">−</td></tr>
+                  <tr><td className="border-b p-2">メンバー招待・ロール変更</td><td className="border-b p-2">−</td><td className="border-b p-2">○</td><td className="border-b p-2">−</td></tr>
+                  <tr><td className="border-b p-2">プロジェクト・ナレッジ・課題の作成/編集</td><td className="border-b p-2">−</td><td className="border-b p-2">○</td><td className="border-b p-2">○</td></tr>
+                  <tr><td className="p-2">他社データの閲覧</td><td className="p-2">課金集計のみ</td><td className="p-2">−</td><td className="p-2">−</td></tr>
+                </tbody>
+              </table>
+            </div>
+          }
+        />
+        <FaqItem
+          q="自分のロールはどこで確認できますか？"
+          a={
+            <p>
+              画面右上のアカウントメニュー (アバターアイコン) を開くと、<strong>組織 → ロール → 名前 → メール</strong> の順で表示されます。
+            </p>
+          }
+        />
+        <FaqItem
+          q="退職者が担当していたナレッジ・課題はどう引き継ぎますか？"
+          a={
+            <p>
+              ナレッジ・リスク・課題・振り返り・メモは <strong>担当者 (assignee) を別のメンバーに付け替える</strong> ことで引き継げます。各データの編集画面の「担当者」欄から変更してください (データ自体はそのまま残ります)。
+            </p>
+          }
+        />
+      </FaqCategory>
+
+      {/* アカウント・ログイン */}
+      <FaqCategory title="アカウント・ログインについて">
+        <FaqItem
+          q="組織 ID を忘れました"
+          a={
+            <p>
+              次のいずれかで確認できます: (1) ログイン画面の「組織 ID」入力欄を空にしてフォーカスすると、過去にログイン成功した組織 ID が <strong>最大 5 件・90 日間</strong> 候補表示されます / (2) 招待時に受信したメール本文「【重要】ログイン情報」セクションに記載 / (3) 同じ組織のメンバー (テナント管理者など) に確認。
+            </p>
+          }
+        />
+        <FaqItem
+          q="パスワード設定リンクの有効期限はどれくらいですか？"
+          a={
+            <p>
+              招待メールおよびパスワード再設定メールに含まれるリンクは <strong>24 時間で期限切れ</strong> になります。期限切れの場合、ログイン画面の「パスワードを忘れた方」から再発行してください (一般メンバーで再発行できない場合はテナント管理者に依頼)。
+            </p>
+          }
+        />
+        <FaqItem
+          q="招待メールが届きません"
+          a={
+            <>
+              <p>
+                送信元は <strong><code>noreply@tasukiba.com</code></strong> です。次の順に確認してください:
+              </p>
+              <ol className="mt-2 ml-4 list-decimal space-y-1">
+                <li>迷惑メールフォルダ・スパムフォルダを確認</li>
+                <li>会社のメールフィルタで <code>noreply@tasukiba.com</code> を受信許可リストに追加</li>
+                <li>メールアドレスのスペルミス (テナント管理者の招待画面で確認)</li>
+                <li>解決しなければテナント管理者から再招待</li>
+              </ol>
+            </>
+          }
+        />
+        <FaqItem
+          q="通知が来ません"
+          a={
+            <p>
+              アプリ内通知は <strong>@メンションされた時のみ</strong> 画面右上のベルアイコンに表示されます。通知の ON/OFF 設定機能は現時点でありません (今後追加予定)。期待した通知が来ない場合は、コメント内で <code>@</code> を入力してメンバー名を選択することで明示的に相手に通知できます。
+            </p>
+          }
+        />
+        <FaqItem
+          q="メール通知はありますか？"
+          a={
+            <p>
+              現時点では <strong>招待メールと Beginner プラン期限警告 (60 日 / 75 日 / 90 日 / 150 日 / 170 日)</strong> のみメールで届きます。日々の操作 (コメント / 担当変更 / 期日リマインド) はアプリ内のベルアイコン通知のみです。
+            </p>
           }
         />
       </FaqCategory>
@@ -208,18 +350,60 @@ export function HelpClient({ isTenantAdmin }: Props) {
           q="他テナントの情報は見えますか？"
           a={
             <p>
-              いいえ、見えません。テナントは <strong>最上位の認可境界</strong>{' '}
-              で、業務データは完全に分離されています。運営 (super_admin) も他テナントの内部データは閲覧できません
-              (集計値や課金情報を除く)。
+              いいえ、見えません。テナント (= 会社) ごとにデータは完全に分かれており、運営者も他社の業務データの中身は見ません (請求のための件数・金額の集計のみ確認します)。
             </p>
           }
         />
         <FaqItem
           q="退会するとデータはどうなりますか？"
           a={
+            <>
+              <p>プランによって異なります。</p>
+              <ul className="mt-2 ml-4 list-disc space-y-1">
+                <li>
+                  <strong>Beginner</strong>: 組織作成から 90 日で読み取り専用、合計 180 日で業務データが <strong>自動的に削除</strong> されます (削除前に事前メール通知あり)。
+                </li>
+                <li>
+                  <strong>Expert / Pro</strong>: テナント設定の「セルフ解約」を実行すると、解約から約 90 日後に業務データが削除されます。
+                </li>
+              </ul>
+              <p className="mt-2">
+                削除前にデータが必要な場合は、テナント設定 →「エクスポート」から CSV を取得してください。請求書など法律で保管が必要な記録は別途 5 年間運営側で保管します。
+              </p>
+            </>
+          }
+        />
+        <FaqItem
+          q="退会したあと、同じ組織で再加入できますか？"
+          a={
             <p>
-              テナント削除を申請すると、<strong>30 日間の Grace 期間</strong> を経て物理削除されます。
-              この間にエクスポート (CSV) で引き上げが可能です。法的保管義務のあるログ (監査ログ等) は匿名化して別途保管されます。
+              削除後は新しい組織として作り直す必要があります (組織 ID は再利用できません)。以前の業務データは復元できないため、必要な情報は必ず削除前にエクスポートしてください。
+            </p>
+          }
+        />
+        <FaqItem
+          q="AI に送られるデータは何ですか？"
+          a={
+            <>
+              <p>
+                提案エンジンおよびチャット検索のために、次のデータが Anthropic (Claude) と Voyage AI に送信されます:
+              </p>
+              <ul className="mt-2 ml-4 list-disc space-y-1">
+                <li>プロジェクトの「目的・背景・スコープ」</li>
+                <li>ナレッジ・リスク・課題・振り返り・メモの本文 (公開範囲が draft でないもの)</li>
+                <li>チャット検索のクエリ文字列</li>
+              </ul>
+              <p className="mt-2">
+                次のデータは <strong>送信されません</strong>: パスワードなどの認証情報 / 添付ファイルの中身 / コメント本文 / 個人情報 (氏名・メールアドレス) など。
+              </p>
+            </>
+          }
+        />
+        <FaqItem
+          q="データのバックアップ・エクスポートはできますか？"
+          a={
+            <p>
+              テナント管理者は <Link href="/settings/tenant" className="text-primary underline">テナント設定</Link> から全データを ZIP 形式で一括エクスポートできます。各一覧画面 (ナレッジ・リスク・課題・振り返り・メモ) の「エクスポート」ボタンから個別の CSV ダウンロードも可能です。退会前のデータ救出にもこの機能をお使いください。
             </p>
           }
         />
@@ -241,6 +425,55 @@ export function HelpClient({ isTenantAdmin }: Props) {
                 「個人メモ」にも自動的に表示されます。
               </p>
             </>
+          }
+        />
+        <FaqItem
+          q="ナレッジの公開範囲 (下書き / プロジェクト内 / 全メンバー) はどう使い分けますか？"
+          a={
+            <>
+              <p>用途別の目安:</p>
+              <ul className="mt-2 ml-4 list-disc space-y-1">
+                <li><strong>下書き (draft)</strong>: 自分の作業メモ。他のメンバーから見えない (提案エンジン対象外)</li>
+                <li><strong>プロジェクト内 (project)</strong>: 関係するプロジェクトメンバーのみに公開</li>
+                <li><strong>全メンバー (company)</strong>: 全社員に公開、提案エンジンの候補にも並ぶ</li>
+              </ul>
+              <p className="mt-2">
+                リスク・課題 (RiskIssue) は <strong>下書き</strong> または <strong>公開</strong> の 2 段階です。
+              </p>
+            </>
+          }
+        />
+        <FaqItem
+          q="公開範囲を後から変更できますか？"
+          a={
+            <p>
+              はい、各データの編集画面で変更できます (PM・テナント管理者のみ)。<strong>「下書き → 全メンバー」に初めて変更した時点で AI が検索用データを作成</strong> するため、提案エンジンに反映されるまで <strong>数秒〜のタイムラグ</strong> が発生します。
+            </p>
+          }
+        />
+        <FaqItem
+          q="@メンションした個人メモは相手から見えますか？"
+          a={
+            <p>
+              メモには <strong>private (自分のみ) と public (全メンバーに公開) の 2 段階</strong> があります。private なメモ内で @メンションしても、相手は閲覧できません (通知も飛びません)。共有したい場合は <strong>public に変更してから</strong> @メンションしてください。
+            </p>
+          }
+        />
+        <FaqItem
+          q="利用規約・プライバシーポリシーはどこにありますか？"
+          a={
+            <p>
+              サインアップフォームの末尾と、{' '}
+              <a
+                href="https://teppei19980914.github.io/HomePage/ja/product/tasukiba-user/#terms"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-primary underline"
+              >
+                公式 LP のたすきば利用規約ページ
+              </a>
+              {' '}に掲載しています。改訂時は事前にメール通知します。
+            </p>
           }
         />
       </FaqCategory>
@@ -338,6 +571,17 @@ export function HelpClient({ isTenantAdmin }: Props) {
                       <strong>取込後に本文の 2 行目以降が消えている</strong> →{' '}
                       改行を含むセルがダブルクォートで囲まれていなかった可能性。CSV をメモ帳 / VS Code で開き
                       該当セルが <code>&quot;...&quot;</code> で囲まれているか確認 (Excel 保存時にクォートが外れる事故あり)
+                    </li>
+                  </ul>
+                  <p className="mt-3 text-muted-foreground">
+                    <strong>Excel での操作補足</strong>:
+                  </p>
+                  <ul className="mt-1 list-disc space-y-1 pl-5 text-muted-foreground">
+                    <li>
+                      <strong>CSV UTF-8 で保存</strong>: Excel メニュー「ファイル」→「名前を付けて保存」→ ファイル形式のドロップダウンから「CSV UTF-8 (コンマ区切り) (*.csv)」を選択 (Windows / Mac とも同じ)
+                    </li>
+                    <li>
+                      <strong>セル内改行</strong>: 改行を入れたいセル内で <code>Alt + Enter</code> (Mac は <code>Option + 改行</code>) を押す。改行を含むセルは保存時に自動的に <code>&quot;</code> で囲まれる
                     </li>
                   </ul>
                 </>
@@ -453,6 +697,83 @@ export function HelpClient({ isTenantAdmin }: Props) {
           </FaqCategory>
 
           <FaqCategory
+            title="請求と支払いについて (テナント管理者のみ)"
+            tone="admin"
+          >
+            <FaqItem
+              q="いつ請求されますか？"
+              a={
+                <p>
+                  <strong>月末締め → 翌月 25 日 (固定) がお支払い期限</strong> です (土日祝に当たる場合は翌営業日)。請求書 PDF は締日の翌月 15 日までにご請求先メールアドレスへ送付されます。
+                </p>
+              }
+            />
+            <FaqItem
+              q="月途中でプランを変えたら料金はどうなりますか？"
+              a={
+                <p>
+                  たすきばは「使ったぶんだけ」の従量課金 (1 回ごと) のため、切替前の利用分は切替前の単価、切替後は切替後の単価で計算されます (日割り計算はありません)。Beginner → Expert / Pro と Expert ↔ Pro は <strong>切替ボタンを押した瞬間に反映</strong> されます。
+                </p>
+              }
+            />
+            <FaqItem
+              q="支払い方法はクレジットカード以外にありますか？"
+              a={
+                <p>
+                  <strong>銀行振込 (請求書 PDF 受領)</strong> と <strong>クレジットカード (Stripe 自動引き落とし)</strong> の 2 種類です。新規組織の初期設定は銀行振込で、{' '}
+                  <Link href="/settings/tenant" className="text-primary underline">
+                    テナント設定
+                  </Link>
+                  {' '}からクレジットカードに変更できます (運営の事情でクレジットカード払いが一時的に選択できない場合があります)。
+                </p>
+              }
+            />
+            <FaqItem
+              q="請求書 PDF はどこからダウンロードできますか？"
+              a={
+                <p>
+                  銀行振込の場合は毎月 15 日までに <strong>ご請求先メールアドレス宛に PDF が直接送付</strong> されます (ダッシュボード内にダウンロード画面はありません)。クレジットカードの場合は Stripe の請求書 URL がメールに含まれ、そこからダウンロードできます。
+                </p>
+              }
+            />
+            <FaqItem
+              q="消費税はどう計算されますか？"
+              a={
+                <p>
+                  <strong>10% を四捨五入</strong> で計算します。請求書には税抜・税込の両方を明記します。
+                </p>
+              }
+            />
+            <FaqItem
+              q="Beginner プランで DB 容量 50 MB を超えるとどうなりますか？"
+              a={
+                <p>
+                  <strong>新しいデータの保存・編集ができなくなります</strong> (Beginner は無料プランのため、超過しても課金は発生しません)。不要なデータを削除すると 30 秒ほどで空き容量が自動再集計され、書き込みが再開されます。継続的に多く保存したい場合は Expert / Pro へアップグレードしてください。
+                </p>
+              }
+            />
+            <FaqItem
+              q="DB 容量・ファイル容量はどこで確認できますか？"
+              a={
+                <p>
+                  <Link href="/settings/tenant" className="text-primary underline">
+                    テナント設定
+                  </Link>
+                  {' '}の <strong>「使用量」タブ</strong> で確認できます。ページを開いた瞬間に再集計されるため、削除直後でも実際の容量が反映されます。
+                </p>
+              }
+            />
+            <FaqItem
+              q="50 GB のハードキャップに達したら何が起こりますか？"
+              a={
+                <p>
+                  全プラン共通で <strong>新規データの保存・編集が止まります</strong> (エクスポート・既存データ閲覧・削除は引き続き可能)。サービス全体の安定性を守るための上限値で、継続利用には不要データの削除をお願いします。
+                </p>
+              }
+            />
+          </FaqCategory>
+
+          <FaqCategory
             title="テナント管理者向け (課金・プラン・席数)"
             tone="admin"
           >
@@ -460,73 +781,90 @@ export function HelpClient({ isTenantAdmin }: Props) {
               q="プラン (Beginner / Expert / Pro) の違いは？"
               a={
                 <>
-                  <ul className="list-disc space-y-1 pl-5">
-                    <li>
-                      <strong>Beginner (無料)</strong>: 5 席まで・プロジェクト作成/更新 月 50 回まで無料・Claude Haiku。
-                      <strong>資産入力 (ナレッジ・リスク・振り返り・メモ) とチャット検索は無料・無制限</strong> (ADR-0019)。
-                      プロジェクト作成/更新が 50 回到達すると当該機能のみ縮退、それ以外は継続。
-                    </li>
-                    <li>
-                      <strong>Expert (¥10/回)</strong>: 席数無制限・Claude Haiku・月間使用量上限なし
-                      (予算上限は自己設定可)。プロジェクト作成/更新のみ課金。
-                      <strong>資産入力とチャット検索は無料・無制限</strong>。
-                    </li>
-                    <li>
-                      <strong>Pro (¥15/回)</strong>: 席数無制限・Claude Sonnet・「なぜ?」機能限定。
-                      プロジェクト作成/更新 + なぜ機能のみ課金。資産入力とチャット検索は無料・無制限。
-                    </li>
-                  </ul>
+                  <div className="mt-2 overflow-x-auto rounded-md border">
+                    <table className="w-full border-collapse text-sm">
+                      <thead className="bg-muted/40">
+                        <tr>
+                          <th className="border-b p-2 text-left">項目</th>
+                          <th className="border-b p-2 text-left">Beginner (無料)</th>
+                          <th className="border-b p-2 text-left">Expert (¥10/回)</th>
+                          <th className="border-b p-2 text-left">Pro (¥15/回)</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <td className="border-b p-2">席数</td>
+                          <td className="border-b p-2">5 人まで</td>
+                          <td className="border-b p-2">無制限</td>
+                          <td className="border-b p-2">無制限</td>
+                        </tr>
+                        <tr>
+                          <td className="border-b p-2">プロジェクト作成/更新</td>
+                          <td className="border-b p-2">月 50 回まで無料</td>
+                          <td className="border-b p-2">¥10/回</td>
+                          <td className="border-b p-2">¥15/回</td>
+                        </tr>
+                        <tr>
+                          <td className="border-b p-2">資産入力 / チャット検索</td>
+                          <td className="border-b p-2" colSpan={3}>全プラン無料・無制限</td>
+                        </tr>
+                        <tr>
+                          <td className="border-b p-2">使う AI モデル</td>
+                          <td className="border-b p-2">基本 AI (Claude Haiku)</td>
+                          <td className="border-b p-2">基本 AI (Claude Haiku)</td>
+                          <td className="border-b p-2">高機能 AI (Claude Sonnet)</td>
+                        </tr>
+                        <tr>
+                          <td className="p-2">「なぜ参考になる?」機能</td>
+                          <td className="p-2 text-muted-foreground">利用不可</td>
+                          <td className="p-2 text-muted-foreground">利用不可</td>
+                          <td className="p-2">利用可 (¥15/回)</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
                   <p className="mt-2 text-muted-foreground">
                     詳細は{' '}
                     <Link href="/settings/tenant" className="text-primary underline">
                       テナント設定
-                    </Link>{' '}
-                    のプラン情報セクション。
+                    </Link>
+                    {' '}のプラン情報セクションで確認できます。
                   </p>
                 </>
               }
             />
             <FaqItem
-              q="ダウングレード (Pro → Beginner) は即時反映されますか？"
+              q="Expert と Pro の切替はいつ反映されますか？"
               a={
                 <p>
-                  いいえ、<strong>当月末まで現プラン継続、翌月 1 日から Beginner に切替</strong>{' '}
-                  します。月途中ダウングレードによる課金回避を防ぐ仕様です。
-                  また現席数が 6 名以上の場合はシステム側でダウングレードを拒否します
-                  (5 名以下にしてから再試行)。
+                  Expert ↔ Pro の切替は <strong>切替ボタンを押した瞬間に即時反映</strong> されます (日割り計算なし、切替前後の利用分はそれぞれの単価で計算)。Beginner プランへ戻すことはできません (「Expert / Pro から Beginner プランに戻せますか？」FAQ を参照)。
                 </p>
               }
             />
             <FaqItem
               q="月次予算上限を超えるとどうなりますか？"
               a={
-                <>
-                  <p>
-                    設定額に達した時点で <strong>縮退モード</strong> に切り替わります。
-                    エンティティの作成・更新は HTTP 200 で継続でき、embedding 生成・auto-tag 抽出・
-                    AI 説明文生成 などの AI 裏方処理のみ一時停止します。
-                  </p>
-                  <p className="mt-2">
-                    提案エンジンでは embedding 未生成の候補を <strong>タグ：テキスト = 5：5 の重み再配分</strong>
-                    で評価し、可能な限り検索精度を維持します。
-                  </p>
-                  <p className="mt-2">
-                    翌月 1 日のリセットで上限が解除され、同時に <strong>月初バッチで embedding を一括補完生成</strong>
-                    して提案精度が完全回復します。月初を待たず即時復活する場合は予算上限の引き上げを行ってください。
-                  </p>
-                </>
+                <p>
+                  設定額に達した時点で <strong>AI 機能の一部が一時停止</strong> します。データの作成・編集は引き続きできますが、新しく登録したデータが提案に反映されず検索精度がやや下がります。<strong>翌月 1 日に自動で元に戻ります</strong> (途中で復活させたい場合は予算上限を引き上げてください)。
+                </p>
               }
             />
             <FaqItem
-              q="シードデータ (管理テナントの参考事例) を使いたくありません"
+              q="シードデータ (運営が用意した参考事例) を使いたくありません"
               a={
                 <p>
                   <Link href="/settings/tenant" className="text-primary underline">
                     テナント設定
                   </Link>{' '}
-                  →「シードデータ参照」を OFF にしてください。
-                  以降は自テナント内のデータのみで提案が組まれます
-                  (Phase 2 テナント分離適用後、他テナントのデータは一切参照しません)。
+                  →「シードデータ参照」を OFF にしてください。以降は自社内のデータのみで提案が組まれます (他の会社のデータは一切参照しません)。
+                </p>
+              }
+            />
+            <FaqItem
+              q="Expert / Pro から Beginner プランに戻せますか？"
+              a={
+                <p>
+                  <strong>戻せません</strong>。Beginner は試用期間 (90 日) 用のプランで、一度上位プランに上げると同じ組織では使えなくなります。月額の利用をゼロに抑えたい場合は、Expert / Pro のまま <strong>テナント設定 →「月次予算上限」を ¥0</strong> に設定してください (AI 機能が一時停止し、追加課金が発生しません)。
                 </p>
               }
             />
