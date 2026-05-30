@@ -273,6 +273,10 @@ Netlify Dashboard → Site configuration → Environment variables では **同�
 | `APP_DEFAULT_TIMEZONE` / `APP_DEFAULT_LOCALE` | 共通値 | 拠点ごとに切替する場合のみ context 分離 |
 | `SYSTEM_USER_ID` | 共通値 | seed で生成する単一 UUID |
 | `NEXT_PUBLIC_DISCORD_INVITE_URL` / `_FEATURE_REQUEST_URL` | 共通値 | client 側で参照 |
+| **`ANTHROPIC_API_KEY`** ★必須★ | Anthropic Console 発行の API key | **全 context (Production / Deploy preview / Branch) で必須**。auto-tag / suggestion-explanation / help-chat の全 LLM 経路で参照。未設定だと該当 endpoint が 503 を返す ─ ヘルプチャットは [route.ts root-level catch](../../src/app/api/help/chat/route.ts) で 503 + `fallbackToAccordion:true` に倒すが、提案エンジン系はテナント書込阻害になるため preview にも必ず設定する。詳細: [DEPLOYMENT.md §4.4](./DEPLOYMENT.md) |
+| **`VOYAGE_API_KEY`** ★必須★ | Voyage AI ダッシュボード発行の API key | **全 context で必須**。chat-semantic-search / 各 entity の embedding / help-chat の RAG embedding (ADR-0028) で参照。未設定だと意味検索が pg_trgm fallback に縮退、ヘルプチャットは degraded mode (= RAG なし、「該当 FAQ なし」固定回答) になる。Voyage 200M tokens/月 無料枠は全 context 合算なので、preview/branch 使用も無料枠内で吸収可能 |
+
+> ★なぜ全 context 共通で OK か★: AI API key を context 分離 (= preview だけ別 key) するメリットがない (Anthropic / Voyage に dev/prod の概念なし、課金は実コール量ベース)。むしろ「preview だけ key 未設定」だと PR レビュー時の動作確認で意味検索 / ヘルプチャットが動かず UX バグの見落とし要因になるため、必ず全 context で同じ key を設定する。
 
 ### 2.3 Netlify Dashboard 操作手順 (context override 設定)
 

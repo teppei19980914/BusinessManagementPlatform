@@ -406,12 +406,25 @@ export function ChatPanel({ onClose }: { onClose: () => void }) {
             同じ機能を有する UI は完全一致が原則 = ゴミ箱位置も含めて統一)。
             disabled 判定は現 mode の turns 数に基づく。
           */}
+          {/*
+            ADR-0028 PR #471 2 巡目検証 (2026-05-30): aria-label / title を mode 別に動的化。
+            screen reader ユーザに「今クリックするとどちらの履歴がクリアされるか」を明示する
+            (a11y、両モードで「会話履歴をクリア」固定だと判別不能)。
+          */}
           <button
             type="button"
             onClick={handleClearHistory}
             disabled={mode === 'search' ? turns.length === 0 : helpTurnsCount === 0}
-            aria-label="会話履歴をクリア"
-            title="会話履歴をクリア"
+            aria-label={
+              mode === 'search'
+                ? '過去資産検索の会話履歴をクリア'
+                : 'ヘルプ・ガイドの会話履歴をクリア'
+            }
+            title={
+              mode === 'search'
+                ? '過去資産検索の会話履歴をクリア'
+                : 'ヘルプ・ガイドの会話履歴をクリア'
+            }
             data-testid="chat-panel-clear-history"
             className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-muted-foreground"
           >
@@ -476,44 +489,59 @@ export function ChatPanel({ onClose }: { onClose: () => void }) {
         </button>
       </div>
 
-      {mode === 'help' ? (
-        <div
-          role="tabpanel"
-          id="chat-panel-panel-help"
-          aria-labelledby="chat-panel-tab-help"
-          className="flex flex-1 min-h-0 flex-col"
-        >
-          {/*
-            ADR-0028 PR #471 (2026-05-30): HelpChatInput を完全に ChatPanel のレイアウトに
-            溶け込ませる (UI 完全一致):
-              - hideHeader: ChatPanel ヘッダ (アバター + persona + クリア + 閉じる) に一元化
-              - onTurnsCountChange: ChatPanel 側でクリアボタン disabled 判定に使う
-              - key={helpResetKey}: クリア時に再 mount で内部 state を破棄
-          */}
-          <HelpChatInput
-            key={helpResetKey}
-            variant="panel"
-            hideHeader
-            onTurnsCountChange={setHelpTurnsCount}
+      {/*
+        ADR-0028 PR #471 2 巡目検証 (2026-05-30): タブ切替で state 消失を防ぐため、
+        条件レンダリングではなく **両 tabpanel を常に mount しつつ hidden 属性で表示制御** する。
+        WAI-ARIA tab pattern の標準形 (= 非アクティブ側もメモリ常駐) に準拠。
+        これにより search → help → search の切替で「入力中クエリ / in-flight fetch / scroll 位置」
+        が保持される。両 sessionStorage が初期 load 時に同時に読まれるが、軽量なため性能影響なし。
+      */}
+      <div
+        role="tabpanel"
+        id="chat-panel-panel-search"
+        aria-labelledby="chat-panel-tab-search"
+        hidden={mode !== 'search'}
+        className={mode === 'search' ? 'flex flex-1 min-h-0 flex-col' : ''}
+      >
+        {mode === 'search' && (
+          <SearchModeBody
+            turns={turns}
+            query={query}
+            setQuery={setQuery}
+            submitting={submitting}
+            showWarning={showWarning}
+            tooLong={tooLong}
+            handleSubmit={handleSubmit}
+            handleKeyDown={handleKeyDown}
+            handleCardClick={handleCardClick}
+            viewerUserId={viewerUserId}
+            sessionLoading={sessionLoading}
+            bottomAnchorRef={bottomAnchorRef}
+            isNavigating={isNavigating}
           />
-        </div>
-      ) : (
-        <SearchModeBody
-          turns={turns}
-          query={query}
-          setQuery={setQuery}
-          submitting={submitting}
-          showWarning={showWarning}
-          tooLong={tooLong}
-          handleSubmit={handleSubmit}
-          handleKeyDown={handleKeyDown}
-          handleCardClick={handleCardClick}
-          viewerUserId={viewerUserId}
-          sessionLoading={sessionLoading}
-          bottomAnchorRef={bottomAnchorRef}
-          isNavigating={isNavigating}
+        )}
+      </div>
+      <div
+        role="tabpanel"
+        id="chat-panel-panel-help"
+        aria-labelledby="chat-panel-tab-help"
+        hidden={mode !== 'help'}
+        className={mode === 'help' ? 'flex flex-1 min-h-0 flex-col' : ''}
+      >
+        {/*
+          HelpChatInput は **常に mount**:
+            - hideHeader: ChatPanel ヘッダ (アバター + persona + クリア + 閉じる) に一元化
+            - onTurnsCountChange: ChatPanel 側でクリアボタン disabled 判定に使う
+            - key={helpResetKey}: クリア時に意図的 re-mount で内部 state 破棄 (タブ切替では re-mount しない)
+          ★非アクティブ時 (mode='search') も内部 state は維持される (= 入力中クエリ / in-flight fetch 保持)。
+        */}
+        <HelpChatInput
+          key={helpResetKey}
+          variant="panel"
+          hideHeader
+          onTurnsCountChange={setHelpTurnsCount}
         />
-      )}
+      </div>
     </aside>
   );
 }
