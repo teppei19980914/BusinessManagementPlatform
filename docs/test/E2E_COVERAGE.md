@@ -71,7 +71,7 @@
 - [ ] `/admin/role-changes` — skip: 権限変更履歴、read-only で優先度低
 - [x] `/customers` — e2e/specs/09-customers.spec.ts (PR #111-2 / admin 専用画面の新規登録 + 一覧削除) + e2e/specs/16-column-sort.spec.ts (PR fix/sortable-header-dropdown-portal / 2026-05-24 / plain TableHead パターンの sort dropdown 可視性 + body Portal 検証)。視覚回帰は並列テストで tbody 行数が変動するため対象外 (LESSONS §4.15 / §4.31 / settings-themes でテーマ回帰はカバー)
 - [x] `/customers/[customerId]` — e2e/specs/09-customers.spec.ts (PR #111-2 / 詳細画面編集 + active Project 紐付きカスケード削除) + e2e/visual/customers-screens.spec.ts (PR #111-2 / light テーマ詳細、単独スコープで決定化)
-- [ ] `/settings/tenant` — skip: PR-X4 (テナント管理者プラン変更 UI、admin 限定)。CRUD 単体テストは src/services/tenant-self.service.test.ts で対応 (E2E は V1.x 多テナント対応時に追加検討)
+- [x] `/settings/tenant` — e2e/specs/18-embedding-monthly-cap-ui.spec.ts (ADR-0030 / 2026-05-30 / 使用量タブ 2 大セクション化 + 月次予算上限フォーム 2 つ + 請求タブ「今月請求金額」セクション)。CRUD ロジックは src/services/tenant-self.service.test.ts (Embedding cap 含む)
 
 ### super_admin 専用 (PR-X2 / 2026-05-07)
 - [x] `/admin/super` — e2e/specs/13-super-admin-dashboard.spec.ts (2026-05-11 / 顧客集計 + Default 別セクション表示)

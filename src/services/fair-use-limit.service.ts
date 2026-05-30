@@ -1,8 +1,16 @@
 /**
- * Fair Use Limit サービス (ADR-0019 / 2026-05-24 → ADR-0022 で Beginner 専用に縮小 / 2026-06-01)
+ * Fair Use Limit サービス (ADR-0019 / 2026-05-24 → ADR-0022 で Beginner 専用に縮小 / 2026-06-01
+ *  → ADR-0030 で safety net に位置付け変更 / 2026-05-30)
  *
- * 役割 (ADR-0022 後の縮小版):
- *   **Beginner プラン × EMBEDDING_BILLABLE featureUnit** に対する tenant-level 月次上限を実装する。
+ * 役割 (ADR-0030 後の最終位置付け):
+ *   **Beginner プラン × EMBEDDING_BILLABLE featureUnit** に対する tenant-level 月次上限 (10,000 件)
+ *   = Voyage 200M 無料枠保護の **safety net**。
+ *
+ *   ADR-0030 (2026-05-30) で Beginner Embedding に明示的な試用上限 (100 件、BEGINNER_EMBEDDING_MONTHLY_LIMIT)
+ *   が新設されたため、通常運用では Beginner 100 件が先に発火し本 Fair Use Limit (10,000 件) は到達しなくなった。
+ *   本サービスは、Beginner 100 件チェック (metered.ts Step 3.1) を bypass するコードバグへの最終防御線
+ *   として残置する。Voyage 無料枠 200M トークン (全テナント共有) を 1 テナントが意図せず食い潰さない
+ *   ためのインフラ安全弁。
  *
  *   ADR-0019 で Embedding 系を全プラン無料化したことに伴い、無料 featureUnit 全般に対して
  *   Voyage 200M 無料枠保護のための月次 10,000 calls/tenant 上限を設けていた。

@@ -73,6 +73,11 @@ export interface GenerateEmbeddingFailure {
     | 'plan_invalid'
     // ADR-0019 (2026-05-24): 無料 featureUnit (chat-semantic-search 等) で fair-use-limit 超過時。
     | 'fair_use_limit_exceeded'
+    // ADR-0030 (2026-05-30): Embedding 系専用上限 — embedding.service が EMBEDDING_BILLABLE 経路を
+    //   呼ぶため、これらは実際に発火し得る。caller 側はチャット検索の縮退バナー表示や提案エンジンの
+    //   タグのみフォールバックでハンドリングする。
+    | 'embedding_budget_exceeded'
+    | 'embedding_beginner_limit_exceeded'
     | 'llm_error'
     | 'output_invalid';
   message: string;

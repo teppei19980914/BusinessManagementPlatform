@@ -93,7 +93,15 @@ model Tenant {
   currentMonthHelpChatCount            Int       @default(0) @map("current_month_help_chat_count")
   /// ユーザ自己設定の月次予算上限 (円)。NULL = 無制限。withMeteredLLM が予測コスト超過チェックで参照。
   ///   ADR-0022: 判定対象は LLM_BILLABLE のみ (= Embedding はチャット検索/資産入力に必須のため予算上限とは独立)。
+  ///   ADR-0030 (2026-05-30): Embedding 用の個別予算上限は monthlyEmbeddingBudgetCapJpy に分離 (本カラムは引き続き LLM_BILLABLE のみ)。
   monthlyBudgetCapJpy                  Int?      @map("monthly_budget_cap_jpy")
+  /// ADR-0030 (2026-05-30): Embedding 系 (EMBEDDING_BILLABLE_FEATURE_UNITS = 7 種) 用の月次予算上限 (円)。
+  ///   NULL = 無制限。withMeteredLLM が予測コスト超過チェックで参照する。
+  ///   Beginner は Embedding cost=0 のため意味を持たない (= UI でも入力フォームを非表示)。Expert/Pro 任意設定。
+  ///   到達時の挙動: 縮退モード reason='embedding_budget_exceeded'。チャット意味検索は既存 embedding で継続、
+  ///   新規 embedding は次月の月初 backfill cron で補填される (ADR-0026 非同期化 + ADR-0022 backfill との整合)。
+  ///   feedback_billing_invariant: currentMonthEmbeddingCostJpy + 予測コスト > 本値 で発火する金額ベース判定。
+  monthlyEmbeddingBudgetCapJpy         Int?      @map("monthly_embedding_budget_cap_jpy")
   /// Beginner プランの月間 API 呼び出し回数上限 (default **50**、ADR-0019 改定: 100 → 50)。
   /// 上限カウント対象は **課金対象 featureUnit のみ** (= `BILLABLE_FEATURE_UNITS`)。
   /// 無料の embedding / chat / backfill は本カウンタを進めない。

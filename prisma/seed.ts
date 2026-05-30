@@ -177,7 +177,7 @@ async function seedManagementTenantAndSuperAdmin(prisma: PrismaClient): Promise<
         name: 'Knowledge Relay Platform',
         plan: 'pro',
         // tenantSeq は明示的に null (= 顧客連番外、案 D 仕様)
-        // monthlyBudgetCapJpy は null (無制限、運営内部のため課金対象外)
+        // monthlyBudgetCapJpy / monthlyEmbeddingBudgetCapJpy (ADR-0030) は null (無制限、運営内部のため課金対象外)
       },
     });
     console.log(`✅ 管理テナント作成: ${MANAGEMENT_TENANT_ID} (Knowledge Relay Platform)`);

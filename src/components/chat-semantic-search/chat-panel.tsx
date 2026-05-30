@@ -60,6 +60,10 @@ const DEGRADED_REASON_LABEL: Record<DegradedReason, string> = {
   budget_exceeded: 'チャット検索は無料機能です (上限超過の通知が出た場合はサポートへ)',
   // ADR-0019: チャット検索 (= 無料 featureUnit) の月次 fair use limit (10,000 calls/tenant) 到達。
   fair_use_limit_exceeded: '無料機能の月間利用上限に達しました (来月自動再開)',
+  // ADR-0030 (2026-05-30): チャット意味検索は EMBEDDING_BILLABLE のため、Embedding 月次上限 / Beginner 100 件試用上限が発火する。
+  //   既存 embedding を使った検索は本質的に embedding 生成を伴わないため停止しないが、UI 側の防御として label を整備。
+  embedding_budget_exceeded: 'Embedding 月次予算上限に達しました (新規 embedding 停止、既存検索は継続、月初 backfill で次月補填)',
+  embedding_beginner_limit_exceeded: 'Beginner プランの Embedding 月間試用上限 (100 件) に達しました (新規 embedding 停止、既存検索は継続)',
   tenant_inactive: 'テナントが無効です',
   plan_invalid: 'プラン設定が不正です',
   llm_error: 'AI サービスで一時的な問題が発生しています',

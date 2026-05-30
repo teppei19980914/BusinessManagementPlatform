@@ -6,7 +6,8 @@
  * super_admin (システム管理者) は admin と同じメッセージで足る (運営者は別経路で対応)。
  *
  * - rate_limited / llm_error: ロール非依存 (短期 rate limit / LLM 一時障害)
- * - beginner_limit_exceeded / budget_exceeded: ロールで分岐
+ * - beginner_limit_exceeded / budget_exceeded: ロールで分岐 (LLM 系、ADR-0019)
+ * - embedding_beginner_limit_exceeded / embedding_budget_exceeded: ロールで分岐 (ADR-0030、Embedding 系)
  * - tenant_inactive / plan_invalid / plan_forbidden: 個別文言
  *
  * 関連:
@@ -27,6 +28,9 @@ export type DegradedReason =
   | 'plan_forbidden'
   // ADR-0019 (2026-05-24): 無料 featureUnit の月次 fair use limit (= 月 10,000 calls/tenant) 到達
   | 'fair_use_limit_exceeded'
+  // ADR-0030 (2026-05-30): Embedding 月次予算上限 + Beginner Embedding 100 件試用上限
+  | 'embedding_budget_exceeded'
+  | 'embedding_beginner_limit_exceeded'
   | 'llm_error';
 
 /**
@@ -70,9 +74,26 @@ export function getDegradedMessage(
 
     case 'fair_use_limit_exceeded':
       // ADR-0019 (2026-05-24): 無料機能 (チャット検索・資産入力等) の月次上限 (10,000 calls/tenant) 到達
+      // ADR-0030 (2026-05-30): Beginner Embedding 100 件上限が先に発火するため、本 reason は safety net (= Step 3.1 を bypass するバグの際にのみ発火)
       return isAdminLike
         ? '無料機能の月間利用上限 (10,000 回/テナント) に達しました。来月になると自動的に再開します。Pro プランへのアップグレードで利用枠拡張を検討してください。'
         : '無料機能の月間利用上限に達しました。来月になると自動的に再開します。早期復活が必要な場合はテナント管理者へご相談ください。';
+
+    case 'embedding_beginner_limit_exceeded':
+      // ADR-0030 (2026-05-30): Beginner Embedding 月 100 件試用上限到達。
+      //   既存 embedding でのチャット検索・類似度判定は継続。新規 embedding 生成のみ停止し、
+      //   失敗分は月初 backfill cron で次月補填される (= サービス停止ではない)。
+      return isAdminLike
+        ? 'Beginner プランの Embedding 月間試用上限 (100 件) に達しました。新規の資産入力・チャット検索の embedding 生成のみ停止しており、既存の検索は継続しています。来月 1 日に自動再開、または Expert/Pro へのアップグレードで即時復活できます。'
+        : 'Embedding 機能の試用上限に達しました。既存の検索は引き続きご利用いただけます。月末になると自動的に再開します。早期復活が必要な場合はテナント管理者へご相談ください。';
+
+    case 'embedding_budget_exceeded':
+      // ADR-0030 (2026-05-30): Expert/Pro Embedding 月次予算上限到達。
+      //   設定 → テナント → 使用量タブ → Embedding 生成回数の月次予算上限を引き上げると即時復活。
+      //   ブロック中も既存 embedding 検索は継続、新規 embedding は次月 backfill 補填。
+      return isAdminLike
+        ? 'Embedding の月次予算上限に達したため、新規 embedding 生成を停止しました。既存の embedding 検索は継続しています。設定 → テナント → 使用量タブ → Embedding 生成回数の月次予算上限を引き上げると、その場で再開できます。'
+        : 'Embedding の月次予算上限に達したため、新規 embedding 生成を停止しました。既存の検索は継続利用できます。月末になると自動的に再開します。早期復活が必要な場合はテナント管理者へご相談ください。';
 
     case 'llm_error':
       // LLM 側の一時障害なので、ロールを問わず「時間を置いて再試行」案内

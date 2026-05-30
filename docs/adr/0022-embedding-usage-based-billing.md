@@ -1,6 +1,8 @@
 # ADR-0022: Embedding 機能の従量課金 — Expert/Pro ¥1/call (2026-06-01)
 
-> ⚠️ **単価改定済 (2026-05-30)**: Expert/Pro の Embedding 単価は [ADR-0029](./0029-embedding-price-revision-5jpy.md) で **¥1 → ¥5/call** に改定されました。本 ADR の単価記述 (¥1) は**導入時の歴史的記録**として残します。現行単価・課金構造の真実源は [src/config/embedding-pricing.ts](../../src/config/embedding-pricing.ts) と ADR-0029 を参照してください。課金対象 featureUnit / Beginner ¥0 / backfill 無料 / 上限ロジックは本 ADR のまま有効です。
+> ⚠️ **単価改定済 (2026-05-30)**: Expert/Pro の Embedding 単価は [ADR-0029](./0029-embedding-price-revision-5jpy.md) で **¥1 → ¥5/call** に改定されました。本 ADR の単価記述 (¥1) は**導入時の歴史的記録**として残します。現行単価・課金構造の真実源は [src/config/embedding-pricing.ts](../../src/config/embedding-pricing.ts) と ADR-0029 を参照してください。課金対象 featureUnit / Beginner ¥0 / backfill 無料 は本 ADR のまま有効です。
+
+> ⚠️ **上限ロジック改定済 (2026-05-30)**: 「Embedding は monthlyBudgetCap 判定対象外」「Beginner Embedding 月次上限なし」は [ADR-0030](./0030-embedding-monthly-budget-cap.md) で部分上書きされました。Expert/Pro は新カラム `monthlyEmbeddingBudgetCapJpy` で個別予算上限を任意設定可能、Beginner は月 100 件の試用上限が新設されています。Fair Use Limit (10,000 件) は safety net として残置。
 
 > ✅ **credit_card 払い有効化済 (2026-05-30)**: 採択時 (2026-06-01 リリース予定) は「リリース時は credit_card 払い未対応 → 将来 Stripe 有効化」を前提とした **Stripe-ready 設計** でした。その後 PR #469 で credit_card UI が解禁され、Sandbox→Live mode 移行 (TC-L1〜L8 PASS) が 2026-05-30 に完遂したため、**6/1 リリース時点で credit_card 払いは有効** です。本文中の「リリース時 未対応 / 将来 Stripe 有効化時」記述は **歴史的記録** として残します。実際には 6/1 launch から credit_card テナントへ 5 Item invariant (Haiku/Sonnet/Embedding/DBCap/Storage) で Subscription が組成され、Stripe Invoice に embedding 課金が反映されます (= `feedback_billing_invariant` 完全成立)。
 
@@ -53,7 +55,8 @@ ADR-0019 で Embedding 系 featureUnit (= Knowledge / RiskIssue / Retrospective 
 | **backfill (cron 自動リカバリ)** | **全プラン ¥0 維持** | 不当請求リスク回避、UX/信頼関係保護 |
 | **計測単位** | per-call (= ApiCallLog 1 件単位) | LLM 系と整合 |
 | **Beginner 月次上限への計上** | **しない** | 既存 50 件上限ロジック不変、資産入力で枠枯渇しない |
-| **monthlyBudgetCap 判定対象** | **しない** | Embedding は必須機能のため予算上限とは独立 |
+| **monthlyBudgetCap 判定対象** | **しない (本 ADR 時点)** → **[ADR-0030](./0030-embedding-monthly-budget-cap.md) で個別 `monthlyEmbeddingBudgetCapJpy` を新設し判定対象化** | 本 ADR 時点は「Embedding は必須機能のため予算上限とは独立」だが、ADR-0026 非同期化 + 月初 backfill cron + 既存 embedding 継続利用の多層フォールバックが成立した後、ユーザ予算管理の手段を提供 |
+| **Beginner Embedding 月次上限** | **なし (本 ADR 時点)** → **[ADR-0030](./0030-embedding-monthly-budget-cap.md) で 100 件/月の試用上限を新設** | 本 ADR 時点は Voyage 無料枠保護を Fair Use Limit (10,000 件) のみで担保していたが、ユーザ向け試用範囲の明示として ADR-0030 で 100 件を上書き |
 
 ### 2. 重要設計判断
 

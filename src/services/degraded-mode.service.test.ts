@@ -101,6 +101,59 @@ describe('getDegradedModeState', () => {
     expect(r).toBeNull();
   });
 
+  // ADR-0030 (2026-05-30): Embedding 系 2 reason の判定テスト
+  it('ADR-0030: Beginner Embedding 100 件到達なら active=embedding_beginner_limit_exceeded', async () => {
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValue({
+      plan: 'beginner',
+      currentMonthApiCallCount: 0,
+      currentMonthApiCostJpy: 0,
+      currentMonthEmbeddingCallCount: 100, // 到達
+      currentMonthEmbeddingCostJpy: 0,
+      beginnerMonthlyCallLimit: 50,
+      monthlyBudgetCapJpy: null,
+      monthlyEmbeddingBudgetCapJpy: null,
+    } as never);
+
+    const r = await getDegradedModeState('t');
+    expect(r?.active).toBe(true);
+    expect(r?.reason).toBe('embedding_beginner_limit_exceeded');
+  });
+
+  it('ADR-0030: Pro Embedding 予算到達なら active=embedding_budget_exceeded', async () => {
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValue({
+      plan: 'pro',
+      currentMonthApiCallCount: 0,
+      currentMonthApiCostJpy: 0,
+      currentMonthEmbeddingCallCount: 600,
+      currentMonthEmbeddingCostJpy: 3000, // 上限到達 (600 × ¥5)
+      beginnerMonthlyCallLimit: 50,
+      monthlyBudgetCapJpy: null,
+      monthlyEmbeddingBudgetCapJpy: 3000,
+    } as never);
+
+    const r = await getDegradedModeState('t');
+    expect(r?.active).toBe(true);
+    expect(r?.reason).toBe('embedding_budget_exceeded');
+  });
+
+  it('ADR-0030: LLM 経路が先に発火している場合は LLM 側 reason を優先', async () => {
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValue({
+      plan: 'pro',
+      currentMonthApiCallCount: 100,
+      currentMonthApiCostJpy: 5000, // LLM 予算到達
+      currentMonthEmbeddingCallCount: 600,
+      currentMonthEmbeddingCostJpy: 3000, // Embedding 予算も到達 (両方発火条件)
+      beginnerMonthlyCallLimit: 50,
+      monthlyBudgetCapJpy: 5000,
+      monthlyEmbeddingBudgetCapJpy: 3000,
+    } as never);
+
+    const r = await getDegradedModeState('t');
+    expect(r?.active).toBe(true);
+    // LLM 経路が先に判定されるため budget_exceeded が優先
+    expect(r?.reason).toBe('budget_exceeded');
+  });
+
   it('nullEmbeddings は集計結果を含める', async () => {
     vi.mocked(prisma.tenant.findFirst).mockResolvedValue({
       plan: 'beginner',

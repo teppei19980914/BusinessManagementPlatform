@@ -34,6 +34,11 @@
 
 import { prisma } from '@/lib/db';
 import type { TenantPlan } from '@/lib/tenant';
+// ADR-0030 (2026-05-30): 請求タブ「今月請求金額」セクション用に DB / Storage 超過想定額を集約。
+//   既存 db-capacity-section / file-storage-section が個別表示している同ロジックを service 層に
+//   引き上げ、TenantSelfInfo 経由で一元提供する (= billing invariant 維持の単一真実源化)。
+import { calculateOverageJpy } from '@/config/db-capacity-pricing';
+import { calculateFileStorageOverageJpy } from '@/config/file-storage-pricing';
 // PR-V8.2 (2026-05-19) ★請求 invariant★: getTenantSelfInfo を ApiCallLog SUM 真値で返却
 // ADR-0022 (2026-06-01): Embedding 側の reconcile も併用
 import {
@@ -77,6 +82,12 @@ export type TenantSelfInfo = {
   suspendReason: string | null;
   plan: TenantPlan;
   monthlyBudgetCapJpy: number | null;
+  /**
+   * ADR-0030 (2026-05-30): Embedding 系専用の月次予算上限 (円整数)。NULL = 無制限。
+   * Beginner では意味を持たないため API 層で NULL 強制 (= BEGINNER_EMBEDDING_BUDGET_NOT_ALLOWED)。
+   * Expert/Pro テナント管理者画面の使用量タブ「Embedding 生成回数」直下で設定する。
+   */
+  monthlyEmbeddingBudgetCapJpy: number | null;
   beginnerMaxSeats: number;
   beginnerMonthlyCallLimit: number;
   currentMonthApiCallCount: number;
@@ -93,6 +104,19 @@ export type TenantSelfInfo = {
    *   feedback_billing_invariant: ApiCallLog SUM = 本値 = CSV = 請求書 の整合性必須。
    */
   currentMonthEmbeddingCostJpy: number;
+  /**
+   * ADR-0030 (2026-05-30): 当月の DB 容量超過想定請求額 (円整数、税抜)。
+   * 現在 peak から `calculateOverageJpy` で算出。月末 cron 確定前の想定値。
+   * 請求タブ「今月請求金額」セクションの内訳タイル + 合計集計に使用。
+   * billing invariant: LLM + Embedding + DB 超過想定 + Storage 超過想定 = 合計表示 = 月末請求書根拠。
+   */
+  estimatedDbCapacityOverageJpy: number;
+  /**
+   * ADR-0030 (2026-05-30): 当月のファイルストレージ超過想定請求額 (円整数、税抜)。
+   * 現在 peak から `calculateFileStorageOverageJpy` で算出。月末 cron 確定前の想定値。
+   * 請求タブ「今月請求金額」セクションの内訳タイル + 合計集計に使用。
+   */
+  estimatedFileStorageOverageJpy: number;
   scheduledPlanChangeAt: Date | null;
   scheduledNextPlan: string | null;
   activeUserCount: number;
@@ -186,6 +210,7 @@ export async function getTenantSelfInfo(tenantId: string): Promise<TenantSelfInf
     suspendReason: t.suspendReason,
     plan: t.plan as TenantPlan,
     monthlyBudgetCapJpy: t.monthlyBudgetCapJpy,
+    monthlyEmbeddingBudgetCapJpy: t.monthlyEmbeddingBudgetCapJpy,
     beginnerMaxSeats: t.beginnerMaxSeats,
     beginnerMonthlyCallLimit: t.beginnerMonthlyCallLimit,
     // ★ PR-V8.2: ApiCallLog SUM (真値) を優先。counter フォールバックは reconcile null のみ。
@@ -196,6 +221,11 @@ export async function getTenantSelfInfo(tenantId: string): Promise<TenantSelfInf
       embeddingReconcile?.reconciledCallCount ?? t.currentMonthEmbeddingCallCount,
     currentMonthEmbeddingCostJpy:
       embeddingReconcile?.reconciledCostJpy ?? t.currentMonthEmbeddingCostJpy,
+    // ADR-0030 (2026-05-30): 請求タブ「今月請求金額」セクション用、月中 peak ベースの想定請求額。
+    //   月末 cron で ApiCallLog INSERT して確定するまでの暫定値。billing invariant:
+    //   LLM + Embedding + DB 超過想定 + Storage 超過想定 = 表示合計 = 月末請求書根拠。
+    estimatedDbCapacityOverageJpy: calculateOverageJpy(t.storageBytesPeakThisMonth),
+    estimatedFileStorageOverageJpy: calculateFileStorageOverageJpy(t.storageFileBytesPeakThisMonth),
     scheduledPlanChangeAt: t.scheduledPlanChangeAt,
     scheduledNextPlan: t.scheduledNextPlan,
     activeUserCount,
@@ -408,8 +438,13 @@ export async function updateBillingContact(
 export type UpdateTenantSelfInput = {
   /** 変更先プラン (省略時は変更なし)。 */
   plan?: TenantPlan;
-  /** 月次予算上限。null = 無制限、undefined = 変更なし */
+  /** 月次予算上限 (LLM_BILLABLE)。null = 無制限、undefined = 変更なし */
   monthlyBudgetCapJpy?: number | null;
+  /**
+   * ADR-0030 (2026-05-30): Embedding 系専用の月次予算上限。null = 無制限、undefined = 変更なし。
+   * Beginner では cost=0 のため意味を持たず、BEGINNER_EMBEDDING_BUDGET_NOT_ALLOWED で拒否。
+   */
+  monthlyEmbeddingBudgetCapJpy?: number | null;
   // 2026-05-09 (PR G / #24): シードデータ参照 toggle (即時反映)
   seedDataEnabled?: boolean;
 };
@@ -425,7 +460,10 @@ export type UpdateTenantSelfResult =
         | 'BEGINNER_DOWNGRADE_FORBIDDEN'
         // PR-2 (2026-05-15): Beginner プランは月次予算上限 (金額) を設定できない (=固定の月 100 回上限)。
         //   UI でフォーム自体は非表示だが、API 直叩きの迂回防止として明示的に拒否する。
-        | 'BEGINNER_BUDGET_NOT_ALLOWED';
+        | 'BEGINNER_BUDGET_NOT_ALLOWED'
+        // ADR-0030 (2026-05-30): Beginner Embedding は cost=0 のため金額上限が意味を持たない。
+        //   UI でフォーム非表示だが、API 直叩きの迂回防止として明示的に拒否する。
+        | 'BEGINNER_EMBEDDING_BUDGET_NOT_ALLOWED';
     }
   // PR-S3 (2026-05-14): credit_card 払いテナントのプラン変更時カード検証失敗
   | {
@@ -456,6 +494,14 @@ export async function updateTenantSelf(
   ) {
     return { ok: false, error: 'INVALID_BUDGET' };
   }
+  // ADR-0030 (2026-05-30): Embedding 月次予算上限も同じく非負整数 or null。
+  if (
+    input.monthlyEmbeddingBudgetCapJpy !== undefined &&
+    input.monthlyEmbeddingBudgetCapJpy !== null &&
+    input.monthlyEmbeddingBudgetCapJpy < 0
+  ) {
+    return { ok: false, error: 'INVALID_BUDGET' };
+  }
 
   const tenant = await prisma.tenant.findFirstOrThrow({
     where: { id: tenantId, deletedAt: null },
@@ -474,11 +520,21 @@ export async function updateTenantSelf(
   ) {
     return { ok: false, error: 'BEGINNER_BUDGET_NOT_ALLOWED' };
   }
+  // ADR-0030: Beginner Embedding は cost=0 のため金額上限が意味を持たない。
+  //   null 化 (= 明示クリア) は救済として許可、非 null は拒否 (= 既存 monthlyBudgetCap と同パターン)。
+  if (
+    targetPlan === 'beginner' &&
+    input.monthlyEmbeddingBudgetCapJpy !== undefined &&
+    input.monthlyEmbeddingBudgetCapJpy !== null
+  ) {
+    return { ok: false, error: 'BEGINNER_EMBEDDING_BUDGET_NOT_ALLOWED' };
+  }
 
   // 予算上限 / seedDataEnabled のみの変更 (プランは変えない)
   if (input.plan === undefined) {
     const data: Record<string, unknown> = {};
     if (input.monthlyBudgetCapJpy !== undefined) data.monthlyBudgetCapJpy = input.monthlyBudgetCapJpy;
+    if (input.monthlyEmbeddingBudgetCapJpy !== undefined) data.monthlyEmbeddingBudgetCapJpy = input.monthlyEmbeddingBudgetCapJpy;
     // 2026-05-09 (PR G / #24): seedDataEnabled toggle (即時反映)
     if (input.seedDataEnabled !== undefined) data.seedDataEnabled = input.seedDataEnabled;
     if (Object.keys(data).length > 0) {
@@ -492,11 +548,11 @@ export async function updateTenantSelf(
 
   // 同一プランへの変更はノーオペ (ただし予算上限は更新可能)
   if (currentPlan === nextPlan) {
-    if (input.monthlyBudgetCapJpy !== undefined) {
-      await prisma.tenant.update({
-        where: { id: tenantId },
-        data: { monthlyBudgetCapJpy: input.monthlyBudgetCapJpy },
-      });
+    const data: Record<string, unknown> = {};
+    if (input.monthlyBudgetCapJpy !== undefined) data.monthlyBudgetCapJpy = input.monthlyBudgetCapJpy;
+    if (input.monthlyEmbeddingBudgetCapJpy !== undefined) data.monthlyEmbeddingBudgetCapJpy = input.monthlyEmbeddingBudgetCapJpy;
+    if (Object.keys(data).length > 0) {
+      await prisma.tenant.update({ where: { id: tenantId }, data });
     }
     return { ok: true, appliedImmediately: true, scheduledFor: null };
   }
@@ -554,6 +610,10 @@ export async function updateTenantSelf(
       beginnerEverUpgraded: true,
       ...(input.monthlyBudgetCapJpy !== undefined
         ? { monthlyBudgetCapJpy: input.monthlyBudgetCapJpy }
+        : {}),
+      // ADR-0030 (2026-05-30): Embedding cap も同時更新を許容 (= プラン変更と cap 設定を 1 操作で完結)
+      ...(input.monthlyEmbeddingBudgetCapJpy !== undefined
+        ? { monthlyEmbeddingBudgetCapJpy: input.monthlyEmbeddingBudgetCapJpy }
         : {}),
     },
   });

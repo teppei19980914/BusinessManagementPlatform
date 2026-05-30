@@ -28,8 +28,10 @@
  *   1. 短期 rate limit (1 ユーザ / 1 分 / 10 回、1 ユーザ / 1 時間 / 60 回) — 全 featureUnit 対象
  *   2. Tenant 取得 + plan 解決
  *   3. Beginner プランの月間呼び出し回数上限チェック (**LLM_BILLABLE のみ**)
- *   3.5. Fair Use Limit チェック (**Beginner プラン × EMBEDDING_BILLABLE のみ**、Voyage 無料枠保護)
+ *   3.1. Beginner プラン Embedding 月間試用上限チェック (**EMBEDDING_BILLABLE のみ**、ADR-0030)
+ *   3.5. Fair Use Limit チェック (**Beginner プラン × EMBEDDING_BILLABLE のみ**、Voyage 無料枠保護、ADR-0030 後は safety net)
  *   4. monthlyBudgetCapJpy 設定時の予測コスト超過チェック (**LLM_BILLABLE のみ**)
+ *   4.1. monthlyEmbeddingBudgetCapJpy 設定時の予測コスト超過チェック (**EMBEDDING_BILLABLE のみ**、ADR-0030)
  *   5. 実 LLM 呼び出し (caller の callback)
  *   6. 成功時に ApiCallLog 記録 (全 featureUnit) + Tenant counter increment (4 階層分岐) +
  *      Stripe queue enqueue (LLM_BILLABLE or EMBEDDING_BILLABLE で cost > 0 のとき)
@@ -38,8 +40,10 @@
  *   - rate_limited: 短期 rate limit 超過
  *   - tenant_inactive: Tenant 削除済 (deletedAt != null) または存在しない
  *   - beginner_limit_exceeded: Beginner 月間 50 回 (default、ADR-0019) 超過 (LLM_BILLABLE call のみカウント)
- *   - fair_use_limit_exceeded: Beginner 月間 10,000 calls (Embedding) 超過 (ADR-0022)
+ *   - embedding_beginner_limit_exceeded: Beginner 月間 100 件 Embedding 試用上限 (ADR-0030) 超過
+ *   - fair_use_limit_exceeded: Beginner 月間 10,000 calls (Embedding) 超過 (ADR-0022 / ADR-0030 後 safety net)
  *   - budget_exceeded: ユーザ自己設定の monthlyBudgetCapJpy 超過予測 (LLM_BILLABLE のみ判定)
+ *   - embedding_budget_exceeded: ユーザ自己設定の monthlyEmbeddingBudgetCapJpy 超過予測 (EMBEDDING_BILLABLE のみ判定、ADR-0030)
  *
  * 失敗モード (LLM 呼び出しが投げた場合):
  *   - llm_error: 内部例外。caller 側でフォールバック (既存スコアリング等) する想定。
@@ -63,6 +67,8 @@
  *   - LLM 単価: src/config/llm.ts (resolveCostForPlan)
  *   - ADR: docs/adr/0019-billable-feature-units-and-free-tier-expansion.md
  *          docs/adr/0022-embedding-usage-based-billing.md
+ *          docs/adr/0029-embedding-price-revision-5jpy.md (Embedding ¥5/call)
+ *          docs/adr/0030-embedding-monthly-budget-cap.md (Embedding 予算上限 + Beginner 100 件試用上限)
  *   - 配下: src/lib/llm/rate-limiter.ts
  *   - Stripe: src/lib/stripe.ts (STRIPE_METER_EVENT_NAMES.embedding)
  */
@@ -74,7 +80,10 @@ import {
   isEmbeddingBillableFeatureUnit,
   isLlmBillableFeatureUnit,
 } from '@/config/billing-feature-units';
-import { resolveEmbeddingCostJpy } from '@/config/embedding-pricing';
+import {
+  resolveEmbeddingCostJpy,
+  BEGINNER_EMBEDDING_MONTHLY_LIMIT,
+} from '@/config/embedding-pricing';
 import {
   LLM_RATE_LIMIT,
   resolveCostForPlan,
@@ -155,7 +164,10 @@ export interface WithMeteredLLMDegraded {
     | 'beginner_limit_exceeded'
     | 'budget_exceeded'
     | 'plan_invalid'
-    | 'fair_use_limit_exceeded';
+    | 'fair_use_limit_exceeded'
+    // ADR-0030 (2026-05-30): Embedding 月次予算上限 + Beginner Embedding 100 件試用上限
+    | 'embedding_budget_exceeded'
+    | 'embedding_beginner_limit_exceeded';
   retryAfterSec?: number;
   message: string;
 }
@@ -273,11 +285,36 @@ export async function withMeteredLLM<T>(
     }
   }
 
+  // ---------- Step 3.1: Beginner Embedding 月間試用上限チェック (ADR-0030) ----------
+  // ADR-0030 (2026-05-30): Beginner プランの Embedding 系呼出が月 100 件 (BEGINNER_EMBEDDING_MONTHLY_LIMIT) を超えたら停止。
+  //   ADR-0022 時点では「Beginner Embedding は無制限」訴求だったが、LP の試用範囲を明示する
+  //   ユーザ向け cap を新設。Fair Use Limit (10,000) が先に発火していた状態を解消し、
+  //   Beginner cap (100) が先に発火する設計に変更。Fair Use Limit は safety net として残置。
+  //   到達時の挙動: 縮退モード。既存 embedding でのチャット検索は継続、新規 embedding 生成のみ停止、
+  //   失敗分は月初 backfill cron で次月補填される (ADR-0026 非同期化 + ADR-0022 backfill との整合)。
+  //
+  // ★severity-high★ race condition + drift リスク (ADR-0030 §Risk):
+  //   本 check は tenant snapshot に対するため、Step 6 の counter increment との間に race window がある。
+  //   同時並行リクエスト時に最大 N callで cap を +N 超過する可能性あり (= 既存 LLM cap も同設計)。
+  //   Beginner cost=0 のため金銭被害なし。drift detection + RepairOwnDriftButton で長期的整合性を保つ。
+  if (isEmbeddingBillable && plan === 'beginner') {
+    if (tenant.currentMonthEmbeddingCallCount >= BEGINNER_EMBEDDING_MONTHLY_LIMIT) {
+      return {
+        ok: false,
+        reason: 'embedding_beginner_limit_exceeded',
+        message: `Beginner プランの月間 Embedding 生成 ${BEGINNER_EMBEDDING_MONTHLY_LIMIT} 回上限に達しました`,
+      };
+    }
+  }
+
   // ---------- Step 3.5: Fair use limit (Beginner プラン × EMBEDDING_BILLABLE のみ) ----------
   // ADR-0022/0029: Expert/Pro は Embedding が cost=¥5 のため monthlyBudgetCap で自然防御。
   //   Beginner は cost=0 のままで防御手段がないため、Beginner プランの EMBEDDING_BILLABLE 呼出に
   //   対してのみ Fair Use Limit (= 月 10,000 calls/tenant) を適用し Voyage 200M 無料枠を保護。
   //   詳細: src/services/fair-use-limit.service.ts + ADR-0022 §2.3
+  // ADR-0030 (2026-05-30): Beginner Embedding 100 件上限が先に発火するため、Fair Use Limit (10,000)
+  //   は通常運用では到達しない (= 上記 Step 3.1 で先に停止)。本 Step は Step 3.1 を bypass する
+  //   コードバグへの safety net として残置 (= Voyage 無料枠保護の最終防御線)。
   if (plan === 'beginner' && isEmbeddingBillable) {
     const fairUse = await checkFairUseLimit(options.tenantId, tenant.timezone ?? null);
     if (!fairUse.allowed) {
@@ -290,8 +327,7 @@ export async function withMeteredLLM<T>(
   }
 
   // ---------- Step 4: monthlyBudgetCapJpy 予測超過チェック (LLM_BILLABLE のみ) ----------
-  // ADR-0022: Embedding はチャット検索/資産入力に必須機能のため、予算上限とは独立。
-  //   Embedding が予算超過で止まると業務継続に直接影響するため、判定対象外とする。
+  // ADR-0019: LLM 系 (project-upsert / suggestion-explanation / auto-tag-extract) の自己設定予算上限。
   //   無料 call (= Beginner Embedding / Backfill / 未知) は cost=0 で予算消費しないため判定不要。
   if (isLlmBillable) {
     const predictedCost = options.predictedCostJpy ?? costJpy;
@@ -304,6 +340,33 @@ export async function withMeteredLLM<T>(
           ok: false,
           reason: 'budget_exceeded',
           message: `月次予算上限 (${tenant.monthlyBudgetCapJpy} 円) に達するため、これ以上の呼び出しを停止しました`,
+        };
+      }
+    }
+  }
+
+  // ---------- Step 4.1: monthlyEmbeddingBudgetCapJpy 予測超過チェック (ADR-0030) ----------
+  // ADR-0030 (2026-05-30): Embedding 系専用の自己設定予算上限。
+  //   ADR-0022 時点では「Embedding は必須機能のため予算上限と独立」だったが、ADR-0026 非同期化 +
+  //   月初 backfill cron + 既存 embedding 継続利用の多層フォールバックが整い、「上限到達 = サービス停止」
+  //   ではない設計が成立したため判定対象化。Expert/Pro が Embedding ¥5/call ADR-0029 の月額膨張を
+  //   自己制御できる手段として提供。Beginner は cost=0 のため発火しない (= NULL 強制)。
+  //
+  // ★severity-high★ race + drift リスク (ADR-0030 §Risk):
+  //   Step 4 (LLM cap) と同じく snapshot ベース判定のため、race で最大 ¥(N×単価) の超過が発生し得る。
+  //   ApiCallLog SUM = 請求書 invariant のため超過分は請求書に正確に反映される。
+  //   完全 atomic 化は ADR-0030 スコープ外 (= 将来別 ADR で再検討)。
+  if (isEmbeddingBillable) {
+    const predictedCost = options.predictedCostJpy ?? costJpy;
+    if (tenant.monthlyEmbeddingBudgetCapJpy != null) {
+      if (
+        tenant.currentMonthEmbeddingCostJpy + predictedCost >
+        tenant.monthlyEmbeddingBudgetCapJpy
+      ) {
+        return {
+          ok: false,
+          reason: 'embedding_budget_exceeded',
+          message: `Embedding 月次予算上限 (${tenant.monthlyEmbeddingBudgetCapJpy} 円) に達するため、これ以上の呼び出しを停止しました`,
         };
       }
     }

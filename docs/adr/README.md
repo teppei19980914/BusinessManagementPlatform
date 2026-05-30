@@ -42,9 +42,14 @@
 | [0022](./0022-embedding-usage-based-billing.md) | Embedding 機能の従量課金 — Expert/Pro ¥1/call (2026-06-01 採択、**単価は [ADR-0029](./0029-embedding-price-revision-5jpy.md) で ¥5 に改定**) | Accepted (単価改定済) | ビジネス・課金 |
 | [0023](./0023-netlify-starter-migration.md) | Vercel Hobby → Netlify (Starter → Personal) 移行 (商用 TOS 違反の解消、2026-05-18 採択 + Personal 昇格) | Accepted | インフラ |
 | [0024](./0024-explicit-tenant-id-no-db-default.md) | tenant_id カラムから DB DEFAULT を撤去しコード明示必須化 (2026-05-28 採択 / severity-1 silent fall-through バグ対応) | Accepted | アーキテクチャ・セキュリティ |
+| [0025](./0025-beginner-write-guard.md) | Beginner プランの DB / File Storage 無料枠超過時 write ブロック (2026-05-29 採択) | Accepted | ビジネス・課金・データ管理 |
+| [0026](./0026-embedding-async-generation.md) | 資産作成・更新時の embedding 生成を非同期化 (Next.js `after()` 採用、2026-05-29 採択) | Accepted | パフォーマンス・UX |
+| [0027](./0027-help-ai-concierge.md) | たすきフクロウ AI ヘルプチャット (FAQ コンシェルジュ) の導入 (2026-05-29 採択、ADR-0028 で撤回) | Superseded by 0028 | UX・AI |
+| [0028](./0028-help-chat-rag-migration.md) | たすきフクロウ AI ヘルプチャットを full-context から RAG (Voyage embedding) へ移行 (2026-05-29 採択) | Accepted | UX・AI |
 | [0029](./0029-embedding-price-revision-5jpy.md) | Embedding 従量課金の単価改定 — Expert/Pro ¥1 → ¥5/call (2026-05-30 採択、ADR-0022 を部分 supersede) | Accepted | ビジネス・課金 |
+| [0030](./0030-embedding-monthly-budget-cap.md) | Embedding 月次予算上限の導入 + Beginner Embedding 100 件試用上限 + 請求タブ「今月請求金額」セクション (2026-05-30 採択、ADR-0022 「Embedding は予算上限と独立」判断を一部上書き) | Accepted | ビジネス・課金・UX |
 
-> 主要設計判断を時系列で ADR 化しています (現在 24 件)。
+> 主要設計判断を時系列で ADR 化しています (現在 29 件)。
 > 設計変更を検討する際は新規 ADR を追加し、変更が確定したら旧 ADR の Status を Deprecated / Superseded に更新します。
 
 ---

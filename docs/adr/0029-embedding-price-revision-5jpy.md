@@ -3,7 +3,8 @@
 - **Status**: Accepted (2026-05-30)
 - **Date**: 2026-05-30
 - **Deciders**: teppei
-- **Supersedes (partial)**: [ADR-0022](./0022-embedding-usage-based-billing.md) (Embedding 従量課金の単価のみ ¥1 → ¥5 に改定。課金対象 featureUnit・Beginner ¥0 維持・backfill 無料・計測単位・上限ロジックは ADR-0022 を継承し変更しない)
+- **Supersedes (partial)**: [ADR-0022](./0022-embedding-usage-based-billing.md) (Embedding 従量課金の単価のみ ¥1 → ¥5 に改定。課金対象 featureUnit・Beginner ¥0 維持・backfill 無料・計測単位は ADR-0022 を継承し変更しない)
+- **Related (上限ロジック)**: [ADR-0030](./0030-embedding-monthly-budget-cap.md) で「ADR-0022 の上限ロジック (= Embedding は予算上限と独立)」を部分上書き。Expert/Pro 個別予算上限 `monthlyEmbeddingBudgetCapJpy` を新設、Beginner Embedding 100 件試用上限を新設。本 ADR の単価 ¥5/call は ADR-0030 の予算換算根拠として参照される
 - **関連**: [src/config/embedding-pricing.ts](../../src/config/embedding-pricing.ts) (`EMBEDDING_PRICE_JPY_BY_PLAN`) / [docs/design/STRIPE_EMBEDDING_PRICE_SETTINGS.md](../design/STRIPE_EMBEDDING_PRICE_SETTINGS.md) (Stripe as-built) / [docs/design/STRIPE_ENV_MAPPING.md](../design/STRIPE_ENV_MAPPING.md)
 
 ---

@@ -19362,3 +19362,116 @@ if (isLlmBillable) {
 - 関連 ADR: [ADR-0028](../adr/0028-help-chat-rag-migration.md) §6 (課金分類)
 - 関連 docs: [PER_CALL_COST_BREAKDOWN.md §1.5](../business/PER_CALL_COST_BREAKDOWN.md) (ヘルプ・ガイドのコスト試算)
 - KDD 関連: §5.X+196 (build hook 自動化、LEARNING_FREE 設計の前駆) / §5.X+198 (recordError 罠、本 §201 と同様「実装と UI 表記の乖離が混乱を生む」パターン)
+
+## §5.X+202 ★severity-medium (CI のみ赤、ローカル test PASS で気付けない)★ Playwright `getByText()` は substring match なので、見出しと内部タイルラベルが共通文字列を含むと strict mode 違反で fail する (PR #473 / 2026-05-31)
+
+### 何が起きたか
+
+PR #473 (ADR-0030 Embedding 月次予算上限 + 請求タブ「今月請求金額」) の E2E spec `e2e/specs/18-embedding-monthly-cap-ui.spec.ts` が GitHub Actions の Playwright job で 2 件 fail (chromium / chromium-mobile 両方)。
+
+**fail した assertion**:
+```ts
+const embeddingSection = page.getByTestId('usage-embedding-section');
+await expect(embeddingSection.getByText('Embedding 生成回数')).toBeVisible();
+```
+
+**Playwright エラー**:
+```
+Error: strict mode violation: getByTestId('usage-embedding-section').getByText('Embedding 生成回数') resolved to 2 elements:
+    1) <h2 class="font-semibold">…</h2> aka getByRole('heading', { name: 'Embedding' })
+    2) <p class="text-xs text-muted-foreground">Embedding 生成回数</p> aka getByText('Embedding 生成回数', { exact: true })
+```
+
+### 根本原因 (= getByText の substring match 動作)
+
+`page.getByText(text)` は **デフォルトで substring match** (= 含むかどうか)。strict mode (= Playwright デフォルト) では複数要素にマッチすると即 fail する。
+
+UsageSection の DOM 構造 (= ADR-0030 で導入):
+```tsx
+<section data-testid="usage-embedding-section">
+  <h2 className="font-semibold">
+    Embedding 生成回数
+    <span className="ml-2 text-xs font-normal text-muted-foreground">
+      (= 資産入力・チャット意味検索・インポート・ファイル添付)
+    </span>
+  </h2>
+  {/* ... */}
+  <div>
+    <p className="text-xs text-muted-foreground">Embedding 生成回数</p>
+    <p className="text-xl font-bold">{count}</p>
+  </div>
+</section>
+```
+
+- `<h2>` の textContent = `"Embedding 生成回数 (= 資産入力・チャット意味検索・インポート・ファイル添付)"` → `"Embedding 生成回数"` を **含む** (substring match)
+- `<p>` の textContent = `"Embedding 生成回数"` → **完全一致**
+
+両方が `getByText('Embedding 生成回数')` でマッチ → strict mode 違反。
+
+### LLM セクションが fail しなかった理由 (= 偶発的な単一マッチ)
+
+LLM セクションも同じ構造だが、見出しとタイルでラベルが異なるため substring match が衝突しなかった:
+
+```tsx
+<h2>当月 LLM 実行回数 (= プロジェクト作成/更新 + なぜ?機能)</h2>  // 「当月」付き
+<p>LLM 実行回数</p>                                           // 「当月」なし
+```
+
+`getByText('当月 LLM 実行回数')` は heading のみマッチ (= tile は「当月」を含まないため除外)。**偶然 PASS していたが、将来「当月」付きにリネームすると即 fail** する潜在地雷。
+
+### なぜローカル `pnpm test` で気付けなかったか
+
+- `pnpm test` は **Vitest ユニットテスト** のみ実行 (= 3845 件)
+- E2E (= Playwright) は **CI でのみ実行** される (= ローカルでは `pnpm test:e2e` を別途叩く必要、コスト的に常時実行しない)
+- ローカル開発で「lint=0 / tsc=0 / test=PASS / build=success」が揃っても、E2E は別レーンのため strict mode 違反のみ CI で発覚する
+
+### 対策 (= 本 PR で実施)
+
+**Before**:
+```ts
+await expect(embeddingSection.getByText('Embedding 生成回数')).toBeVisible();
+```
+
+**After**:
+```ts
+// ★ Playwright strict mode 違反回避 (KDD §5.X+202):
+//   セクション見出しと内部タイルラベルが同一文字列を含むため getByText() は複数マッチで strict mode 違反になる。
+//   getByRole('heading') で見出し要素のみに限定する。
+await expect(embeddingSection.getByRole('heading', { name: /Embedding 生成回数/ })).toBeVisible();
+```
+
+LLM 側も将来のリネーム耐性のため `getByRole('heading', { name: /当月 LLM 実行回数/ })` に統一。
+
+### 何を避けるべきか
+
+- ❌ `getByText()` で「見出しと同じ文字列を持つタイルラベル」を持つセクション内を絞り込む (= strict mode 違反確実)
+- ❌ ローカル `pnpm test` PASS のみで E2E 影響 PR を push する (= CI 専用エラーを見逃す。せめて `pnpm exec playwright test e2e/specs/<新規>.spec.ts --project=chromium` で対象 spec をローカル実行)
+- ❌ `.first()` で誤魔化す (= 意図不明な anti-pattern、何故 2 マッチするか追えなくなる)
+- ❌ `page.locator('h2:has-text("...")')` の CSS セレクタ依存 (= 構造変更で脆くなる、role/aria が堅牢)
+
+### 推奨パターン
+
+| シチュエーション | 推奨 locator |
+|---|---|
+| セクション見出しの確認 | `getByRole('heading', { name: /.../ })` |
+| ボタン押下 | `getByRole('button', { name: /.../ })` |
+| 入力フィールド | `getByLabel(/.../)` または `getByRole('textbox', { name: /.../ })` |
+| タイルラベル / 状態表示 | `getByTestId('...')` (= UI 文言変更耐性のため) |
+| 完全一致が必須 | `getByText('...', { exact: true })` |
+
+### 横展開チェックリスト (= 同種地雷の予防)
+
+E2E spec を新規追加する際:
+- [ ] セクション内に **見出しと同じ文字列を持つタイル** が存在しないか確認 (= UsageSection / DegradedModeSection / 統計カード系で頻発)
+- [ ] `getByText()` は基本的に避け、`getByRole()` または `getByTestId()` を第一選択にする
+- [ ] 完全一致が必要な場合は `{ exact: true }` を明示
+- [ ] PR push 前にローカルで `pnpm exec playwright test <新規 spec> --project=chromium` を実行 ([feedback_e2e_coverage_gate](../../C:/Users/SF02512/.claude/projects/c--Users-SF02512-GitHub-Private-BusinessManagementPlatform/memory/feedback_e2e_coverage_gate.md) の延長として実行)
+- [ ] 既存 spec (`getByText`) も「セクション内で同じ文字列が見出し + タイル双方に存在しないか」を grep で確認
+
+### 関連
+
+- 関連 PR: PR #473 (本 KDD の発端、CI E2E 2 件 fail で発覚)
+- 関連 fail run: [GitHub Actions #26686906709](https://github.com/teppei19980914/BusinessManagementPlatform/actions/runs/26686906709)
+- 関連 source: [src/app/(dashboard)/settings/tenant/tenant-settings-client.tsx](../../src/app/\(dashboard\)/settings/tenant/tenant-settings-client.tsx) UsageSection (= 構造提供元) / [e2e/specs/18-embedding-monthly-cap-ui.spec.ts](../../e2e/specs/18-embedding-monthly-cap-ui.spec.ts) (= 修正対象 spec)
+- 関連 docs: [Playwright Strict Mode 公式 (= getByText 仕様)](https://playwright.dev/docs/locators#strictness)
+- Memory: [feedback_visual_baseline_gen](../../C:/Users/SF02512/.claude/projects/c--Users-SF02512-GitHub-Private-BusinessManagementPlatform/memory/feedback_visual_baseline_gen.md) (= ローカル 4 点 PASS でも CI 別レーン fail の前例)

@@ -20,10 +20,14 @@
  * 設計判断:
  *   - **テナントごとに**処理する: withMeteredLLM は tenantId スコープで rate limit / 予算
  *     チェックするため、テナント単位で呼び出すのが自然。
- *   - **テナントの月間上限を尊重**: Beginner 月 50 回 / Pro/Expert monthlyBudgetCapJpy。
- *     ※ ADR-0019 (2026-05-24): backfill featureUnit (`*-embedding-backfill`) は無料化されたため
- *     Tenant.currentMonthApiCallCount を消費せず、Beginner 上限にも影響しない。残るのは
- *     fair-use-limit (月 10,000 calls/tenant) のみ。上限超過時はその時点で停止する。
+ *   - **backfill は明示的 free 扱い**: featureUnit `*-embedding-backfill` は ADR-0022 で
+ *     EMBEDDING_BACKFILL_FEATURE_UNITS として LLM_BILLABLE / EMBEDDING_BILLABLE と分離され、
+ *     全プランで cost=0 / counter 不変 / Stripe queue 不投入。
+ *     ADR-0030 (2026-05-30) で新設の Embedding 月次予算上限 / Beginner Embedding 100 件試用上限の
+ *     **判定対象外** (= isEmbeddingBillable=false で Step 3.1 / Step 4.1 を素通り)。
+ *     ユーザ非起動の自動リカバリ処理での予期せぬブロックを避ける設計判断。
+ *     残るは fair-use-limit (月 10,000 calls/tenant) も backfill 対象外のため、本処理はテナント側の
+ *     どの上限にも消費されない。上限超過は MAX_BACKFILL_PER_TENANT_PER_TABLE で別途抑制。
  *   - **visibility='draft' は対象外**: 提案エンジン側で除外されるエンティティに対して
  *     embedding 生成 (= Voyage API 課金) を発生させない (PR #358 と整合)。
  *   - **bulk 集約**: `generateAndPersistBatchEmbeddings` を使い、1 業務操作 = 1 ApiCallLog

@@ -154,9 +154,15 @@ export default async function SuperAdminTenantDetailPage({
           </div>
         )}
         <DetailCard
-          label="月次予算上限"
+          label="月次予算上限 (LLM)"
           value={tenant.monthlyBudgetCapJpy != null ? `¥${tenant.monthlyBudgetCapJpy.toLocaleString()}` : '無制限'}
-          tooltip="テナント管理者が設定した月次予算 (円)。超過時は LLM 呼び出しがブロックされる"
+          tooltip="テナント管理者が設定した LLM 系 (project-upsert / suggestion-explanation / auto-tag-extract) の月次予算 (円)。超過時は当該 LLM 呼び出しがブロックされる"
+        />
+        {/* ADR-0030 (2026-05-30): Embedding 月次予算上限を LLM cap と並列表示 */}
+        <DetailCard
+          label="月次予算上限 (Embedding)"
+          value={tenant.monthlyEmbeddingBudgetCapJpy != null ? `¥${tenant.monthlyEmbeddingBudgetCapJpy.toLocaleString()}` : '無制限'}
+          tooltip="テナント管理者が設定した Embedding 系 (knowledge / risk-issue / retrospective / memo / chat-semantic-search / external-import / attachment-embedding の 7 種) の月次予算 (円)。超過時は新規 embedding 生成のみブロック、既存 embedding 検索は継続 + 月初 backfill cron で次月補填 (ADR-0030)"
         />
         <DetailCard
           label="Beginner 月間呼出上限"

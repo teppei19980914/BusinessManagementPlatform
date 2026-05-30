@@ -39,7 +39,12 @@ function makeTenant(overrides: Partial<Record<string, unknown>> = {}) {
     plan: 'beginner',
     currentMonthApiCallCount: 0,
     currentMonthApiCostJpy: 0,
+    // ADR-0022 (2026-06-01): Embedding counter (Beginner も件数記録、cost は plan 別)
+    currentMonthEmbeddingCallCount: 0,
+    currentMonthEmbeddingCostJpy: 0,
     monthlyBudgetCapJpy: null as number | null,
+    // ADR-0030 (2026-05-30): Embedding 月次予算上限 (Expert/Pro 任意、Beginner 強制 NULL)
+    monthlyEmbeddingBudgetCapJpy: null as number | null,
     // ADR-0019 (2026-05-24): Beginner 上限 100 → 50 (課金対象 call のみカウント)
     beginnerMonthlyCallLimit: 50,
     beginnerMaxSeats: 5,
@@ -351,6 +356,167 @@ describe('withMeteredLLM - Step 4: monthlyBudgetCapJpy 予測超過', () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe('budget_exceeded');
+  });
+});
+
+// ADR-0030 (2026-05-30): Embedding 月次予算上限 + Beginner Embedding 100 件試用上限のテスト。
+describe('withMeteredLLM - Step 3.1: Beginner Embedding 100 件試用上限 (ADR-0030)', () => {
+  it('Beginner で currentMonthEmbeddingCallCount >= 100 なら embedding_beginner_limit_exceeded', async () => {
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValue(
+      makeTenant({
+        plan: 'beginner',
+        currentMonthEmbeddingCallCount: 100, // 上限到達
+      }) as never,
+    );
+    const call = vi.fn();
+
+    const result = await withMeteredLLM(
+      {
+        // EMBEDDING_BILLABLE_FEATURE_UNITS のいずれか
+        featureUnit: 'chat-semantic-search',
+        tenantId: TENANT_ID,
+        userId: USER_ID,
+        rateLimiter: allowAllRateLimiter(),
+      },
+      call,
+    );
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('embedding_beginner_limit_exceeded');
+    expect(call).not.toHaveBeenCalled();
+  });
+
+  it('Beginner で currentMonthEmbeddingCallCount < 100 なら通過 (LLM 経路は影響しない)', async () => {
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValue(
+      makeTenant({
+        plan: 'beginner',
+        currentMonthEmbeddingCallCount: 99,
+      }) as never,
+    );
+    const call = vi.fn().mockResolvedValue({ result: 'ok' });
+
+    const result = await withMeteredLLM(
+      {
+        featureUnit: 'knowledge-embedding',
+        tenantId: TENANT_ID,
+        userId: USER_ID,
+        rateLimiter: allowAllRateLimiter(),
+      },
+      call,
+    );
+
+    expect(result.ok).toBe(true);
+    expect(call).toHaveBeenCalled();
+  });
+
+  it('Expert / Pro プランは Beginner Embedding 上限の対象外', async () => {
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValue(
+      makeTenant({
+        plan: 'expert',
+        currentMonthEmbeddingCallCount: 99999, // どんなに使っても Beginner 上限は適用されない
+      }) as never,
+    );
+    const call = vi.fn().mockResolvedValue({ result: 'ok' });
+
+    const result = await withMeteredLLM(
+      {
+        featureUnit: 'knowledge-embedding',
+        tenantId: TENANT_ID,
+        userId: USER_ID,
+        rateLimiter: allowAllRateLimiter(),
+      },
+      call,
+    );
+
+    // Beginner cap は通過するが、別のチェックで止まるかは別の話。Embedding 上限が原因で止まらないこと。
+    if (!result.ok) {
+      expect(result.reason).not.toBe('embedding_beginner_limit_exceeded');
+    }
+  });
+});
+
+describe('withMeteredLLM - Step 4.1: monthlyEmbeddingBudgetCapJpy 予測超過 (ADR-0030)', () => {
+  it('Expert で currentMonthEmbeddingCostJpy + 予測コスト > monthlyEmbeddingBudgetCapJpy なら embedding_budget_exceeded', async () => {
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValue(
+      makeTenant({
+        plan: 'expert',
+        currentMonthEmbeddingCostJpy: 995, // 995 + ¥5 = 1000、上限 1000 はぴったりなので OK パス用に 996 で超過
+        monthlyEmbeddingBudgetCapJpy: 1000,
+      }) as never,
+    );
+    // currentMonthEmbeddingCostJpy = 996 にして 996 + 5 = 1001 > 1000 で発火
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce(
+      makeTenant({
+        plan: 'expert',
+        currentMonthEmbeddingCostJpy: 996,
+        monthlyEmbeddingBudgetCapJpy: 1000,
+      }) as never,
+    );
+    const call = vi.fn();
+
+    const result = await withMeteredLLM(
+      {
+        featureUnit: 'knowledge-embedding',
+        tenantId: TENANT_ID,
+        userId: USER_ID,
+        rateLimiter: allowAllRateLimiter(),
+      },
+      call,
+    );
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('embedding_budget_exceeded');
+    expect(call).not.toHaveBeenCalled();
+  });
+
+  it('monthlyEmbeddingBudgetCapJpy が null なら無制限扱いで通過', async () => {
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValue(
+      makeTenant({
+        plan: 'expert',
+        currentMonthEmbeddingCostJpy: 999999,
+        monthlyEmbeddingBudgetCapJpy: null,
+      }) as never,
+    );
+    const call = vi.fn().mockResolvedValue({ result: 'ok' });
+
+    const result = await withMeteredLLM(
+      {
+        featureUnit: 'knowledge-embedding',
+        tenantId: TENANT_ID,
+        userId: USER_ID,
+        rateLimiter: allowAllRateLimiter(),
+      },
+      call,
+    );
+
+    expect(result.ok).toBe(true);
+  });
+
+  it('LLM_BILLABLE featureUnit は Embedding cap の判定対象外', async () => {
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValue(
+      makeTenant({
+        plan: 'expert',
+        currentMonthEmbeddingCostJpy: 999999, // Embedding 側は超過していても
+        monthlyEmbeddingBudgetCapJpy: 100,
+      }) as never,
+    );
+    const call = vi.fn().mockResolvedValue({ result: 'ok' });
+
+    const result = await withMeteredLLM(
+      {
+        // LLM_BILLABLE
+        featureUnit: 'project-upsert',
+        tenantId: TENANT_ID,
+        userId: USER_ID,
+        rateLimiter: allowAllRateLimiter(),
+      },
+      call,
+    );
+
+    // LLM 経路では Embedding cap で止まらない
+    if (!result.ok) {
+      expect(result.reason).not.toBe('embedding_budget_exceeded');
+    }
   });
 });
 

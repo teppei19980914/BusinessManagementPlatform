@@ -89,6 +89,9 @@ export interface ChatSearchResult {
     | 'tenant_inactive'
     | 'plan_invalid'
     | 'fair_use_limit_exceeded'
+    // ADR-0030 (2026-05-30): Embedding 系専用上限 (= chat-semantic-search は EMBEDDING_BILLABLE 経路のため発火し得る)
+    | 'embedding_budget_exceeded'
+    | 'embedding_beginner_limit_exceeded'
     | 'llm_error'
     | 'output_invalid';
   results: {
