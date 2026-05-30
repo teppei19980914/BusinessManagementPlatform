@@ -89,7 +89,7 @@ export type TenantSelfInfo = {
    */
   currentMonthEmbeddingCallCount: number;
   /**
-   * ADR-0022 (2026-06-01): Embedding 系の当月課金額。Beginner=0 / Expert=件数×¥1 / Pro=件数×¥1。
+   * ADR-0022 (2026-06-01) / ADR-0029 (¥1→¥5 改定): Embedding 系の当月課金額。Beginner=0 / Expert=件数×¥5 / Pro=件数×¥5。
    *   feedback_billing_invariant: ApiCallLog SUM = 本値 = CSV = 請求書 の整合性必須。
    */
   currentMonthEmbeddingCostJpy: number;

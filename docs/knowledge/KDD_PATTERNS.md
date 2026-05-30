@@ -19304,7 +19304,7 @@ PR #471 ADR-0028 RAG 移行後、ユーザがヘルプ・ガイドチャット�
 
 | featureUnit | 課金分類 | UI counter inc | ApiCallLog 記録 | 課金 |
 |---|---|---|---|---|
-| `chat-semantic-search` (過去資産検索) | EMBEDDING_BILLABLE | ✅ inc | ✅ 記録 | Expert/Pro ¥1/回 |
+| `chat-semantic-search` (過去資産検索) | EMBEDDING_BILLABLE | ✅ inc | ✅ 記録 | Expert/Pro ¥5/回 (ADR-0029) |
 | `knowledge-embedding` 等 (資産入力) | EMBEDDING_BILLABLE | ✅ inc | ✅ 記録 | 同上 |
 | **`help-chat-embedding`** (ヘルプ・ガイド) | **LEARNING_FREE** | ❌ **不変** | ✅ 記録 | **全プラン無料** |
 
@@ -19323,7 +19323,7 @@ if (isLlmBillable) {
 ### 何故この設計か
 
 1. **学習支援機能の無料訴求**: ヘルプ・ガイドチャットは初心者の使い方学習のための機能、Beginner/Expert/Pro いずれも完全無料を訴求
-2. **counter 混在防止**: もし LEARNING_FREE を EMBEDDING_BILLABLE counter に inc させると、画面の「Embedding 呼出 X 件 × ¥1 = ¥X」の計算が破綻 (= 一部 ¥0、一部 ¥1 で計算式が成立しない)
+2. **counter 混在防止**: もし LEARNING_FREE を EMBEDDING_BILLABLE counter に inc させると、画面の「Embedding 呼出 X 件 × ¥5 = ¥X」の計算が破綻 (= 一部 ¥0、一部 ¥5 で計算式が成立しない)
 3. **Stripe 誤投入リスク回避**: Stripe queue は cost > 0 のときのみ投入する設計だが、counter inc は別経路なため誤投入の温床になりやすい → counter 不変の方が安全
 
 ### UX 改善 (本 PR で実施)

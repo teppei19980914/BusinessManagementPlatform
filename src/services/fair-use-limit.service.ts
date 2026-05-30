@@ -7,7 +7,7 @@
  *   ADR-0019 で Embedding 系を全プラン無料化したことに伴い、無料 featureUnit 全般に対して
  *   Voyage 200M 無料枠保護のための月次 10,000 calls/tenant 上限を設けていた。
  *
- *   ADR-0022 (2026-06-01) で Expert/Pro の Embedding を ¥1/call 課金化したことに伴い、
+ *   ADR-0022 (2026-06-01) で Expert/Pro の Embedding を課金化 (ADR-0029 で ¥5/call) したことに伴い、
  *   Expert/Pro は monthlyBudgetCap で自然防御されるため Fair Use Limit の対象から外した。
  *   Beginner は依然として Embedding が cost=0 のため防御手段がなく、本サービスを Beginner
  *   専用に縮小して継続維持する。
@@ -26,8 +26,8 @@
  *       - Hard: 月 **10,000 calls/tenant** で当該テナントの EMBEDDING_BILLABLE を縮退モード
  *     Beginner プランは 5 席 × 90 日試用期間内のため理論最大値 4,500,000 calls。これに対し
  *     10,000 calls/月の閾値で十分防御。
- *   - **Beginner 専用に縮小した理由**: Expert/Pro は ¥1/call 課金で:
- *       * 経済的攻撃 (= Voyage 枠食い潰し DoS) は ¥1 × 10000 calls = ¥10,000 売上が立つため不成立
+ *   - **Beginner 専用に縮小した理由**: Expert/Pro は ¥5/call 課金で (ADR-0029):
+ *       * 経済的攻撃 (= Voyage 枠食い潰し DoS) は ¥5 × 10000 calls = ¥50,000 売上が立つため不成立
  *       * monthlyBudgetCap で自然防御される
  *     一方、Beginner は cost=0 + 5 席 + 90 日制限 + 同一メール再払出不可制約はあるが、
  *     試用期間内に Voyage 枠を集中的に消費される可能性が残るため上限を維持する。

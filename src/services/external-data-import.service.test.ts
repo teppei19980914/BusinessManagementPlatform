@@ -507,7 +507,7 @@ describe('applyImport', () => {
     vi.mocked(generateAndPersistBatchEmbeddings).mockResolvedValueOnce({
       generated: 1,
       failed: 0,
-      costJpy: 0, // ADR-0019: external-import-embedding は無料
+      costJpy: 0, // ADR-0022/0029: Beginner は external-import-embedding も ¥0 (Expert/Pro は ¥5/取込)
     });
     const r = await applyImport({ tenantId: TENANT_ID, userId: USER_ID, previewId: 'x' });
     expect(r.ok).toBe(true);

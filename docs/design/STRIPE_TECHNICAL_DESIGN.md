@@ -82,8 +82,9 @@ export async function completeStripeSetup(tenantId: string, setupSessionId: stri
     // ADR-0022 (2026-06-01) / ADR-0020 / ADR-0021 (2026-05-30) Stripe-ready optional 設計:
     //   STRIPE_PRICE_EMBEDDING / STRIPE_PRICE_DB_CAPACITY_OVERAGE / STRIPE_PRICE_STORAGE_FILE_OVERAGE
     //   が設定されていれば追加 Item として組み込まれ、各 Meter Event が Stripe Invoice に反映される
-    //   (= invoice 払いの BillingHistory と 4 経路 invariant 一致)。
-    //   未設定なら旧挙動互換 (= 2 本のみ、リリース時の挙動)。
+    //   (= invoice 払いの BillingHistory と 5 経路 invariant 一致)。
+    //   ✅ 2026-05-30 Production 全 5 env 設定済 → 5 Item Subscription 構成で 6/1 launch 稼働。
+    //   Sandbox / 開発環境では未設定なら 2〜4 本構成の旧挙動互換 (= Stripe-ready 設計を維持)。
     const items = [
       { price: STRIPE_PRICE_HAIKU },
       { price: STRIPE_PRICE_SONNET },

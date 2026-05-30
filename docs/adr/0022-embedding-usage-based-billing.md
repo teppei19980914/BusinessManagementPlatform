@@ -1,6 +1,10 @@
 # ADR-0022: Embedding 機能の従量課金 — Expert/Pro ¥1/call (2026-06-01)
 
-- **Status**: Accepted (2026-06-01)
+> ⚠️ **単価改定済 (2026-05-30)**: Expert/Pro の Embedding 単価は [ADR-0029](./0029-embedding-price-revision-5jpy.md) で **¥1 → ¥5/call** に改定されました。本 ADR の単価記述 (¥1) は**導入時の歴史的記録**として残します。現行単価・課金構造の真実源は [src/config/embedding-pricing.ts](../../src/config/embedding-pricing.ts) と ADR-0029 を参照してください。課金対象 featureUnit / Beginner ¥0 / backfill 無料 / 上限ロジックは本 ADR のまま有効です。
+
+> ✅ **credit_card 払い有効化済 (2026-05-30)**: 採択時 (2026-06-01 リリース予定) は「リリース時は credit_card 払い未対応 → 将来 Stripe 有効化」を前提とした **Stripe-ready 設計** でした。その後 PR #469 で credit_card UI が解禁され、Sandbox→Live mode 移行 (TC-L1〜L8 PASS) が 2026-05-30 に完遂したため、**6/1 リリース時点で credit_card 払いは有効** です。本文中の「リリース時 未対応 / 将来 Stripe 有効化時」記述は **歴史的記録** として残します。実際には 6/1 launch から credit_card テナントへ 5 Item invariant (Haiku/Sonnet/Embedding/DBCap/Storage) で Subscription が組成され、Stripe Invoice に embedding 課金が反映されます (= `feedback_billing_invariant` 完全成立)。
+
+- **Status**: Accepted (2026-06-01) / **単価のみ ADR-0029 で改定 (2026-05-30)** / **credit_card 6/1 launch で有効化済 (2026-05-30)**
 - **Date**: 2026-06-01
 - **Deciders**: teppei
 - **Supersedes (partial)**: [ADR-0019](./0019-billable-feature-units-and-free-tier-expansion.md) (Embedding 無料化 → Expert/Pro のみ ¥1 課金、Fair Use Limit は Beginner 専用に縮小)
@@ -22,14 +26,14 @@ ADR-0019 で Embedding 系 featureUnit (= Knowledge / RiskIssue / Retrospective 
 
 ### 課題
 
-1. **「課金経路を最初から仕込んでおきたい」要件**: 2026-06-01 リリースでクレジットカード払いは未対応だが、将来 Stripe 有効化時にコード変更ゼロで動き出す **Stripe-ready 設計** にしたい。これは Embedding 課金経路が無いと部分的にしか実現できない。
+1. **「課金経路を最初から仕込んでおきたい」要件**: ~~2026-06-01 リリースでクレジットカード払いは未対応だが、将来 Stripe 有効化時にコード変更ゼロで動き出す~~ **Stripe-ready 設計** にしたい。これは Embedding 課金経路が無いと部分的にしか実現できない。 *(2026-05-30 追記: PR #469 で credit_card UI 解禁 + Sandbox→Live 移行完了。launch 時点で credit_card 有効、Embedding 含む 5 Item Subscription で稼働)*
 2. **収益化の機会損失**: Expert/Pro プランで 1000 件/月の embedding 利用があっても収益 ¥0。Voyage 実コスト ¥36/月 は事業者が負担する一方、Beginner 50 件上限 (¥500/月 上限) の Expert/Pro 移行誘因が弱い。
 3. **Fair Use Limit の意義縮小**: 「無料 featureUnit のみ適用」設計のため、Expert/Pro テナントが Voyage 枠を食い潰しても止められない (= cost=0 で budget cap 不発火)。
 
 ### 制約 (本 ADR の前提)
 
 - **Beginner 「90 日完全無料」訴求は絶対保全**: LP line 20/251/768/773 + api-usage-guide.md §1 で謳う「資産入力・チャット検索すべて無料」が崩れると消費者契約法/景品表示法リスク + Beginner→Expert/Pro アップセル動線の根幹崩壊。
-- **2026-06-01 リリースでクレジットカード払い未対応**: Stripe 設定 (Dashboard / env) は実施せず、invoice / bank_transfer 払い経路のみで運用。
+- ~~**2026-06-01 リリースでクレジットカード払い未対応**: Stripe 設定 (Dashboard / env) は実施せず、invoice / bank_transfer 払い経路のみで運用。~~ *(2026-05-30 更新: PR #469 で credit_card UI 解禁 + Sandbox→Live 移行完了。Stripe Dashboard 5 Price + Webhook + Production env 全設定済。launch 時点で invoice / credit_card の二経路稼働)*
 - **既存 Beginner 50 件上限 + monthlyBudgetCap の動作不変**: Embedding を上限カウントに含めると「資産入力 200 件 + チャット検索 100 回」で枠枯渇しユーザ操作を止める事故になる。
 - **不当請求 (= ユーザ非起動の処理で請求発生) は厳禁**: 月初 cron による embedding-backfill (= 失敗した embedding を月初に自動再生成) はユーザ起動ではないため、課金すると「自分が起こした覚えのない処理での請求」と感じられ UX/信頼関係に直接影響する。
 
@@ -86,14 +90,16 @@ Embedding 件数/課金額は新規カラム `Tenant.currentMonthEmbeddingCallCo
 - 表示で「LLM 利用料 / Embedding 利用料 / ストレージ超過」を 3 セクション分離するため、データソースも分離した方が UX が明快。
 - Beginner も件数記録 (cost=0 だが count は increment)。UI で「Embedding 200 件 / ¥0 (無料利用中)」と表示可能。
 
-#### 2.5 Stripe-ready 設計 (= リリース時は credit_card 払い未対応だが将来動く)
+#### 2.5 Stripe-ready 設計 (= 2026-05-30 credit_card 有効化完了、Embedding Item 稼働中)
 
-`STRIPE_PRICE_EMBEDDING` 環境変数は **optional**。
+> ✅ **2026-05-30 更新**: ADR 採択時 (2026-06-01 想定) は「リリース時は credit_card 未対応 → 将来 Stripe 有効化」の Stripe-ready 設計でしたが、PR #469 + Sandbox→Live 移行 (TC-L1〜L8 PASS) で **launch 時点から credit_card 有効** に変更。`STRIPE_PRICE_EMBEDDING` Production も設定済みで、5 Item Subscription (Haiku/Sonnet/Embedding/DBCap/Storage) で稼働中。
 
-- **未設定 (= リリース時)**: `getStripePriceConfig()` は throw せず embedding=undefined を返す。`createSubscriptionForTenant` は Embedding Item を Subscription に追加しない (= 従来通り Haiku+Sonnet 2 本だけ)。`stripe-usage-flush` は embedding queue を見ず空 queue 扱い。
-- **設定済み (= 将来 Stripe 有効化時)**: Subscription Item 3 本目として追加、queue 送信開始。コード変更ゼロで自動的に動き出す。
+`STRIPE_PRICE_EMBEDDING` 環境変数は **optional** な Stripe-ready 設計を維持:
 
-新 Meter event 名 `tasukiba_embedding_call` を `STRIPE_METER_EVENT_NAMES.embedding` で定義。Stripe Dashboard で Meter + Price (¥1/call, Metered) 作成 + Netlify env 設定の運用作業を `docs/operations/STRIPE_SETUP.md` に事前記載しておく。
+- **未設定** (= 採択時想定 / Sandbox 等の補助環境): `getStripePriceConfig()` は throw せず embedding=undefined を返す。`createSubscriptionForTenant` は Embedding Item を Subscription に追加しない (= 4 本構成)。`stripe-usage-flush` は embedding queue を見ず空 queue 扱い。
+- **設定済み** (= ✅ Production 2026-05-30 以降): Subscription Item 5 本目として追加、queue 送信稼働中。env 設定だけで動作 (= コード変更ゼロの Stripe-ready 設計を維持)。
+
+新 Meter event 名 `tasukiba_embedding_call` を `STRIPE_METER_EVENT_NAMES.embedding` で定義。Stripe Dashboard で Meter + Price ([ADR-0029](./0029-embedding-price-revision-5jpy.md) で ¥1 → ¥5 改定済、Metered) 作成 + Netlify env 設定の運用作業を `docs/operations/STRIPE_SETUP.md` に記載。
 
 ### 3. 請求 invariant (= 5 経路一致の絶対要件)
 
@@ -105,7 +111,7 @@ Embedding 件数/課金額は新規カラム `Tenant.currentMonthEmbeddingCallCo
 4. **CSV エクスポート (= 月次請求業務)**: ApiCallLog SUM ベース
 5. **請求書 (= invoice/bank_transfer)**: `billing-aggregation.service` が ApiCallLog SUM (featureUnit ∈ BILLABLE_FEATURE_UNITS) で集計、自動的に Embedding 分も含まれる
 
-将来 Stripe 有効化時は 6 経路目に **Stripe Meter Event 送信量** が加わる (= apiCallLogId を identifier に重複送信防止)。
+✅ 2026-05-30 以降は 6 経路目に **Stripe Meter Event 送信量** が加わっており (= apiCallLogId を identifier に重複送信防止)、credit_card テナントへの請求書 (Stripe Invoice) もこの SUM と一致する 6 経路 invariant が稼働中。
 
 ---
 
@@ -115,7 +121,7 @@ Embedding 件数/課金額は新規カラム `Tenant.currentMonthEmbeddingCallCo
 
 - **収益化の起点**: Expert/Pro プランで Embedding 課金が立つ (= 月 1000 件で ¥1000 売上、Voyage 実コスト ¥36 を大きく上回る)
 - **Beginner 訴求保全**: 「90 日完全無料」「資産入力・チャット検索すべて無料」訴求が完全に成立
-- **Stripe-ready**: 将来 Stripe Dashboard 作業 + env 設定だけでクレジットカード払いが動く
+- **Stripe-ready**: ~~将来~~ Stripe Dashboard 作業 + env 設定だけでクレジットカード払いが動く設計 *(2026-05-30 達成済: PR #469 + Sandbox→Live 移行完了で実稼働)*
 - **invariant 強化**: Embedding を ApiCallLog ベース集計に乗せたことで、5 経路 (将来 6 経路) の一致監視が明確化
 - **不当請求リスク回避**: backfill 明示 free + Beginner 上限/budget cap 不変で UX/信頼関係を保護
 - **Fair Use Limit の意義回復**: Beginner 専用に縮小することで dead code 化を回避、Voyage 無料枠を引き続き防御
@@ -125,11 +131,11 @@ Embedding 件数/課金額は新規カラム `Tenant.currentMonthEmbeddingCallCo
 - **schema migration コスト**: Tenant + TenantMonthlyUsageHistory に 5 列追加 (= migration `20260601_embedding_billing`)
 - **既存テスト書換え**: 旧仕様で「Embedding cost=0」を期待する metered.test.ts / 各 service test を Expert/Pro × Embedding featureUnit のテストケースで書換える必要がある
 - **ドキュメント書換え**: api-usage-guide.md / plan-guide.md / business / design / operations / HomePage LP の料金記述を一括書換え
-- **告知ルール**: api-usage-guide.md §5.3 「単価変更 30 日前告知」ルール対象。リリース前着手 (2026-06-01 前 / 顧客ゼロ) なら告知不要、リリース後着手なら Expert/Pro 新規契約規約に最初から記載で代替可能
+- **告知ルール**: api-usage-guide.md §5.3 「単価変更 30 日前告知」ルール対象。リリース前着手 (2026-06-01 前 / 顧客ゼロ) なら告知不要、リリース後着手なら Expert/Pro 新規契約規約に最初から記載で代替可能。 *(2026-05-30 補足: 採択時点で credit_card 払いも有効化済となったため、6/1 launch 前の Stripe Dashboard + env 設定を含めて「告知不要」期間内に完遂。ADR-0029 ¥1→¥5 改定も同 launch 前で告知対象外)*
 
 ### Neutral
 
-- リリース時はクレジットカード払い未対応のため、Embedding 課金は invoice/bank_transfer 経由で月次請求書に乗る (= `billing-aggregation.service` 経由)。Stripe queue は空のまま動作。
+- ~~リリース時はクレジットカード払い未対応のため~~ Embedding 課金は invoice 経路では `billing-aggregation.service` で月次請求書に乗り、credit_card 経路では Stripe Meter Event 経由で Stripe Invoice に反映される。 *(2026-05-30 更新: credit_card 払いも有効化済、双方経路稼働中)*
 - Beginner は cost=0 のため counter は increment するが Stripe queue は不投入 (= 件数記録のみ、課金経路には乗らない)。
 
 ---
@@ -149,7 +155,7 @@ Embedding 件数/課金額は新規カラム `Tenant.currentMonthEmbeddingCallCo
 [api-usage-guide.md §5.3](../public/api-usage-guide.md) の「将来の単価変更も、**効力発生日の 30 日以上前** にメール + ユーザ規約への掲示でお知らせします」ルール対象。
 
 - **リリース前着手 (2026-06-01 前 / Expert/Pro 既存顧客ゼロ)**: 告知不要
-- **リリース後着手**: 新規 Expert/Pro 契約規約に最初から「Embedding ¥1/call」を記載することで告知代替可能。既存 Expert/Pro 契約者がいる場合は規約改定 + 30 日前メール告知 + サービス内バナー掲示が必要
+- **リリース後着手**: 新規 Expert/Pro 契約規約に最初から「Embedding ¥5/call」(ADR-0029 改定後) を記載することで告知代替可能。既存 Expert/Pro 契約者がいる場合は規約改定 + 30 日前メール告知 + サービス内バナー掲示が必要 *(2026-05-30 実績: 6/1 launch 前に着手 + 完了したため告知不要パスを満たす。credit_card 払いも同 launch から有効化済)*
 - **Beginner ユーザ**: 影響なし (= 無料維持) のため告知不要
 
 ---

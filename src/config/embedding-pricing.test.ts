@@ -10,17 +10,17 @@ import {
   resolveEmbeddingCostJpy,
 } from './embedding-pricing';
 
-describe('EMBEDDING_PRICE_JPY_BY_PLAN (ADR-0022)', () => {
+describe('EMBEDDING_PRICE_JPY_BY_PLAN (ADR-0022 / ADR-0029 で ¥1→¥5 改定)', () => {
   it('Beginner は ¥0 (= 「90 日完全無料」訴求保全)', () => {
     expect(EMBEDDING_PRICE_JPY_BY_PLAN.beginner).toBe(0);
   });
 
-  it('Expert は ¥1', () => {
-    expect(EMBEDDING_PRICE_JPY_BY_PLAN.expert).toBe(1);
+  it('Expert は ¥5 (ADR-0029 / 2026-05-30 改定、旧 ¥1)', () => {
+    expect(EMBEDDING_PRICE_JPY_BY_PLAN.expert).toBe(5);
   });
 
-  it('Pro は ¥1 (Expert と同単価 = Embedding は plan 間で品質差なし)', () => {
-    expect(EMBEDDING_PRICE_JPY_BY_PLAN.pro).toBe(1);
+  it('Pro は ¥5 (Expert と同単価 = Embedding は plan 間で品質差なし)', () => {
+    expect(EMBEDDING_PRICE_JPY_BY_PLAN.pro).toBe(5);
   });
 
   it('全プランの単価が定義されている (= TenantPlan 型と完全網羅)', () => {
@@ -34,12 +34,12 @@ describe('resolveEmbeddingCostJpy', () => {
     expect(resolveEmbeddingCostJpy('beginner')).toBe(0);
   });
 
-  it('Expert は 1 を返す', () => {
-    expect(resolveEmbeddingCostJpy('expert')).toBe(1);
+  it('Expert は 5 を返す (ADR-0029)', () => {
+    expect(resolveEmbeddingCostJpy('expert')).toBe(5);
   });
 
-  it('Pro は 1 を返す', () => {
-    expect(resolveEmbeddingCostJpy('pro')).toBe(1);
+  it('Pro は 5 を返す (ADR-0029)', () => {
+    expect(resolveEmbeddingCostJpy('pro')).toBe(5);
   });
 
   it('★invariant★ 全戻り値が非負整数 (= 円整数の制約)', () => {

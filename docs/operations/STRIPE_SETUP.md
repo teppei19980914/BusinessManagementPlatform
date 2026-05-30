@@ -78,11 +78,11 @@ Dashboard → **商品カタログ** → **商品を追加**
 
 → 環境変数 `STRIPE_PRICE_SONNET` に保存。**ADR-0019 では Sonnet 単価変更なし**、既存 Price をそのまま使用可。
 
-### 2.2-bis Embedding Price 作成 (ADR-0022 / 2026-06-01) — **将来 Stripe 有効化時の追加作業**
+### 2.2-bis Embedding Price 作成 (ADR-0022 / 2026-06-01、ADR-0029 単価改定 / 2026-05-30)
 
-> 🆕 **ADR-0022 (2026-06-01) Stripe-ready 設計**: リリース時 (2026-06-01) は credit_card 払い未対応のため、本セクションの作業は **不要** です。`STRIPE_PRICE_EMBEDDING` 環境変数を未設定にしておくと `createSubscriptionForTenant` は Haiku + Sonnet の 2 本だけ Subscription Item を作成し、Embedding 課金は invoice/bank_transfer 経由で `billing-aggregation.service` から請求書に乗ります (= 主経路)。
+> ✅ **2026-05-30 更新**: PR #469 で credit_card 払い UI が解禁され、**6/1 リリース時点で credit_card 払いを有効化** したため、本セクションの作業は **必須** です (= Embedding Subscription Item が credit_card テナントに紐付かないと Stripe Invoice に embedding 課金が反映されず、`feedback_billing_invariant` 違反となります)。
 >
-> **将来 Stripe 有効化する際の手順** (= クレジットカード払い対応時):
+> Live mode 切替手順を完遂し、`STRIPE_PRICE_EMBEDDING` を Production に設定 → `createSubscriptionForTenant` が 5 本目の Subscription Item (Haiku/Sonnet/**Embedding**/DB容量/Storage) として自動追加します。
 
 1. **新 Meter event 作成**:
    - 商品カタログ → メーター → 「新規メーター」
@@ -90,24 +90,25 @@ Dashboard → **商品カタログ** → **商品を追加**
    - 集計タイプ: 合計 (sum)
    - イベントペイロード キー: `stripe_customer_id` / `value`
 
-2. **新 Embedding Price 作成**:
+2. **新 Embedding Price 作成** (ADR-0029 / 2026-05-30: ¥1 → ¥5 改定):
 
 | 項目 | 値 |
 |---|---|
-| 商品名 | `たすきば Embedding 業務操作 (= 資産入力 / チャット検索 / CSV / 添付ファイル embedding)` |
-| 説明 | `Expert/Pro プランの Embedding 業務操作 1 回あたり ¥1 (ADR-0022 / 2026-06-01)。Beginner は 0 課金 (= queue 不投入のため Subscription Item は不要)` |
+| 商品名 | `たすきば Embedding 課金 (Expert / Pro)` (= 資産入力 / チャット検索 / CSV / 添付ファイル embedding) |
+| 説明 | `Expert/Pro プランの Embedding 業務操作 1 回あたり ¥5 (ADR-0022 初版 ¥1 → ADR-0029 ¥5 改定)。Beginner は 0 課金 (= queue 不投入のため Subscription Item は不要)` |
 | 料金モデル | 従量課金ベース (新規 Meter `tasukiba_embedding_call` に紐付け) |
-| 単価 | **`¥1` per unit** |
+| 単価 | **`¥5` per unit** ★ADR-0029 改定後★ |
 | 請求期間 | 月次 |
-| 検索キー | `embedding_per_call` |
+| 検索キー | (任意) `embedding_per_call_v2` |
 
 3. **環境変数設定**:
-   - `STRIPE_PRICE_EMBEDDING` を staging + production の両方に設定 (= Test / Live で別 Price ID)
-   - 設定後、`createSubscriptionForTenant` は自動的に 3 本目の Subscription Item として追加 (コード変更ゼロ)
+   - `STRIPE_PRICE_EMBEDDING` を staging (Sandbox) + production (Live) の両方に設定 (= Test / Live で別 Price ID)
+   - Production 値は **Live mode Account ID (`KHIaXKbo0M`) が埋め込まれていること** を必ず目視確認 (Sandbox 値が混入すると Subscription 作成時に `No such price` 400 で `StripeInvalidRequestError` 発生、launch 直前の TC-L4 検証で発覚した罠)
+   - 設定後、`createSubscriptionForTenant` は自動的に 5 本目の Subscription Item として追加 (= コード変更ゼロの Stripe-ready 設計)
 
-4. **既存 credit_card テナント (もし存在すれば) への migrate**:
+4. **既存 credit_card テナントへの migrate** (本 docs 更新時点では Default テナントのみ):
    - Stripe Dashboard で既存 active Subscription の Items に Embedding Price を追加
-   - またはコード経由: `stripe.subscriptionItems.create({ subscription: sub_xxx, price: STRIPE_PRICE_EMBEDDING })`
+   - またはテナント側で「銀行振込 → クレジットカード」再切替で新 Subscription を作成 (= 5 Item 構成で再生成)
 
 ### 2.3 ~~Storage Add-on (Plus)~~ — **ADR-0020 で廃止**
 
@@ -170,11 +171,11 @@ Dashboard → **商品カタログ** → **商品を追加**
 > **重要**: `STRIPE_PRICE_DB_CAPACITY_OVERAGE` 環境変数を設定するだけでは Stripe Meter Event の `tasukiba_db_capacity_overage_jpy` が **Stripe Invoice に反映されない**。Meter Event は Subscription Item に紐付かないと Invoice に乗らない Stripe 仕様のため、`createSubscriptionForTenant` が当該 Price を Item として追加する必要がある。
 
 - **Stripe-ready optional 設計** ([src/services/stripe-billing.service.ts](../../src/services/stripe-billing.service.ts) `createSubscriptionForTenant` / ADR-0022 Embedding と同パターン):
-  - **`STRIPE_PRICE_DB_CAPACITY_OVERAGE` 未設定**: Subscription Item は追加されない (= リリース時の挙動互換)。Stripe Meter Event は送信されるが、Stripe Invoice には反映されない。
-  - **`STRIPE_PRICE_DB_CAPACITY_OVERAGE` 設定済**: 新規 Subscription 作成時に 4 本目の Item として追加 (Haiku + Sonnet + (optional) Embedding + DB 容量超過)。これにより月初 cron が送信する Meter Event の円整数 quantity が当該 Item に集約され、Stripe Invoice に反映される。
-- **invariant 担保**: invoice 払いの BillingHistory (= `BILLABLE_FEATURE_UNITS` の ApiCallLog SUM) と Stripe Invoice の金額が完全一致する設計。テナントダッシュボード表示 = 請求書 = Stripe Invoice の 4 点 invariant。
+  - **`STRIPE_PRICE_DB_CAPACITY_OVERAGE` 未設定**: Subscription Item は追加されない (= Sandbox / 開発環境向け)。Stripe Meter Event は送信されるが、Stripe Invoice には反映されない。
+  - **`STRIPE_PRICE_DB_CAPACITY_OVERAGE` 設定済 (= ✅ 2026-05-30 Production 設定済)**: 新規 Subscription 作成時に Item として追加 (Haiku + Sonnet + Embedding + DB 容量超過 + ファイルストレージ超過 = **5 本構成**)。これにより月初 cron が送信する Meter Event の円整数 quantity が当該 Item に集約され、Stripe Invoice に反映される。
+- **invariant 担保**: invoice 払いの BillingHistory (= `BILLABLE_FEATURE_UNITS` の ApiCallLog SUM) と Stripe Invoice の金額が完全一致する設計。テナントダッシュボード表示 = 請求書 = Stripe Invoice の 5 点 invariant (6/1 launch から credit_card 経路稼働中)。
 - **Webhook 同期**: `handleSubscriptionUpdated` で `stripeSubscriptionItemDbCapacityId` カラムも同期更新 (カード再登録などで Subscription が再作成されても DB と Stripe の Item ID が常に一致)。
-- **コード変更ゼロで Stripe 有効化**: env 設定だけで自動的に動き出す Stripe-ready 設計 (詳細: [src/lib/stripe.ts](../../src/lib/stripe.ts) `getStripePriceConfig` の `dbCapacityOverage?` フィールド)。
+- **Stripe-ready 設計を維持**: env 設定だけで動き出す設計のまま (詳細: [src/lib/stripe.ts](../../src/lib/stripe.ts) `getStripePriceConfig` の `dbCapacityOverage?` フィールド)。Sandbox/開発環境への一時的な無効化も env 撤去だけで可能。
 
 ### 2.6 ファイルストレージ従量課金 (ADR-0021 / 2026-05-26)
 
@@ -497,23 +498,29 @@ cron-job.org で実行履歴を確認 (詳細手順は [CRON.md §8〜§9](./CRO
 
 ---
 
-## §11. Live mode 移行チェックリスト (Phase 5)
+## §11. Live mode 移行チェックリスト (Phase 5) — ✅ 2026-05-30 完了
 
-Sandbox 動作確認 OK 後、Live mode で同じ設定を再構築:
+> ✅ **2026-05-30 完了**: 6/1 リリース前検証セッション (TC-L1〜L8) で Sandbox → Live 移行を完遂しました。
+> 5 Subscription Item (Haiku / Sonnet / Embedding / DB 容量 / Storage) invariant 担保 + Webhook 配送疎通 + 解約フロー全て確認済み。
 
-### 必須
-- [ ] Stripe Live mode で本人確認完了 (個人事業主、身分証提出)
-- [ ] クレジット取引セキュリティチェックリスト 1.1〜1.12 すべて「はい」
-- [ ] 公開事業情報 placeholder データを実値に置換 (= サポート住所 / 電話 / メール / ウェブサイト)
-- [ ] Live mode で Product / Meter / Price を再作成 (= ID が変わる)
-- [ ] Live mode で Webhook エンドポイント追加 + 11 イベント購読
-- [ ] Live mode の Customer Portal を Sandbox と同じ設定で構築
-- [ ] Live mode の Smart Retries / メール通知設定を Sandbox と同じ値で構築
-- [ ] Live API キー (`sk_live_xxxx`) + Webhook secret (`whsec_xxxx`) を Netlify Live 環境変数に登録 (= 平文共有禁止、Dashboard 直接入力)
-- [ ] `STRIPE_PRICE_*` を Live mode の Price ID に置換 (= Sandbox Price ID と混同しないこと)
+### 完了項目
+- [x] Stripe Live mode で本人確認完了 (個人事業主、身分証提出)
+- [x] クレジット取引セキュリティチェックリスト 1.1〜1.12 すべて「はい」
+- [x] 公開事業情報 placeholder データを実値に置換 (= サポート住所 / 電話 / メール / ウェブサイト)
+- [x] Live mode で Product / Meter / Price 5 件を再作成 (= Haiku ¥10 / Sonnet ¥15 / Embedding ¥5 / DB容量 ¥1 / Storage ¥1)
+- [x] Live mode で Webhook エンドポイント `tasukiba-production-webhook` 追加 + 11 イベント購読 + API バージョン `2026-04-22.dahlia` 一致
+- [x] Live mode の Customer Portal を Sandbox と同じ設定で構築 (キャンセル / プラン切替 / 数量変更 OFF)
+- [x] Live mode の Smart Retries / メール通知設定 (2 週間 / 8 回 / 期限超過保持)
+- [x] Live API キー (`sk_live_xxxx`、Restricted Key) + Webhook secret (`whsec_xxxx`) を Netlify Production 環境変数に登録
+- [x] `STRIPE_PRICE_*` 5 件を Live mode の Price ID に置換 (= Live Account ID `KHIaXKbo0M` 埋め込み確認、Sandbox ID `K3TUQWW2eq` 混入なし)
 - [x] **PR-V8 完了**: コード側の API バージョン `2026-04-22.dahlia` + Meter API 対応完了 (= PR #411 にバンドル merge 済)
-- [ ] 利用規約 / 特商法に Stripe 決済 / 自動更新条項が反映済
-- [ ] LP `#tokushoho` アンカーが Live mode の特商法 URL に設定済
+- [x] 利用規約 / 特商法に Stripe 決済 / 自動更新条項が反映済
+- [x] LP `#tokushoho` アンカーが Live mode の特商法 URL に設定済
+
+### 切替時の罠 (本セッションで実検出、KDD §5.X+ に記録予定)
+1. **過去 Sandbox testing で populate された `tenant.stripeCustomerId`** が Live API key で retrieve 失敗し 503 を返す → DB cleanup SQL で全 Stripe ID を NULL 化して再 setup
+2. **`STRIPE_PRICE_EMBEDDING` Production が Sandbox 値のまま** → Subscription 作成時に `No such price` 400 で fail。env の Live ID 化 + Stripe Customer 削除 + DB cleanup で復旧
+3. **(参考)** auto-tag.service.ts が Anthropic structured output 未サポートの `maxItems` を含め全リクエスト 400 reject されていた (TC-L6a 検証時に発覚) → schema から `maxItems` 撤去 + dedup() で件数上限カットオフに変更
 
 ---
 

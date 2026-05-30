@@ -149,9 +149,11 @@ describe('TenantOnboardingInputSchema', () => {
     expect(TenantOnboardingInputSchema.safeParse(bad).success).toBe(false);
   });
 
-  // 2026-05-09 (#4): クレジットカード決済は現状未対応のため API でも reject。
-  //   将来対応時はこのテストの期待値を反転させる。
-  it('paymentMethod は credit_card を reject (#4 future support)', () => {
+  // 2026-05-09 (#4) / 2026-05-30 更新: credit_card 払いは launch 時点で有効化済 (TC-L4 PASS)
+  //   だが、サインアップ時は 90 日無料試用の体験を優先し paymentMethod='invoice' を強制。
+  //   credit_card 切替は登録後 /settings/tenant 経由で実施 (= UX 設計、tenant-onboarding.service.ts:93)。
+  //   サインアップ時 credit_card 受付に拡張する場合は本テストの期待値を反転 + 関連設計見直しが必要。
+  it('paymentMethod は credit_card を reject (= signup は invoice 固定、card 切替は登録後)', () => {
     const bad = { ...VALID_INPUT, paymentMethod: 'credit_card' };
     expect(TenantOnboardingInputSchema.safeParse(bad).success).toBe(false);
   });

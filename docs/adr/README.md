@@ -39,9 +39,10 @@
 | [0019](./0019-billable-feature-units-and-free-tier-expansion.md) | 課金対象 featureUnit の明示化と無料利用範囲の拡大 (2026-05-24 採択) | Partially superseded by 0022 | ビジネス・課金 |
 | [0020](./0020-db-capacity-usage-based-billing.md) | DB 容量従量課金 — 月中 peak ベース階段関数型料金 (2026-05-25 採択) | Accepted | ビジネス・課金 |
 | [0021](./0021-file-storage-usage-based-billing.md) | ファイル添付ストレージ従量課金 — Supabase Storage 連携 (2026-05-26 採択) | Accepted | ビジネス・課金 |
-| [0022](./0022-embedding-usage-based-billing.md) | Embedding 機能の従量課金 — Expert/Pro ¥1/call (2026-06-01 採択) | Accepted | ビジネス・課金 |
+| [0022](./0022-embedding-usage-based-billing.md) | Embedding 機能の従量課金 — Expert/Pro ¥1/call (2026-06-01 採択、**単価は [ADR-0029](./0029-embedding-price-revision-5jpy.md) で ¥5 に改定**) | Accepted (単価改定済) | ビジネス・課金 |
 | [0023](./0023-netlify-starter-migration.md) | Vercel Hobby → Netlify (Starter → Personal) 移行 (商用 TOS 違反の解消、2026-05-18 採択 + Personal 昇格) | Accepted | インフラ |
 | [0024](./0024-explicit-tenant-id-no-db-default.md) | tenant_id カラムから DB DEFAULT を撤去しコード明示必須化 (2026-05-28 採択 / severity-1 silent fall-through バグ対応) | Accepted | アーキテクチャ・セキュリティ |
+| [0029](./0029-embedding-price-revision-5jpy.md) | Embedding 従量課金の単価改定 — Expert/Pro ¥1 → ¥5/call (2026-05-30 採択、ADR-0022 を部分 supersede) | Accepted | ビジネス・課金 |
 
 > 主要設計判断を時系列で ADR 化しています (現在 24 件)。
 > 設計変更を検討する際は新規 ADR を追加し、変更が確定したら旧 ADR の Status を Deprecated / Superseded に更新します。

@@ -136,7 +136,7 @@ const HEADERS_CURRENT = [
   'drift警告',
   'drift呼出差分',
   'drift費用差分(円)',
-  // ADR-0022 (2026-06-01): Embedding 内訳列 (Beginner=0 / Expert=Pro=件数×¥1)
+  // ADR-0022/0029: Embedding 内訳列 (Beginner=0 / Expert=Pro=件数×¥5)
   'Embedding呼出回数(counter)',
   'Embedding課金額(counter, 円)',
   'アクティブユーザ数',
@@ -216,7 +216,7 @@ function buildCurrentMonthCsv(
         csvEscape(driftWarning),
         (driftCallDiff >= 0 ? '+' : '') + driftCallDiff.toString(),
         (driftCostDiff >= 0 ? '+' : '') + driftCostDiff.toString(),
-        // ADR-0022 (2026-06-01): Embedding 内訳 (counter ベース、Beginner=0 / Expert=Pro=件数×¥1)
+        // ADR-0022/0029: Embedding 内訳 (counter ベース、Beginner=0 / Expert=Pro=件数×¥5)
         t.currentMonthEmbeddingCallCount.toString(),
         t.currentMonthEmbeddingCostJpy.toString(),
         t.activeUserCount.toString(),

@@ -247,7 +247,11 @@ describe('extractAutoTags - 出力検証 (Zod)', () => {
     if (!result.ok) expect(result.reason).toBe('output_invalid');
   });
 
-  it(`${MAX_TAGS_PER_AXIS + 1} 個のタグが返ってきたら hallucination として output_invalid`, async () => {
+  it(`${MAX_TAGS_PER_AXIS + 1} 個のタグが返ってきても dedup() が MAX_TAGS_PER_AXIS で truncate して成功する`, async () => {
+    // 2026-05-30 変更:
+    //   旧: maxItems を Anthropic schema + Zod で強制 → 9 件返ったら output_invalid
+    //   新: Anthropic structured output が maxItems 未対応で 400 になるため schema 撤去 →
+    //       dedup() の max 引数で件数上限カットオフ。9 件返ったら 8 件で truncate して成功扱い。
     const tooMany = Array.from({ length: MAX_TAGS_PER_AXIS + 1 }, (_, i) => `t${i}`);
     mockMeteredLLMSuccess(
       JSON.stringify({
@@ -265,8 +269,56 @@ describe('extractAutoTags - 出力検証 (Zod)', () => {
       userId: USER_ID,
     });
 
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.reason).toBe('output_invalid');
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.tags.businessDomainTags.length).toBe(MAX_TAGS_PER_AXIS);
+      expect(result.tags.businessDomainTags).toEqual(
+        Array.from({ length: MAX_TAGS_PER_AXIS }, (_, i) => `t${i}`),
+      );
+    }
+  });
+
+  it('Anthropic schema に maxItems が含まれていない (= 400 invalid_request 回避、2026-05-30 regression guard)', async () => {
+    let capturedSchema: unknown;
+    vi.mocked(withMeteredLLM).mockImplementation(async (_o, call) => {
+      const fakeCreate = vi.fn().mockImplementation(async (params) => {
+        capturedSchema =
+          (params.output_config as { format: { schema: unknown } }).format.schema;
+        return {
+          content: [
+            {
+              type: 'text',
+              text: '{"businessDomainTags":[],"techStackTags":[],"processTags":[]}',
+            },
+          ],
+          usage: { input_tokens: 1, output_tokens: 1 },
+        };
+      });
+      vi.mocked(getAnthropicClient).mockReturnValue({
+        messages: { create: fakeCreate },
+      } as never);
+      const r = await call({ modelName: 'claude-haiku-4-5', requestId: 'r' });
+      return {
+        ok: true,
+        result: r.result,
+        costJpy: 0,
+        latencyMs: 1,
+        modelName: 'claude-haiku-4-5',
+        requestId: 'r',
+      };
+    });
+
+    await extractAutoTags({
+      purpose: 'p',
+      background: 'b',
+      scope: 's',
+      tenantId: TENANT_ID,
+      userId: USER_ID,
+    });
+
+    // 取得した schema を JSON 文字列化して maxItems が含まれていないことを保証
+    const schemaJson = JSON.stringify(capturedSchema);
+    expect(schemaJson).not.toContain('maxItems');
   });
 
   it(`${MAX_TAG_CHARS + 1} 文字超のタグが返ってきたら output_invalid`, async () => {

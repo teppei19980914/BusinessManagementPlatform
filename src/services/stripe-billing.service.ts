@@ -848,19 +848,24 @@ export async function createSubscriptionForTenant(
   const prices = getStripePriceConfig();
 
   // Subscription Items: Haiku + Sonnet + (optional) Embedding + (optional) DB capacity + (optional) Storage file。
-  // ADR-0022 (2026-06-01) Stripe-ready 設計:
-  //   - STRIPE_PRICE_EMBEDDING 未設定 (= リリース時の挙動): Haiku+Sonnet 2 本のみ
-  //   - STRIPE_PRICE_EMBEDDING 設定済 (= 将来 Stripe 有効化時): 3 本目として Embedding を追加
-  //     これにより withMeteredLLM が embedding event で投入する queue が flush 時に
-  //     Subscription Item と紐付き、Stripe Invoice に Embedding 課金が反映される。
+  // 2026-05-30 credit_card 有効化: PR #469 で UI 解禁 + Sandbox→Live mode 移行完了 (TC-L1〜L8 PASS)。
+  //   6/1 リリース構成では 5 env 全て Production 設定済みのため、新規 credit_card テナントは
+  //   **5 Item invariant** (Haiku/Sonnet/Embedding/DBCap/Storage) で Subscription が組成される。
+  //
+  // ADR-0022 (2026-06-01) + ADR-0029 (2026-05-30 ¥1→¥5) Stripe-ready 設計:
+  //   - STRIPE_PRICE_EMBEDDING 未設定: Haiku+Sonnet 2 本のみ (= 4 env 構成と同じ旧挙動互換)
+  //   - STRIPE_PRICE_EMBEDDING 設定済 (= ✅ Production 設定済): Embedding Item を追加し、
+  //     withMeteredLLM が embedding event で投入する queue が flush 時に Subscription Item と紐付き
+  //     Stripe Invoice に Embedding 課金が反映される。
   //
   // ADR-0020 / 0021 (2026-05-30) Stripe-ready 設計 (Embedding と同パターン):
   //   - STRIPE_PRICE_DB_CAPACITY_OVERAGE / STRIPE_PRICE_STORAGE_FILE_OVERAGE 未設定: Item 追加せず旧挙動互換。
-  //   - 設定済: Item として追加され、月初 cron が送信する Meter Event (円整数 quantity) が
-  //     当該 Item に集約されて Stripe Invoice に反映される。これにより invoice 払いの BillingHistory
-  //     (= BILLABLE_FEATURE_UNITS の ApiCallLog SUM) と Stripe Invoice の金額が完全 invariant 一致する。
+  //   - 設定済 (= ✅ Production 設定済): Item として追加され、月初 cron が送信する Meter Event
+  //     (円整数 quantity) が当該 Item に集約されて Stripe Invoice に反映される。これにより
+  //     invoice 払いの BillingHistory (= BILLABLE_FEATURE_UNITS の ApiCallLog SUM) と
+  //     Stripe Invoice の金額が完全 invariant 一致する。
   //
-  //   コード変更ゼロで Stripe 有効化が完結する設計 (= env 設定だけで自動的に動き出す)。
+  //   env 設定だけで動き出す Stripe-ready 設計 (= コード変更ゼロ)。
   const items: Stripe.SubscriptionCreateParams.Item[] = [
     { price: prices.haiku },
     { price: prices.sonnet },

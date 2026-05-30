@@ -16,7 +16,7 @@
  *        Stripe queue = haiku/sonnet event
  *     2. **EMBEDDING_BILLABLE** (knowledge-embedding / risk-issue-embedding / retrospective-embedding /
  *        memo-embedding / chat-semantic-search / external-import-embedding / attachment-embedding):
- *        cost = resolveEmbeddingCostJpy(plan) [Beginner=0 / Expert=¥1 / Pro=¥1]
+ *        cost = resolveEmbeddingCostJpy(plan) [Beginner=0 / Expert=¥5 / Pro=¥5、ADR-0029]
  *        counter = currentMonthEmbedding* (全プラン件数記録、Beginner は cost=0 でも count は記録)
  *        Beginner 上限 / budget cap 判定対象外 (= 既存上限ロジック不変)
  *        Stripe queue = embedding event (cost > 0 のときのみ = Beginner はスキップ)
@@ -82,7 +82,7 @@ import {
 } from '@/config/llm';
 import { isTenantPlan, type TenantPlan } from '@/lib/tenant';
 // ADR-0019 (2026-05-24) → ADR-0022 (2026-06-01) で Beginner プラン限定に縮小:
-//   Embedding 系を Expert/Pro で ¥1 課金化したため、それらは monthlyBudgetCap で自然防御。
+//   Embedding 系を Expert/Pro で ¥5 課金化したため (ADR-0029)、それらは monthlyBudgetCap で自然防御。
 //   Beginner は cost=0 のままで防御手段がないため、本サービスを Beginner プランのみで利用継続。
 import { checkFairUseLimit } from '@/services/fair-use-limit.service';
 import {
@@ -232,7 +232,7 @@ export async function withMeteredLLM<T>(
   //      Stripe queue は haiku/sonnet event。
   //   2. EMBEDDING_BILLABLE (knowledge-embedding / risk-issue-embedding / retrospective-embedding /
   //      memo-embedding / chat-semantic-search / external-import-embedding / attachment-embedding):
-  //      Beginner=¥0 / Expert=¥1 / Pro=¥1、currentMonthEmbedding* counter、Beginner 上限 / budget cap
+  //      Beginner=¥0 / Expert=¥5 / Pro=¥5 (ADR-0029)、currentMonthEmbedding* counter、Beginner 上限 / budget cap
   //      判定対象外 (= 既存上限ロジック不変)、Stripe queue は cost > 0 のみ embedding event。
   //   3. EMBEDDING_BACKFILL (cron 自動リカバリ): 全プラン ¥0 維持、counter 不変、Stripe queue 不投入。
   //      ユーザ非起動の処理での課金は「不当請求」 = UX/信頼関係に直接影響するため明示的 free。
@@ -248,7 +248,7 @@ export async function withMeteredLLM<T>(
 
   // cost 計算: featureUnit カテゴリで分岐。
   //   LLM → resolveCostForPlan(plan): Beginner=0 / Expert=¥10 / Pro=¥15
-  //   Embedding → resolveEmbeddingCostJpy(plan): Beginner=0 / Expert=¥1 / Pro=¥1
+  //   Embedding → resolveEmbeddingCostJpy(plan): Beginner=0 / Expert=¥5 / Pro=¥5 (ADR-0029)
   //   Backfill / 未知 / LEARNING_FREE (help-chat-embedding 等) → 0 (明示的 free)
   const costJpy = isLlmBillable
     ? resolveCostForPlan(plan, {
@@ -274,7 +274,7 @@ export async function withMeteredLLM<T>(
   }
 
   // ---------- Step 3.5: Fair use limit (Beginner プラン × EMBEDDING_BILLABLE のみ) ----------
-  // ADR-0022 (2026-06-01): Expert/Pro は Embedding が cost=¥1 のため monthlyBudgetCap で自然防御。
+  // ADR-0022/0029: Expert/Pro は Embedding が cost=¥5 のため monthlyBudgetCap で自然防御。
   //   Beginner は cost=0 のままで防御手段がないため、Beginner プランの EMBEDDING_BILLABLE 呼出に
   //   対してのみ Fair Use Limit (= 月 10,000 calls/tenant) を適用し Voyage 200M 無料枠を保護。
   //   詳細: src/services/fair-use-limit.service.ts + ADR-0022 §2.3
@@ -345,7 +345,8 @@ export async function withMeteredLLM<T>(
   //   - LLM_BILLABLE × 他  → 'haiku'
   //   - EMBEDDING_BILLABLE → 'embedding' (= 新 Meter event 'tasukiba_embedding_call')
   // Stripe-ready 設計: STRIPE_PRICE_EMBEDDING 環境変数未設定でも queue 投入は行う
-  //   (= リリース時は credit_card テナント不在で queue 自体が空、将来 Stripe 有効化で自動動作)。
+  //   (= 2026-05-30 以降は Production 設定済みで credit_card テナントへの請求が有効、
+  //   将来 env unset に戻しても queue 機構自体は不変で動き続ける)。
   const apiCallLogId = randomUUID();
   const stripeCallType: 'haiku' | 'sonnet' | 'embedding' = isLlmBillable
     ? plan === 'pro'

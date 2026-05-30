@@ -735,8 +735,8 @@ describe('withMeteredLLM - ADR-0019/0022 §4 階層課金分類', () => {
       expect(logCall?.data.featureUnit).toBe('chat-semantic-search');
     });
 
-    it('Expert × chat-semantic-search: cost=¥1 / Embedding counter +1 / Stripe queue 投入 (embedding event)', async () => {
-      // ADR-0022: Expert/Pro は Embedding ¥1/call。credit_card なら Stripe queue に embedding event 投入。
+    it('Expert × chat-semantic-search: cost=¥5 / Embedding counter +5 / Stripe queue 投入 (embedding event)', async () => {
+      // ADR-0029 (2026-05-30): Expert/Pro は Embedding ¥5/call (旧 ¥1)。credit_card なら Stripe queue に embedding event 投入。
       vi.mocked(prisma.tenant.findFirst).mockResolvedValue(
         makeTenant({
           plan: 'expert',
@@ -760,22 +760,22 @@ describe('withMeteredLLM - ADR-0019/0022 §4 階層課金分類', () => {
       );
 
       expect(result.ok).toBe(true);
-      if (result.ok) expect(result.costJpy).toBe(1);
-      // Embedding 側 counter に increment (cost も ¥1 で計上)
+      if (result.ok) expect(result.costJpy).toBe(5);
+      // Embedding 側 counter に increment (cost も ¥5 で計上、ADR-0029)
       const tenantUpdate = vi.mocked(prisma.tenant.update).mock.calls[0]?.[0];
       expect(tenantUpdate?.data?.currentMonthEmbeddingCallCount).toEqual({ increment: 1 });
-      expect(tenantUpdate?.data?.currentMonthEmbeddingCostJpy).toEqual({ increment: 1 });
+      expect(tenantUpdate?.data?.currentMonthEmbeddingCostJpy).toEqual({ increment: 5 });
       // LLM 側 counter は不変 (= Beginner 50 件 / budget cap に影響しない)
       expect(tenantUpdate?.data?.currentMonthApiCallCount).toBeUndefined();
       // Stripe queue は embedding event で投入
       const enqueueCall = vi.mocked(prisma.stripeUsageRecordQueue.create).mock.calls[0]?.[0];
       expect(enqueueCall?.data.callType).toBe('embedding');
-      // ApiCallLog は cost=1 で記録
+      // ApiCallLog は cost=5 で記録
       const logCall = vi.mocked(prisma.apiCallLog.create).mock.calls[0]?.[0];
-      expect(logCall?.data.costJpy).toBe(1);
+      expect(logCall?.data.costJpy).toBe(5);
     });
 
-    it('Pro × knowledge-embedding: cost=¥1 (Expert と同単価、ADR-0022 で plan 間で品質差なし)', async () => {
+    it('Pro × knowledge-embedding: cost=¥5 (Expert と同単価、Embedding は plan 間で品質差なし)', async () => {
       vi.mocked(prisma.tenant.findFirst).mockResolvedValue(
         makeTenant({ plan: 'pro' }) as never,
       );
@@ -792,9 +792,9 @@ describe('withMeteredLLM - ADR-0019/0022 §4 階層課金分類', () => {
       );
 
       expect(result.ok).toBe(true);
-      if (result.ok) expect(result.costJpy).toBe(1);
+      if (result.ok) expect(result.costJpy).toBe(5);
       const tenantUpdate = vi.mocked(prisma.tenant.update).mock.calls[0]?.[0];
-      expect(tenantUpdate?.data?.currentMonthEmbeddingCostJpy).toEqual({ increment: 1 });
+      expect(tenantUpdate?.data?.currentMonthEmbeddingCostJpy).toEqual({ increment: 5 });
     });
 
     it('Beginner × chat-semantic-search × 50 件上限到達後でも継続実行可能 (= 上限消費しない)', async () => {
@@ -979,8 +979,8 @@ describe('withMeteredLLM - ADR-0019/0022 §4 階層課金分類', () => {
       expect(call).not.toHaveBeenCalled();
     });
 
-    it('Expert × chat-semantic-search では fair-use-limit を check しない (= ¥1 課金で自然防御)', async () => {
-      // ADR-0022: Expert/Pro は Embedding ¥1/call で cost > 0 のため monthlyBudgetCap で自然防御。
+    it('Expert × chat-semantic-search では fair-use-limit を check しない (= ¥5 課金で自然防御)', async () => {
+      // ADR-0022/0029: Expert/Pro は Embedding ¥5/call で cost > 0 のため monthlyBudgetCap で自然防御。
       // Fair Use Limit のチェックは Beginner プランのみに縮小したため、Expert では count を呼ばない。
       vi.mocked(prisma.tenant.findFirst).mockResolvedValue(
         makeTenant({ plan: 'expert' }) as never,
