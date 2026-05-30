@@ -75,10 +75,14 @@ test.describe('@feature:billing ADR-0030 Embedding 月次予算上限 UI', () =>
     await expect(page.getByTestId('usage-llm-section')).toBeVisible();
     await expect(page.getByTestId('usage-embedding-section')).toBeVisible();
     // 旧文言 (= 当月使用量 / Embedding 利用量) が残留していないこと
+    // ★ Playwright strict mode 違反回避 (KDD §5.X+202、2026-05-31):
+    //   セクション見出しと内部タイルラベルが同一文字列を含むため getByText() は複数マッチで strict mode 違反になる。
+    //   Embedding セクション: <h2>"Embedding 生成回数 (= ...)"</h2> と <p>"Embedding 生成回数"</p> が両方 substring match。
+    //   getByRole('heading') で見出し要素のみに限定する。LLM 側も将来のリネームに備えて同 pattern に統一。
     const llmSection = page.getByTestId('usage-llm-section');
-    await expect(llmSection.getByText('当月 LLM 実行回数')).toBeVisible();
+    await expect(llmSection.getByRole('heading', { name: /当月 LLM 実行回数/ })).toBeVisible();
     const embeddingSection = page.getByTestId('usage-embedding-section');
-    await expect(embeddingSection.getByText('Embedding 生成回数')).toBeVisible();
+    await expect(embeddingSection.getByRole('heading', { name: /Embedding 生成回数/ })).toBeVisible();
   });
 
   test('使用量タブ Beginner: 月次予算上限フォームは非表示 (= 月 50 / 100 件固定上限のため)', async () => {
