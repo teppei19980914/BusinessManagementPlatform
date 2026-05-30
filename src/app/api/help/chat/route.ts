@@ -183,11 +183,25 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   try {
     return await handlePost(req);
   } catch (e) {
+    // ★severity-1★ PR #471 3 巡目検証 (2026-05-30): recordError は DB の systemErrorLog
+    //   にのみ書込み、console には出さない (再帰ログ防止)。そのため真因確定時に
+    //   Netlify Function logs だけ見ても `[help-chat]` 文言が出ず、ユーザが調査時に
+    //   "原因不明" になる罠がある (KDD §5.X+198)。
+    //   対策: route 内の 503 catch では console.warn にも並行出力する。
+    //   ApiCallLog や DB systemErrorLog と二重記録になるが、Function logs での
+    //   即時性 (= ユーザが root cause を即特定可能) を優先する。
+    const errorMessage = e instanceof Error ? e.message : String(e);
+    const errorStack = e instanceof Error ? e.stack : undefined;
+    // eslint-disable-next-line no-console -- KDD §5.X+198: recordError は DB 専用で Function logs に出ないため意図的に併出し
+    console.warn(
+      `[help-chat] uncaught error in POST handler: ${errorMessage}`,
+      errorStack,
+    );
     await recordError({
       severity: 'warn',
       source: 'server',
-      message: `[help-chat] uncaught error in POST handler: ${e instanceof Error ? e.message : String(e)}`,
-      stack: e instanceof Error ? e.stack : undefined,
+      message: `[help-chat] uncaught error in POST handler: ${errorMessage}`,
+      stack: errorStack,
       context: { kind: 'help_chat_uncaught_error' },
     });
     return NextResponse.json(
@@ -363,6 +377,18 @@ async function handlePost(req: NextRequest): Promise<NextResponse> {
     const errorMessage = isError ? e.message : String(e);
     const rawOutputSnippet = llmRawText != null ? llmRawText.slice(0, 500) : null;
 
+    // ★severity-1★ PR #471 3 巡目検証 (2026-05-30): recordError は DB 専用 (再帰ログ防止)。
+    //   Netlify Function logs で真因を即特定できるよう console.warn にも並行出力する
+    //   (KDD §5.X+198)。phase / rawOutputSnippet / ragHitsCount を 1 行にまとめて grep 容易に。
+    // eslint-disable-next-line no-console -- KDD §5.X+198: 同上、Function logs に詳細を出すため意図的
+    console.warn(
+      `[help-chat] LLM call failed at phase=${llmPhase}: ${errorName}: ${errorMessage} ` +
+        `(ragHits=${ragResult.hits.length}, ragDegraded=${ragResult.degraded}, ` +
+        `degradedReason=${ragResult.degradedReason ?? 'n/a'}, ` +
+        `llmInputTokens=${llmInputTokens}, llmOutputTokens=${llmOutputTokens}, ` +
+        `rawOutputSnippet=${rawOutputSnippet ? JSON.stringify(rawOutputSnippet) : 'null'})`,
+      isError ? e.stack : undefined,
+    );
     await recordError({
       severity: 'warn',
       source: 'server',

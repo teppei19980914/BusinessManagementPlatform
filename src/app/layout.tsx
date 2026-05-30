@@ -37,7 +37,16 @@ export async function generateMetadata(): Promise<Metadata> {
   const t = await getTranslations('app');
   const title = t('metaTitle');
   const description = t('metaDescription');
+  // ★severity-low (SEO / SNS シェア)★ PR #471 (2026-05-30):
+  //   metadataBase を明示しないと Next.js が relative URL (例: '/og-image.png') を
+  //   解決する基準を `http://localhost:3000` でフォールバックし、本番で OG image /
+  //   Twitter card のプレビュー画像 URL が壊れる。NEXTAUTH_URL を優先採用、
+  //   未設定 (= dev preview 等) は production URL でフォールバック。
+  //   build/runtime 両方で同じ logic、Server Component なので env は直接参照可。
+  const baseUrl =
+    process.env.NEXTAUTH_URL?.trim() || 'https://tasukiba.com';
   return {
+    metadataBase: new URL(baseUrl),
     title,
     description,
     openGraph: {

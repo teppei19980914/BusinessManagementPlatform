@@ -18990,3 +18990,154 @@ cron-job.org は公開 API を提供しているため、CI で以下を実装�
 - 関連 source: [src/config/cron-jobs.ts](../../src/config/cron-jobs.ts) (metadata 真実源) / [src/lib/cron-execution-log.ts](../../src/lib/cron-execution-log.ts) (advisory lock)
 - 関連 docs: [docs/design/CRON_JOBS.md](../design/CRON_JOBS.md) (人間向け解説、§6 運用注意)
 - KDD 関連: §5.X+70 (cron route 追加・移行時の checklist) / §5.X+181 (cron 運用 3 つの罠、本 KDD の前駆体)
+
+## §5.X+198 ★severity-1 (デバッグ不能化)★ recordError は DB の systemErrorLog にのみ書込み Function logs に出ない ─ 真因確定が必要な catch には console.warn 併出し必須 (PR #471 / 2026-05-30)
+
+### 何が起きたか
+
+PR #471 ADR-0028 RAG 移行で `/api/help/chat` route に root-level try-catch を追加し、503 真因確定のため詳細 context (llmPhase / rawOutputSnippet / ragHitsCount 等) を `recordError` で記録するように強化した。
+
+しかし本番 deploy preview で 503 が再現した際、ユーザが Netlify Function logs を確認しても `[help-chat]` 文言が **一切見当たらない** 状況になった。私 (Claude) も「真因確定にはサーバログ確認が必要」とユーザに案内していたが、ログ確認できない設計だった。
+
+### 原因
+
+[`src/services/error-log.service.ts:75-99`](../../src/services/error-log.service.ts) の `recordError` 実装:
+
+```ts
+export async function recordError(input: RecordErrorInput): Promise<void> {
+  try {
+    await prisma.systemErrorLog.create({  // ← DB INSERT のみ
+      data: { ... },
+    });
+  } catch {
+    // silent fail — エラーログ自体の失敗はユーザ体験を阻害させない
+  }
+}
+```
+
+コメントに明示: 「本サービス自身の失敗は silent (console にも出さない、**再帰ログ防止**)」
+
+この設計意図は妥当 (recordError 自身の throw が無限ログループを起こさないため) だが、結果として:
+- ❌ Netlify Function logs に出ない (= ユーザは grep できない)
+- ✅ DB `systemErrorLog` テーブルには記録される
+- ❌ ただし「`/admin/super/system-errors` 画面で確認」を案内しないと、運用者は気付けない
+
+### 対策
+
+#### A. 真因確定が必要な catch には `console.warn` を併出し
+
+```ts
+} catch (e) {
+  const errorMessage = e instanceof Error ? e.message : String(e);
+  const errorStack = e instanceof Error ? e.stack : undefined;
+
+  // ★Function logs で grep 可能にする (recordError は DB のみのため)
+  console.warn(`[help-chat] uncaught error: ${errorMessage}`, errorStack);
+
+  await recordError({  // DB 監査記録 (構造化 context)
+    severity: 'warn',
+    source: 'server',
+    message: `[help-chat] uncaught error: ${errorMessage}`,
+    stack: errorStack,
+    context: { kind: '...', ... },
+  });
+
+  return NextResponse.json({ ... }, { status: 503 });
+}
+```
+
+#### B. なぜ二重記録か (= console + recordError 両方)
+
+| 経路 | 用途 | アクセス方法 |
+|---|---|---|
+| `console.warn` (Function logs) | **即時調査用** ─ ユーザ / 開発者がリアルタイムに grep 可能 | Netlify Dashboard → Logs → Functions、または `netlify functions:log` CLI |
+| `recordError` (DB systemErrorLog) | **構造化監査用** ─ 時系列分析 / context 詳細 / 履歴保存 | `/admin/super/system-errors` 画面、または SQL 直接 |
+
+両方記録する理由:
+- console のみ: Netlify のログ保持期間制限 (= 過去ログ消失)、検索の構造化が弱い
+- DB のみ: リアルタイム調査が困難、運用者が画面を開く必要
+
+#### C. 「再帰ログ防止」との両立
+
+`recordError` 自身が DB 失敗で throw する経路は依然として silent (内部 try-catch)。`console.warn` は recordError とは独立に出力されるため、recordError が失敗してもログは出る。再帰ログのリスクは増えない。
+
+### 横展開チェックリスト
+
+新規 catch ブロックで recordError を使う際:
+- [ ] そのエラーが起きた時に **ユーザ / 開発者が Function logs を見て真因を即特定したい** か?
+  - **YES** → `console.warn(message, stack)` を併出し (本パターン適用)
+  - **NO (= 単に監査記録のみで OK)** → recordError 単独で OK
+- [ ] 既存 catch ブロックでも 503 / 500 を返すものは原則 console.warn 併出し対象
+- [ ] WARN レベル (= UX に影響なし) でも、デバッグ性を上げるため出力推奨
+- [ ] 個人情報・API キーを context / message に含めない (= Function logs は外部漏洩リスクある)
+
+### 関連
+
+- 関連 PR: PR #471 (本 KDD の発端)
+- 関連 source: [src/services/error-log.service.ts:75-99](../../src/services/error-log.service.ts) (recordError 実装) / [src/app/api/help/chat/route.ts](../../src/app/api/help/chat/route.ts) (本パターン適用例)
+- 関連 docs: [docs/operations/INCIDENT_RESPONSE.md](../operations/INCIDENT_RESPONSE.md) (障害対応 SOP、Function logs 確認手順を含む)
+
+## §5.X+199 ★severity-low (SEO/SNS 影響)★ Next.js `metadata.metadataBase` 未設定で OG image / Twitter card の絶対 URL が `http://localhost:3000` フォールバック (PR #471 / 2026-05-30)
+
+### 何が起きたか
+
+PR #471 deploy preview の Netlify Function logs に下記 WARN が **毎リクエスト** 出力されていた:
+
+```
+WARN ⚠ metadataBase property in metadata export is not set for resolving social
+open graph or twitter images, using "http://localhost:3000".
+See https://nextjs.org/docs/app/api-reference/functions/generate-metadata#metadatabase
+```
+
+これは Next.js 16 で `generateMetadata()` が relative URL の OG image (`'/og-image.png'`) を絶対 URL に解決する際、基準 URL (= `metadataBase`) が未設定だと **`http://localhost:3000` フォールバック** することへの警告。
+
+### 影響度
+
+- ✅ **機能影響なし** (= サイト本体・ヘルプチャット等は正常動作)
+- ⚠ **SEO / SNS シェア影響あり** (= 本番で URL を Twitter / Facebook / Discord / Slack 等にシェアした際、プレビュー画像が `http://localhost:3000/og-image.png` を参照しようとして 404、プレビューが壊れる)
+- ⚠ Console / Function logs ノイズ (= 他の真因 debug 時に埋もれる)
+
+### 対策
+
+[`src/app/layout.tsx:generateMetadata()`](../../src/app/layout.tsx) で `metadataBase` を明示:
+
+```ts
+export async function generateMetadata(): Promise<Metadata> {
+  // NEXTAUTH_URL を優先、未設定なら production URL でフォールバック
+  const baseUrl = process.env.NEXTAUTH_URL?.trim() || 'https://tasukiba.com';
+  return {
+    metadataBase: new URL(baseUrl),  // ← 追加
+    title, description,
+    openGraph: { ..., images: [{ url: '/og-image.png', ... }] },
+    twitter: { ..., images: ['/og-image.png'] },
+  };
+}
+```
+
+### 設計判断
+
+#### A. なぜ `NEXTAUTH_URL` を優先?
+
+- 本番: `NEXTAUTH_URL = https://tasukiba.com` で OG image が `https://tasukiba.com/og-image.png` に解決
+- deploy preview: `NEXTAUTH_URL` が context override で preview URL になっているなら preview URL ベース
+- ローカル開発: `NEXTAUTH_URL = http://localhost:3000` で localhost ベース (= SNS シェア対象外、warning も出なくなる)
+
+`NEXTAUTH_URL` は既存の auth 配線で常に環境別に設定済 (= [ENV_VARS.md §2.3](../operations/ENV_VARS.md))、新規 env 追加不要。
+
+#### B. なぜ default fallback を hardcode の `https://tasukiba.com` にしたか
+
+- 万一 `NEXTAUTH_URL` が未設定でも、production URL がフォールバックされれば OG image は valid
+- 本番運用では `NEXTAUTH_URL` は必ず設定されているため、fallback は防衛的措置
+
+### 横展開チェックリスト
+
+新規 metadata を扱う page / layout を追加するとき:
+- [ ] `metadataBase` を root layout で 1 度だけ設定 (= 子 page で個別設定不要)
+- [ ] OG image / Twitter card は relative URL (= `/path/to/image.png`) で書く (= metadataBase に依存)
+- [ ] dev preview で Console に `metadataBase property ... not set` warning が出ないか確認
+
+### 関連
+
+- 関連 PR: PR #471 (本 KDD の発端)
+- 関連 source: [src/app/layout.tsx:36-63](../../src/app/layout.tsx) (生成 metadata 設定)
+- 関連 docs (Next.js 公式): https://nextjs.org/docs/app/api-reference/functions/generate-metadata#metadatabase

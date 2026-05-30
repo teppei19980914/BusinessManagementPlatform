@@ -13,9 +13,8 @@
 > | 区分 | 件数 | 内容 |
 > |---|---:|---|
 > | **本サービス cron (CRON_JOBS metadata 登録、DB ロギング対象)** | **12 件** | 本ドキュメント §2.1〜§2.12 で詳細解説 |
-> | 本サービス cron (metadata 未登録、意図的) | 1 件 | **health-check** ([§2.13](#213-health-check-日次-0900-jst) 死活監視専用、DB ロギング対象外) |
-> | 本サービス cron (重複登録、★要整理★) | (+1 件) | **tasukiba attachment-embedding** ([§6.1](#61-attachment-embedding-の重複登録-要対応) 同じ endpoint が 2 つ登録) |
-> | **本サービス合計** | **13 件** | (うち運用上整理推奨が 1 件) |
+> | 本サービス cron (metadata 未登録、意図的) | 1 件 | **health-check** ([§2.13](#213-health-check-日次-0700-jst) 死活監視専用、DB ロギング対象外) |
+> | **本サービス合計** | **13 件** | (2026-05-30: 旧 attachment-embedding 重複登録は手動解消済、§6.1 履歴参照) |
 >
 > cron-job.org 管理画面で本サービス URL (`https://tasukiba.com/...`) 以外の cron が見えても、本サービスとは無関係です ([§6.4](#64-アカウント共用上の注意) 参照)。
 
@@ -38,14 +37,16 @@ JST   00:00 ───┬──────────────────�
                │                                                         │
 */10 * * * *   ◆ attachment-embedding (10 分毎)                          │
                │   ファイル添付の意味検索インデックスを背景生成          │
-               │   ※ 同 endpoint に 15 分毎の重複登録あり (§6.1 整理推奨) │
                │                                                         │
-07:00 ◆ daily-notifications                                              │
+07:00 ◆ health-check                                                     │
+               │   サービス本体の死活確認 ping (※ metadata 未登録、§2.13)│
+               │                                                         │
+07:00 ◆ daily-notifications (※ 同時刻、用途独立)                         │
                │   今日が予定開始日/終了日の活動について通知メール送信   │
                │   + 30 日前の既読通知削除 + storage 容量再計算          │
                │                                                         │
-09:00 ◆ health-check (※ metadata 未登録、§2.13)                          │
-               │   サービス本体の死活確認 ping                           │
+07:00 ◆ billing-overdue-alert (※ 同時刻、用途独立)                       │
+               │   支払期日 +5 日を超えた未払い請求を super_admin にメール│
                │                                                         │
 11:00 ◆ daily-usage-aggregation                                          │
                │   昨日の API 利用量をテナント別集計、急増検知、         │
@@ -57,17 +58,14 @@ JST   00:00 ───┬──────────────────�
 12:00 ◆ cron-failure-alert                                               │
                │   過去 24h で失敗した cron を集約 → super_admin にメール│
                │                                                         │
-12:00 ◆ lock-inactive-users (※ 同時刻)                                   │
-               │   30 日ログインしていない一般ユーザのログインをロック   │
-               │                                                         │
 13:00 ◆ stripe-auto-suspend                                              │
                │   未払い猶予期限到来テナントを自動 read-only モードへ   │
                │                                                         │
 14:00 ◆ stripe-usage-flush                                               │
                │   API 利用量を Stripe に送信 (クレジットカード決済用)   │
                │                                                         │
-17:00 ◆ billing-overdue-alert                                            │
-               │   支払期日 +5 日を超えた未払い請求を super_admin にメール│
+21:00 ◆ lock-inactive-users                                              │
+               │   30 日ログインしていない一般ユーザのログインをロック   │
                │                                                         │
 JST   24:00 ───┴─────────────────────────────────────────────────────────┘
 ```
@@ -76,21 +74,21 @@ JST   24:00 ───┴──────────────────�
 
 | 日 | 時刻 | cron | 何をする |
 |---|---|---|---|
-| 1 日 | 09:00 | **tenant-monthly-reset** | テナントの API カウンタ + 課金額を 0 にリセット (= 翌月の請求基準点を作る) |
+| 1 日 | 00:00 | **tenant-monthly-reset** | テナントの API カウンタ + 課金額を 0 にリセット (= 月またぎ直後に走らせ、今月/前月の請求混同を防ぐ) |
 | 1 日 | 15:00 | **stripe-reconcile** | 当社 DB と Stripe の subscription 状態を突合、ズレを Stripe 値で補正 |
-| 2 日 | 09:00 | **billing-monthly-aggregation** | 銀行振込 / 請求書払いテナントの前月分請求金額を確定 (BillingHistory upsert) |
+| 2 日 | 00:00 | **billing-monthly-aggregation** | 銀行振込 / 請求書払いテナントの前月分請求金額を確定 (★ tenant-monthly-reset が前日に終了していることが前提のため 1 日空ける) |
 
 ### 1.3 各 cron の連鎖関係
 
 ```
-[月初 1日 09:00]
-tenant-monthly-reset
-   ↓ (counter リセット完了)
-[月初 2日 09:00]
+[月初 1日 00:00]
+tenant-monthly-reset (= 月またぎ直後、今月/前月の請求カウンタ混同を防ぐ)
+   ↓ (counter リセット完了、24h の猶予を取って)
+[月初 2日 00:00]
 billing-monthly-aggregation (前月分の請求書を集計)
    ↓
-[日次 10:00]
-billing-overdue-alert (支払期日 +5 日超過を検知)
+[日次 07:00]
+billing-overdue-alert (支払期日 +5 日超過を検知、朝の通知で気付きやすい)
    ↓
 [日次 13:00]
 stripe-auto-suspend (猶予期限超過を read-only 化)
@@ -100,7 +98,7 @@ stripe-auto-suspend (猶予期限超過を read-only 化)
 
 ## 2. 各 cron の詳細 (12 件)
 
-### 2.1 attachment-embedding (10 分毎、※ 15 分毎の重複登録あり)
+### 2.1 attachment-embedding (10 分毎)
 
 | 項目 | 内容 |
 |---|---|
@@ -112,7 +110,7 @@ stripe-auto-suspend (猶予期限超過を read-only 化)
 | **失敗時の挙動** | 指数 backoff (1分→5分) で 3 回まで自動リトライ、それ以降は失敗確定。次回 10 分後に新しいバッチで再開 |
 | **止まると困ること** | 新しいファイル添付の意味検索ができなくなる (= キーワード一致のみで検索精度低下)。本体機能には影響なし |
 | **異常検知閾値** | 最終成功から 2 時間経過で長期停止扱い |
-| **★要整理★** | 同 endpoint に **15 分毎の重複登録** あり (cron-job.org に `tasukiba attachment-embedding` 名で別途登録、`*/15 * * * *`)。advisory lock で同時実行は防御済だが運用上は片方削除推奨 (§6.1 参照) |
+| **重複登録履歴** | 2026-05-30 以前は `tasukiba attachment-embedding` (15 分毎) が同 endpoint で重複登録されていたが、ユーザが手動削除して解消済 (§6.1 履歴参照) |
 
 ### 2.2 daily-notifications (日次 07:00 JST)
 
@@ -136,25 +134,27 @@ stripe-auto-suspend (猶予期限超過を read-only 化)
 | **止まると困ること** | 予算超過警告が届かない = テナント運営者が支払額に驚く。Beginner 期限切れテナントが残存し DB 容量を圧迫 |
 | **異常検知閾値** | 最終成功から 25 時間経過で長期停止扱い |
 
-### 2.4 lock-inactive-users (日次 12:00 JST)
+### 2.4 lock-inactive-users (日次 21:00 JST)
 
 | 項目 | 内容 |
 |---|---|
-| **スケジュール** | **`0 12 * * *`** (= 毎日 12:00、※ cron-failure-alert と同時刻、用途は独立) |
+| **スケジュール** | **`0 21 * * *`** (= 毎日 21:00、夜にロック処理を実行) |
 | **endpoint** | `/api/admin/users/lock-inactive` |
 | **何をする** | 最終ログインから **30 日以上** ログインしていない非管理者ユーザを「ロック」(= isActive=false) する |
 | **なぜ必要** | 退職者・休眠ユーザの不正アクセス防止。ただしアカウント自体は削除せず、ナレッジの作者表示等は維持 |
+| **時刻設計意図** | 営業時間外の夜にロック実行 → 業務影響を避けつつ翌朝の問い合わせは即時対応可能 |
 | **止まると困ること** | 退職者のアカウントがログイン可能なまま残り、セキュリティリスク (シリアスではないが運用上の懸念) |
 | **異常検知閾値** | 最終成功から 25 時間経過で長期停止扱い |
 
-### 2.5 tenant-monthly-reset (月初 1 日 09:00 JST)
+### 2.5 tenant-monthly-reset (月初 1 日 00:00 JST)
 
 | 項目 | 内容 |
 |---|---|
-| **スケジュール** | 毎月 1 日 09:00 |
+| **スケジュール** | **`0 0 1 * *`** (= 毎月 1 日 00:00、月またぎ直後) |
 | **endpoint** | `/api/cron/tenant-monthly-reset` |
 | **何をする** | 1. 全テナントの月次 API カウンタ + 課金額を **0 にリセット**<br>2. リセット直前の値をスナップショット保存 (= 後で「先月どれだけ使ったか」を確認できる)<br>3. ストレージアドオンの月次適用<br>4. Beginner プラン期限超過テナントの物理削除<br>5. 月初に embedding 補完バッチ (失敗していた embedding を再生成) |
 | **なぜ必要** | ★最重要★ 当月の API 利用量を 0 から数え始めることで、月次請求の基準点を作る。これが動かないと **請求金額が永遠に累積し続ける** |
+| **時刻設計意図** | 月またぎ直後 00:00 に走らせることで「今月の利用」「前月の利用」のカウンタ混同を防ぐ (= 例: 1 日 09:00 に reset すると 1 日 0〜9 時の利用が前月と混ざる) |
 | **止まると困ること** | ★severity-1★ 課金カウンタがリセットされず、月またぎの請求金額が誤算出される |
 | **異常検知閾値** | 最終成功から 35 日経過で長期停止扱い (= 月跨ぎ + 余裕) |
 
@@ -191,26 +191,28 @@ stripe-auto-suspend (猶予期限超過を read-only 化)
 | **止まると困ること** | DB と Stripe で subscription 状態が乖離し、誤請求 / 誤停止のリスクが残る (即時障害ではないが、複数月放置で悪化) |
 | **異常検知閾値** | 最終成功から 35 日経過で長期停止扱い |
 
-### 2.9 billing-monthly-aggregation (月初 2 日 09:00 JST)
+### 2.9 billing-monthly-aggregation (月初 2 日 00:00 JST)
 
 | 項目 | 内容 |
 |---|---|
-| **スケジュール** | 毎月 2 日 09:00 (= 1 日の tenant-monthly-reset 完了後) |
+| **スケジュール** | **`0 0 2 * *`** (= 毎月 2 日 00:00、1 日の tenant-monthly-reset から 24h 後) |
 | **endpoint** | `/api/cron/billing-monthly-aggregation` |
 | **何をする** | 銀行振込 / 請求書払いテナントの **前月分請求金額を集計** し `BillingHistory` テーブルに保存 |
 | **なぜ必要** | ★最重要★ 銀行振込・請求書発行の基礎データ。これが無いと請求書 PDF が発行できない |
+| **時刻設計意図** | tenant-monthly-reset (1 日 00:00) が確実に完了している前提のため、1 日空けて 2 日 00:00 に実行。万一 1 日の reset が失敗していても日中に気付いて対処する時間的余裕を確保 |
 | **対象外** | クレジットカード決済 (= Stripe Webhook で自動同期) |
 | **止まると困ること** | ★severity-1★ 銀行振込テナントへの請求書発行が遅延、収益認識ズレ |
 | **異常検知閾値** | 最終成功から 35 日経過で長期停止扱い |
 
-### 2.10 billing-overdue-alert (日次 17:00 JST)
+### 2.10 billing-overdue-alert (日次 07:00 JST)
 
 | 項目 | 内容 |
 |---|---|
-| **スケジュール** | **`0 17 * * *`** (= 毎日 17:00) |
+| **スケジュール** | **`0 7 * * *`** (= 毎日 07:00、朝の通知) |
 | **endpoint** | `/api/cron/billing-overdue-alert` |
 | **何をする** | `BillingHistory.payment_due_date + 5 日` を超過した未払い行を検知し、super_admin にメール送信 |
 | **なぜ必要** | 銀行振込テナントの未払いを早期検知し、回収アクションを取る |
+| **時刻設計意図** | 朝のメールチェックで運営者が気付きやすい + ユーザにも午前中に通知が届けば当日中の支払いアクションが取りやすい |
 | **dedup 機構** | 24 時間以内の重複送信を抑制 (= 同じ未払い件で毎日メールが届かない) |
 | **止まると困ること** | 未払い検知が遅延、回収機会逸失 |
 | **異常検知閾値** | 最終成功から 25 時間経過で長期停止扱い |
@@ -238,19 +240,28 @@ stripe-auto-suspend (猶予期限超過を read-only 化)
 | **止まると困ること** | 静かな異常 (= ユーザからは見えないが集計ズレ等) が放置される |
 | **異常検知閾値** | 最終成功から 25 時間経過で長期停止扱い |
 
-### 2.13 health-check (日次 09:00 JST)
+### 2.13 health-check (日次 07:00 JST)
 
 | 項目 | 内容 |
 |---|---|
-| **スケジュール** | 毎日 9 時 |
+| **スケジュール** | **`0 7 * * *`** (= 毎日 07:00、朝) |
 | **endpoint** | `/api/health` |
 | **何をする** | サービス本体が稼働しているか HTTP ping。DB 接続まで確認しない軽量 health check |
 | **なぜ必要** | サーバが完全停止していないか cron-job.org 側で死活確認するため |
+| **時刻設計意図** | 朝 7 時実行で運営者の起床直後に通知 → 一般始業時刻 (= 09:00) までの **2 時間で復旧対応可能** な時間帯を確保 |
 | **★特殊点★ DB ロギング対象外** | 他 cron と異なり `CRON_JOBS` メタデータに **意図的に未登録**。理由: 単純な ping 用途で `cron_execution_logs` への INSERT コストの方が処理コストより大きいため。死活監視は cron-job.org 側の history で完結 |
-| **止まると困ること** | サービス停止に気付くのが遅延 (= cron-job.org の history で「最終成功時刻が古い」アラートが届かない)。ただし他 cron も停止していれば cron-failure-alert が二段階で気付く |
+| **★サーバ停止時の通知★** | **YES、通知される** ─ cron-job.org の「Notifications」設定で **execution of the cronjob fails (1 failure 後)** をオンにしていれば、health-check が HTTP 接続エラー / 200 以外 を返した時点で登録メールアドレスに即時メール通知される (= ユーザの設定で確認済)。**`/api/health` は最軽量実装で常に 200 を返す設計** のため、200 以外が返ってきた時点で「サーバ停止 or fatal error 発生」と判定できる |
+| **止まると困ること** | サービス停止に気付くのが遅延。ただし他 cron も停止していれば cron-failure-alert が二段階で気付く (= 二重防御) |
 | **異常検知閾値** | cron-job.org 側で監視 (本サービスの DB 監視対象外) |
 
 > **注意**: `CRON_JOBS` メタデータに登録しないこの方針は [`src/config/cron-jobs.ts:50-54`](../../src/config/cron-jobs.ts) のコメントで明文化されています。新たに「DB ロギングしない軽量 cron」を追加する場合は同じ判断基準で metadata 登録を見送ること。
+>
+> **cron-job.org 通知設定** (ユーザの管理画面で設定済):
+> - ✅ execution of the cronjob fails (Notify after 1 failure)
+> - ✅ execution of the cronjob succeeds after it failed before (= 復旧通知)
+> - ✅ the cronjob will be disabled because of too many failures
+>
+> この設定により、サーバが停止すれば **1 回の失敗 (= 翌朝 07:00 の ping) で即時メール通知** が届きます。「7:00 ping fail → 7:01 メール届く → 9:00 一般始業まで 2 時間の復旧時間」という設計です。
 
 ---
 
@@ -320,7 +331,8 @@ stripe-auto-suspend (猶予期限超過を read-only 化)
 | 日付 | 改訂内容 |
 |---|---|
 | 2026-05-30 | 初版 (PR #471 で人間向けに体系化、ユーザ要請) |
-| 2026-05-30 | 実態同期: cron-job.org 真実源から 3 件の時刻乖離を補正 (lock-inactive 21→12 / attachment-embedding 15→10 / billing-overdue 10→17) + health-check §2.13 追加 + §6 cron-job.org 運用注意セクション追加 |
+| 2026-05-30 | 実態同期 1 巡目: cron-job.org 真実源から 3 件の時刻乖離を補正 (lock-inactive 21→12 / attachment-embedding 15→10 / billing-overdue 10→17) + health-check §2.13 追加 + §6 cron-job.org 運用注意セクション追加 |
+| 2026-05-30 | 実態同期 2 巡目: ユーザがスケジュール再変更 (lock-inactive 12→21 / tenant-monthly-reset 9→0 / billing-monthly-aggregation 9→0 / billing-overdue 17→7 / health-check 9→7) + attachment-embedding 重複登録解消済 §6.1 履歴化 + health-check の通知仕様を §2.13 に明示 |
 
 ---
 
@@ -328,37 +340,34 @@ stripe-auto-suspend (猶予期限超過を read-only 化)
 
 cron 設定は **cron-job.org が実行スケジュールの真実源**、本サービスの [`src/config/cron-jobs.ts:CRON_JOBS`](../../src/config/cron-jobs.ts) は **メタデータ (description / 異常検知閾値) の真実源** という二重ソース構造です。両者で drift が起きやすいため、本セクションに運用ルールをまとめます。
 
-### 6.1 attachment-embedding の重複登録 (★要対応★)
+### 6.1 attachment-embedding の重複登録 (★2026-05-30 解消済 / 履歴)
 
-#### 現状
+#### 経緯
 
-cron-job.org に **同じ endpoint** (`/api/cron/attachment-embedding`) を叩く cron が **2 つ** 登録されています:
+2026-05-30 以前、cron-job.org に **同じ endpoint** (`/api/cron/attachment-embedding`) を叩く cron が **2 つ** 登録されていました:
 
-| 登録名 | 周期 | cron 式 |
-|---|---|---|
-| `attachment-embedding` | 10 分毎 | `*/10 * * * *` |
-| `tasukiba attachment-embedding` | 15 分毎 | `*/15 * * * *` |
+| 登録名 | 周期 | cron 式 | 状態 |
+|---|---|---|---|
+| `attachment-embedding` | 10 分毎 | `*/10 * * * *` | ✅ 現役 (継続) |
+| `tasukiba attachment-embedding` | 15 分毎 | `*/15 * * * *` | ❌ 2026-05-30 ユーザが手動削除 |
 
-#### 影響
+#### 削除理由
 
-- **同時実行は防御済** ─ [`src/lib/cron-execution-log.ts:withCronExecutionLogging`](../../src/lib/cron-execution-log.ts) の advisory lock により、同一 cron 名で並列実行が起きても 2 つ目以降は HTTP 409 で即 return ([KDD §5.X+181](../knowledge/KDD_PATTERNS.md))
-- **無駄な実行は発生** ─ 10/15/20/30/40/45/50 分のうち、複数 cron が近接時刻 (例: 30 分時点で両方が起動) で重なる場合、片方は 409 で空振りする
-- **ロギング容量微増** ─ `cron_execution_logs` テーブルに 409 行も毎回 INSERT される (= severity-low)
-
-#### 推奨対応
-
-cron-job.org 管理画面で **`tasukiba attachment-embedding`** (15 分毎の方) を **削除** することを推奨。理由:
 - `attachment-embedding` (10 分毎) の方が周期が短く処理頻度が十分
 - 命名規則の一貫性 (他 cron は prefix なし)
-- 409 空振りログを減らす
+- 409 空振りログ (= advisory lock による空振り) を減らすため
 
-#### 削除手順
+#### 当時の影響度
+
+- **同時実行は防御済** だった ─ [`src/lib/cron-execution-log.ts:withCronExecutionLogging`](../../src/lib/cron-execution-log.ts) の advisory lock により、同一 endpoint で並列実行が起きても 2 つ目以降は HTTP 409 で即 return ([KDD §5.X+181](../knowledge/KDD_PATTERNS.md))
+- **機能影響なし、運用負債のみ** だった
+
+#### 同様の重複が再発した場合の対処
 
 1. cron-job.org にログイン
-2. 一覧から `tasukiba attachment-embedding` を選択
+2. 一覧から不要な重複 cron を選択
 3. EDIT → Delete cronjob
-
-> 削除後も `attachment-embedding` (10 分毎) で機能は変わらず動作します。
+4. 本ドキュメント §6.1 履歴に追記
 
 ### 6.2 cron-job.org と metadata の同期保持ルール
 
