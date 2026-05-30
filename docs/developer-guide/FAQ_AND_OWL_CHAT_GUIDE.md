@@ -81,12 +81,12 @@
 | **withMeteredLLM 経由** | 既存課金基盤の流用、ApiCallLog 一元管理、drift 検知に乗る |
 | **sessionStorage 履歴** | 既存 chat-semantic-search パターンと同一。タブ単位揮発、DB 容量を消費しない |
 
-### 1.3 課金分類
+### 1.3 課金分類 (ADR-0027 / ADR-0028)
 
-- featureUnit: `help-chat`
-- 分類: 全プラン無料 (Beginner 含む、`EMBEDDING_BACKFILL_FEATURE_UNITS` と同じ ¥0 維持パターン)
-- Counter: `currentMonthHelpChatCount` (Tenant カラム新設) で月次カウント
-- 上限: テナント月 100 回 (= ¥50/月程度の運営コスト想定)
+- featureUnit: `help-chat` (LLM 呼出) と `help-chat-embedding` (RAG embedding) の 2 つを使用
+- 両方とも `LEARNING_FREE_FEATURE_UNITS` 分類で全プラン無料 (Beginner 含む、`EMBEDDING_BACKFILL_FEATURE_UNITS` と同じ ¥0 維持パターン)
+- Counter: `currentMonthHelpChatCount` (Tenant カラム) で `help-chat` のみ月次カウント (embedding は cost=0 + Voyage 無料枠で実質ゼロ)
+- 上限: テナント月 100 回 (= ¥50/月程度の運営コスト想定、LLM 呼出のみ判定)
 - 上限到達時: HTTP 429 + `fallbackToAccordion: true` を返却 → UI が入力欄を disable してアコーディオン誘導
 
 #### 1.3.1 ★重要★ なぜ `withMeteredLLM` を経由しないか
@@ -310,50 +310,64 @@ FAQ が「困った時の Q&A」なら、ガイドは「使い方の体系的説
 
 ---
 
-## 5. トークン上限とコスト最適化
+## 5. トークン上限とコスト最適化 (ADR-0028 RAG 版)
 
-### 5.1 現状の容量
+> **2026-05-30 更新**: ADR-0027 の full-context 方式を廃止し、ADR-0028 で RAG 方式に移行しました。本節は RAG 版での再試算です。
+
+### 5.1 現状の容量 (RAG 後)
 
 | 項目 | tokens 推定 |
 |---|---|
-| system prompt (キャラクタ + ハルシネーション対策) | ~500 |
-| FAQ 全文 (50 件) | ~5,000 |
-| 使い方ガイド全文 | ~5,000 |
-| 出力スキーマ説明 | ~300 |
-| **合計** | **~10,800** |
-| Haiku 200K window | 5.4% 使用 |
+| system prompt (PERSONA + 開示制限のみ、★キャッシュ対象★) | ~1,000 |
+| messages: RAG 結果 (top-K=5、各 ~600 tokens) | ~3,000 |
+| messages: 質問文 + 出力スキーマ説明 | ~600 |
+| **合計** | **~4,600** |
+| Haiku 200K window | 2.3% 使用 |
+
+`top-K=5` は `src/services/help-search.service.ts:HELP_SEARCH_DEFAULT_LIMIT` で集中管理。
 
 ### 5.2 拡張余地
 
-FAQ を **300 件まで増やしても** 50K tokens 程度に収まり、Haiku window の 25% 使用に留まる。1 query あたりのコスト増は ¥0.5 → ¥1 程度 (許容範囲)。
+RAG 化により FAQ 件数が **何件増えても 1 query のトークン数は固定** です。これが ADR-0028 移行の最大のメリット:
 
-### 5.3 上限到達時の対応 (RAG 移行)
+| FAQ 規模 | 1 query のトークン数 | 1 query のコスト (cache hit) |
+|---|---|---|
+| 50 件 | ~4,600 | ¥0.5 |
+| 300 件 | ~4,600 | ¥0.5 |
+| 1,000 件 | ~4,600 | ¥0.5 |
 
-100K tokens を超えたら、Voyage embedding で関連 FAQ だけ抽出する RAG 化を検討する。設計案:
+> 参考: 旧 full-context 方式では 300 件で ¥4.8、600 件で ¥9.5 と線形増大していました。
 
-```
-ユーザ質問
-  ↓ Voyage embedding (~¥0.036)
-faq-content.ts の各 FAQ も embedding 済み
-  ↓ コサイン類似度 top-K 抽出 (K=10)
-Haiku に「関連 FAQ 10 件のみ」を渡す
-  ↓ 回答
-```
+### 5.3 RAG 追加コスト
 
-RAG 移行は ADR-0028 (将来) で正式に決定する。
+RAG の追加コストは **Voyage embedding 生成** のみ:
 
-### 5.4 月間コスト試算
+| 操作 | 頻度 | コスト (Voyage) |
+|---|---|---|
+| query embedding (1 query) | 質問のたび | ~¥0.04 (200M tokens/月 無料枠内では事実上 ¥0) |
+| FAQ embedding (1 件追加・更新) | deploy 後 1 回 | ~¥0.001 |
+| FAQ embedding 全件再生成 | 通常起こらない | ~¥0.05 (FAQ 100 件想定) |
+
+Voyage の無料枠 (200M tokens/月) があれば、テナント月 100 回 × 全テナント × 数百件規模でも超過は事実上発生しない見込み。
+
+### 5.4 月間コスト試算 (RAG 版)
 
 - テナント数: 10 社想定 (β / 初期商用フェーズ)
 - 平均利用: 30 回/月/テナント (~ 上限 100 回の 30%)
-- 1 query コスト: ¥0.5 (Haiku + ~10K tokens system + ~500 output、cache hit 時)
-- **月間運営コスト: ¥150 (10 社 × 30 回 × ¥0.5)**
+- 1 query コスト: ¥0.5 (Haiku + ~4.6K tokens 固定、cache hit 時)
+- Voyage embedding: 無料枠内 = ¥0
+- **月間運営コスト: ¥150 (10 社 × 30 回 × ¥0.5)** ← FAQ 何件でも同じ
 
-全プラン無料で吸収。Beginner プランの無料試用機能としても無理がない範囲。
+### 5.5 ★重要★ Anthropic Prompt Caching の役割 (RAG 後)
 
-### 5.5 ★重要★ Anthropic Prompt Caching によるコスト構造
+RAG 後も Prompt Caching は引き続き有効で、より明確な役割分担を持ちます:
 
-「FAQ を増やすほど 1 query のコストが膨れるのでは?」というご指摘は **素朴な計算では正しい** が、Anthropic の **Prompt Caching (5 分 TTL)** を使うことで実運用コストは大きく抑制されます。
+| キャッシュ対象 | 内容 | 変更頻度 |
+|---|---|---|
+| system プロンプト | PERSONA + 開示制限 (viewer ロール別に固定) | viewer のロール変化時のみ |
+| messages | RAG 結果 + 質問文 (query 毎に変化) | 毎 query |
+
+system プロンプトは **viewer 単位で固定** のため、5 分以内に同じユーザが続けて質問すれば 90% off の cache hit が効きます。
 
 #### コスト単価 (Claude Haiku 4.5、2026 年時点)
 
@@ -364,25 +378,21 @@ RAG 移行は ADR-0028 (将来) で正式に決定する。
 | Input (cache write、初回登録) | $1.25 (25% premium) | ~¥190 |
 | Output | $5.00 | ~¥750 |
 
-#### FAQ 規模別の 1 query コスト試算 (出力 500 tokens 固定)
-
-| FAQ 規模 | system tokens | Cache miss | Cache hit | 50% cache 平均 |
-|---|---|---|---|---|
-| **現状 42 件** | ~10K | ¥2.0 | ¥0.5 | ¥1.25 |
-| 100 件 | ~25K | ¥4.5 | ¥0.75 | ¥2.6 |
-| 300 件 | ~50K | ¥8.5 | ¥1.1 | ¥4.8 |
-| 600 件 (RAG 移行閾値) | ~100K | ¥17 | ¥1.9 | ¥9.5 |
-
-つまり **cache hit 時は FAQ がいくら増えても 1 query ¥1〜2 程度に抑えられる**。実運用では「業務開始時にユーザが連続質問する」など 5 分以内の連続アクセスが多く、平均 50-70% の cache hit を見込めます。
-
 #### 実装上のポイント (`src/app/api/help/chat/route.ts`)
 
 ```ts
 system: [
   {
     type: 'text' as const,
-    text: systemPrompt,           // FAQ + ガイド全文 (~10K〜100K tokens)
+    text: systemPrompt,           // PERSONA + 開示制限 (~1K tokens、viewer 別に固定)
     cache_control: { type: 'ephemeral' as const },  // ★必須★ 5 分 TTL の prompt cache
+  },
+],
+messages: [
+  {
+    role: 'user',
+    content: `${ragPromptSection}\n...\n${userQuery}\n...\n${outputInstruction}`,
+    // RAG 結果 + 質問文 + 出力指示 (query 毎に変化、キャッシュ不可)
   },
 ],
 ```
@@ -391,7 +401,12 @@ system: [
 
 #### ユーザ料金への影響
 
-**ゼロ**。たすきフクロウは全プラン無料 (LEARNING_FREE) で、コストは運営が学習コストとして吸収します ([ADR-0027 §1.3.1](../adr/0027-help-ai-concierge.md))。テナント月 100 回上限 (`HELP_CHAT_MONTHLY_LIMIT_PER_TENANT = 100`) と 100K tokens で RAG 移行する閾値設計により、運営コストの上限も予測可能になっています。
+**ゼロ**。たすきフクロウは全プラン無料 (LEARNING_FREE) で、コストは運営が学習コストとして吸収します ([ADR-0028 §6](../adr/0028-help-chat-rag-migration.md))。
+
+- LLM 呼出: `featureUnit='help-chat'` (LEARNING_FREE、cost=0)
+- query embedding: `featureUnit='help-chat-embedding'` (LEARNING_FREE、cost=0)
+- テナント月 100 回上限: `HELP_CHAT_MONTHLY_LIMIT_PER_TENANT = 100` (LLM 呼出のみカウント)
+- RAG 移行により 1 query コストが FAQ 件数に依存せず固定化、運営コストが予測可能
 
 ---
 
@@ -409,38 +424,86 @@ system: [
 
 ## 7. FAQ 追加チェックリスト (実務手順)
 
-### 7.0 ★よくある誤解の解消★ FAQ 追加に Embedding 生成は不要
+### 7.0 ★最重要★ FAQ ライフサイクル SOP (ADR-0028 RAG 版) — ★たすきば存続の生命線★
 
-「FAQ をフクロウに理解させるには Embedding (ベクトル化) や事前ビルド処理が必要なのでは?」という認識を持たれることがありますが、**不要です**。
+> ADR-0027 の full-context 方式から **ADR-0028 RAG 方式へ移行** しました (2026-05-30)。
+> 旧版の「Embedding 生成は不要」記述は撤回されています。
+>
+> **本節の手順を守らないと「DB の FAQ embedding が古い → 新 FAQ の質問にフクロウが答えられない」現象が発生し、ヘルプチャット品質が静かに劣化します**。FAQ/使い方ガイドの追加・更新・削除を行う開発者は **必ず** 本節を読んでください。
 
-たすきフクロウは **full-context 方式** で動作し、FAQ 全文を毎回 Claude Haiku の system prompt に直接同梱します ([ADR-0027](../adr/0027-help-ai-concierge.md))。Embedding 生成・Voyage 呼び出し・事前 batch 処理・特別な CI ジョブは一切不要で、**`faq-content.ts` に entry を追加 → 通常の `pnpm build` → main マージ → Netlify deploy** のフローだけで即座にフクロウが新 FAQ を理解できます。
+#### 7.0.1 全体フロー
 
 ```
-[開発者] faq-content.ts に追記
+[開発者] faq-content.ts / guide-content.ts を編集
    ↓ commit + push
-[CI/CD] pnpm build → Netlify deploy
+[CI] pnpm check:faq-embeddings-sync で構造健全性チェック (DB アクセスなし)
+   ↓
+[CI/CD] main マージ → Netlify deploy
+   ↓
+[★必須★ deploy 後] pnpm generate:faq-embeddings (1 回だけ実行)
    ↓
 [ユーザ] /help でチャット質問
    ↓
-[route.ts] buildFaqPromptSection(viewer) で全 FAQ を文字列結合
+[/api/help/chat] searchHelpContent → faq_embeddings から top-K
    ↓
-[Claude Haiku] system prompt 内の FAQ を読んで回答生成
+[Claude Haiku] RAG 結果のみを参照して回答生成
 ```
 
-将来 FAQ が **~600 件 (≈ 100K tokens)** を超えたら RAG (Voyage embedding) 移行を検討しますが、現状 (42 件 / ~10K tokens) では Haiku 200K window の 5% しか使っておらず、移行不要です (§5.3 参照)。
+#### 7.0.2 4 層防御
 
-### 7.1 新規 FAQ を追加するときの checklist
+| 層 | 守る仕組み | 失敗時 |
+|---|---|---|
+| 1. CI 構造ガード | `pnpm check:faq-embeddings-sync` が PR CI で実行され、`faq-content.ts` の構造異常 (id 重複 / 文字数超過 / visibleTo 不正) を検知 | PR が red になりマージ不可 |
+| 2. CI drift ガード (オプション) | `DATABASE_URL` を渡せば DB と config の hash 突合を行う | drift があれば fail、deploy SOP の実行を促す |
+| 3. 手動 SOP | 本節 §7.0.3 / §7.0.4 の手順 | 開発者が忘れると 4 層目で吸収 |
+| 4. DEPLOYMENT.md SOP | [docs/operations/DEPLOYMENT.md](../operations/DEPLOYMENT.md) の Netlify deploy checklist に明記 | reviewer が deploy PR に対し generate 実行を確認 |
 
-- [ ] `src/config/faq-content.ts` に新規 entry 追加 (id / category / q / a / visibleTo)
+#### 7.0.3 generate-faq-embeddings.ts の役割
+
+`scripts/generate-faq-embeddings.ts` は以下を 1 つの冪等処理で行います:
+
+| ケース | DB の状態 | 本 script の動作 |
+|---|---|---|
+| 新規 FAQ 追加 | config に entry 増、DB に行なし | Voyage embedding 生成 + INSERT |
+| 既存 FAQ 更新 | config 側の hash 変化 | Voyage embedding 再生成 + UPDATE |
+| FAQ 削除 | config から entry 消、DB に orphan 行 | DELETE |
+| 変更なし | hash 一致 | skip (Voyage API 呼出ゼロ) |
+
+判定基準は `composeFaqContentText(entry)` の SHA-256 hash。`src/services/help-search.service.ts` で定義された compose 関数が **DB 書込側 / RAG 検索側 / drift 検知側で共通** のため、hash の不一致は config の実体変更と等価です。
+
+#### 7.0.4 新規 FAQ / Guide を追加するときの checklist
+
+**ローカル開発フェーズ**:
+
+- [ ] `src/config/faq-content.ts` (または `guide-content.ts`) に新規 entry 追加 (id は kebab-case、150 字以内)
 - [ ] 既存 FAQ と矛盾しないかキーワード grep で確認
-- [ ] 数値・期間・上限は src/config / ADR / service と一致するか grep で verify
+- [ ] 数値・期間・上限は src/config / ADR / service と一致するか grep で verify (`[[feedback_design_comment_vs_impl_drift]]`)
 - [ ] 専門用語 (embedding / draft / super_admin 等) を平易語に置換
-- [ ] `help-client.test.ts` / `faq-content.test.ts` に必要なら invariant アサーション追加 (Q 文言 / 重要数値 / 旧誤記再混入防止)
+- [ ] composed text が Voyage の MAX_INPUT_CHARS (8000) を超えないか確認
+- [ ] `pnpm check:faq-embeddings-sync` で構造健全性 PASS
+- [ ] `pnpm test src/config/faq-content.test.ts src/services/help-search.service.test.ts` で権限 + RAG ロジックのテスト PASS
+- [ ] `pnpm lint && pnpm tsc --noEmit && pnpm build` で品質ゲート PASS
+
+**PR + deploy フェーズ**:
+
+- [ ] PR 説明に「★FAQ/Guide 編集を含む。deploy 後に `pnpm generate:faq-embeddings` を実行★」と明記
+- [ ] PR がマージされ Netlify deploy が完了するまで待つ
+- [ ] **★必須★** ローカル `.env.local` に **本番 (または staging)** の `DATABASE_URL` と `VOYAGE_API_KEY` を設定し、`pnpm generate:faq-embeddings` を実行
+- [ ] 出力で「+N 追加 / ~N 更新 / -N 削除」が想定どおりであることを確認
+- [ ] (任意) `pnpm check:faq-embeddings-sync` を本番 DATABASE_URL で再実行し drift ゼロを確認
 - [ ] docs/public/*.md (account-setup-guide / chat-semantic-search-guide 等) に同じ情報があれば同期
 - [ ] LP (HomePage repo) に同じ情報があれば別 PR で同期
-- [ ] `pnpm test src/config/faq-content.test.ts` で権限フィルタ assertion PASS
-- [ ] `pnpm lint && pnpm tsc --noEmit && pnpm build` で品質ゲート PASS
-- [ ] **Embedding 生成 / 事前 batch / Voyage 呼び出しは不要** (full-context 方式のため)
+
+#### 7.0.5 トラブルシューティング
+
+| 症状 | 想定原因 | 対処 |
+|---|---|---|
+| 新 FAQ について質問してもフクロウが「該当する FAQ がありません」と答える | deploy 後の generate スクリプト未実行 | `pnpm generate:faq-embeddings` 実行 |
+| generate スクリプトが Voyage API エラーで失敗 | `VOYAGE_API_KEY` 未設定 / 失効 | `.env.local` の API キーを確認 |
+| `pnpm check:faq-embeddings-sync` が drift エラー | config 変更後 generate を忘れた | `pnpm generate:faq-embeddings` 実行 |
+| 旧 FAQ id の質問にも答えられる (削除したのに) | DB の orphan 行が残っている | `pnpm generate:faq-embeddings` 実行 (DELETE 経路も自動) |
+| structure エラー: id が 150 字超 | 長すぎる id | kebab-case で短く |
+| structure エラー: 本文が MAX_INPUT_CHARS=8000 超 | FAQ 本文が長すぎる | 本文を分割して複数 FAQ に分ける |
 
 ---
 
@@ -480,3 +543,4 @@ system: [
 |---|---|
 | 2026-05-29 | 初版 (feat/faq-pr5-ai-concierge-core で AI チャット導入時に同時作成) |
 | 2026-05-29 | PR7 で関連 doc (ADR-0027 / HELP_CHAT.md / KDD §5.X+188) を作成しリンク更新 |
+| 2026-05-30 | ★大改訂★ ADR-0028 で full-context → RAG に移行。§5 (コスト) / §7 (FAQ ライフサイクル SOP) を全面書換、§1.3 (課金分類) に `help-chat-embedding` 追加、§7.0 で旧「Embedding 不要」記述を撤回し新 SOP を明示 |

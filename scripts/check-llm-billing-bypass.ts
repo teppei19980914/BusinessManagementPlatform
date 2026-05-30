@@ -26,12 +26,14 @@
  *   - src/services/embedding.service.ts (withMeteredLLM の callback 内で Voyage を呼ぶ)
  *   - src/services/project.service.ts (project-upsert で Anthropic + Voyage を集約)
  *   - src/services/suggestion-explanation.service.ts (なぜ機能、Anthropic 呼出)
- *   - src/app/api/help/chat/route.ts (ADR-0027 / 2026-05-29):
- *       LEARNING_FREE_FEATURE_UNITS (= help-chat) は意図的に withMeteredLLM を経由しない
- *       独立経路として設計されている (cost=0 全プラン無料、Tenant.currentMonthHelpChatCount で
- *       月次回数を独自管理、IP rate limit + テナント月 100 回上限の二重ガード)。
- *       BILLABLE_FEATURE_UNITS union に含まれず、課金集計対象外。
- *       根拠: ADR-0027 §1.3 課金分類 / docs/developer-guide/FAQ_AND_OWL_CHAT_GUIDE.md §1.2
+ *   - src/app/api/help/chat/route.ts (ADR-0027 / 2026-05-29、ADR-0028 / 2026-05-30 で RAG 化):
+ *       LEARNING_FREE_FEATURE_UNITS (= help-chat, help-chat-embedding) は意図的に
+ *       withMeteredLLM を経由しない独立経路として設計されている (cost=0 全プラン無料、
+ *       Tenant.currentMonthHelpChatCount で月次回数を独自管理、IP rate limit + テナント
+ *       月 100 回上限の二重ガード)。BILLABLE_FEATURE_UNITS union に含まれず、課金集計対象外。
+ *       ADR-0028 移行後は route 内で直接 anthropic は呼ぶが、RAG 用 Voyage embedding は
+ *       embedding.service.ts の generateBatchEmbeddings 経由なので Voyage 側は ALLOWLIST 不要。
+ *       根拠: ADR-0028 §6 課金分類 / docs/developer-guide/FAQ_AND_OWL_CHAT_GUIDE.md §1.3
  *   - *.test.ts ファイル (vi.mock でモック化、実呼出なし)
  *
  * 例外的に許可が必要な場合は該当行末に `// llm-billing-allow: <理由>` を付与する。
@@ -70,9 +72,11 @@ const ALLOWLIST_EXACT = new Set<string>([
   'src/services/embedding.service.ts',
   'src/services/project.service.ts',
   'src/services/suggestion-explanation.service.ts',
-  // ADR-0027 (2026-05-29): たすきフクロウ AI ヘルプチャット は LEARNING_FREE 分類で
-  //   意図的に withMeteredLLM を経由しない独立経路 (cost=0 全プラン無料、
-  //   Tenant.currentMonthHelpChatCount で月次回数を独自管理)。詳細は上部コメント参照。
+  // ADR-0027 (2026-05-29) / ADR-0028 (2026-05-30 RAG 化): たすきフクロウ AI ヘルプチャット
+  //   は LEARNING_FREE 分類で意図的に withMeteredLLM を経由しない独立経路
+  //   (cost=0 全プラン無料、Tenant.currentMonthHelpChatCount で月次回数を独自管理)。
+  //   ADR-0028 後も anthropic 直叩きは本 route 内のみ。
+  //   詳細は上部コメント参照。
   'src/app/api/help/chat/route.ts',
 ]);
 

@@ -543,6 +543,60 @@ END $$;
 - migration 自体は冪等 (= 再実行で WARNING も再出力される)
 - 該当行が 0 件なら DO ブロックは何も出力しない (= 通常運用時のノイズなし)
 
+### 4.4 ★生命線★ FAQ / Guide 編集を含む deploy の手順 (ADR-0028 RAG)
+
+> **本節を読まずに deploy すると、新規 FAQ がフクロウに認識されません**。FAQ/使い方ガイドの追加・更新・削除を含む PR をマージしたら **必ず** 本手順を実行してください。詳細は [FAQ_AND_OWL_CHAT_GUIDE.md §7](../developer-guide/FAQ_AND_OWL_CHAT_GUIDE.md) を参照。
+
+#### 4.4.1 PR レビュー時の確認 (reviewer 向け)
+
+- [ ] PR に `src/config/faq-content.ts` または `src/config/guide-content.ts` の変更が含まれるか確認
+- [ ] 含まれる場合、PR 説明に「★FAQ/Guide 編集を含む。deploy 後に `pnpm generate:faq-embeddings` を実行★」が記載されているか確認
+- [ ] 記載がなければマージ前に PR author に指摘
+- [ ] CI で `check:faq-embeddings-sync` (structure mode) が PASS していることを確認
+
+#### 4.4.2 deploy 直後の generate スクリプト実行 (deploy 担当者向け)
+
+```bash
+# 1. ローカルに本番 DB 接続情報と Voyage API キーを設定 (.env.local)
+DATABASE_URL='postgresql://...本番接続...'
+DATABASE_URL_DIRECT='postgresql://...本番直接接続...'
+VOYAGE_API_KEY='pa-xxx...'
+
+# 2. dry-run で実行計画を確認 (Voyage API 呼出ゼロ、安全)
+pnpm generate:faq-embeddings --dry-run
+
+# 出力例:
+#    📚 faq_embeddings 同期 (46 件 in config)
+#       ➕ csv-import-external-wizard-4steps-detail (add)
+#       🔄 billing-cycle (update)
+#       🗑  obsolete-entry-id (delete = config から削除済)
+#    📊 faq_embeddings: +1 追加 / ~1 更新 / =44 不変 / -1 削除 / ❌0 失敗 (total 47)
+
+# 3. 想定どおりであることを確認したら実 generate を実行
+pnpm generate:faq-embeddings
+
+# 4. (任意) drift ゼロを確認
+pnpm check:faq-embeddings-sync
+# → "DB embedding は config と完全同期しています" が出れば OK
+```
+
+#### 4.4.3 失敗時の対処
+
+| 症状 | 原因 | 対処 |
+|---|---|---|
+| `VOYAGE_API_KEY` 未設定エラー | `.env.local` に未設定 | Voyage AI ダッシュボードから API キー取得して設定 |
+| `DATABASE_URL` 未設定エラー | `.env.local` に未設定 | 本番接続文字列を設定 (DATABASE_URL_DIRECT も推奨) |
+| Voyage API rate limit エラー | 大量再生成時 | 数分待って再実行 (本 script は冪等で残った行のみ処理) |
+| 一部 entry が `❌ 失敗` | Voyage 一時障害 | 再実行で残り分のみ処理 |
+| `pnpm check:faq-embeddings-sync` が drift エラー | generate 未実行 / 部分失敗 | `pnpm generate:faq-embeddings` を再実行 |
+
+#### 4.4.4 本 SOP の存在意義 (★生命線★)
+
+- 本 SOP を実行しないと: 新 FAQ がフクロウに認識されない → 「該当する FAQ がありません」と回答 → 初心者ユーザの離脱率増加 → サービス満足度低下
+- これは **コードレビュー / CI では検知できない** (config 側だけ見れば正しいため)
+- 4 層防御パターンの **手動 SOP 層** (KDD §5.X+193 参照)
+- 自動化案 (deploy hook で自動実行) は将来検討中だが、現状は手動で確実性を優先
+
 ---
 
 ## 5. Locked Deploy (本番事故防止)

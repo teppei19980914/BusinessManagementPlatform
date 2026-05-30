@@ -12,15 +12,28 @@
  *   - viewer の systemRole から isTenantAdmin を判定
  *   - hasAnyProjectPmRole は ProjectMembership から動的解決 (PR6 で実装、PR5 では常に false)
  *
- * 課金 (ADR-0027):
- *   - featureUnit: 'help-chat' (LEARNING_FREE_FEATURE_UNITS)
- *   - cost = 0 (全プラン無料、学習コストとして運営吸収)
+ * 課金 (ADR-0027 / ADR-0028):
+ *   - LLM 呼出: featureUnit='help-chat' (LEARNING_FREE)、cost=0
+ *   - RAG embedding: featureUnit='help-chat-embedding' (LEARNING_FREE)、cost=0
+ *     (= help-search.service.ts 内の generateBatchEmbeddings で別 ApiCallLog 1 件)
+ *   - 全プラン無料 (学習コストとして運営吸収)
  *   - withMeteredLLM 経由ではなく本 route 内で直接 ApiCallLog INSERT + Counter increment
- *   - テナント単位月 100 回上限 (HELP_CHAT_MONTHLY_LIMIT_PER_TENANT)
+ *   - テナント単位月 100 回上限 (HELP_CHAT_MONTHLY_LIMIT_PER_TENANT) ─ LLM 呼出のみカウント
  *
  * 上限到達時:
  *   - HTTP 429 + { fallbackToAccordion: true } を返却
  *   - UI 側 (HelpChatInput) が入力欄を disable してアコーディオン誘導
+ *
+ * RAG 設計 (ADR-0028 / 2026-05-30):
+ *   - 質問文を Voyage AI で embedding 化し faq_embeddings / guide_embeddings から
+ *     上位 K=5 件を抽出 (= help-search.service.ts:searchHelpContent)。
+ *   - 抽出結果のみを LLM に渡す (FAQ 全文ではなく)。FAQ 拡張 (50→300 件等) でも
+ *     トークン数が固定 ≈ コスト固定。
+ *   - 旧 full-context 方式 (ADR-0027 撤回) はトークン量が線形増大していた。
+ *
+ * プロンプトキャッシュ設計:
+ *   - system プロンプト: PERSONA + 開示制限 (= viewer 別に固定) → cache_control ephemeral
+ *   - messages[0]: 質問文 + RAG 結果 (= query 毎に変化) → キャッシュ不可
  *
  * リクエスト:
  *   { query: string (1〜2000 字) }
@@ -43,10 +56,11 @@
  *   - 503: LLM 一時障害 (fallbackToAccordion=true)
  *
  * 関連:
- *   - 設計: docs/adr/0027-help-ai-concierge.md (PR7 で作成予定)
- *   - 仕様: docs/specification/HELP_CHAT.md (PR7 で作成予定)
+ *   - 設計: docs/adr/0028-help-chat-rag-migration.md (現行) / 0027 (撤回済)
+ *   - 仕様: docs/specification/HELP_CHAT.md
  *   - 開発者ガイド: docs/developer-guide/FAQ_AND_OWL_CHAT_GUIDE.md
  *   - データ: src/config/faq-content.ts / src/config/guide-content.ts
+ *   - RAG 検索: src/services/help-search.service.ts
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -63,16 +77,16 @@ import { recordError } from '@/services/error-log.service';
 //   他の Prisma 利用 API route と同じパターン (例: /api/health, /api/memos/sync-import)。
 export const runtime = 'nodejs';
 import {
-  buildFaqPromptSection,
   getFaqEntriesForRole,
   type ViewerRoles,
 } from '@/config/faq-content';
-import {
-  buildGuidePromptSection,
-  getGuideStepsForRole,
-} from '@/config/guide-content';
+import { getGuideStepsForRole } from '@/config/guide-content';
 import { buildRoleGuardancePromptSection } from '@/config/faq-content';
 import { HELP_CHAT_MONTHLY_LIMIT_PER_TENANT } from '@/config/billing-feature-units';
+import {
+  searchHelpContent,
+  buildRagPromptSection,
+} from '@/services/help-search.service';
 
 // ================================================================
 // 定数
@@ -126,18 +140,20 @@ const MAX_OUTPUT_TOKENS = 1024;
 // プロンプト構築
 // ================================================================
 
+/**
+ * system プロンプト (キャッシュ可能、viewer 別に固定)。
+ *
+ * ADR-0028: 旧 full-context 方式では FAQ/Guide 全文を含めて 5 分/1h cache していたが、
+ *   FAQ 件数増加でキャッシュサイズが膨張するため、本関数からは **FAQ/Guide 本文を除外** し
+ *   PERSONA + 開示制限 (= viewer 別に固定) のみをキャッシュ対象とする。
+ *   関連 FAQ の本文は messages[0] (= query 毎に変化) で動的に渡す。
+ */
 function buildSystemPrompt(viewer: ViewerRoles): string {
   const sections = [
     PERSONA_PROMPT_HEAD,
     '',
     '【開示制限 (★重要 — 必ず守ること★)】',
     buildRoleGuardancePromptSection(viewer),
-    '',
-    '【許可された FAQ】',
-    buildFaqPromptSection(viewer),
-    '',
-    '【許可された使い方ガイド】',
-    buildGuidePromptSection(viewer),
   ];
   return sections.join('\n');
 }
@@ -238,11 +254,24 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     hasAnyProjectPmRole: pmMembership !== null,
   };
 
-  // 5. system prompt 構築
+  // 5. RAG 検索 (ADR-0028)
+  //    質問文を Voyage AI で embedding 化し faq_embeddings / guide_embeddings から
+  //    上位 K=5 件を抽出。help-chat-embedding featureUnit で別 ApiCallLog 1 件記録 (cost=0)。
+  //    embedding 失敗 / DB 障害時は degraded=true で hits=[] が返り、LLM には「参考情報なし」
+  //    として渡される (= 完全失敗ではなく out-of-scope 応答にフォールバック)。
+  const ragResult = await searchHelpContent({
+    query: input.query,
+    tenantId: user.tenantId,
+    userId: user.id,
+    viewer,
+  });
+
+  // 6. system prompt 構築 (PERSONA + 開示制限のみ = キャッシュ対象)
   const systemPrompt = buildSystemPrompt(viewer);
+  const ragPromptSection = buildRagPromptSection(ragResult.hits);
   const outputInstruction = buildOutputSchemaInstruction();
 
-  // 6. Anthropic Claude Haiku 呼び出し
+  // 7. Anthropic Claude Haiku 呼び出し
   const requestId = crypto.randomUUID();
   let output: HelpChatOutput;
   let llmInputTokens = 0;
@@ -253,10 +282,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       model: MODEL_NAME,
       max_tokens: MAX_OUTPUT_TOKENS,
       // ★コスト最適化★ Anthropic Prompt Caching (5 分 TTL) を有効化。
-      //   system プロンプトには FAQ + ガイド全文 (~10K tokens、将来 ~50K まで増加見込み) を
-      //   含むため、cache_control なしだと 1 query あたり input cost が線形に増大する。
-      //   cache hit 時は input cost が ~10% (90% off) で、cache write 時は 125% (25% premium)。
-      //   テナント運用では 5 分以内に複数 query が来るケースが多く、平均 70-80% off を想定。
+      //   system プロンプトは viewer 別に固定 (PERSONA + 開示制限のみ、~1K tokens)。
+      //   ADR-0028 後は FAQ/Guide 本文を含めない設計で、cache size は安定。
+      //   cache hit 時は input cost が ~10% (90% off)、cache write 時は 125% (25% premium)。
+      //   テナント運用では 5 分以内に複数 query が来るケースが多く、平均 70-80% off 想定。
       //   既存実装 (auto-tag.service.ts:251-256 / suggestion-explanation.service.ts:248-253)
       //   と同じパターン。詳細は KDD §5.X+191 / FAQ_AND_OWL_CHAT_GUIDE.md §5。
       system: [
@@ -269,7 +298,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       messages: [
         {
           role: 'user',
-          content: `${input.query}\n\n---\n${outputInstruction}`,
+          // RAG 結果 + 質問文 + 出力指示。messages は query 毎に変化するためキャッシュ不可。
+          content: `${ragPromptSection}\n\n---\n\n## 質問\n${input.query}\n\n---\n\n${outputInstruction}`,
         },
       ],
     });
@@ -301,8 +331,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     );
   }
 
-  // 7. ★severity-1★ defense-in-depth: sourceFaqIds / sourceGuideStepIds の権限再検証
+  // 8. ★severity-1★ defense-in-depth: sourceFaqIds / sourceGuideStepIds の権限再検証
   //    AI が許可外の id を hallucination で返した場合に備え、必ずフィルタする
+  //    (RAG 検索は SQL 層 + TS 層で既に権限フィルタしているが、LLM が許可された FAQ の id
+  //     と異なる id を捏造する可能性を排除する 3 層目)
   const allowedFaqIds = new Set(getFaqEntriesForRole(viewer).map((e) => e.id));
   const allowedGuideStepIds = new Set(getGuideStepsForRole(viewer).map((s) => s.id));
   const sourceFaqIds = output.sourceFaqIds.filter((id) => allowedFaqIds.has(id));
@@ -310,7 +342,23 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     allowedGuideStepIds.has(id),
   );
 
-  // 8. Counter + ApiCallLog の atomic update
+  // 9. RAG 縮退時は audit 用に warn log を残す (回答自体は返す = UX 優先)
+  if (ragResult.degraded) {
+    await recordError({
+      severity: 'warn',
+      source: 'server',
+      message: `[help-chat] RAG degraded: ${ragResult.degradedReason ?? 'unknown'}`,
+      context: {
+        kind: 'help_chat_rag_degraded',
+        tenantId: user.tenantId,
+        userId: user.id,
+        requestId,
+        degradedReason: ragResult.degradedReason ?? null,
+      },
+    });
+  }
+
+  // 10. Counter + ApiCallLog の atomic update
   const latencyMs = Math.round(performance.now() - startTime);
   try {
     await prisma.$transaction([
@@ -343,7 +391,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     });
   }
 
-  // 9. response
+  // 11. response
   return NextResponse.json({
     data: {
       answer: output.answer,

@@ -1,9 +1,23 @@
 # ADR-0027: たすきフクロウ AI ヘルプチャット (FAQ コンシェルジュ) の導入
 
-- **Status**: Accepted
+- **Status**: ★Superseded by [ADR-0028](./0028-help-chat-rag-migration.md) (2026-05-29 撤回)★
 - **Date**: 2026-05-29
 - **Deciders**: tasukiba プロジェクト管理者
 - **関連 PR**: feat/faq-pr5-ai-concierge-core (`251bf7fb`) / feat/faq-pr6-ai-ui-minimal (`405f3aef`) / 本 PR (feat/faq-pr7-docs-and-adr)
+
+## ★撤回理由 (2026-05-29 同日内)★
+
+本 ADR で採用した「full-context 方式 (FAQ 全文を毎回 Haiku system prompt に同梱)」は、リリース前のユーザレビューで以下の致命的な設計上の弱点が判明したため [ADR-0028](./0028-help-chat-rag-migration.md) により撤回されました:
+
+1. **FAQ 拡張時のコスト線形増大**: cache miss 時に FAQ 600 件で 1 query ¥17 まで増大、長期視点でコスト爆発
+2. **設計判断時の起点ミス**: リリース時 FAQ 42 件規模を起点に短期最適化したが、ユーザは「FAQ を継続的に拡充」という長期視点を表明されていた ([[project_faq_drives_ai_accuracy]] 既述)
+3. **既存資産の過小評価**: chat-semantic-search の Voyage + pgvector 基盤を流用すれば RAG 実装の追加コストは限定的だったが、ADR-0027 時点では新規実装の負担を過大に見積もっていた ([[feedback_reuse_existing_design_first]] 違反)
+
+詳細な振り返りと代替案分析は [ADR-0028 Context](./0028-help-chat-rag-migration.md#context-背景) および KDD §5.X+192 (設計判断ミス事例) を参照。
+
+本 ADR は **設計判断の履歴として残し、本文以下は撤回時点の記録として保存** します。実装方針 (RAG 採用) は ADR-0028 に従ってください。
+
+---
 
 ---
 

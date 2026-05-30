@@ -47,6 +47,7 @@ import type {
   ChatSearchResult,
 } from '@/services/chat-search.service';
 import { ChatSearchResultCard } from './result-card';
+import { HelpChatInput } from '@/components/help-chat/help-chat-input';
 
 type DegradedReason = NonNullable<ChatSearchResult['degradeReason']>;
 
@@ -142,6 +143,38 @@ function clearHistory(): void {
   }
 }
 
+/**
+ * パネルのモード (= タブ切替)。
+ *
+ * - 'search': 既存の過去資産意味検索 (Voyage AI で pgvector top-K)
+ * - 'help' : たすきフクロウ AI ヘルプチャット (ADR-0028 / RAG。FAQ + 使い方ガイド)
+ *
+ * mode は sessionStorage に保存し、パネル再オープン / リロード後も同じタブを維持する。
+ * 値が壊れていたら 'search' に fail-safe (= 既存 UX に倒す)。
+ */
+type PanelMode = 'search' | 'help';
+const PANEL_MODE_STORAGE_KEY = 'tasukiba_chat_panel_mode_v1';
+
+function loadPanelMode(): PanelMode {
+  if (typeof window === 'undefined') return 'search';
+  try {
+    const raw = window.sessionStorage.getItem(PANEL_MODE_STORAGE_KEY);
+    if (raw === 'help' || raw === 'search') return raw;
+    return 'search';
+  } catch {
+    return 'search';
+  }
+}
+
+function savePanelMode(mode: PanelMode): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.sessionStorage.setItem(PANEL_MODE_STORAGE_KEY, mode);
+  } catch {
+    // noop
+  }
+}
+
 /** ChatTurn 用の id 生成。crypto.randomUUID が無い環境のフォールバック付き。 */
 function generateTurnId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -151,6 +184,13 @@ function generateTurnId(): string {
 }
 
 export function ChatPanel({ onClose }: { onClose: () => void }) {
+  // ADR-0028: タブで「過去資産検索」と「ヘルプ・ガイド」を切替。default は既存挙動互換で search。
+  const [mode, setMode] = useState<PanelMode>(() => loadPanelMode());
+  const handleSwitchMode = useCallback((next: PanelMode) => {
+    setMode(next);
+    savePanelMode(next);
+  }, []);
+
   const [query, setQuery] = useState('');
   const [submitting, setSubmitting] = useState(false);
   // H-1: 会話履歴を配列で保持。lazy init で sessionStorage から復元する。
@@ -316,15 +356,9 @@ export function ChatPanel({ onClose }: { onClose: () => void }) {
         {/*
           2026-05-27 デザイン更新: 「ユーザは誰と会話しているか」を明示するため、
           ヘッダにアシスタント・ペルソナ (たすきフクロウ) のアバターと表示名を提示。
+          ADR-0028 (2026-05-30): サブタイトルは mode で切替 (検索 / ヘルプ)。
         */}
         <div className="flex items-center gap-2">
-          {/*
-            ヘッダ avatar: ChatPanel 自体が `{open && <ChatPanel>}` で user 操作後に
-            初めて mount されるため、初期ページロード時の LCP 候補ではない。
-            priority を付けると未使用 preload で WAS bandwidth を浪費する (KDD §5.X+166)。
-            FAB 側で同じ /mascot-owl-chat.png を priority 表示しており、その時点で
-            HTTP cache に乗っているため遅延描画は事実上ない。
-          */}
           <Image
             src={CHAT_PERSONA.avatarSrc}
             alt={CHAT_PERSONA.avatarAlt}
@@ -338,23 +372,25 @@ export function ChatPanel({ onClose }: { onClose: () => void }) {
               {CHAT_PERSONA.name}
             </span>
             <span className="text-[10px] text-muted-foreground leading-tight">
-              過去資産を意味検索
+              {mode === 'search' ? '過去資産を意味検索' : 'FAQ・使い方ガイド'}
             </span>
           </div>
         </div>
         <div className="flex items-center gap-1">
-          {/* H-1: 履歴クリアボタン。turns が空なら disable して操作の意味を視覚化。 */}
-          <button
-            type="button"
-            onClick={handleClearHistory}
-            disabled={turns.length === 0}
-            aria-label="会話履歴をクリア"
-            title="会話履歴をクリア"
-            data-testid="chat-panel-clear-history"
-            className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-muted-foreground"
-          >
-            🗑️
-          </button>
+          {/* H-1: 履歴クリアボタンは search mode のみ (help mode は HelpChatInput 内に独自実装あり)。 */}
+          {mode === 'search' && (
+            <button
+              type="button"
+              onClick={handleClearHistory}
+              disabled={turns.length === 0}
+              aria-label="会話履歴をクリア"
+              title="会話履歴をクリア"
+              data-testid="chat-panel-clear-history"
+              className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-muted-foreground"
+            >
+              🗑️
+            </button>
+          )}
           <button
             type="button"
             onClick={onClose}
@@ -366,6 +402,124 @@ export function ChatPanel({ onClose }: { onClose: () => void }) {
         </div>
       </header>
 
+      {/*
+        ADR-0028: WAI-ARIA tab pattern. role="tablist" + role="tab" + aria-selected /
+        aria-controls + role="tabpanel" + aria-labelledby で MDN/W3C 標準形に準拠。
+        左→右の順で頻度の高い既存機能 (search) を先頭に置く。
+      */}
+      <div
+        role="tablist"
+        aria-label="チャットパネルのモード切替"
+        className="flex border-b border-border bg-muted/30"
+      >
+        <button
+          type="button"
+          role="tab"
+          id="chat-panel-tab-search"
+          aria-selected={mode === 'search'}
+          aria-controls="chat-panel-panel-search"
+          tabIndex={mode === 'search' ? 0 : -1}
+          onClick={() => handleSwitchMode('search')}
+          data-testid="chat-panel-tab-search"
+          className={cn(
+            'flex-1 px-3 py-2 text-xs font-medium border-b-2 transition-colors',
+            mode === 'search'
+              ? 'border-primary text-foreground'
+              : 'border-transparent text-muted-foreground hover:text-foreground',
+          )}
+        >
+          🔍 過去資産検索
+        </button>
+        <button
+          type="button"
+          role="tab"
+          id="chat-panel-tab-help"
+          aria-selected={mode === 'help'}
+          aria-controls="chat-panel-panel-help"
+          tabIndex={mode === 'help' ? 0 : -1}
+          onClick={() => handleSwitchMode('help')}
+          data-testid="chat-panel-tab-help"
+          className={cn(
+            'flex-1 px-3 py-2 text-xs font-medium border-b-2 transition-colors',
+            mode === 'help'
+              ? 'border-primary text-foreground'
+              : 'border-transparent text-muted-foreground hover:text-foreground',
+          )}
+        >
+          🦉 ヘルプ・ガイド
+        </button>
+      </div>
+
+      {mode === 'help' ? (
+        <div
+          role="tabpanel"
+          id="chat-panel-panel-help"
+          aria-labelledby="chat-panel-tab-help"
+          className="flex-1 min-h-0 overflow-hidden p-2"
+        >
+          <HelpChatInput variant="panel" />
+        </div>
+      ) : (
+        <SearchModeBody
+          turns={turns}
+          query={query}
+          setQuery={setQuery}
+          submitting={submitting}
+          showWarning={showWarning}
+          tooLong={tooLong}
+          handleSubmit={handleSubmit}
+          handleKeyDown={handleKeyDown}
+          handleCardClick={handleCardClick}
+          viewerUserId={viewerUserId}
+          sessionLoading={sessionLoading}
+          bottomAnchorRef={bottomAnchorRef}
+          isNavigating={isNavigating}
+        />
+      )}
+    </aside>
+  );
+}
+
+/**
+ * 検索モードの本体 (Voyage 告知 + メッセージ領域 + 送信欄)。
+ * mode='help' との conditional render を分かりやすくするため、別 component に切り出した。
+ */
+function SearchModeBody({
+  turns,
+  query,
+  setQuery,
+  submitting,
+  showWarning,
+  tooLong,
+  handleSubmit,
+  handleKeyDown,
+  handleCardClick,
+  viewerUserId,
+  sessionLoading,
+  bottomAnchorRef,
+  isNavigating,
+}: {
+  turns: ChatTurn[];
+  query: string;
+  setQuery: (q: string) => void;
+  submitting: boolean;
+  showWarning: boolean;
+  tooLong: boolean;
+  handleSubmit: () => void;
+  handleKeyDown: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void;
+  handleCardClick: () => void;
+  viewerUserId: string | undefined;
+  sessionLoading: boolean;
+  bottomAnchorRef: React.RefObject<HTMLDivElement | null>;
+  isNavigating: boolean;
+}) {
+  return (
+    <div
+      role="tabpanel"
+      id="chat-panel-panel-search"
+      aria-labelledby="chat-panel-tab-search"
+      className="flex flex-1 min-h-0 flex-col"
+    >
       {/*
         Voyage への外部送信を明示告知 (about.md §Q5 と整合)。
       */}
@@ -463,7 +617,7 @@ export function ChatPanel({ onClose }: { onClose: () => void }) {
           </button>
         </div>
       </footer>
-    </aside>
+    </div>
   );
 }
 

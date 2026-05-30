@@ -268,3 +268,79 @@ describe('ChatPanel フクロウの会話文言 invariant (人間味調整)', ()
     expect(source).toMatch(/機微情報の入力はお控えください/);
   });
 });
+
+/**
+ * ADR-0028 (2026-05-30): mode タブ (search / help) 統合
+ *
+ * 担保対象:
+ *   - PanelMode 型 + sessionStorage 永続化 helpers
+ *   - WAI-ARIA tab pattern (role="tablist" / role="tab" / aria-selected /
+ *     aria-controls / role="tabpanel" / aria-labelledby)
+ *   - HelpChatInput を panel variant で組み込み
+ *   - mode='search' default、誤った保存値は 'search' に fail-safe
+ *   - mode='help' 時は ChatPanel のクリアボタンは隠す (HelpChatInput が独自に持つ)
+ */
+describe('ChatPanel mode タブ統合 (ADR-0028)', () => {
+  it('HelpChatInput を @/components/help-chat/help-chat-input から import している', () => {
+    expect(source).toMatch(
+      /import\s*\{\s*HelpChatInput\s*\}\s*from\s*'@\/components\/help-chat\/help-chat-input'/,
+    );
+  });
+
+  it('PanelMode 型を search | help で定義している', () => {
+    expect(source).toMatch(/type\s+PanelMode\s*=\s*'search'\s*\|\s*'help'/);
+  });
+
+  it('sessionStorage 用 key を tasukiba_chat_panel_mode_v1 として定義', () => {
+    expect(source).toMatch(/PANEL_MODE_STORAGE_KEY\s*=\s*'tasukiba_chat_panel_mode_v1'/);
+  });
+
+  it('loadPanelMode / savePanelMode helper が定義されている', () => {
+    expect(source).toMatch(/function loadPanelMode\(/);
+    expect(source).toMatch(/function savePanelMode\(/);
+  });
+
+  it("loadPanelMode は不正値 / 未設定時に 'search' へ fail-safe", () => {
+    // 'help' | 'search' のいずれでもなければ 'search' に倒す実装になっている
+    expect(source).toMatch(
+      /raw === 'help' \|\| raw === 'search'[\s\S]{0,30}?return raw[\s\S]{0,30}?return 'search'/,
+    );
+  });
+
+  it('WAI-ARIA tablist + tab + tabpanel を備える', () => {
+    expect(source).toMatch(/role="tablist"/);
+    expect(source).toMatch(/role="tab"/);
+    expect(source).toMatch(/role="tabpanel"/);
+    expect(source).toMatch(/aria-selected=\{mode === 'search'\}/);
+    expect(source).toMatch(/aria-selected=\{mode === 'help'\}/);
+    expect(source).toMatch(/aria-controls="chat-panel-panel-search"/);
+    expect(source).toMatch(/aria-controls="chat-panel-panel-help"/);
+    expect(source).toMatch(/aria-labelledby="chat-panel-tab-search"/);
+    expect(source).toMatch(/aria-labelledby="chat-panel-tab-help"/);
+  });
+
+  it('タブボタンに data-testid を付与してテストから参照可能', () => {
+    expect(source).toMatch(/data-testid="chat-panel-tab-search"/);
+    expect(source).toMatch(/data-testid="chat-panel-tab-help"/);
+  });
+
+  it('mode==="help" 時は HelpChatInput を variant="panel" で描画', () => {
+    expect(source).toMatch(/<HelpChatInput variant="panel"\s*\/>/);
+  });
+
+  it('mode==="search" 時のみクリアボタンを描画 (HelpChatInput 側に独自実装あり)', () => {
+    // {mode === 'search' && (...クリアボタン...)} の構造
+    expect(source).toMatch(
+      /\{mode === 'search' &&[\s\S]{0,400}?data-testid="chat-panel-clear-history"/,
+    );
+  });
+
+  it('サブタイトルは mode に応じて切替 (検索 / ヘルプ・ガイド)', () => {
+    expect(source).toMatch(/mode === 'search' \? '過去資産を意味検索' : 'FAQ・使い方ガイド'/);
+  });
+
+  it('tabIndex は roving tab index pattern (active=0、inactive=-1)', () => {
+    expect(source).toMatch(/tabIndex=\{mode === 'search' \? 0 : -1\}/);
+    expect(source).toMatch(/tabIndex=\{mode === 'help' \? 0 : -1\}/);
+  });
+});

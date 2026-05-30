@@ -116,26 +116,49 @@ API レイヤで 2 段階フィルタ (defense-in-depth):
 1. AI prompt 構築時に `getFaqEntriesForRole(viewer)` でフィルタ
 2. AI 出力の `sourceFaqIds` / `sourceGuideStepIds` を再フィルタ
 
-## 4. featureUnit 定義
+## 4. featureUnit 定義 (ADR-0028 RAG 後)
 
 | featureUnit | 分類 | cost | counter | 月次上限 |
 |---|---|---|---|---|
-| `help-chat` | LEARNING_FREE | 0 (全プラン無料) | `Tenant.currentMonthHelpChatCount` | テナント 100 回 / 月 |
+| `help-chat` | LEARNING_FREE | 0 (全プラン無料) | `Tenant.currentMonthHelpChatCount` | テナント 100 回 / 月 (LLM 呼出のみ) |
+| `help-chat-embedding` | LEARNING_FREE | 0 (全プラン無料) | カウントなし (Voyage 無料枠で実質ゼロ) | なし |
 
 - `LEARNING_FREE_FEATURE_UNITS` array に登録 (`src/config/billing-feature-units.ts`)
 - `BILLABLE_FEATURE_UNITS` union には含めない (= 課金集計対象外)
-- `withMeteredLLM` 経由ではなく `/api/help/chat` route 内で直接 ApiCallLog INSERT
-- 月次リセット (= 0) は `tenant-monthly-reset.service.ts` に PR6 後の別 PR で組み込む (TODO)
+- `withMeteredLLM` 経由ではなく `/api/help/chat` route 内で直接 ApiCallLog INSERT (help-chat)
+- RAG 用 query embedding は `embedding.service.ts:generateBatchEmbeddings` 経由で 1 ApiCallLog (help-chat-embedding)
+- 月次リセット (= 0) は `tenant-monthly-reset.service.ts` で実装済
+
+## 4.2 RAG 検索仕様 (ADR-0028 新設)
+
+ADR-0027 の full-context 方式を撤回し、Voyage AI + pgvector による RAG 検索に移行 (2026-05-30)。
+
+| 項目 | 値 |
+|---|---|
+| query embedding model | Voyage AI `voyage-4-lite` (1024 次元、inputType='query') |
+| 検索対象 | `faq_embeddings` + `guide_embeddings` (テナント横断、共有データ) |
+| 上位件数 | top-K = 5 (`HELP_SEARCH_DEFAULT_LIMIT`、FAQ + Guide 合算) |
+| スコア計算 | pgvector Cosine: `1 - (("content_embedding" <=> query::vector) / 2)` |
+| 権限フィルタ | SQL 層 (`requires_admin` / `requires_project_pm` denormalize flag) + TS 層 (`getFaqEntriesForRole(viewer)` で再検証) |
+| 縮退時挙動 | embedding 失敗 / DB 障害時は hits=[] + LLM プロンプトに「該当 FAQ なし」を渡して fallback 応答 |
+| FAQ embedding 生成 | `scripts/generate-faq-embeddings.ts` を deploy 後に実行 (★生命線★ developer-guide §7 参照) |
+| drift 検知 | `scripts/check-faq-embeddings-sync.ts` が CI で構造健全性 + (オプション) DB との hash 突合 |
 
 ## 5. ハルシネーション対策 (5 点)
 
-詳細は [KDD_PATTERNS.md §5.X+188](../knowledge/KDD_PATTERNS.md) 参照:
+詳細は [KDD_PATTERNS.md §5.X+188](../knowledge/KDD_PATTERNS.md) 参照 (ADR-0028 RAG 化後も同じ 5 点が有効):
 
-1. FAQ/ガイド全文を system prompt に同梱
+1. ~~FAQ/ガイド全文を system prompt に同梱~~ → ★ADR-0028★ RAG top-K のみ messages に注入 (PERSONA + 開示制限は system にキャッシュ)
 2. 出典 ID (sourceFaqIds[]) を JSON 出力で必須化
 3. FAQ/ガイドにない内容は推測禁止、固定文で誘導
 4. 業務データ質問は chat-semantic-search に誘導
 5. サーバ側で sourceFaqIds の権限再検証 (defense-in-depth)
+
+権限フィルタは **3 層 defense-in-depth** で構成 (ADR-0028 §6):
+
+- Layer 1: SQL 層で `requires_admin` / `requires_project_pm` denormalize flag で top-K を絞り込み
+- Layer 2: TS 層で `getFaqEntriesForRole(viewer)` の id 集合と intersect (SQL 漏れ防御)
+- Layer 3: LLM 応答の `sourceFaqIds` を allowedFaqIds と再フィルタ (hallucination 防御)
 
 ## 6. フィードバック保存 (Phase 2 / 後続 PR)
 
@@ -158,9 +181,12 @@ model FaqFeedback {
 
 ## 7. 関連
 
-- ADR: [ADR-0027](../adr/0027-help-ai-concierge.md)
-- 開発者ガイド: [FAQ_AND_OWL_CHAT_GUIDE.md](../developer-guide/FAQ_AND_OWL_CHAT_GUIDE.md)
-- 実装 (PR5): `src/config/faq-content.ts` / `src/config/guide-content.ts` / `src/app/api/help/chat/route.ts`
+- ADR: [ADR-0028 (Current, RAG 版)](../adr/0028-help-chat-rag-migration.md) — full-context → RAG への移行設計
+- ADR: [ADR-0027 (Superseded)](../adr/0027-help-ai-concierge.md) — 旧 full-context 設計、ADR-0028 で撤回
+- 開発者ガイド: [FAQ_AND_OWL_CHAT_GUIDE.md](../developer-guide/FAQ_AND_OWL_CHAT_GUIDE.md) (特に §7 FAQ ライフサイクル SOP)
+- 運用 SOP: [DEPLOYMENT.md](../operations/DEPLOYMENT.md) (FAQ embedding 生成スクリプトの deploy 後実行)
+- KDD: §5.X+188 (ハルシネーション対策) / §5.X+189 (LEARNING_FREE ALLOWLIST) / §5.X+190 (runtime='nodejs') / §5.X+191 (Prompt Caching) / §5.X+192 (ADR 撤回の判断ミス事例) / §5.X+193 (drift 検知 4 層防御)
+- 実装: `src/config/faq-content.ts` / `src/config/guide-content.ts` / `src/services/help-search.service.ts` / `src/app/api/help/chat/route.ts` / `scripts/generate-faq-embeddings.ts` / `scripts/check-faq-embeddings-sync.ts`
 - 実装 (PR6): `src/components/help-chat/help-chat-input.tsx`
 - 既存設計の参照: `src/components/chat-semantic-search/chat-panel.tsx`
 - KDD: §5.X+188 (FAQ AI ハルシネーション対策 5 点)

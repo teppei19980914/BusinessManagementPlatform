@@ -14,6 +14,8 @@
     "db:seed": "tsx prisma/seed.ts",
     "db:seed:suggestion": "tsx prisma/seed-suggestion.ts",
     "seed:generate-embeddings": "tsx scripts/generate-seed-embeddings.ts",
+    "generate:faq-embeddings": "tsx scripts/generate-faq-embeddings.ts",
+    "check:faq-embeddings-sync": "tsx scripts/check-faq-embeddings-sync.ts",
     "db:reset": "prisma migrate reset",
     "db:deploy": "prisma migrate deploy",
     "db:recover": "tsx scripts/recover-prisma-migrations.ts",

@@ -18461,3 +18461,174 @@ PR #471 の help-chat 実装で本罠を踏んだ。レビュー時に「FAQ が
 - 関連 docs: [FAQ_AND_OWL_CHAT_GUIDE.md §5.5](../developer-guide/FAQ_AND_OWL_CHAT_GUIDE.md) (Prompt Caching のコスト構造解説)
 - 公式リファレンス: Anthropic API Docs - Prompt Caching (https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching)
 - KDD 関連: §5.X+188 (FAQ AI ハルシネーション対策、本 §191 と同 PR 由来) / §5.X+189 (check-llm-billing-bypass ALLOWLIST) / §5.X+190 (runtime='nodejs' 明示)
+
+## §5.X+192 ★severity-high 設計判断ミス★ 既存資産流用を検討せず短期最適化で full-context を選んだ罠 ─ ユーザの長期構想を見落とすと撤回コストが大きい (PR #471 / ADR-0027 → ADR-0028)
+
+### 何が起きたか
+
+PR #471 でたすきフクロウ AI ヘルプチャットを実装する際、設計判断として **「現状 FAQ 42 件 / ~10K tokens なら Anthropic Prompt Caching + full-context で十分」** と判断し、ADR-0027 として正式化して実装まで進めた。しかしユーザから:
+
+> 「FAQ の量が多くなればなるほど credit が膨大になりますか? cache が hit する場合は線形にはならないと思いますが…」
+> 「案 B (RAG = Voyage embedding) であれば、固定コストは発生せず、むしろ FAQ 拡張をしてもコストは削減できるという認識であっていますか?」
+> 「★推奨: 案 B (RAG) への設計変更が良いと思います。私のその想定で作業を依頼していました。**なぜ案 A (full-context) にしたのでしょうか？**」
+
+と指摘を受け、ADR-0027 を **撤回** し ADR-0028 (RAG) に移行することになった。
+
+### なぜ起きたか (判断の根本原因)
+
+1. **現時点 (42 件 / ~10K tokens)** を起点にコスト試算した。「Prompt Caching で 90% off」が効くことを根拠に full-context を正当化したが、これは **短期最適化**。
+2. ユーザ memory `[[project_faq_drives_ai_accuracy]]` には「FAQ 50→300 件まで Haiku 1 query で対応可、100K tokens 超で RAG 化検討」と書かれており、本来は **長期で 300 件以上を見込む構想** だった。これを十分に読み込まずに「現状 42 件で快適」を起点にしてしまった。
+3. **既存資産 (Voyage AI + pgvector 基盤)** が成熟しているのに、それを「次フェーズの検討対象」と切り捨てた。chat-search.service.ts の `pgvectorSearch` パターンや embedding.service.ts の `generateBatchEmbeddings` は本機能にそのまま流用可能だった。
+4. **ADR 内に「既存実装の流用検討」が欠落** していた。ADR-0027 には full-context のメリット ("Prompt Caching でコスト最適化可能") は書いてあったが、RAG (= 既存資産) との明示的なトレードオフ比較表がなかった。
+
+### 撤回コスト
+
+- ADR-0027 を「Superseded」に変更、ADR-0028 を新規作成
+- route / service / schema / migration / scripts / tests / docs (FAQ_AND_OWL_CHAT_GUIDE.md, HELP_CHAT.md 等) を全面書き換え
+- 開発時間: 約 2 セッション分の作業を ADR-0028 への移行に再投資
+- 幸い「実装範囲が PR 内で完結」していたため、本番リリース前に撤回できた (本番リリース後の撤回だったら DB migration / Counter リセット等で更にコスト増)
+
+### 対策・教訓
+
+#### 1. **既存資産流用を検討するのを ADR 内で必須項目化**
+
+ADR テンプレートに「既存実装の流用検討」セクションを必ず含める:
+
+```markdown
+## 既存実装の流用検討
+
+| 既存資産 | 流用可否 | 不採用理由 (もし不採用なら) |
+|---|---|---|
+| 〇〇 service | 採用 | (採用するメリット記載) |
+| ✕✕ パターン | 不採用 | (本機能には合わない具体的理由) |
+```
+
+新規設計を選ぶときは「既存流用 vs 新規設計」のトレードオフ表を提示し、新規が将来保守者にとって明確に優れている根拠を提示する。
+
+#### 2. **長期構想 (memory / ユーザ発言) を必ず読み込んでから設計判断**
+
+実装着手前に以下を行う:
+
+- `memory/project_*.md` を全件読む (特にプロジェクト方針系)
+- ユーザの過去発言を grep する (`grep -r "FAQ" memory/`)
+- 「現状 N 件で快適だから」を起点にせず、「ユーザが想定している将来規模」を起点にする
+
+#### 3. **設計判断時の自問チェックリスト**
+
+- [ ] この機能のユーザの長期ビジョンは何か? (memory / ADR を遡る)
+- [ ] 既存資産で同じ機能を実現する方法はあるか? (grep で同種機能を探す)
+- [ ] 既存資産を流用した場合の欠点は何か? それは本機能にとって致命的か?
+- [ ] 短期最適 vs 長期最適のトレードオフを明示できるか?
+- [ ] ADR 内に「既存流用検討と不採用理由」を書いたか?
+
+#### 4. **ユーザ memory として feedback 化**
+
+本ケースの教訓は memory として永続化:
+
+- `feedback_reuse_existing_design_first.md` — ★最優先★ 既存資産流用を最初に検討
+- `feedback_ui_completion_is_default_scope.md` — UI 完成までを 1 スコープ単位とする
+
+### 関連
+
+- 関連 PR: PR #471 (本 KDD の発端)
+- 関連 ADR: [ADR-0027 (Superseded)](../adr/0027-help-ai-concierge.md) / [ADR-0028 (Current)](../adr/0028-help-chat-rag-migration.md)
+- 関連 memory: [feedback_reuse_existing_design_first.md](../../C:/Users/SF02512/.claude/projects/c--Users-SF02512-GitHub-Private-BusinessManagementPlatform/memory/feedback_reuse_existing_design_first.md) / [feedback_ui_completion_is_default_scope.md](../../C:/Users/SF02512/.claude/projects/c--Users-SF02512-GitHub-Private-BusinessManagementPlatform/memory/feedback_ui_completion_is_default_scope.md) / [project_faq_drives_ai_accuracy.md](../../C:/Users/SF02512/.claude/projects/c--Users-SF02512-GitHub-Private-BusinessManagementPlatform/memory/project_faq_drives_ai_accuracy.md)
+- KDD 関連: §5.X+188 〜 §5.X+191 (本 PR で発覚した別罠) / §5.X+167 (docs drift 整合性 cleanup と同根「既存資産の扱いを軽視」)
+
+## §5.X+193 ★severity-1 (静かな品質劣化)★ FAQ embedding 同期 drift 検知の 4 層防御パターン ─ deploy 後の generate スクリプト実行漏れを構造的に潰す (ADR-0028 RAG 移行)
+
+### 何が起きたか
+
+ADR-0028 で full-context → RAG に移行した結果、`src/config/faq-content.ts` (source-of-truth) と `faq_embeddings` テーブル (RAG 検索の検索対象) の **2 つの状態** を同期保つ必要が生まれた。両者が乖離 (drift) すると以下が発生:
+
+- 新 FAQ を config に追加 → deploy しても **DB に embedding がない** → フクロウは検索結果ゼロ → 「該当する FAQ がありません」と答える
+- FAQ を config から削除 → deploy しても **DB に orphan 行が残る** → フクロウは古い情報を答え続ける
+- FAQ を config で更新 → deploy しても **DB の embedding は旧本文の意味** → 古い意味で検索する
+
+これらの drift は **コードレビュー / tsc / lint / test では検知できない** (config 側だけ見れば正しいため)。本番 UX 劣化が静かに進む severity-1 級の罠。
+
+### 採用した 4 層防御パターン
+
+drift を構造的に防ぐため、以下 4 層を組合せた:
+
+```
+[Layer 1] CI 構造ガード (PR 時に毎回)
+   ↓ structure_check_only=true, DATABASE_URL なし
+   ↓ id 重複 / 文字数超過 / visibleTo 不正値を検出
+[Layer 2] CI drift ガード (オプション)
+   ↓ DATABASE_URL あり、本番 DB と config を SHA-256 hash で突合
+   ↓ deploy 前の本番 / staging での実行を想定
+[Layer 3] 手動 deploy SOP (開発者の checklist)
+   ↓ developer-guide §7 + DEPLOYMENT.md に明示
+   ↓ deploy 後に `pnpm generate:faq-embeddings` を 1 回実行
+[Layer 4] 冪等 generate スクリプト (再実行で常に正解状態)
+   ↓ scripts/generate-faq-embeddings.ts は add / update / delete を 1 経路で処理
+   ↓ hash 一致なら Voyage API 呼出ゼロ (低コスト + 高速)
+```
+
+### 設計のキーポイント
+
+#### A. 同じ compose 関数を「DB 書込側 + RAG 検索側 + drift 検知側」で共有
+
+scripts/generate-faq-embeddings.ts (DB 書込) と src/services/help-search.service.ts (RAG 検索 / drift 検知) で同じ `composeFaqContentText(entry)` / `composeGuideContentText(step)` を使う:
+
+```ts
+// src/services/help-search.service.ts (single source of truth)
+export function composeFaqContentText(entry: FaqEntry): string {
+  return `Q: ${entry.q}\n\nA: ${entry.a}`;
+}
+export function computeContentHash(text: string): string {
+  return createHash('sha256').update(text, 'utf8').digest('hex');
+}
+
+// scripts/generate-faq-embeddings.ts
+import { composeFaqContentText, computeContentHash } from '../src/services/help-search.service';
+// → 同じ関数を使うので、hash は config の実体変更とだけ連動する
+```
+
+重複定義してしまうと、片方を変えるだけで全件の hash が変わり「全件再生成」が起きる罠 (= 大量の Voyage API コスト + 一時的 UX 劣化)。
+
+#### B. content_hash カラムを DB に持ち、hash 比較だけで drift 判定
+
+DB の `faq_embeddings.content_hash` (SHA-256) と config 側の `computeContentHash(composeFaqContentText(entry))` を比較するだけで:
+
+- 一致 → 変更なし、skip
+- 不一致 → embedding 再生成 + upsert
+- 一致しない `entry_id` が config に存在しない → DELETE
+
+Voyage embedding ベクトル本体を比較する必要がない (= 高速 + 確実)。
+
+#### C. `--dry-run` モードを持つ generate スクリプト + check スクリプトから呼出
+
+`pnpm check:faq-embeddings-sync` (Layer 2) は内部で `pnpm generate:faq-embeddings --dry-run` を呼び、出力の「+N 追加 / ~N 更新 / -N 削除」を抽出して 0 件かを判定する。重複ロジックを書かず実装一本化。
+
+#### D. content_snapshot を DB にも保持 (deploy 直後の乖離瞬間で UX 維持)
+
+config と DB の SHA-256 同期が崩れる瞬間 (= deploy 直後で generate 未実行) でも、DB に保持した snapshot で **古い** が答えられる状態を維持する。完全失敗 (= 「該当 FAQ なし」回答) よりも縮退動作の方が UX 上ベター。source-of-truth は config だが、運用継続性のために DB 側にも本文を redundantly 保持する設計。
+
+### 何を避けるべきか
+
+- ❌ 「全 FAQ embedding 生成を deploy 時 cron で毎回走らせる」(大量 Voyage コスト、deploy 失敗時の整合性破綻)
+- ❌ 「FAQ 追加時に手動で SQL INSERT」(error-prone、cleanup 経路がない)
+- ❌ check スクリプトを CI に含めない (drift が本番で初めて発覚する)
+- ❌ developer-guide / DEPLOYMENT.md に SOP を書かない (新規メンバーが SOP を知らずに deploy する)
+
+### 横展開チェックリスト
+
+新規の「config + DB embedding を持つ機能」を実装する際、以下 4 層が揃っているかチェック:
+
+- [ ] Layer 1: CI 構造ガード (config 単体の健全性チェック)
+- [ ] Layer 2: CI drift ガード (DB との突合、optional / DATABASE_URL あり時のみ実行)
+- [ ] Layer 3: 開発者 SOP (developer-guide + DEPLOYMENT.md にチェックリスト形式で記載)
+- [ ] Layer 4: 冪等 generate スクリプト (add / update / delete を 1 経路で、hash 一致なら skip)
+- [ ] compose 関数 + hash 関数を service 側に集約 (重複定義禁止)
+- [ ] content_snapshot を DB にも保持 (deploy 直後の乖離瞬間の UX 維持)
+
+### 関連
+
+- 関連 PR: PR #471 (ADR-0028 RAG 移行で本パターン確立)
+- 関連 ADR: [ADR-0028](../adr/0028-help-chat-rag-migration.md)
+- 関連 docs: [developer-guide §7](../developer-guide/FAQ_AND_OWL_CHAT_GUIDE.md) (FAQ ライフサイクル SOP) / [DEPLOYMENT.md](../operations/DEPLOYMENT.md) (deploy 時 SOP)
+- 関連 source: [scripts/generate-faq-embeddings.ts](../../scripts/generate-faq-embeddings.ts) / [scripts/check-faq-embeddings-sync.ts](../../scripts/check-faq-embeddings-sync.ts) / [src/services/help-search.service.ts](../../src/services/help-search.service.ts)
+- 関連 memory: [feedback_drift_detection_design.md](../../C:/Users/SF02512/.claude/projects/c--Users-SF02512-GitHub-Private-BusinessManagementPlatform/memory/feedback_drift_detection_design.md) (drift 検知 4 点セットの一般化)
+- KDD 関連: §5.X+187 (FAQ 文言 drift 検知、同根「config と他層の同期」) / §5.X+172 (コメント vs 実装 drift) / §5.X+192 (ADR-0028 移行の判断ミス)
