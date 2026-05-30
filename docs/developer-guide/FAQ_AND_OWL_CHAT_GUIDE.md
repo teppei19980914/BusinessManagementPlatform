@@ -367,17 +367,38 @@ RAG 移行は ADR-0028 (将来) で正式に決定する。
 
 ## 7. FAQ 追加チェックリスト (実務手順)
 
-新規 FAQ を追加する時の checklist:
+### 7.0 ★よくある誤解の解消★ FAQ 追加に Embedding 生成は不要
+
+「FAQ をフクロウに理解させるには Embedding (ベクトル化) や事前ビルド処理が必要なのでは?」という認識を持たれることがありますが、**不要です**。
+
+たすきフクロウは **full-context 方式** で動作し、FAQ 全文を毎回 Claude Haiku の system prompt に直接同梱します ([ADR-0027](../adr/0027-help-ai-concierge.md))。Embedding 生成・Voyage 呼び出し・事前 batch 処理・特別な CI ジョブは一切不要で、**`faq-content.ts` に entry を追加 → 通常の `pnpm build` → main マージ → Netlify deploy** のフローだけで即座にフクロウが新 FAQ を理解できます。
+
+```
+[開発者] faq-content.ts に追記
+   ↓ commit + push
+[CI/CD] pnpm build → Netlify deploy
+   ↓
+[ユーザ] /help でチャット質問
+   ↓
+[route.ts] buildFaqPromptSection(viewer) で全 FAQ を文字列結合
+   ↓
+[Claude Haiku] system prompt 内の FAQ を読んで回答生成
+```
+
+将来 FAQ が **~600 件 (≈ 100K tokens)** を超えたら RAG (Voyage embedding) 移行を検討しますが、現状 (42 件 / ~10K tokens) では Haiku 200K window の 5% しか使っておらず、移行不要です (§5.3 参照)。
+
+### 7.1 新規 FAQ を追加するときの checklist
 
 - [ ] `src/config/faq-content.ts` に新規 entry 追加 (id / category / q / a / visibleTo)
 - [ ] 既存 FAQ と矛盾しないかキーワード grep で確認
 - [ ] 数値・期間・上限は src/config / ADR / service と一致するか grep で verify
 - [ ] 専門用語 (embedding / draft / super_admin 等) を平易語に置換
-- [ ] `help-client.test.ts` に 3 種類アサーション追加 (Q 文言 / 重要数値 / 旧誤記再混入防止)
+- [ ] `help-client.test.ts` / `faq-content.test.ts` に必要なら invariant アサーション追加 (Q 文言 / 重要数値 / 旧誤記再混入防止)
 - [ ] docs/public/*.md (account-setup-guide / chat-semantic-search-guide 等) に同じ情報があれば同期
 - [ ] LP (HomePage repo) に同じ情報があれば別 PR で同期
-- [ ] `pnpm test src/app/\(dashboard\)/help/` で全 assertion PASS
+- [ ] `pnpm test src/config/faq-content.test.ts` で権限フィルタ assertion PASS
 - [ ] `pnpm lint && pnpm tsc --noEmit && pnpm build` で品質ゲート PASS
+- [ ] **Embedding 生成 / 事前 batch / Voyage 呼び出しは不要** (full-context 方式のため)
 
 ---
 
