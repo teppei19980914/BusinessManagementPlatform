@@ -7,7 +7,7 @@
 ## ADR ベースの最近の追加
 
 - **ADR-0019 (2026-05-24)** 課金 featureUnit の中央定義: `src/config/billing-feature-units.ts` (ADR-0022 で 4 階層化、部分 supersede)
-- **ADR-0022 (2026-06-01)** Embedding 機能の従量課金 (Beginner ¥0 維持、Expert/Pro ¥1/業務操作):
+- **ADR-0022 (2026-06-01) / ADR-0029 (2026-05-30 ¥1→¥5 改定)** Embedding 機能の従量課金 (Beginner ¥0 維持、Expert/Pro ¥5/業務操作):
   - `Tenant` 3 列追加: `currentMonthEmbeddingCallCount` / `currentMonthEmbeddingCostJpy` (= LLM counter とは別カラムで管理、Beginner 50 件上限の判定対象外) / `stripeSubscriptionItemEmbeddingId` (= Stripe-ready、optional)
   - `TenantMonthlyUsageHistory` 2 列追加: `embeddingCallCount` / `embeddingCostJpy` (= ADR-0022 適用前の過去月は null、内訳表示用 subset)
   - `StripeUsageRecordQueue.callType` に 'embedding' を追加 (= 既存 'haiku' / 'sonnet' / 'db_capacity_overage' / 'storage_file_overage' に並ぶ)

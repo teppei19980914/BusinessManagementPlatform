@@ -471,8 +471,8 @@ USING (
 - **新規 schema 列**: `Tenant.stripeSubscriptionItemStorageFileId` (`stripe_subscription_item_storage_file_id` VARCHAR(50) NULLABLE)
 - **新規環境変数**: `STRIPE_PRICE_STORAGE_FILE_OVERAGE` (optional、Test / Live で別 Price ID)
 - **`createSubscriptionForTenant` の挙動**:
-  - env 未設定: 旧挙動互換、Subscription Item に追加されない (= リリース時の挙動)
-  - env 設定済: 新規 Subscription 作成時に Item として追加され、Stripe Meter Event の円整数 quantity が当該 Item に集約されて Stripe Invoice に反映
+  - env 未設定: 旧挙動互換、Subscription Item に追加されない (= Sandbox や開発環境向け)
+  - env 設定済 (= ✅ 2026-05-30 Production 設定済): 新規 Subscription 作成時に Item として追加され、Stripe Meter Event の円整数 quantity が当該 Item に集約されて Stripe Invoice に反映 (6/1 launch から credit_card テナントへ稼働中、5 Item Subscription 構成)
 - **Webhook 同期**: `handleSubscriptionUpdated` が `extractSubscriptionItemIds` で抽出した Item ID を `stripeSubscriptionItemStorageFileId` に保存
 
 ### 11.2 invariant 担保 (4 経路一致)

@@ -237,7 +237,7 @@ describe('handleSubscriptionUpdated', () => {
     const updateCall = vi.mocked(prisma.tenant.update).mock.calls[0]?.[0];
     expect(updateCall?.data.stripeSubscriptionItemHaikuId).toBe('si_haiku');
     expect(updateCall?.data.stripeSubscriptionItemSonnetId).toBe('si_sonnet');
-    // env 未設定 → null で上書き (= 旧挙動互換、リリース時の挙動)
+    // env 未設定 → null で上書き (= Sandbox / 開発環境向け旧挙動互換。Production は ✅ 2026-05-30 以降全 5 env 設定済)
     expect(updateCall?.data.stripeSubscriptionItemEmbeddingId).toBeNull();
     expect(updateCall?.data.stripeSubscriptionItemDbCapacityId).toBeNull();
     expect(updateCall?.data.stripeSubscriptionItemStorageFileId).toBeNull();

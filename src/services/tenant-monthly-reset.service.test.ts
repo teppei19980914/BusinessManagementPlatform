@@ -135,7 +135,7 @@ describe('resetTenantMonthlyCounters', () => {
         currentMonthApiCallCount: 12,
         currentMonthApiCostJpy: 150,
         currentMonthEmbeddingCallCount: 5,
-        currentMonthEmbeddingCostJpy: 5,
+        currentMonthEmbeddingCostJpy: 25, // ADR-0029: 5 件 × ¥5 (旧 ¥1 時代は 5)
         currentMonthHelpChatCount: 42,
       },
     ] as never);

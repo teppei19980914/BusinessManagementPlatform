@@ -90,7 +90,11 @@ export const TenantOnboardingInputSchema = z
 
     /** 任意 */
     billingPhoneNumber: z.string().trim().max(20).optional(),
-    // 2026-05-09 (#4): クレジットカードは未対応のため API でも reject (UI も disabled)。
+    // 2026-05-09 (#4) / 2026-05-30 更新: 新規 sign-up API は paymentMethod を 'invoice' 固定で受付。
+    //   credit_card 払いは 2026-05-30 に有効化済だが (TC-L4 PASS、PR #469)、サインアップ初期は
+    //   90 日無料試用の体験を優先するため card 登録は強制せず、登録後 /settings/tenant 経由で
+    //   credit_card へ切替する UX 設計。本 enum を ['invoice', 'credit_card'] に拡張する場合は
+    //   サインアップフォーム + Checkout 経路 + Subscription 5 Item 紐付けの設計見直しが必要。
     // 2026-05-15: 'bank_transfer' を廃止し 'invoice' に統合 (UI ラベル「銀行振込」, 内部値 'invoice')。
     paymentMethod: z.enum(['invoice']).default('invoice'),
 

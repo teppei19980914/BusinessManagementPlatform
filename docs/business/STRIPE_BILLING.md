@@ -9,15 +9,17 @@
 > - **billing-invariant 維持**: ApiCallLog SUM = 表示 = 請求 の不変条件は崩れず、Beginner は SUM=0 で構造的に整合
 > - 詳細: [ADR-0025](../adr/0025-beginner-write-guard.md)
 
-> 🆕 **ADR-0022 (2026-06-01) Embedding 課金導入反映済**:
+> 🆕 **ADR-0022 (2026-06-01) Embedding 課金導入 + ADR-0029 (2026-05-30) ¥1 → ¥5 単価改定 反映済**:
 > - **Beginner プラン**: Embedding 系 (資産入力・チャット検索・CSV インポート・添付ファイル本文 embedding) は **¥0 維持** (= 「90 日完全無料」訴求保全)
-> - **Expert / Pro プラン**: Embedding 系を **¥1 / 業務操作** で従量課金 (= 1 ApiCallLog = 1 課金、CSV 100 件取込でも ¥1 の集約設計)
+> - **Expert / Pro プラン**: Embedding 系を **¥5 / 業務操作** で従量課金 (= 1 ApiCallLog = 1 課金、CSV 100 件取込でも ¥5 の集約設計、ADR-0029 改定後)
 > - **embedding-backfill** (月初 cron 自動リカバリ): 全プラン無料維持 (= ユーザ非起動の修復処理は不当請求リスク回避)
 > - **Fair Use Limit** (月 10,000 calls/tenant): Beginner プラン専用に縮小 (Expert/Pro は `monthlyBudgetCap` で自然防御)
 > - **新 Stripe Meter event 名**: `tasukiba_embedding_call`
-> - **新 Price ID 環境変数**: `STRIPE_PRICE_EMBEDDING` (= optional、リリース時は未設定、将来 Stripe 有効化時に設定 = Stripe-ready 設計)
+> - **新 Price ID 環境変数**: `STRIPE_PRICE_EMBEDDING` (= ✅ 2026-05-30 Production 設定済み、Live Account ID `KHIaXKbo0M` 埋め込み確認済)
 >
-> 詳細: [ADR-0022](../adr/0022-embedding-usage-based-billing.md)
+> 詳細: [ADR-0022](../adr/0022-embedding-usage-based-billing.md) / [ADR-0029](../adr/0029-embedding-price-revision-5jpy.md)
+>
+> 🆕 **2026-05-30 credit_card 払い有効化完了**: PR #469 で credit_card UI 解禁 + Sandbox→Live mode 移行完了 (TC-L1〜L8 検証 PASS)。新規 Subscription は **5 Item invariant** (Haiku/Sonnet/Embedding/DB容量/Storage) で `createSubscriptionForTenant` が組成し、Stripe Invoice と invoice 払いの BillingHistory が完全一致 (`feedback_billing_invariant`)。
 >
 > **ADR-0019 (2026-05-24) 価格改定反映済** (ADR-0022 で部分 supersede): Expert ¥5 → ¥10 / Pro ¥15 据置 / 課金対象を `BILLABLE_FEATURE_UNITS` (= ADR-0022 で 4 階層化、`LLM_BILLABLE` + `EMBEDDING_BILLABLE` + `STORAGE_OVERAGE` の合算) に限定。詳細: [ADR-0019](../adr/0019-billable-feature-units-and-free-tier-expansion.md)
 関連:
@@ -180,11 +182,11 @@ model BillingHistory {
 |---|---|---|---|
 | Expert プロジェクト作成/更新 (Haiku) | `STRIPE_PRICE_HAIKU` | Metered (per_unit) | **¥10 / call** (ADR-0019 / 2026-05-24 改定: ¥5 → ¥10) |
 | Pro プロジェクト作成/更新 + なぜ機能 (Sonnet) | `STRIPE_PRICE_SONNET` | Metered (per_unit) | **¥15 / call** (据置) |
-| **Embedding 業務操作** (ADR-0022 / 2026-06-01) | `STRIPE_PRICE_EMBEDDING` *(optional)* | Metered (per_unit) | **¥1 / call** (Expert/Pro 共通、Beginner は Subscription 不要 / cost=0 のため queue 不投入) |
-| Storage Add-on (Plus) | `STRIPE_PRICE_STORAGE_PLUS` | Recurring (固定) | ¥500 / 月 |
-| Storage Add-on (Pro Storage) | `STRIPE_PRICE_STORAGE_PRO` | Recurring (固定) | ¥1,500 / 月 |
+| **Embedding 業務操作** (ADR-0022 / 2026-06-01 + ADR-0029 / 2026-05-30 ¥1→¥5 改定) | `STRIPE_PRICE_EMBEDDING` *(optional、✅ Production 設定済)* | Metered (per_unit) | **¥5 / call** (Expert/Pro 共通、Beginner は Subscription 不要 / cost=0 のため queue 不投入) |
+| ~~Storage Add-on (Plus)~~ | ~~`STRIPE_PRICE_STORAGE_PLUS`~~ | ~~Recurring (固定)~~ | ~~¥500 / 月~~ (ADR-0020 で廃止、従量課金化済) |
+| ~~Storage Add-on (Pro Storage)~~ | ~~`STRIPE_PRICE_STORAGE_PRO`~~ | ~~Recurring (固定)~~ | ~~¥1,500 / 月~~ (同上) |
 
-> **ADR-0022 (2026-06-01) Stripe-ready 設計**: `STRIPE_PRICE_EMBEDDING` 環境変数は **optional**。リリース時 (2026-06-01) は credit_card 払い未対応のため未設定で動作 (= `createSubscriptionForTenant` は Haiku + Sonnet の 2 本だけ Subscription Item を作成)。将来 Stripe Dashboard で新 Meter (`tasukiba_embedding_call`) + 新 Price (¥1/call) を作成し env を設定すると、`createSubscriptionForTenant` が 3 本目の Subscription Item として自動追加し、コード変更ゼロでクレジットカード払い経路が動き出します。
+> **ADR-0022 (2026-06-01) + ADR-0029 (2026-05-30) Stripe-ready 設計**: `STRIPE_PRICE_EMBEDDING` 環境変数は **optional** な Stripe-ready 設計を維持しつつ、✅ 2026-05-30 から **Production 設定済** で credit_card 払い有効化済 (PR #469 + Sandbox→Live 移行 TC-L1〜L8 PASS)。`createSubscriptionForTenant` は 5 本構成の Subscription Item (Haiku + Sonnet + **Embedding** + DB 容量超過 + ファイルストレージ超過) を組成。Sandbox / 開発環境では env を未設定にすれば旧挙動 (= 2〜4 本構成) で運用可能。
 
 > **重要 (ADR-0019 / 2026-05-24 価格改定)**: Stripe では一度作成した Price の単価変更ができません。**新規 Price を作成して Subscription Item を切り替える運用** が必要です。手順:
 > 1. Stripe Dashboard で新 Haiku Price (¥10/call) を作成 (Sonnet は ¥15 据置のため変更不要)
@@ -651,7 +653,7 @@ export async function POST(req: NextRequest) {
 
 ### 10.1 利用規約への追加
 
-v1.x で Stripe (クレジットカード自動引落) を導入する際、利用規約 ([HomePage / tasukiba-user.md `#terms`](https://teppei19980914.github.io/HomePage/ja/product/tasukiba-user/#terms)) に以下を追記する想定 (v1.0 では銀行振込のみのため未反映):
+Stripe (クレジットカード自動引落) は **2026-05-30 に有効化済** (PR #469 / launch 2026-06-01 から credit_card 稼働)。利用規約 ([HomePage / tasukiba-user.md `#terms`](https://teppei19980914.github.io/HomePage/ja/product/tasukiba-user/#terms)) には以下のクレジットカード関連条項を反映する (LP への反映状況・既存契約者への告知要否は別途確定 = 規約改定タスク):
 
 - **自動更新条項**: 月末締めの自動引き落とし、解約は前月末まで
 - **解約条件**: セルフ解約は当月末で有効、当月分は請求対象

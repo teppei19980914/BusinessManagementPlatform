@@ -78,7 +78,7 @@ export default async function SuperAdminUsagePage() {
           label="今月の Embedding 呼出 (内訳)"
           value={summary.totalCurrentMonthEmbeddingCalls.toLocaleString()}
           unit="回"
-          subValue="Beginner=無料 / Expert=Pro=¥1/回"
+          subValue="Beginner=無料 / Expert=Pro=¥5/回"
         />
         <UsageCard
           label="今月の Embedding 課金 (内訳)"
@@ -211,7 +211,7 @@ export default async function SuperAdminUsagePage() {
                   <th className="p-2 text-right">API 費用</th>
                   {/* ADR-0022 (2026-06-01): Embedding 内訳 (ADR-0022 適用前の過去月は - 表示) */}
                   <th className="p-2 text-right" title="Embedding 系の月内呼出回数 (ADR-0022 内訳)">Embedding 呼出</th>
-                  <th className="p-2 text-right" title="Embedding 系の月内課金 (Beginner=0、Expert/Pro=件数×¥1)">Embedding 費用</th>
+                  <th className="p-2 text-right" title="Embedding 系の月内課金 (Beginner=0、Expert/Pro=件数×¥5、ADR-0029)">Embedding 費用</th>
                   <th className="p-2 text-right">アクティブユーザ</th>
                 </tr>
               </thead>

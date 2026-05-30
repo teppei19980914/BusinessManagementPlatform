@@ -128,17 +128,27 @@ export const MAX_TAG_CHARS = 30;
  * 防御的に Zod でも検証する (LLM プロバイダ側のバグ / モデル更新で fragile な
  * 部分は最小化したい)。
  */
+// 2026-05-30: `.max(MAX_TAGS_PER_AXIS)` を撤去。Anthropic structured output が array の
+// `maxItems` を未サポート (400 invalid_request) のため schema 側で件数上限を表現できない。
+// 件数上限は dedup() の `max` 引数で defensive にカットオフする (= LLM が 9 件返しても
+// 先頭 8 件で truncate)。MAX_TAG_CHARS / 必須フィールドは引き続き Zod で検証。
 const AutoTagOutputSchema = z.object({
-  businessDomainTags: z.array(z.string().min(1).max(MAX_TAG_CHARS)).max(MAX_TAGS_PER_AXIS),
-  techStackTags: z.array(z.string().min(1).max(MAX_TAG_CHARS)).max(MAX_TAGS_PER_AXIS),
-  processTags: z.array(z.string().min(1).max(MAX_TAG_CHARS)).max(MAX_TAGS_PER_AXIS),
+  businessDomainTags: z.array(z.string().min(1).max(MAX_TAG_CHARS)),
+  techStackTags: z.array(z.string().min(1).max(MAX_TAG_CHARS)),
+  processTags: z.array(z.string().min(1).max(MAX_TAG_CHARS)),
 });
 
 type AutoTagOutput = z.infer<typeof AutoTagOutputSchema>;
 
 /**
  * Anthropic API に渡す JSON schema (output_config.format)。
- * Zod の構造と完全に一致させる必要がある (両者の同期)。
+ *
+ * 2026-05-30 修正: 旧 schema が `maxItems: MAX_TAGS_PER_AXIS` を含んでいたが、
+ *   Anthropic structured output は array の `maxItems` をサポートしておらず、
+ *   `400 invalid_request_error: For 'array' type, property 'maxItems' is not supported`
+ *   で全リクエストが reject されていた (= プロジェクト作成時に auto-tag が silent fail
+ *   する重大バグ、本番 launch 直前の TC-L6a 検証で発覚)。
+ *   件数上限はプロンプト本文 + dedup() の `max` 引数で defensive にカットオフする。
  */
 const ANTHROPIC_OUTPUT_SCHEMA = {
   type: 'object' as const,
@@ -146,17 +156,14 @@ const ANTHROPIC_OUTPUT_SCHEMA = {
     businessDomainTags: {
       type: 'array' as const,
       items: { type: 'string' as const, minLength: 1, maxLength: MAX_TAG_CHARS },
-      maxItems: MAX_TAGS_PER_AXIS,
     },
     techStackTags: {
       type: 'array' as const,
       items: { type: 'string' as const, minLength: 1, maxLength: MAX_TAG_CHARS },
-      maxItems: MAX_TAGS_PER_AXIS,
     },
     processTags: {
       type: 'array' as const,
       items: { type: 'string' as const, minLength: 1, maxLength: MAX_TAG_CHARS },
-      maxItems: MAX_TAGS_PER_AXIS,
     },
   },
   required: ['businessDomainTags', 'techStackTags', 'processTags'],
@@ -284,9 +291,11 @@ export async function callAnthropicForAutoTagsInner(args: {
 
   return {
     tags: {
-      businessDomainTags: dedup(parsed.businessDomainTags),
-      techStackTags: dedup(parsed.techStackTags),
-      processTags: dedup(parsed.processTags),
+      // dedup の第 2 引数で件数上限を defensive にカットオフ (Anthropic schema の
+      //   maxItems 撤去に伴うアプリ側の責務、2026-05-30)。
+      businessDomainTags: dedup(parsed.businessDomainTags, MAX_TAGS_PER_AXIS),
+      techStackTags: dedup(parsed.techStackTags, MAX_TAGS_PER_AXIS),
+      processTags: dedup(parsed.processTags, MAX_TAGS_PER_AXIS),
     },
     llmInputTokens,
     llmOutputTokens,
@@ -380,7 +389,15 @@ function escapeClosingTags(s: string): string {
   return s.replace(/<\/project_(purpose|background|scope)>/gi, '<\\/project_$1>');
 }
 
-function dedup(tags: string[]): string[] {
+/**
+ * trim + 重複除去 + 件数上限カットオフ。
+ *
+ * @param tags LLM 応答のタグ配列
+ * @param max 件数上限 (= MAX_TAGS_PER_AXIS)。これを超えた要素は無視。
+ *            2026-05-30 追加: Anthropic structured output が `maxItems` 未サポートのため、
+ *            schema で表現できない件数上限をここで defensive にカットオフする。
+ */
+function dedup(tags: string[], max: number): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
   for (const t of tags) {
@@ -389,6 +406,7 @@ function dedup(tags: string[]): string[] {
     if (seen.has(trimmed)) continue;
     seen.add(trimmed);
     out.push(trimmed);
+    if (out.length >= max) break;
   }
   return out;
 }

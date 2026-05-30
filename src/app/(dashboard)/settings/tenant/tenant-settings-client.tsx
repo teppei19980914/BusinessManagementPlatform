@@ -62,7 +62,7 @@ type TenantSelfInfo = {
   currentMonthApiCostJpy: number;
   /** ADR-0022 (2026-06-01): Embedding 系の当月呼出回数 (全プラン件数記録、Beginner も cost=0 で件数のみ) */
   currentMonthEmbeddingCallCount: number;
-  /** ADR-0022 (2026-06-01): Embedding 系の当月課金額 (Beginner=0 / Expert=Pro=件数×¥1) */
+  /** ADR-0022 (2026-06-01) / ADR-0029 (¥1→¥5 改定): Embedding 系の当月課金額 (Beginner=0 / Expert=Pro=件数×¥5) */
   currentMonthEmbeddingCostJpy: number;
   scheduledPlanChangeAt: Date | string | null;
   scheduledNextPlan: string | null;
@@ -950,7 +950,7 @@ function UsageSection({
         <p className="mt-1 text-xs text-muted-foreground">
           {isBeginner
             ? 'Beginner プランは Embedding 機能も完全無料です (= 件数のみ記録)'
-            : `${info.plan === 'pro' ? 'Pro' : 'Expert'} プランは 1 業務操作あたり ¥1 の従量課金 (ADR-0022)。資産 100 件 CSV 取込でも ¥1 で済む集約設計。`}
+            : `${info.plan === 'pro' ? 'Pro' : 'Expert'} プランは 1 業務操作あたり ¥5 の従量課金 (ADR-0029)。資産 100 件 CSV 取込でも ¥5 で済む集約設計。`}
         </p>
         {/*
           ADR-0028 PR #471 (2026-05-30): ヘルプ・ガイドチャットの embedding (LEARNING_FREE) は
@@ -975,8 +975,8 @@ function UsageSection({
             className="cursor-help"
             title={
               isBeginner
-                ? 'Beginner プランは無料 (= 90 日完全無料訴求)。Expert/Pro 切替で件数×¥1 課金が始まります'
-                : '当月の Embedding 内部請求額。Beginner=¥0 維持 / Expert=Pro=件数×¥1 (ADR-0022)'
+                ? 'Beginner プランは無料 (= 90 日完全無料訴求)。Expert/Pro 切替で件数×¥5 課金が始まります'
+                : '当月の Embedding 内部請求額。Beginner=¥0 維持 / Expert=Pro=件数×¥5 (ADR-0029)'
             }
           >
             <p className="text-xs text-muted-foreground">Embedding 費用</p>

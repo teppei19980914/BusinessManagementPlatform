@@ -12,7 +12,7 @@
  *      monthlyBudgetCap の判定対象。Stripe queue は haiku/sonnet event 名で投入。
  *      → project-upsert, suggestion-explanation, auto-tag-extract
  *   2. **EMBEDDING_BILLABLE_FEATURE_UNITS** (NEW / ADR-0022): Voyage embedding API を呼ぶ
- *      ユーザ起動操作。plan 別単価 (resolveEmbeddingCostJpy: Beginner ¥0 / Expert ¥1 / Pro ¥1)。
+ *      ユーザ起動操作。plan 別単価 (resolveEmbeddingCostJpy: Beginner ¥0 / Expert ¥5 / Pro ¥5、ADR-0029)。
  *      Beginner 上限 / budget cap 判定対象外 (= 既存上限ロジック不変)。Stripe queue は
  *      embedding event 名で投入 (cost > 0 のときのみ = Beginner はスキップ)。
  *      → knowledge-embedding, risk-issue-embedding, retrospective-embedding, memo-embedding,
@@ -78,7 +78,7 @@ export type LlmBillableFeatureUnit = (typeof LLM_BILLABLE_FEATURE_UNITS)[number]
  * Embedding (Voyage API) を呼ぶ課金対象 featureUnit。plan 別単価 (resolveEmbeddingCostJpy)。
  * ADR-0022 (2026-06-01) で新設。
  *
- * 単価: Beginner=¥0 / Expert=¥1 / Pro=¥1
+ * 単価: Beginner=¥0 / Expert=¥5 / Pro=¥5 (ADR-0029 で ¥1 → ¥5 改定)
  *
  * - `knowledge-embedding`: Knowledge 作成・更新時の embedding 生成
  * - `risk-issue-embedding`: RiskIssue 作成・更新時の embedding 生成
@@ -91,7 +91,7 @@ export type LlmBillableFeatureUnit = (typeof LLM_BILLABLE_FEATURE_UNITS)[number]
  * 設計判断:
  *   - **bulk は 1 業務操作 = 1 call**: external-import-embedding は generateBatchEmbeddings で
  *     N 件処理しても 1 ApiCallLog = 1 課金単位 (= memory feedback_bulk_llm_call_unit.md)。
- *     100 件 CSV 取込でも ¥1 で済む UX 配慮。
+ *     100 件 CSV 取込でも ¥5 で済む UX 配慮 (= 1 業務操作 1 課金、ADR-0029)。
  *   - **Beginner は 90 日完全無料訴求保全**: resolveEmbeddingCostJpy('beginner') = 0 で
  *     LP 上の「資産入力・チャット検索は完全無料」が引き続き成立する。
  *   - **既存上限ロジックは不変**: Beginner 50 件月次上限と monthlyBudgetCap は LLM 系のみ判定。
@@ -200,7 +200,7 @@ export function isLlmBillableFeatureUnit(
  * ADR-0022 (2026-06-01) で新設。
  *
  * `withMeteredLLM` は本関数が true のときのみ:
- *   - cost = resolveEmbeddingCostJpy(plan) (Beginner=0 / Expert=1 / Pro=1)
+ *   - cost = resolveEmbeddingCostJpy(plan) (Beginner=0 / Expert=5 / Pro=5、ADR-0029)
  *   - currentMonthEmbeddingCallCount / currentMonthEmbeddingCostJpy を increment (全プラン件数記録)
  *   - Beginner 上限 / budget cap は **判定しない** (= 既存上限ロジック不変)
  *   - cost > 0 のとき Stripe queue に embedding event で投入 (Beginner はスキップ)
@@ -250,7 +250,7 @@ export function isEmbeddingBackfillFeatureUnit(
  *
  * 注意:
  *   - 本関数が true でも、実際の cost は plan / featureUnit で変動する (LLM は plan 別、Embedding は
- *     Beginner=0 / Expert=Pro=1、Storage Overage は使用量から算出)。
+ *     Beginner=0 / Expert=Pro=5 (ADR-0029)、Storage Overage は使用量から算出)。
  *   - billable/free の単純判定だけでは正しい単価が決まらない。cost 計算は metered.ts で行う。
  */
 export function isBillableFeatureUnit(

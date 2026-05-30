@@ -19,10 +19,10 @@
 | プラン | Embedding 単価 | 対象 featureUnit | 備考 |
 |---|---|---|---|
 | **Beginner** | **¥0 (= 90 日完全無料訴求保全)** | knowledge/risk-issue/retrospective/memo/chat-semantic-search/external-import/attachment-embedding | Fair Use Limit (月 10,000 calls) 適用 |
-| **Expert / Pro** | **¥1 / 業務操作** | 同上 | `monthlyBudgetCap` で予算上限設定可、Stripe queue 投入は cost > 0 時 |
+| **Expert / Pro** | **¥5 / 業務操作** (ADR-0029) | 同上 | `monthlyBudgetCap` で予算上限設定可、Stripe queue 投入は cost > 0 時 |
 | **全プラン** | **¥0 維持** | `*-embedding-backfill` (月初 cron 自動リカバリ、5 種) | ユーザ非起動の修復処理 = 不当請求リスク回避 |
 
-**重要設計**: 「1 業務操作 = 1 ApiCallLog = 1 課金」集約 (CSV 100 件取込でも ¥1)。Beginner 50 件上限 / `monthlyBudgetCap` は LLM_BILLABLE のみ判定 (= 既存上限ロジック不変)。Fair Use Limit は Beginner 専用に縮小。詳細: [ADR-0022](../adr/0022-embedding-usage-based-billing.md)。
+**重要設計**: 「1 業務操作 = 1 ApiCallLog = 1 課金」集約 (CSV 100 件取込でも ¥5、ADR-0029)。Beginner 50 件上限 / `monthlyBudgetCap` は LLM_BILLABLE のみ判定 (= 既存上限ロジック不変)。Fair Use Limit は Beginner 専用に縮小。詳細: [ADR-0022](../adr/0022-embedding-usage-based-billing.md)。
 | 課金対象 | 全 LLM/Embedding 呼出 | **`BILLABLE_FEATURE_UNITS` のみ** (project-upsert / suggestion-explanation / auto-tag-extract) |
 | 無料化された機能 | — | **資産入力 (Knowledge/RiskIssue/Retrospective/Memo) + チャット検索 + CSV インポート + 月初 backfill cron** |
 

@@ -163,9 +163,9 @@ embedding は「文や句」単位の意味を捉えるよう学習されてい�
 3. 各資産で関連度上位 50 件を取得、tier (strong / medium / weak) に分類
 4. 合計レイテンシ **0.3〜0.5 秒** で結果カードを表示
 
-**請求 (ADR-0022 / 2026-06-01 改定後)**:
+**請求 (ADR-0022 / 2026-06-01 導入、ADR-0029 / 2026-05-30 で ¥1→¥5 改定)**:
 - **Beginner プラン**: **¥0 / 無制限** (= 「90 日完全無料」訴求保全)。tenant-level fair-use-limit (月 10,000 calls) のみ適用。
-- **Expert / Pro プラン**: **¥1 / 検索** (= 1 業務操作 = 1 ApiCallLog = ¥1)。`monthlyBudgetCap` で予算上限を設定可能。Stripe queue 投入は cost > 0 のときのみ。
+- **Expert / Pro プラン**: **¥5 / 検索** (= 1 業務操作 = 1 ApiCallLog = ¥5、ADR-0029)。`monthlyBudgetCap` で予算上限を設定可能。Stripe queue 投入は cost > 0 のときのみ。
 - 全プランで ApiCallLog 記録 (監査・分析用)。Beginner は cost=0 でも件数 counter は increment (UI 表示用)。
 
 ### 例 2: 10 文字未満の短すぎるクエリ
@@ -311,7 +311,7 @@ embedding は「文や句」単位の意味を捉えるよう学習されてい�
 ### Q4. 1 検索でどれくらい課金される?
 **A.** **プランによります** ([ADR-0022](../adr/0022-embedding-usage-based-billing.md) 2026-06-01 改定):
 - **Beginner プラン**: **¥0 / 無制限** (= 「90 日完全無料」訴求保全)。fair-use-limit (月 10,000 calls) のみ適用、通常利用では到達しません。
-- **Expert / Pro プラン**: **¥1 / 検索** (= 1 業務操作 = ¥1)。月 2,000 回検索なら ¥2,000。`monthlyBudgetCap` で予算上限設定可。
+- **Expert / Pro プラン**: **¥5 / 検索** (= 1 業務操作 = ¥5、ADR-0029)。月 2,000 回検索なら ¥10,000。`monthlyBudgetCap` で予算上限設定可。
 
 ### Q5. クエリ内容は永続的に保存される?
 **A.** **同一タブのセッション中のみ保持** され、それを越えて永続化はされません。

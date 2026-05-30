@@ -81,8 +81,8 @@ export const STRIPE_METER_EVENT_NAMES = {
   //   費用計算は src/config/file-storage-pricing.ts calculateFileStorageOverageJpy()。
   //   月初 cron (tenant-monthly-reset) で前月 peak から quantity を算出し送信。
   storage_file_overage: 'tasukiba_storage_file_overage_jpy',
-  // ADR-0022 (2026-06-01): Embedding 機能の従量課金。
-  //   Beginner=¥0 (= 「90 日完全無料」訴求保全) / Expert=¥1 / Pro=¥1。
+  // ADR-0022 (2026-06-01): Embedding 機能の従量課金。ADR-0029 (2026-05-30) で ¥1 → ¥5 改定。
+  //   Beginner=¥0 (= 「90 日完全無料」訴求保全) / Expert=¥5 / Pro=¥5。
   //   Stripe queue 投入は cost > 0 のときのみ (= Beginner はスキップ)。
   //   1 業務操作 = 1 ApiCallLog = 1 Meter Event invariant (bulk 集約、feedback_bulk_llm_call_unit)。
   //   費用計算は src/config/embedding-pricing.ts resolveEmbeddingCostJpy()。
@@ -176,14 +176,17 @@ export type StripePriceConfig = {
   haiku: string;
   sonnet: string;
   /**
-   * ADR-0022 (2026-06-01): Embedding 機能の Price ID (¥1/call, Metered)。
+   * ADR-0022 (2026-06-01) + ADR-0029 (2026-05-30 ¥1→¥5 改定): Embedding 機能の Price ID (¥5/call, Metered)。
    *
-   * **optional フィールド**: リリース時点では未設定 (= リリース後の credit_card 払い未対応に整合)。
-   *   - 未設定 (undefined): createSubscriptionForTenant は Embedding Item を追加しない (= Haiku+Sonnet 2 本)。
-   *     stripe-usage-flush は embedding queue を見ず、空 queue 扱い。リリース時の動作。
-   *   - 設定済み: createSubscriptionForTenant が 3 本目の Item として追加し、embedding queue が送信される。
-   *     将来 Stripe Dashboard で Meter + Price 作成 + 本 env 設定でクレジットカード払い経路が
-   *     コード変更ゼロで自動的に動き出す (= Stripe-ready 設計)。
+   * **optional フィールド** (= Stripe-ready 設計):
+   *   - 未設定 (undefined): createSubscriptionForTenant は Embedding Item を追加しない (= 4 本構成)。
+   *     stripe-usage-flush は embedding queue を見ず、空 queue 扱い。
+   *   - **設定済み** (= ✅ 2026-05-30 Production 設定済、6/1 リリース構成): createSubscriptionForTenant が
+   *     5 本目の Item (Haiku/Sonnet/Embedding/DBCap/Storage) として追加し、embedding queue が送信される。
+   *
+   * 6/1 launch 時点では Production に **設定済** (Live Account ID `KHIaXKbo0M` 埋め込み確認済)。
+   * Sandbox 値 (`K3TUQWW2eq`) が混入すると Subscription 作成時に `No such price` 400 で fail するため、
+   * env 切替時は必ず Live Account ID を目視確認すること (= TC-L4 検証時に検出した罠)。
    */
   embedding?: string;
   /**
@@ -224,8 +227,9 @@ export function getStripePriceConfig(): StripePriceConfig {
     );
   }
 
-  // ADR-0022 (2026-06-01): STRIPE_PRICE_EMBEDDING は optional (= 未設定でも throw しない)。
-  //   リリース時は未設定、将来 Stripe 有効化時に設定する Stripe-ready 設計。
+  // ADR-0022 (2026-06-01) + ADR-0029 (2026-05-30 ¥1→¥5): STRIPE_PRICE_EMBEDDING は optional な
+  //   Stripe-ready 設計 (= 未設定でも throw しない)。6/1 リリース時点で Production に設定済み
+  //   (= credit_card 払い有効化、5 Item Subscription 構成)。Sandbox 等で未設定なら 4 Item 構成。
   //   空文字列も undefined 扱い (Netlify env で空保存される運用パターンへの defensive)。
   const embeddingRaw = process.env['STRIPE_PRICE_EMBEDDING'];
   const embedding = embeddingRaw != null && embeddingRaw.length > 0 ? embeddingRaw : undefined;

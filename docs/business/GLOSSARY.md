@@ -98,14 +98,14 @@ CSV sync-import は 17 列で完全網羅 (旧 16 列 CSV も後方互換 import
 | プラン | 月額固定 | 席数 | API 上限 | LLM 単価 | Embedding 単価 (ADR-0022) | モデル |
 |---|---|---|---|---|---|---|
 | Beginner | ¥0 | 5 席 | プロジェクト作成/更新 **月 50 回まで無料** (上限到達後は縮退) | — | **¥0 (= 90 日完全無料訴求保全)** | Haiku |
-| Expert | ¥0 | 無制限 | 無制限 (`monthlyBudgetCapJpy` で予算上限設定可) | **プロジェクト作成/更新 ¥10/call** (ADR-0019 改定: ¥5 → ¥10) | **¥1 / 業務操作** | Haiku |
-| Pro | ¥0 | 無制限 | 無制限 (同上) | **プロジェクト作成/更新 + なぜ機能 ¥15/call** (据置) | **¥1 / 業務操作** | Sonnet |
+| Expert | ¥0 | 無制限 | 無制限 (`monthlyBudgetCapJpy` で予算上限設定可) | **プロジェクト作成/更新 ¥10/call** (ADR-0019 改定: ¥5 → ¥10) | **¥5 / 業務操作** (ADR-0029) | Haiku |
+| Pro | ¥0 | 無制限 | 無制限 (同上) | **プロジェクト作成/更新 + なぜ機能 ¥15/call** (据置) | **¥5 / 業務操作** (ADR-0029) | Sonnet |
 
-**ADR-0022 (2026-06-01) Embedding 課金導入**: Beginner プランは Embedding 系 (`{knowledge,risk-issue,retrospective,memo}-embedding` / `chat-semantic-search` / `external-import-embedding` / `attachment-embedding`) を **¥0 維持** (= 「90 日完全無料」訴求保全)。Expert / Pro は **¥1 / 業務操作** で従量課金 (CSV 100 件取込でも 1 取込操作 = ¥1 集約)。月初 cron による失敗 embedding 自動リカバリ (`*-embedding-backfill` 5 種) は **全プラン無料維持** (= 不当請求リスク回避)。
+**ADR-0022 (2026-06-01) Embedding 課金導入**: Beginner プランは Embedding 系 (`{knowledge,risk-issue,retrospective,memo}-embedding` / `chat-semantic-search` / `external-import-embedding` / `attachment-embedding`) を **¥0 維持** (= 「90 日完全無料」訴求保全)。Expert / Pro は **¥5 / 業務操作** で従量課金 (ADR-0029、CSV 100 件取込でも 1 取込操作 = ¥5 集約)。月初 cron による失敗 embedding 自動リカバリ (`*-embedding-backfill` 5 種) は **全プラン無料維持** (= 不当請求リスク回避)。
 
 **4 階層 featureUnit 分類** (ADR-0022 / `src/config/billing-feature-units.ts`):
 1. `LLM_BILLABLE_FEATURE_UNITS`: project-upsert / suggestion-explanation / auto-tag-extract (plan 別単価、Beginner 50 件上限の対象)
-2. `EMBEDDING_BILLABLE_FEATURE_UNITS`: 上記 7 種 (Beginner ¥0 / Expert・Pro ¥1、Beginner 上限の対象外)
+2. `EMBEDDING_BILLABLE_FEATURE_UNITS`: 上記 7 種 (Beginner ¥0 / Expert・Pro ¥5、ADR-0029、Beginner 上限の対象外)
 3. `STORAGE_OVERAGE_FEATURE_UNITS`: db-capacity-overage / storage-file-overage (月初 cron INSERT)
 4. `EMBEDDING_BACKFILL_FEATURE_UNITS`: 5 種 backfill (全プラン明示的 ¥0)
 

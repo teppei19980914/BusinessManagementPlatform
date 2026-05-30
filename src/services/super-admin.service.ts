@@ -92,7 +92,7 @@ export type TenantSummaryRow = {
   currentMonthApiCostJpy: number;
   /** ADR-0022 (2026-06-01): Embedding 系の当月コール数 (Beginner も件数記録、Expert/Pro は cost > 0) */
   currentMonthEmbeddingCallCount: number;
-  /** ADR-0022: Embedding 系の当月課金額 (Beginner=0 / Expert=Pro=件数×¥1) */
+  /** ADR-0022/0029: Embedding 系の当月課金額 (Beginner=0 / Expert=Pro=件数×¥5) */
   currentMonthEmbeddingCostJpy: number;
   monthlyBudgetCapJpy: number | null;
   activeUserCount: number;

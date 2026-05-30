@@ -22,7 +22,8 @@
       "PowerShell(Get-ChildItem \"C:\\\\Users\\\\SF02512\\\\GitHub\\\\Private\\\\BusinessManagementPlatform\\\\src\\\\app\" -Directory | ForEach-Object { $_.Name })",
       "PowerShell(grep -r \"NEXT_PUBLIC_APP_VERSION\\\\|process.env.NEXT_PUBLIC\" \"C:\\\\Users\\\\SF02512\\\\GitHub\\\\Private\\\\BusinessManagementPlatform\\\\src\" 2>$null)",
       "PowerShell(head -10)",
-      "PowerShell(Get-ChildItem -Path \"C:\\\\Users\\\\SF02512\\\\GitHub\\\\Private\\\\BusinessManagementPlatform\\\\src\\\\app\" -Name | Where-Object { $_ -match 'auth|public' })"
+      "PowerShell(Get-ChildItem -Path \"C:\\\\Users\\\\SF02512\\\\GitHub\\\\Private\\\\BusinessManagementPlatform\\\\src\\\\app\" -Name | Where-Object { $_ -match 'auth|public' })",
+      "WebFetch(domain:docs.anthropic.com)"
     ],
     "additionalDirectories": [
       "C:\\Users\\SF02512\\GitHub\\Private\\HomePage\\src\\content\\product\\ja",

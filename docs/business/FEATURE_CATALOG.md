@@ -75,7 +75,7 @@
 | **利用量集計 / 表示** | 「今月いくら使ったか即座に把握したい」 | `src/services/api-usage-recalc.service.ts` / `src/app/(dashboard)/settings/tenant/usage/` | [TENANT_AND_BILLING.md](./TENANT_AND_BILLING.md) / memory: feedback_billing_data_realtime |
 | **縮退モード** | 「Beginner 上限到達でも完全停止せず、月初に自動復帰」 | `src/services/degraded-mode.service.ts` | [GLOSSARY: 縮退モード](./GLOSSARY.md) / [ADR-0002](../adr/0002-tenant-billing-per-api-call.md) |
 | **Stripe 決済 (v1.x)** | 「クレジットカードで自動引き落とし」 | `src/lib/stripe.ts` / `src/app/api/stripe/webhook/route.ts` | [STRIPE_BILLING.md](./STRIPE_BILLING.md) / [ADR-0006](../adr/0006-stripe-metered-billing-integration.md) |
-| **請求書・銀行振込 (v1)** | 「最初は請求書発行・銀行振込のみで運用」 | `src/services/invoice.service.ts` (該当) | [PAYMENT_TERMS.md](./PAYMENT_TERMS.md) / [ADR-0007](../adr/0007-unify-invoice-and-bank-transfer.md) |
+| **請求書・銀行振込 + クレジットカード (v1)** | 「請求書/銀行振込とクレジットカード払いの 2 経路で運用 (credit_card は 2026-05-30 有効化、それ以前は銀行振込のみ)」 | `src/services/invoice.service.ts` (該当) | [PAYMENT_TERMS.md](./PAYMENT_TERMS.md) / [ADR-0007](../adr/0007-unify-invoice-and-bank-transfer.md) |
 | **月初 cron バッチ** | 「課金確定 (LLM/DB容量/ファイル peak)・embedding 補完・プラン切替予約適用 (legacy)」 | `src/app/api/cron/monthly-batch/route.ts` | [INCIDENT_RESPONSE.md §6.8](../operations/INCIDENT_RESPONSE.md) |
 
 ---
