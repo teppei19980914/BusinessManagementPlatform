@@ -40,9 +40,18 @@ describe('POST /api/help/chat — 暴走防止 hard cap 4 段ガード', () => {
     );
   });
 
-  it('テナント status check: active 以外は 403', () => {
-    expect(source).toMatch(/tenant\.status !== 'active'/);
+  it('テナント inactive check: deletedAt / suspendedAt で判定し 403 (KDD §5.X+200 fix)', () => {
+    // 旧: `tenant.status !== 'active'` ─ Tenant に status field が存在せず Prisma runtime
+    //   で throw する罠だった (KDD §5.X+200)。
+    // 新: 既存パターン (billing-aggregation / stripe-webhook-handlers) に合わせて
+    //   deletedAt / suspendedAt で判定。
+    expect(source).toMatch(
+      /tenant\.deletedAt !== null \|\| tenant\.suspendedAt !== null/,
+    );
     expect(source).toMatch(/code:\s*'TENANT_INACTIVE'/);
+    // 旧 status 参照が再混入しないことを保証
+    expect(source).not.toMatch(/tenant\.status !== 'active'/);
+    expect(source).not.toMatch(/select:[\s\S]{0,100}?status:\s*true/);
   });
 
   it('テナント月 100 回上限 (HELP_CHAT_MONTHLY_LIMIT_PER_TENANT) pre-check', () => {

@@ -247,9 +247,19 @@ async function handlePost(req: NextRequest): Promise<NextResponse> {
   }
 
   // 3. テナント取得 + 月次上限チェック
+  // ★severity-1★ PR #471 4 巡目検証 (2026-05-30): 元コード (ADR-0027) で
+  //   `select.status: true` を指定していたが、Tenant model には `status` フィールドが存在しない
+  //   (本サービスのテナント状態は `suspendedAt` / `deletedAt` で表現する設計)。
+  //   ローカル + 本番で Prisma が "Unknown field `status`" で throw → root-level catch で 503。
+  //   既存パターン (billing-aggregation / stripe-webhook-handlers 等) に合わせて
+  //   `deletedAt != null` (= 削除済) / `suspendedAt != null` (= 停止中) で判定する。
   const tenant = await prisma.tenant.findUnique({
     where: { id: user.tenantId },
-    select: { currentMonthHelpChatCount: true, status: true },
+    select: {
+      currentMonthHelpChatCount: true,
+      deletedAt: true,
+      suspendedAt: true,
+    },
   });
   if (!tenant) {
     return NextResponse.json(
@@ -257,7 +267,7 @@ async function handlePost(req: NextRequest): Promise<NextResponse> {
       { status: 404 },
     );
   }
-  if (tenant.status !== 'active') {
+  if (tenant.deletedAt !== null || tenant.suspendedAt !== null) {
     return NextResponse.json(
       { error: { code: 'TENANT_INACTIVE', message: 'テナントが無効です' } },
       { status: 403 },

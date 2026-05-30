@@ -19141,3 +19141,151 @@ export async function generateMetadata(): Promise<Metadata> {
 - 関連 PR: PR #471 (本 KDD の発端)
 - 関連 source: [src/app/layout.tsx:36-63](../../src/app/layout.tsx) (生成 metadata 設定)
 - 関連 docs (Next.js 公式): https://nextjs.org/docs/app/api-reference/functions/generate-metadata#metadatabase
+
+## §5.X+200 ★severity-1 (本番 runtime 障害)★ Prisma `select: { 存在しないフィールド: true }` は tsc / lint で検出されず、本番 runtime で初めて throw する罠 (PR #471 / 2026-05-30 / commit 251bf7fb で混入、6 ヶ月以上未検知)
+
+### 何が起きたか
+
+PR #471 ADR-0028 RAG 移行の本番 deploy preview でヘルプチャットが 503 を返し続けた。原因は [`src/app/api/help/chat/route.ts:252`](../../src/app/api/help/chat/route.ts) で `Tenant` モデルに **存在しないフィールド `status`** を select していたこと:
+
+```ts
+const tenant = await prisma.tenant.findUnique({
+  where: { id: user.tenantId },
+  select: { currentMonthHelpChatCount: true, status: true },  // ← status は存在しない
+});
+if (tenant.status !== 'active') { ... }  // ← 同じく
+```
+
+本サービスの `Tenant` モデルにはそもそも `status` フィールドが存在せず、テナント状態は **`suspendedAt` (= 停止時刻) と `deletedAt` (= 削除時刻)** で表現する設計。
+
+### Prisma runtime エラー (本番 Function logs に出力)
+
+```
+PrismaClientValidationError:
+Invalid `prisma.tenant.findUnique()` invocation:
+{
+  where: { id: "00000000-0000-0000-0000-000000000001" },
+  select: {
+    currentMonthHelpChatCount: true,
+    status: true,
+    ~~~~~~
+    ?   id?: true, slug?: true, name?: true, ...
+  }
+}
+Unknown field `status` for select statement on model `Tenant`.
+Available options are marked with ?.
+```
+
+→ root-level try-catch (KDD §5.X+198) でキャッチされ 503 + fallback。**ヘルプチャット完全 unavailable**。
+
+### 混入と未検知の経緯 (★6 ヶ月以上★)
+
+- **2026-05-29 commit 251bf7fb**: `feat(help-chat): たすきフクロウ AI コア + 権限制御 (PR5)` で初回追加 (= ADR-0027 実装時)
+- **以降の 4 PR**: PR5 (ADR-0027 コア) → PR9 (Prompt Caching) → PR #471 (ADR-0028 RAG) と複数開発者が route.ts を編集したが **誰も気付かず**
+- **本番 deploy 後**: ユーザがヘルプチャットを使った瞬間 503 が起きた
+- **発見契機**: 私 (Claude) が KDD §5.X+198 で導入した `console.warn` 併出しにより、Netlify Function logs に Prisma エラー全文が表示され即座に判明
+
+### なぜ tsc が検出しなかったのか (★最重要原因仮説★)
+
+`Prisma.TenantSelect` 型は generated 型で **field 名を厳密に列挙** するはず。`select: { status: true }` を書けば tsc error で検出されるべき。にもかかわらず通った理由として最有力:
+
+#### 仮説 A: ローカル prisma client が古い schema の generated 型を保持
+
+- 過去のある時点で `Tenant` に `status` field があった (= ADR-0019 以前の旧設計?)
+- 後の migration で削除され schema から消えた
+- しかし開発者ローカルの `src/generated/prisma` を再 generate しないまま route コードを書いた
+- ローカル tsc は古い型で PASS、CI でも `pnpm prisma generate` 後の tsc PASS したと **誤認** (= 実は新型でも何らかの理由で通った)
+- 6 ヶ月放置
+
+#### 仮説 B: Prisma generated 型の strict 検証バグ / 限界
+
+- `Prisma.TenantSelect` が `Record<string, boolean>` 的に緩く生成されている
+- 任意の string key を許容してしまう
+- → 本仮説検証は時間コスト高いため未実施 (修正優先)、後日別 PR で `select: { thisDoesNotExist: true }` を一時的に書いて tsc 反応を実証する価値あり
+
+#### 仮説 C: tsc が build:netlify 経由でしか実体検証されていない
+
+- `pnpm tsc --noEmit` 単独実行では prisma generate を経由しないため、ローカル client がそのまま使われる
+- CI でも同様に古い generated を使った可能性
+- `pnpm build:netlify` (= prisma generate を先に走らせる) を pre-merge で必ず実行する運用ルール化が必要
+
+### 対策
+
+#### A. 即時修正 (本 PR で実施)
+
+既存パターン (billing-aggregation.service / stripe-webhook-handlers.service / email-verification.service 等) に合わせて修正:
+
+```ts
+const tenant = await prisma.tenant.findUnique({
+  where: { id: user.tenantId },
+  select: {
+    currentMonthHelpChatCount: true,
+    deletedAt: true,
+    suspendedAt: true,
+  },
+});
+if (tenant.deletedAt !== null || tenant.suspendedAt !== null) {
+  return NextResponse.json({ ... }, { status: 403 });
+}
+```
+
+#### B. tsc 信頼性の検証 (将来課題)
+
+- `pnpm tsc --noEmit` の前に **必ず** `pnpm prisma generate` を走らせる pre-tsc hook を追加検討
+- CI で `pnpm build:netlify --build-only` のような「generate + tsc」をセットで実行するコマンド整備
+- もしくは local `.husky/pre-commit` で同様の保証
+
+#### C. 横展開 grep (本 PR で実施済 / ★他に罠なし★)
+
+PR #471 で `tenant.status` / `Tenant select.status` の利用箇所を grep でフルスキャンした結果:
+
+| ファイル | 内容 | 判定 |
+|---|---|---|
+| `src/app/api/help/chat/route.ts:252` | `prisma.tenant.findUnique({ select: { ..., status: true } })` | ❌ **罠 (本 PR で修正)** |
+| `src/lib/permissions/membership.ts:70` | `prisma.project.findUnique({ select: { status: true, ... } })` | ✅ Project.status (valid) |
+| `src/services/billing-aggregation.service.ts:125` | `prisma.billingHistory.findUnique({ select: { status: true } })` | ✅ BillingHistory.status (valid) |
+| `src/services/billing-integrity.service.ts:92` | (= BillingHistory.status) | ✅ valid |
+| `src/services/billing-management.service.ts:106` | (= BillingHistory.status) | ✅ valid |
+| `src/services/cron-history.service.ts:68/79` | `prisma.cronExecutionLog.findFirst({ select: { status: true, ... } })` | ✅ CronExecutionLog.status (valid) |
+| `src/services/task-sync-import.service.ts:364` | (= Task.status) | ✅ valid |
+| `src/services/task.service.ts:818/1411/1454` | (= Task.status) | ✅ valid |
+
+→ **Tenant モデルで `select.status: true` を指定している経路は route.ts のみ**、本 PR の修正で完全解消。
+
+将来同様の罠を発見した場合の grep コマンド:
+
+```bash
+grep -rn "prisma\.tenant\.\(findUnique\|findFirst\|findMany\|update\|updateMany\)" src/ --include="*.ts" | xargs -I{} grep -A5 {} | grep "status: true"
+```
+
+### なぜ 6 ヶ月未検知だったか
+
+- 元 ADR-0027 では `if (tenant.status !== 'active')` のためのテストを vitest mock で書いていた
+- vitest mock は実 Prisma を呼ばないため、`status` 不存在は実行されない
+- ★severity-1 罠を vitest だけでは検出できない実例★ — [`feedback_test_rule`](../../C:/Users/SF02512/.claude/projects/c--Users-SF02512-GitHub-Private-BusinessManagementPlatform/memory/feedback_test_rule.md) の「テスト密度向上」が **integration test (= 実 DB or 実 schema 検証) でないと意味がない** ことを示す
+
+### 何を避けるべきか
+
+- ❌ `pnpm prisma generate` をローカルで明示実行せずに route コードを書く
+- ❌ Prisma の `select` を「ユニットテスト (vitest mock)」だけで verify する (= 実 schema 検証不可)
+- ❌ tsc PASS = 安全と過信する (= Prisma generated 型の信頼性に限界がある可能性)
+- ❌ コードレビューで「既存実装からコピペした」コードを無条件で信頼する (= 元コードに罠が混入している可能性)
+
+### 横展開チェックリスト
+
+新規 Prisma クエリを書くとき、または既存コードをコピペするとき:
+
+- [ ] `pnpm prisma generate` を実行してから tsc 検証
+- [ ] `select` / `where` のフィールド名は schema.prisma の model 定義と **目視で 1 つずつ突合**
+- [ ] 重要パス (= 認可 / 課金) は **実 DB integration test** を vitest mock とは別に書く (= 罠検出の最終防衛線)
+- [ ] route 内の throw 経路は **root-level catch + console.warn 併出し** (KDD §5.X+198) で本番 runtime 障害時に即診断可能にする
+- [ ] PR レビュー時に「`select` のフィールド名は schema と一致するか」を明示的チェック項目に追加
+
+### 関連
+
+- 関連 PR: PR #471 (本 KDD の発見契機)、原因混入 commit: 251bf7fb (PR5 / ADR-0027 / 2026-05-29)
+- 関連 source: [src/app/api/help/chat/route.ts:249-265](../../src/app/api/help/chat/route.ts) (修正対象)
+- 関連 source: [src/services/billing-aggregation.service.ts:114](../../src/services/billing-aggregation.service.ts) / [src/services/stripe-webhook-handlers.service.ts:161](../../src/services/stripe-webhook-handlers.service.ts) (= 既存の正しい判定パターン参考実装)
+- 関連 memory: [feedback_test_rule.md](../../C:/Users/SF02512/.claude/projects/c--Users-SF02512-GitHub-Private-BusinessManagementPlatform/memory/feedback_test_rule.md) (テストコード必須ルール、本 KDD で integration test の重要性が再確認された)
+- 関連 memory: [feedback_design_comment_vs_impl_drift.md](../../C:/Users/SF02512/.claude/projects/c--Users-SF02512-GitHub-Private-BusinessManagementPlatform/memory/feedback_design_comment_vs_impl_drift.md) (コメント vs 実装の乖離、本 KDD で「コードが書かれた = 動く」と思い込む罠の典型)
+- KDD 関連: §5.X+198 (recordError + console 併出し、本 KDD の真因即特定を可能にした前提条件) / §5.X+163 (Prisma XOR 型が tsc を通り抜ける別パターン、同根「Prisma 型の信頼性限界」)
