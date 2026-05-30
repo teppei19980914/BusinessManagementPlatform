@@ -37,7 +37,12 @@ const VoyageEmbeddingResponseSchema = z.object({
   data: z.array(
     z.object({
       object: z.string().optional(),
-      embedding: z.array(z.number()),
+      // ★severity-1★ ADR-0028 PR #471 フルスキャン検証 (2026-05-30) で発覚:
+      //   `z.number()` だけだと NaN / Infinity が通り、後段の pgvector に
+      //   `[NaN,...]::vector` を投げると DB exception (pgvector v0.5+ は NaN 非許容)。
+      //   chat-search.service.ts / help-search.service.ts / persistEmbedding の
+      //   全 RAG 経路を保護するため、ここで finite() バリデーションを強制する。
+      embedding: z.array(z.number().finite()),
       index: z.number().optional(),
     }),
   ),

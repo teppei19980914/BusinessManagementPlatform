@@ -1024,4 +1024,77 @@ describe('withMeteredLLM - ADR-0019/0022 §4 階層課金分類', () => {
       expect(prisma.apiCallLog.count).not.toHaveBeenCalled();
     });
   });
+
+  /**
+   * ADR-0028 (2026-05-30): LEARNING_FREE_FEATURE_UNITS (= help-chat-embedding) を
+   * `withMeteredLLM` 経由で呼んだ時に、4 階層分類の「その他 (未知)」分岐に
+   * 意図的に落ちて以下が保たれることを保証する:
+   *   - cost=0 (全プラン)
+   *   - currentMonthApi* / currentMonthEmbedding* counter 不変
+   *   - Stripe queue 不投入
+   *   - ApiCallLog のみ記録 (= 監査用)
+   *
+   * これは LEARNING_FREE_FEATURE_UNITS 配列への登録のみで safety を得る設計の証跡。
+   * 万一 metered.ts に help-chat-embedding を EMBEDDING_BILLABLE に追加するような
+   * リファクタが入ったら本テストが fail して気付ける。
+   *
+   * 関連: ADR-0028 §6 / docs/developer-guide/FAQ_AND_OWL_CHAT_GUIDE.md §1.3
+   */
+  describe('LEARNING_FREE (help-chat-embedding、ADR-0028 / 2026-05-30): 全プラン cost=0 / counter 不変', () => {
+    for (const plan of ['beginner', 'expert', 'pro'] as const) {
+      it(`${plan} × help-chat-embedding: cost=0 / 両 counter 不変 / Stripe queue 不投入 / ApiCallLog 記録`, async () => {
+        vi.mocked(prisma.tenant.findFirst).mockResolvedValue(
+          makeTenant({
+            plan,
+            paymentMethod: 'credit_card',
+            stripeCustomerId: 'cus_test_xxx',
+          }) as never,
+        );
+        const call = vi.fn().mockResolvedValue({ result: [0.1, 0.2] });
+
+        const result = await withMeteredLLM(
+          {
+            featureUnit: 'help-chat-embedding',
+            tenantId: TENANT_ID,
+            userId: USER_ID,
+            rateLimiter: allowAllRateLimiter(),
+          },
+          call,
+        );
+
+        expect(result.ok).toBe(true);
+        if (result.ok) expect(result.costJpy).toBe(0);
+        // counter 両軸不変 (= LEARNING_FREE は 4 階層判定の「その他」に落ちる)
+        const tenantUpdate = vi.mocked(prisma.tenant.update).mock.calls[0]?.[0];
+        expect(tenantUpdate).toBeUndefined();
+        // Stripe queue 不投入 (cost=0 のため)
+        expect(prisma.stripeUsageRecordQueue.create).not.toHaveBeenCalled();
+        // ApiCallLog は記録 (監査用、Voyage 利用枠監視のため)
+        const logCall = vi.mocked(prisma.apiCallLog.create).mock.calls[0]?.[0];
+        expect(logCall?.data.featureUnit).toBe('help-chat-embedding');
+        expect(logCall?.data.costJpy).toBe(0);
+      });
+    }
+
+    it('Beginner × help-chat-embedding は fair-use-limit を check しない (= EMBEDDING_BILLABLE ではないため)', async () => {
+      vi.mocked(prisma.tenant.findFirst).mockResolvedValue(
+        makeTenant({ plan: 'beginner' }) as never,
+      );
+      const call = vi.fn().mockResolvedValue({ result: [0.1, 0.2] });
+
+      const result = await withMeteredLLM(
+        {
+          featureUnit: 'help-chat-embedding',
+          tenantId: TENANT_ID,
+          userId: USER_ID,
+          rateLimiter: allowAllRateLimiter(),
+        },
+        call,
+      );
+
+      expect(result.ok).toBe(true);
+      // help-chat-embedding は EMBEDDING_BILLABLE ではないので fair-use-limit count 経路は通らない
+      expect(prisma.apiCallLog.count).not.toHaveBeenCalled();
+    });
+  });
 });

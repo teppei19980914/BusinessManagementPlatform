@@ -18632,3 +18632,117 @@ config と DB の SHA-256 同期が崩れる瞬間 (= deploy 直後で generate 
 - 関連 source: [scripts/generate-faq-embeddings.ts](../../scripts/generate-faq-embeddings.ts) / [scripts/check-faq-embeddings-sync.ts](../../scripts/check-faq-embeddings-sync.ts) / [src/services/help-search.service.ts](../../src/services/help-search.service.ts)
 - 関連 memory: [feedback_drift_detection_design.md](../../C:/Users/SF02512/.claude/projects/c--Users-SF02512-GitHub-Private-BusinessManagementPlatform/memory/feedback_drift_detection_design.md) (drift 検知 4 点セットの一般化)
 - KDD 関連: §5.X+187 (FAQ 文言 drift 検知、同根「config と他層の同期」) / §5.X+172 (コメント vs 実装 drift) / §5.X+192 (ADR-0028 移行の判断ミス)
+
+## §5.X+194 ★severity-medium★ 外部 LLM 系 API の暴走防止は「認証 + IP rate limit + 月次 hard cap + race condition guard + 入力 validation + 出力 size cap + 応答値 validation」の 7 層パターン (PR #471 フルスキャン検証 / ADR-0028)
+
+### 何が起きたか
+
+PR #471 ADR-0028 RAG 移行後のフルスキャン検証で、help-chat (LLM + RAG embedding) の暴走防止について以下の隙間を発見した:
+
+1. **race condition (★severity-medium★)**: route の pre-check (`tenant.findUnique` → `if count >= 100`) と increment (`tenant.update`) の間に lock がなく、同一テナント並列 request で counter overshoot が発生
+2. **API 応答値 validation (★severity-1★)**: voyage-client.ts の zod schema `z.array(z.number())` は NaN/Infinity を許容、pgvector に `[NaN,...]::vector` を投げると DB exception で全 RAG 経路ダウン
+
+両方とも tsc / lint / test では検知できず、本番 runtime でのみ顕在化する罠。
+
+### 採用した 7 層 hard cap パターン
+
+外部 LLM (Anthropic / Voyage) を呼ぶ API endpoint には以下の 7 層を必ず実装する:
+
+| 層 | 防御内容 | 実装例 (help-chat) |
+|---|---|---|
+| 1. 認証 | 未認証 → 401 | `getAuthenticatedUser()` (route 先頭) |
+| 2. IP/user rate limit | 短期暴走 → 429 | `applyRateLimit({ key, max:10, windowMs:60000 })` |
+| 3. テナント月次 hard cap (pre-check) | 月間予算超過 → 429 | `if (tenant.currentMonthHelpChatCount >= LIMIT) return 429` |
+| 4. **race condition guard (★最重要★)** | 並列 request の overshoot 防止 | `updateMany({ where: { id, count: { lt: LIMIT } }, data: { count: { increment: 1 } }})` で **conditional increment**、`updated.count === 0` で warn ログ |
+| 5. 入力 validation | 巨大 / 不正入力 → 400 | `z.string().min(1).max(2000)` |
+| 6. 出力 size cap | LLM 暴走出力の防止 | `max_tokens: 1024` (Anthropic) / `HELP_SEARCH_DEFAULT_LIMIT: 5` (RAG top-K 固定) |
+| 7. **API 応答値 validation (★severity-1★)** | 異常値で後段 DB / システムを破壊しない | Voyage zod を `z.array(z.number().finite())` (NaN/Infinity 拒否) |
+
+### 設計のキーポイント
+
+#### A. race condition guard は `updateMany` + WHERE 条件で実装
+
+❌ **NG**: 
+```ts
+// 100 並列 read で全部 99 を見て、全部通る → counter 199 まで overshoot
+const tenant = await prisma.tenant.findUnique({ where, select: { count: true } });
+if (tenant.count >= LIMIT) return 429;
+// ... LLM 呼出 ...
+await prisma.tenant.update({ where, data: { count: { increment: 1 } } });
+```
+
+✅ **OK**:
+```ts
+const tenant = await prisma.tenant.findUnique({ where, select: { count: true } });
+if (tenant.count >= LIMIT) return 429;  // pre-check (UX 上 LLM 呼出前に弾く)
+// ... LLM 呼出 ...
+const [updated] = await prisma.$transaction([
+  prisma.tenant.updateMany({
+    where: { id, count: { lt: LIMIT } },  // ★ ここで conditional
+    data: { count: { increment: 1 } },
+  }),
+  prisma.apiCallLog.create({ ... }),  // ApiCallLog は overshoot しても記録 (監査用)
+]);
+if (updated.count === 0) {
+  // race condition で先行 request が上限到達。LLM は呼んでしまったので response は返す
+  // (UX 優先)、warn ログで overshoot を可視化 (= bot 攻撃検知材料)
+  await recordError({ ... });
+}
+```
+
+**設計判断**:
+- pre-check は **UX 上必須** (LLM 呼出前に 429 を返す方が早い)
+- conditional increment は **invariant 維持必須** (counter は LIMIT を絶対超えない)
+- LLM 呼出後の overshoot 検知では **response は返す** (= ユーザ視点では成功、課金は本来発生しないので実害なし)
+- ApiCallLog は **常に記録** (Voyage 利用量監視 + 監査のため)
+
+#### B. 外部 API zod schema は finite / 数値範囲を必ず check
+
+`z.number()` だけだと NaN / Infinity / -Infinity が通る。embedding ベクトルに混入すると:
+- pgvector v0.5+ では `[NaN,...]::vector` が parse error → DB exception
+- 計算系 (Cosine similarity 等) で NaN/Infinity 伝播
+- 後段の集計 (SUM / AVG) で全件破損
+
+修正パターン:
+```ts
+embedding: z.array(z.number().finite()),
+// または範囲制約: z.array(z.number().gte(-2).lte(2))
+```
+
+#### C. 多層防御の優先順位
+
+新規 LLM endpoint を実装するときの優先順位 (left-to-right で深い層を後で追加):
+
+1. **必須 (リリース時から)**: 1 認証, 2 IP rate limit, 3 月次 cap, 5 入力 validation, 6 出力 cap, 7 応答 validation
+2. **後追い OK (フルスキャンで気付く)**: 4 race condition guard (= 実害が低いため初期実装で見落としやすいが、`updateMany` への置換で防御可能)
+
+層 4 を後追いで足すコストは小さいが、層 7 を後追いで足すと本番で DB 障害が発生してから気付く可能性大 → 7 層チェックリストを **新規 LLM endpoint 実装時に必ず参照** すること。
+
+### 何を避けるべきか
+
+- ❌ `findUnique` で read → if 判定 → `update` で increment の素朴な実装 (race condition で overshoot 確実)
+- ❌ Pre-check のみで増分操作の conditional WHERE 句なし
+- ❌ Race condition で overshoot 時に 5XX エラーを返す (= LLM コストは発生済、ユーザ視点で失敗 = UX 二重損)
+- ❌ 外部 API zod schema を `z.array(z.number())` だけで済ます (NaN/Infinity が通る)
+- ❌ MAX_OUTPUT_TOKENS / top-K を環境変数経由にして本番で誤って巨大値設定
+
+### 横展開チェックリスト
+
+新規 LLM endpoint を作るときの 7 層 hard cap チェックリスト:
+
+- [ ] 1. 認証: `getAuthenticatedUser()` 又は同等
+- [ ] 2. IP/user rate limit: `applyRateLimit` (適切な key / max / windowMs)
+- [ ] 3. 月次 / 日次 hard cap pre-check: `tenant.currentMonth*Count >= LIMIT` で 429
+- [ ] 4. **race condition guard**: `updateMany` + WHERE 条件で conditional increment、`updated.count === 0` で warn
+- [ ] 5. 入力 validation: zod で min/max + 個別フィールド型制約
+- [ ] 6. 出力 size cap: LLM の `max_tokens` / RAG の `top-K` を const で固定
+- [ ] 7. **API 応答 validation**: 外部 API レスポンスの zod schema に `finite()` / 範囲制約
+
+### 関連
+
+- 関連 PR: PR #471 (本パターン確立、フルスキャン検証で 2 件発見)
+- 関連 ADR: [ADR-0028](../adr/0028-help-chat-rag-migration.md)
+- 関連 source: [src/app/api/help/chat/route.ts](../../src/app/api/help/chat/route.ts) (7 層実装の参考実装) / [src/lib/llm/voyage-client.ts](../../src/lib/llm/voyage-client.ts) (zod finite 強化) / [src/lib/llm/rate-limiter.ts](../../src/lib/llm/rate-limiter.ts)
+- 関連 test: [src/app/api/help/chat/route.test.ts](../../src/app/api/help/chat/route.test.ts) (7 層 invariant 保護) / [src/lib/llm/voyage-client.test.ts](../../src/lib/llm/voyage-client.test.ts) (NaN/Infinity 拒否)
+- 関連 memory: [feedback_billing_invariant.md](../../C:/Users/SF02512/.claude/projects/c--Users-SF02512-GitHub-Private-BusinessManagementPlatform/memory/feedback_billing_invariant.md) (counter invariant の重要性)
+- KDD 関連: §5.X+191 (Prompt Caching、同 PR で確立) / §5.X+193 (drift 4 層防御、同じ「複層 hard cap」パターン)

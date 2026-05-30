@@ -358,12 +358,34 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     });
   }
 
-  // 10. Counter + ApiCallLog の atomic update
+  // 10. Counter + ApiCallLog の atomic update (★severity-medium★ race condition guard)
+  //
+  // ADR-0028 PR #471 フルスキャン検証 (2026-05-30) で発覚した race condition への対策:
+  //   Step 3 の pre-check (currentMonthHelpChatCount >= 100) は read-only のため、
+  //   同一テナントから 100 並列 request が一斉に来ると全 read で「< 100」と判定され、
+  //   後続 increment で counter が 100 を大幅に超える overshoot を起こす。
+  //
+  // 対策: `updateMany` の WHERE 句に `currentMonthHelpChatCount < HELP_CHAT_MONTHLY_LIMIT_PER_TENANT`
+  //   を入れて、increment 自体を conditional にする。先行 request が既に上限に達していたら
+  //   updateMany.count = 0 が返り、counter は increment されない (= overshoot 防止)。
+  //
+  // 設計判断:
+  //   - LLM 呼出は既に完了している (= コスト発生済) ため、ユーザへの response は返す
+  //     (= UX 優先)。実害は「100 件直前に並列 request が来た場合に warn ログが増える」のみ。
+  //   - ApiCallLog は overshoot しても記録 (= Voyage 利用量監視 + 監査のため必須)。
+  //   - 並列 IP rate limit (1 分 10 回 / IP) が先に効くため、現実的な overshoot は
+  //     同一テナント × 同一 IP で +0〜10 件程度。経済影響は無視可能だが counter 上限超過は
+  //     UX 設計 (HTTP 429 で fallback アコーディオン誘導) と矛盾するため防止する。
+  //
+  // 関連: KDD §5.X+194 (multi-layer hard cap パターン)
   const latencyMs = Math.round(performance.now() - startTime);
   try {
-    await prisma.$transaction([
-      prisma.tenant.update({
-        where: { id: user.tenantId },
+    const [updated] = await prisma.$transaction([
+      prisma.tenant.updateMany({
+        where: {
+          id: user.tenantId,
+          currentMonthHelpChatCount: { lt: HELP_CHAT_MONTHLY_LIMIT_PER_TENANT },
+        },
         data: { currentMonthHelpChatCount: { increment: 1 } },
       }),
       prisma.apiCallLog.create({
@@ -380,6 +402,21 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         },
       }),
     ]);
+    if (updated.count === 0) {
+      // race condition で先行 request が上限に達した。LLM 結果は返すが counter は不変、
+      // warn ログで overshoot を可視化 (= 並列攻撃の検知材料)。
+      await recordError({
+        severity: 'warn',
+        source: 'server',
+        message: `[help-chat] counter increment skipped (race condition or pre-check stale)`,
+        context: {
+          kind: 'help_chat_counter_race_skip',
+          tenantId: user.tenantId,
+          userId: user.id,
+          requestId,
+        },
+      });
+    }
   } catch (e) {
     // Counter 更新失敗は致命的でないため、ログだけ残して response は返す
     // (上限管理が緩むだけで AI 回答自体は届ける = UX 優先)
