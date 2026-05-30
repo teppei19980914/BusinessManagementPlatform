@@ -191,6 +191,14 @@ export function ChatPanel({ onClose }: { onClose: () => void }) {
     savePanelMode(next);
   }, []);
 
+  // ADR-0028 PR #471 (2026-05-30): help mode の turns 数と remount key を ChatPanel 側で管理。
+  //   ChatPanel のヘッダにある統一クリアボタン (ゴミ箱) から両 mode の履歴をクリアできるよう、
+  //   help mode の turns 数は HelpChatInput からの callback で受け取り、
+  //   クリア操作は HelpChatInput の sessionStorage を直接消去 + remount key 更新で
+  //   HelpChatInput の内部 state を破棄する設計。
+  const [helpTurnsCount, setHelpTurnsCount] = useState(0);
+  const [helpResetKey, setHelpResetKey] = useState(0);
+
   const [query, setQuery] = useState('');
   const [submitting, setSubmitting] = useState(false);
   // H-1: 会話履歴を配列で保持。lazy init で sessionStorage から復元する。
@@ -341,10 +349,25 @@ export function ChatPanel({ onClose }: { onClose: () => void }) {
   }, []);
 
   // 履歴クリア (手動)。ユーザが明示的に「過去の会話を消したい」と意思表示した場合に呼ばれる。
+  // ADR-0028 PR #471: ChatPanel ヘッダの統一クリアボタンから両 mode をクリアできるよう
+  //   現 mode に応じて対象履歴を切替 (UI の見た目は完全一致)。
   const handleClearHistory = useCallback(() => {
-    clearHistory();
-    setTurns([]);
-  }, []);
+    if (mode === 'search') {
+      clearHistory();
+      setTurns([]);
+    } else {
+      // help mode: HelpChatInput が管理する sessionStorage を直接削除 + remount で内部 state 破棄
+      if (typeof window !== 'undefined') {
+        try {
+          window.sessionStorage.removeItem('tasukiba_help_chat_history_v1');
+        } catch {
+          // noop (quota / private browsing)
+        }
+      }
+      setHelpResetKey((k) => k + 1);
+      setHelpTurnsCount(0);
+    }
+  }, [mode]);
 
   return (
     <aside
@@ -377,20 +400,23 @@ export function ChatPanel({ onClose }: { onClose: () => void }) {
           </div>
         </div>
         <div className="flex items-center gap-1">
-          {/* H-1: 履歴クリアボタンは search mode のみ (help mode は HelpChatInput 内に独自実装あり)。 */}
-          {mode === 'search' && (
-            <button
-              type="button"
-              onClick={handleClearHistory}
-              disabled={turns.length === 0}
-              aria-label="会話履歴をクリア"
-              title="会話履歴をクリア"
-              data-testid="chat-panel-clear-history"
-              className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-muted-foreground"
-            >
-              🗑️
-            </button>
-          )}
+          {/*
+            ADR-0028 PR #471 (2026-05-30): 統一ヘッダのクリアボタンは mode 共通で常に表示。
+            UI の見た目を search / help タブで完全に揃える ([feedback_sibling_ui_pattern_horizontal_rollout]:
+            同じ機能を有する UI は完全一致が原則 = ゴミ箱位置も含めて統一)。
+            disabled 判定は現 mode の turns 数に基づく。
+          */}
+          <button
+            type="button"
+            onClick={handleClearHistory}
+            disabled={mode === 'search' ? turns.length === 0 : helpTurnsCount === 0}
+            aria-label="会話履歴をクリア"
+            title="会話履歴をクリア"
+            data-testid="chat-panel-clear-history"
+            className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-muted-foreground"
+          >
+            🗑️
+          </button>
           <button
             type="button"
             onClick={onClose}
@@ -455,9 +481,21 @@ export function ChatPanel({ onClose }: { onClose: () => void }) {
           role="tabpanel"
           id="chat-panel-panel-help"
           aria-labelledby="chat-panel-tab-help"
-          className="flex-1 min-h-0 overflow-hidden p-2"
+          className="flex flex-1 min-h-0 flex-col"
         >
-          <HelpChatInput variant="panel" />
+          {/*
+            ADR-0028 PR #471 (2026-05-30): HelpChatInput を完全に ChatPanel のレイアウトに
+            溶け込ませる (UI 完全一致):
+              - hideHeader: ChatPanel ヘッダ (アバター + persona + クリア + 閉じる) に一元化
+              - onTurnsCountChange: ChatPanel 側でクリアボタン disabled 判定に使う
+              - key={helpResetKey}: クリア時に再 mount で内部 state を破棄
+          */}
+          <HelpChatInput
+            key={helpResetKey}
+            variant="panel"
+            hideHeader
+            onTurnsCountChange={setHelpTurnsCount}
+          />
         </div>
       ) : (
         <SearchModeBody

@@ -174,6 +174,36 @@ function buildOutputSchemaInstruction(): string {
 // ================================================================
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
+  // ★severity-1★ Root-level safety net (ADR-0028 PR #471 2 巡目検証 / 2026-05-30):
+  //   `/api/help/chat` は ADR-0028 で RAG 経路 (Voyage embedding + pgvector) を追加した結果、
+  //   失敗経路が増えた。各段で個別 try-catch を持つが、想定外の uncaught throw が起きた時に
+  //   Next.js が素の 500 を返すと、ユーザ視点では「赤バナーで応答失敗」となり UX 大幅劣化。
+  //   503 + fallbackToAccordion で FAQ アコーディオン誘導に倒し、原因は recordError でログ。
+  //   既存の rate limit / auth 等が NextResponse を返す経路は無変更で通過する。
+  try {
+    return await handlePost(req);
+  } catch (e) {
+    await recordError({
+      severity: 'warn',
+      source: 'server',
+      message: `[help-chat] uncaught error in POST handler: ${e instanceof Error ? e.message : String(e)}`,
+      stack: e instanceof Error ? e.stack : undefined,
+      context: { kind: 'help_chat_uncaught_error' },
+    });
+    return NextResponse.json(
+      {
+        error: {
+          code: 'LLM_ERROR',
+          message: '🙏 申し訳ありません、AI が一時的に応答できないようです。下記の FAQ から探していただくか、Discord でご質問ください。',
+        },
+        fallbackToAccordion: true,
+      },
+      { status: 503 },
+    );
+  }
+}
+
+async function handlePost(req: NextRequest): Promise<NextResponse> {
   const startTime = performance.now();
 
   // 1. 認証

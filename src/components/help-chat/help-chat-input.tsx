@@ -94,9 +94,24 @@ export type HelpChatInputProps = {
   variant?: 'page' | 'panel';
   /** 初期挨拶文の上書き (デフォルト: 共通のフクロウ挨拶) */
   greeting?: string;
+  /**
+   * ChatPanel のタブ内に埋め込む時、ChatPanel 側のヘッダで「アバター + たすきフクロウ + クリアボタン」を
+   * 一元化するため本コンポーネントの自前ヘッダを suppress する。
+   * `variant='panel'` 用途で ChatPanel が true を渡す ([feedback_sibling_ui_pattern_horizontal_rollout] 整合)。
+   */
+  hideHeader?: boolean;
+  /**
+   * turns 数の変化を ChatPanel に通知 (= 親側でクリアボタン disabled 判定に使う)。
+   */
+  onTurnsCountChange?: (count: number) => void;
 };
 
-export function HelpChatInput({ variant = 'page', greeting }: HelpChatInputProps) {
+export function HelpChatInput({
+  variant = 'page',
+  greeting,
+  hideHeader = false,
+  onTurnsCountChange,
+}: HelpChatInputProps) {
   const [query, setQuery] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [rateLimited, setRateLimited] = useState(false);
@@ -108,6 +123,11 @@ export function HelpChatInput({ variant = 'page', greeting }: HelpChatInputProps
   const bottomAnchorRef = useRef<HTMLDivElement | null>(null);
 
   const tooLong = query.length > MAX_QUERY_CHARS;
+
+  // 親 (ChatPanel) に turns 数変化を通知 (= mode='help' のクリアボタン disabled 判定用)
+  useEffect(() => {
+    onTurnsCountChange?.(turns.length);
+  }, [turns.length, onTurnsCountChange]);
 
   // sessionStorage 永続化
   useEffect(() => {
@@ -229,11 +249,27 @@ export function HelpChatInput({ variant = 'page', greeting }: HelpChatInputProps
   const defaultGreeting =
     'こんにちは、たすきフクロウです。\nお困りごとを教えてください。FAQ や使い方ガイドから一緒にお探ししますね。';
 
+  // ADR-0028 PR #471 (2026-05-30): ChatPanel タブ内に埋め込む場合 (variant='panel') は、
+  //   ChatPanel のヘッダ (アバター + persona + クリア + 閉じる) と footer (入力欄スタイル) を
+  //   ★完全に同一の見た目に揃える★ ([feedback_sibling_ui_pattern_horizontal_rollout]:
+  //   同じ機能を持つ UI は完全一致が原則。ユーザの美学要求)。
+  //   page variant (`/help` / `/guide` 単独ページ) は自前のヘッダ + 枠付きメッセージ領域を維持。
+  const isPanel = variant === 'panel';
+
   const containerClass = cn(
-    variant === 'page'
-      ? 'rounded-lg border bg-card p-4'
-      : 'flex h-full flex-col bg-background',
+    isPanel
+      ? 'flex h-full min-h-0 flex-col bg-background'
+      : 'rounded-lg border bg-card p-4',
   );
+
+  // メッセージ領域: panel は ChatPanel と完全一致 (枠なし、padding 4、flex-1 で残り全て)
+  //                page  は従来通り (枠あり、max-h-96 で固定上限)
+  const messagesClass = isPanel
+    ? 'flex-1 min-h-0 overflow-y-auto p-4 text-sm'
+    : 'max-h-96 min-h-0 flex-1 overflow-y-auto rounded-md border bg-background p-3 text-sm';
+
+  // footer: panel は ChatPanel と完全一致 (上ボーダ + p-3)、page は mt-3 のみ
+  const footerClass = isPanel ? 'border-t border-border p-3' : 'mt-3';
 
   return (
     <section
@@ -241,37 +277,40 @@ export function HelpChatInput({ variant = 'page', greeting }: HelpChatInputProps
       className={containerClass}
       data-testid="help-chat-input"
     >
-      <header className="mb-3 flex items-center gap-2">
-        <Image
-          src={CHAT_PERSONA.avatarSrc}
-          alt={CHAT_PERSONA.avatarAlt}
-          width={32}
-          height={32}
-          className="h-8 w-8 rounded-full object-cover"
-        />
-        <div className="flex flex-col">
-          <span className="text-sm font-semibold leading-tight">{CHAT_PERSONA.name}</span>
-          <span className="text-[10px] text-muted-foreground leading-tight">
-            FAQ・使い方ガイドからお答えします
-          </span>
-        </div>
-        <button
-          type="button"
-          onClick={handleClearHistory}
-          disabled={turns.length === 0}
-          aria-label="会話履歴をクリア"
-          title="会話履歴をクリア"
-          data-testid="help-chat-clear-history"
-          className="ml-auto rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-muted-foreground"
-        >
-          🗑️
-        </button>
-      </header>
+      {/*
+        自前ヘッダ: page variant のみ表示。panel variant は ChatPanel のヘッダで一元化
+        ([feedback_sibling_ui_pattern_horizontal_rollout]: 二重ヘッダは UI 不一致の原因)。
+      */}
+      {!hideHeader && (
+        <header className="mb-3 flex items-center gap-2">
+          <Image
+            src={CHAT_PERSONA.avatarSrc}
+            alt={CHAT_PERSONA.avatarAlt}
+            width={32}
+            height={32}
+            className="h-8 w-8 rounded-full object-cover"
+          />
+          <div className="flex flex-col">
+            <span className="text-sm font-semibold leading-tight">{CHAT_PERSONA.name}</span>
+            <span className="text-[10px] text-muted-foreground leading-tight">
+              FAQ・使い方ガイドからお答えします
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={handleClearHistory}
+            disabled={turns.length === 0}
+            aria-label="会話履歴をクリア"
+            title="会話履歴をクリア"
+            data-testid="help-chat-clear-history"
+            className="ml-auto rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-muted-foreground"
+          >
+            🗑️
+          </button>
+        </header>
+      )}
 
-      <div
-        className="max-h-96 min-h-0 flex-1 overflow-y-auto rounded-md border bg-background p-3 text-sm"
-        data-testid="help-chat-messages"
-      >
+      <div className={messagesClass} data-testid="help-chat-messages">
         <AssistantBubble>
           <p className="whitespace-pre-line leading-relaxed" data-testid="help-chat-initial-greeting">
             {greeting ?? defaultGreeting}
@@ -288,13 +327,16 @@ export function HelpChatInput({ variant = 'page', greeting }: HelpChatInputProps
       {rateLimited && (
         <div
           role="alert"
-          className="mt-2 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning-foreground"
+          className={cn(
+            'rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning-foreground',
+            isPanel ? 'mx-3 mb-2' : 'mt-2',
+          )}
         >
           💡 本月の利用上限に達しました。下記の FAQ 一覧から探してみてください (来月 1 日に再開します)。
         </div>
       )}
 
-      <footer className="mt-3">
+      <footer className={footerClass}>
         {tooLong && (
           <div className="mb-2 text-xs text-destructive">
             質問は {MAX_QUERY_CHARS} 文字以内にしてください

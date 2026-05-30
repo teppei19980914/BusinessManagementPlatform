@@ -324,15 +324,47 @@ describe('ChatPanel mode タブ統合 (ADR-0028)', () => {
     expect(source).toMatch(/data-testid="chat-panel-tab-help"/);
   });
 
-  it('mode==="help" 時は HelpChatInput を variant="panel" で描画', () => {
-    expect(source).toMatch(/<HelpChatInput variant="panel"\s*\/>/);
+  it('mode==="help" 時は HelpChatInput を variant="panel" + hideHeader + onTurnsCountChange + key で描画 (★UI 完全一致★)', () => {
+    // ★severity-high★ UI 一致原則 (feedback_sibling_ui_pattern_horizontal_rollout):
+    //   - hideHeader: ChatPanel ヘッダで一元化 (二重ヘッダ撤廃)
+    //   - onTurnsCountChange: ChatPanel 側でクリアボタン disabled 判定
+    //   - key={helpResetKey}: クリア時の再 mount で内部 state 破棄
+    expect(source).toMatch(/<HelpChatInput[\s\S]*?variant="panel"[\s\S]*?\/>/);
+    expect(source).toMatch(/<HelpChatInput[\s\S]*?hideHeader[\s\S]*?\/>/);
+    expect(source).toMatch(/<HelpChatInput[\s\S]*?onTurnsCountChange=\{setHelpTurnsCount\}[\s\S]*?\/>/);
+    expect(source).toMatch(/<HelpChatInput[\s\S]*?key=\{helpResetKey\}[\s\S]*?\/>/);
   });
 
-  it('mode==="search" 時のみクリアボタンを描画 (HelpChatInput 側に独自実装あり)', () => {
-    // {mode === 'search' && (...クリアボタン...)} の構造
-    expect(source).toMatch(
+  it('クリアボタンは mode 共通で常に表示 (★UI 完全一致★ ゴミ箱位置も統一)', () => {
+    // クリアボタンは header 内に 1 つだけ存在し、mode='search' 条件分岐で隠されない
+    expect(source).toMatch(/data-testid="chat-panel-clear-history"/);
+    // 旧仕様 {mode === 'search' && (...クリアボタン...)} は撤去
+    expect(source).not.toMatch(
       /\{mode === 'search' &&[\s\S]{0,400}?data-testid="chat-panel-clear-history"/,
     );
+  });
+
+  it('クリアボタン disabled は現 mode の turns 数で判定 (search:turns / help:helpTurnsCount)', () => {
+    expect(source).toMatch(
+      /disabled=\{mode === 'search' \? turns\.length === 0 : helpTurnsCount === 0\}/,
+    );
+  });
+
+  it('help mode のクリアは sessionStorage 直接削除 + helpResetKey インクリメントで remount', () => {
+    expect(source).toMatch(/tasukiba_help_chat_history_v1/);
+    expect(source).toMatch(/setHelpResetKey\(\(k\) => k \+ 1\)/);
+  });
+
+  it('help mode の tabpanel は search mode と同じ flex flex-col className (★UI 完全一致★)', () => {
+    // 旧 `flex-1 min-h-0 overflow-hidden p-2` を撤去 (search と異なる padding/overflow)
+    const helpPanelMatch = source.match(
+      /<div\s+role="tabpanel"\s+id="chat-panel-panel-help"[\s\S]{0,300}?className="([^"]+)"/,
+    );
+    expect(helpPanelMatch).not.toBeNull();
+    expect(helpPanelMatch![1]).toContain('flex');
+    expect(helpPanelMatch![1]).toContain('flex-col');
+    expect(helpPanelMatch![1]).not.toContain('p-2');
+    expect(helpPanelMatch![1]).not.toContain('overflow-hidden');
   });
 
   it('サブタイトルは mode に応じて切替 (検索 / ヘルプ・ガイド)', () => {
