@@ -4,7 +4,8 @@
  * 検証:
  *   1. LLM_PROVIDER=stub (非 production) → 鍵なしでも擬似クライアントを返し、
  *      messages.create が help-chat 出力スキーマに合致する JSON (content[].text) + usage を返す
- *   2. ★本番事故防止★ NODE_ENV=production では env を無視し、鍵なしなら従来通り fail-closed
+ *   2. ★安全モデル★ LLM_PROVIDER 未設定なら stub は無効で、鍵なしは従来通り fail-closed
+ *      (本番は本 env を設定しない = 既定で実 Anthropic。NODE_ENV では分岐しない)
  */
 
 import { describe, it, expect, afterEach } from 'vitest';
@@ -65,13 +66,19 @@ describe('LLM stub provider', () => {
     expect(parsed.answer.length).toBeGreaterThan(0);
   });
 
-  it('★本番ガード★ NODE_ENV=production では stub を無視し、鍵なしは AnthropicConfigError', () => {
+  it('LLM_PROVIDER 未設定なら stub 無効・鍵なしは AnthropicConfigError (本番既定の挙動)', () => {
     _setAnthropicClientForTest(null);
     delete process.env.ANTHROPIC_API_KEY;
-    process.env.LLM_PROVIDER = 'stub';
-    setNodeEnv('production');
+    delete process.env.LLM_PROVIDER;
+    setNodeEnv('test');
 
     expect(isLlmStubEnabled()).toBe(false);
     expect(() => getAnthropicClient()).toThrow(AnthropicConfigError);
+  });
+
+  it('★重要★ NODE_ENV=production でも LLM_PROVIDER=stub なら stub 有効 (E2E standalone 互換)', () => {
+    process.env.LLM_PROVIDER = 'stub';
+    setNodeEnv('production');
+    expect(isLlmStubEnabled()).toBe(true);
   });
 });

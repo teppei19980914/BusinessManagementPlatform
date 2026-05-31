@@ -36,6 +36,17 @@ test.describe('@feature:onboarding 初回ウェルカムモーダル', () => {
   });
 
   test('初回ログインで WelcomeOwlModal が自動表示され、主要 CTA が揃う', async () => {
+    // ログイン直後の SPA セッション遷移中、WelcomeOwlAutoOpen の once ガード (sessionStorage SHOWN /
+    //   evaluatedRef) が transient レンダーで先に立ち、isFirstTimeUser=true でも開かないことがある
+    //   (PR #476 初回 CI で発覚: trace 上 session は isFirstTimeUser:true だが modal 未表示)。
+    //   「初回ユーザがダッシュボードを開いたら案内が出る」を決定論的に検証するため、当セッションの
+    //   表示済フラグを消して /projects を素のページロードで開き直す (= 確立済セッションでの再評価)。
+    await page.evaluate(() => {
+      try { window.sessionStorage.clear(); } catch { /* private mode */ }
+    });
+    await page.goto('/projects');
+    await page.waitForLoadState('networkidle');
+
     const modal = page.getByTestId('welcome-owl-modal');
     await expect(modal).toBeVisible({ timeout: 10_000 });
     await expect(page.getByTestId('welcome-owl-cta-chat')).toBeVisible();

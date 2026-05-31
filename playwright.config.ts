@@ -133,6 +133,12 @@ export default defineConfig({
         //   ダッシュボード UI は desktop 専用、auth boundary は HTTP レイヤで決まる
         //   ため mobile viewport 検証の価値が低い → chromium project のみで実行する。
         /13-super-admin-dashboard\.spec\.ts/,
+        // PR #476: signup 3層 eligibility は **HTTP 層の判定** (フォーム disable + 問合せ動線) で
+        //   mobile viewport 固有の価値が薄く、かつ beforeAll が共有 Default テナントの
+        //   created_by_user_id を mutate するため chromium / chromium-mobile 並列実行で競合し得る
+        //   (初回 CI で chromium-mobile のみ owned-tenant-warning 不表示で fail)。11/12/13 と同方針で
+        //   chromium project のみ実行する。
+        /14-signup-3tier-eligibility\.spec\.ts/,
         // test/release-acceptance-e2e (2026-06): 払い出し→資産CRUD→解約→eligibility→chat/help は
         //   API / フローレベルの検証 (signup 完全送信・DB 状態遷移・FAB 配線) で、mobile viewport 固有の
         //   挙動とは無関係。chromium project でのみ実行し CI 時間を節約する。

@@ -117,11 +117,16 @@ function getFetcher(): Fetcher {
 // ================================================================
 
 /**
- * EMBEDDING_PROVIDER=stub かつ非 production のときのみ true。
- * production では env を無視する (本番で偽ベクトルを返さないための強制ガード)。
+ * EMBEDDING_PROVIDER=stub のときのみ true (E2E スタブ provider)。
+ *
+ * ★安全モデル★: メールの MAIL_PROVIDER=inbox と同じ「明示 opt-in env」方式。本番デプロイ
+ * (Netlify) は EMBEDDING_PROVIDER を設定しない (= 既定で実 Voyage)。NODE_ENV では分岐しない:
+ * E2E の standalone サーバは production build を `NODE_ENV=production` で起動するため、
+ * NODE_ENV ガードを入れるとスタブが永久に無効化されてしまう (実際 PR #476 初回 CI で発覚)。
+ * 本番では本 env を絶対に設定しないこと (e2e.yml / playwright.config のみで設定)。
  */
 export function isEmbeddingStubEnabled(): boolean {
-  return process.env.EMBEDDING_PROVIDER === 'stub' && process.env.NODE_ENV !== 'production';
+  return process.env.EMBEDDING_PROVIDER === 'stub';
 }
 
 /**
@@ -171,8 +176,9 @@ export async function voyageEmbed(input: VoyageEmbedInput): Promise<VoyageEmbedR
   //   メールの MAIL_PROVIDER=inbox と同じ「provider 切替」パターン。CI の E2E では VOYAGE_API_KEY を
   //   設定しないため、EMBEDDING_PROVIDER=stub のとき決定論的な疑似ベクトルを返し、API 課金/鍵なしで
   //   embedding 経路 (チャット意味検索 / ヘルプ RAG / 資産 embedding) を通せるようにする。
-  //   ★本番事故防止★ NODE_ENV=production では env を無視し、絶対にスタブを使わない (= 偽ベクトルで
-  //   提案エンジンが壊れるのを防ぐ二重ガード)。
+  //   ★安全モデル★ MAIL_PROVIDER=inbox と同じ明示 opt-in。本番は EMBEDDING_PROVIDER を設定しない
+  //   (= 既定で実 Voyage)。NODE_ENV では分岐しない (E2E standalone は production build = NODE_ENV=production
+  //   で起動するため。詳細は isEmbeddingStubEnabled の JSDoc / KDD)。
   if (isEmbeddingStubEnabled()) {
     return stubEmbeddings(input.texts);
   }

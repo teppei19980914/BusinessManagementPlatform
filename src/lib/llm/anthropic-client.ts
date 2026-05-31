@@ -43,7 +43,8 @@ export function getAnthropicClient(): Anthropic {
   //   CI の E2E では ANTHROPIC_API_KEY を設定しないため、LLM_PROVIDER=stub のとき
   //   help-chat 出力スキーマに合致する定型 JSON を返す擬似クライアントを返し、ヘルプチャット
   //   の配線 (FAB → help タブ → 回答バブル) を鍵なしで通せるようにする。
-  //   ★本番事故防止★ NODE_ENV=production では env を無視し、絶対にスタブを使わない。
+  //   ★安全モデル★ MAIL_PROVIDER=inbox と同じ明示 opt-in。本番は LLM_PROVIDER を設定しない。
+  //   NODE_ENV では分岐しない (E2E standalone は NODE_ENV=production で起動するため)。
   if (isLlmStubEnabled()) {
     cachedClient = createStubAnthropicClient();
     return cachedClient;
@@ -84,11 +85,15 @@ export function _setAnthropicClientForTest(
 // ================================================================
 
 /**
- * LLM_PROVIDER=stub かつ非 production のときのみ true。
- * production では env を無視する (本番で偽 AI 応答を返さないための強制ガード)。
+ * LLM_PROVIDER=stub のときのみ true (E2E スタブ provider)。
+ *
+ * ★安全モデル★: MAIL_PROVIDER=inbox と同じ明示 opt-in env 方式。本番デプロイは LLM_PROVIDER を
+ * 設定しない (= 既定で実 Anthropic)。NODE_ENV では分岐しない: E2E standalone サーバは production
+ * build を `NODE_ENV=production` で起動するため、NODE_ENV ガードはスタブを永久無効化する
+ * (PR #476 初回 CI で発覚)。本番では本 env を絶対に設定しないこと。
  */
 export function isLlmStubEnabled(): boolean {
-  return process.env.LLM_PROVIDER === 'stub' && process.env.NODE_ENV !== 'production';
+  return process.env.LLM_PROVIDER === 'stub';
 }
 
 /**

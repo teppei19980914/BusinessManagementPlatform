@@ -71,11 +71,16 @@ test.describe('@feature:release-acceptance signup ライフサイクル (払い�
   });
 
   test('TC-RA-20: プロジェクト作成 → /projects 一覧に表示', async () => {
-    const created = await createProjectViaApi(page, { name: PROJECT_NAME });
+    // customerName を PROJECT_NAME と別文字列にする (既定 `E2E 顧客 <name>` だと顧客列にも
+    //   プロジェクト名が部分一致し、getByText が複数要素に当たって strict mode violation になる)。
+    const created = await createProjectViaApi(page, {
+      name: PROJECT_NAME,
+      customerName: withRunId('LC顧客'),
+    });
     projectId = created.id;
     await page.goto('/projects');
     await page.waitForLoadState('networkidle');
-    await expect(page.getByText(PROJECT_NAME)).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText(PROJECT_NAME).first()).toBeVisible({ timeout: 10_000 });
   });
 
   test('TC-RA-22: ナレッジ 作成 → 更新 → /knowledge 一覧に反映', async () => {
@@ -90,7 +95,7 @@ test.describe('@feature:release-acceptance signup ライフサイクル (払い�
 
     await page.goto('/knowledge');
     await page.waitForLoadState('networkidle');
-    await expect(page.getByText(KNOWLEDGE_TITLE)).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText(KNOWLEDGE_TITLE).first()).toBeVisible({ timeout: 10_000 });
 
     // 更新 (タイトル変更が一覧に反映される)
     const upd = await page.request.patch(`/api/knowledge/${knowledgeId}`, {
@@ -99,7 +104,7 @@ test.describe('@feature:release-acceptance signup ライフサイクル (払い�
     expect(upd.ok()).toBeTruthy();
     await page.goto('/knowledge');
     await page.waitForLoadState('networkidle');
-    await expect(page.getByText(KNOWLEDGE_TITLE_UPDATED)).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText(KNOWLEDGE_TITLE_UPDATED).first()).toBeVisible({ timeout: 10_000 });
   });
 
   test('TC-RA-23/24: リスク + 課題 作成 → /risks /issues 一覧に反映', async () => {
@@ -120,11 +125,11 @@ test.describe('@feature:release-acceptance signup ライフサイクル (払い�
 
     await page.goto('/risks');
     await page.waitForLoadState('networkidle');
-    await expect(page.getByText(RISK_TITLE)).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText(RISK_TITLE).first()).toBeVisible({ timeout: 10_000 });
 
     await page.goto('/issues');
     await page.waitForLoadState('networkidle');
-    await expect(page.getByText(ISSUE_TITLE)).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText(ISSUE_TITLE).first()).toBeVisible({ timeout: 10_000 });
   });
 
   test('TC-RA-25: 振り返り 作成 → /retrospectives 一覧に反映', async () => {
@@ -137,7 +142,7 @@ test.describe('@feature:release-acceptance signup ライフサイクル (払い�
     });
     await page.goto('/retrospectives');
     await page.waitForLoadState('networkidle');
-    await expect(page.getByText(RETRO_PLAN)).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText(RETRO_PLAN).first()).toBeVisible({ timeout: 10_000 });
   });
 
   test('TC-RA-26: メモ 作成 → /all-memos に表示 → 削除で一覧から消える', async () => {
@@ -150,7 +155,7 @@ test.describe('@feature:release-acceptance signup ライフサイクル (払い�
 
     await page.goto('/all-memos');
     await page.waitForLoadState('networkidle');
-    await expect(page.getByText(MEMO_TITLE)).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText(MEMO_TITLE).first()).toBeVisible({ timeout: 10_000 });
 
     // 削除 (CRUD の D を検証) → 一覧から消える
     const del = await page.request.delete(`/api/memos/${memoId}`);

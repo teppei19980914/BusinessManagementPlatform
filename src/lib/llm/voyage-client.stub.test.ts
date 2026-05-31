@@ -4,7 +4,8 @@
  * 検証:
  *   1. EMBEDDING_PROVIDER=stub (非 production) → 鍵なしでも EMBEDDING_DIMENSIONS 次元の
  *      finite な決定論的ベクトルを返す
- *   2. ★本番事故防止★ NODE_ENV=production では env を無視し、鍵なしなら従来通り fail-closed
+ *   2. ★安全モデル★ EMBEDDING_PROVIDER 未設定なら stub は無効で、鍵なしは従来通り fail-closed
+ *      (本番は本 env を設定しない = 既定で実 Voyage。NODE_ENV では分岐しない)
  */
 
 import { describe, it, expect, afterEach } from 'vitest';
@@ -56,12 +57,18 @@ describe('embedding stub provider', () => {
     expect(a.embeddings[0]).toEqual(b.embeddings[0]);
   });
 
-  it('★本番ガード★ NODE_ENV=production では stub を無視し、鍵なしは VoyageConfigError', async () => {
+  it('EMBEDDING_PROVIDER 未設定なら stub 無効・鍵なしは VoyageConfigError (本番既定の挙動)', async () => {
     delete process.env.VOYAGE_API_KEY;
-    process.env.EMBEDDING_PROVIDER = 'stub';
-    setNodeEnv('production');
+    delete process.env.EMBEDDING_PROVIDER;
+    setNodeEnv('test');
 
     expect(isEmbeddingStubEnabled()).toBe(false);
     await expect(voyageEmbed({ texts: ['x'] })).rejects.toBeInstanceOf(VoyageConfigError);
+  });
+
+  it('★重要★ NODE_ENV=production でも EMBEDDING_PROVIDER=stub なら stub 有効 (E2E standalone 互換)', () => {
+    process.env.EMBEDDING_PROVIDER = 'stub';
+    setNodeEnv('production');
+    expect(isEmbeddingStubEnabled()).toBe(true);
   });
 });
