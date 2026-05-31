@@ -42,8 +42,9 @@
   - frontmatter の `severity` は内容に応じて: `info` (新機能告知) / `warning` (注意喚起) / `critical` (緊急) / `maintenance` (メンテ予告)
   - **bug fix のみのパッチリリースは告知不要** (ユーザ体験への影響が無い場合)
 - [ ] **(5) ローカルゲート確認** — `pnpm lint && pnpm tsc --noEmit && pnpm test && pnpm e2e:coverage-check && pnpm build`
-- [ ] **(6) PR 作成 → CI 通過 → squash merge**
+- [ ] **(6) PR 作成 → CI 通過 → squash merge** — CI には **🤖 機能受け入れ回帰 (E2E)** が含まれる: 払い出し→全資産CRUD→解約→eligibility→チャット/ヘルプ配線 (`e2e/specs/19〜23`、[RELEASE_ACCEPTANCE_TEST.md](../../test/RELEASE_ACCEPTANCE_TEST.md) の 🤖 項目)。E2E が red の場合は merge しない
 - [ ] **(7) Netlify Production deploy 成功確認** ([COMMIT_AND_DEPLOY.md §10.5 squash merge 時の skip キーワード罠](./COMMIT_AND_DEPLOY.md))
+- [ ] **(7.5) 👤 本番 機能受け入れスモーク (数分・毎リリース必須)** — [RELEASE_ACCEPTANCE_TEST.md §9](../../test/RELEASE_ACCEPTANCE_TEST.md#9-数分の人間スモーク-毎リリース必須) の SMK-1〜7 を**本番環境**に対して実施 (プラスエイリアスで払い出し→実メール到達→資産1件→添付1往復→チャット/ヘルプに1問ずつ→主要画面レンダリング)。自動 E2E が肩代わりできない「実メール・実 Storage・実 AI 品質・本番レンダリング」を確認。FAIL があれば原則ロールバック判断
 - [ ] **(8) `/changelog` を本番で開き (ヘッダ AccountMenu「バージョンアップ情報」経由)、バージョン番号とリリース日が反映されていることを確認**
 - [ ] **(9) `/changelog` `/announcements` を本番で開き、新エントリが表示されることを確認** (`/announcements` はフッタ「お知らせ」リンク = ログイン後のみ導線)
 
@@ -51,6 +52,7 @@
 
 上記 2.1 に加えて:
 
+- [ ] **[RELEASE_ACCEPTANCE_TEST.md](../../test/RELEASE_ACCEPTANCE_TEST.md) のフル完走** (§1〜§8) — メジャーリリース、または signup・課金・資産経路を触ったリリースでは、数分スモーク (§9) ではなくフルの受け入れテストを完走し go/no-go を判定する
 - [ ] [`docs/operations/PUBLIC_LAUNCH_CHECKLIST.md`](../../archive/2026-06-01-pre-ops-reorg/PUBLIC_LAUNCH_CHECKLIST.md) の全項目を完了
 - [ ] [`docs/operations/GO_LIVE_RUNBOOK.md`](../../archive/2026-06-01-pre-ops-reorg/GO_LIVE_RUNBOOK.md) の T-2 週間前 / T-1 週間前 / 当日 のタイムラインを実施
 - [ ] OG 画像 (`public/og-image.png`) の差し替え判断
@@ -94,6 +96,7 @@
 
 ## 6. 関連ドキュメント
 
+- [docs/test/RELEASE_ACCEPTANCE_TEST.md](../../test/RELEASE_ACCEPTANCE_TEST.md) — 機能受け入れテスト (払い出し→全資産CRUD→主要機能→解約のライフサイクル)。🤖 自動 E2E (毎 CI) + 👤 本番数分スモーク (§9、毎リリース) の 2 層。本書 §2.1 (6)(7.5) / §2.2 から参照
 - [docs/developer-guide/COMMIT_AND_DEPLOY.md](./COMMIT_AND_DEPLOY.md) — 日常コミット・デプロイのワークフロー
 - [docs/operations/PUBLIC_LAUNCH_CHECKLIST.md](../../archive/2026-06-01-pre-ops-reorg/PUBLIC_LAUNCH_CHECKLIST.md) — 一般公開前の包括チェックリスト
 - [docs/operations/GO_LIVE_RUNBOOK.md](../../archive/2026-06-01-pre-ops-reorg/GO_LIVE_RUNBOOK.md) — 2026-06-01 GA リリースの当日進行
@@ -108,3 +111,4 @@
 | 日付 | 変更 |
 |---|---|
 | 2026-05-24 | 初版作成 (PR #439 / feat/app-header-footer-unification: 全画面共通フッタ削減により真値ファイルの集約場所が明確化されたため、リリース手順を独立ドキュメント化) |
+| 2026-06 | 機能受け入れゲートを統合 (test/release-acceptance-e2e): §2.1 (6) に 🤖 E2E 回帰注記 + (7.5) 本番 👤 数分スモークを追加 / §2.2 にフル完走を追加 / RELEASE_ACCEPTANCE_TEST.md を §6 関連ドキュメントに追加。粒度 = 🤖毎CI / 👤数分毎リリース / フルはメジャー or 主要経路変更時 |

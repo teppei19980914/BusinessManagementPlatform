@@ -133,6 +133,14 @@ export default defineConfig({
         //   ダッシュボード UI は desktop 専用、auth boundary は HTTP レイヤで決まる
         //   ため mobile viewport 検証の価値が低い → chromium project のみで実行する。
         /13-super-admin-dashboard\.spec\.ts/,
+        // test/release-acceptance-e2e (2026-06): 払い出し→資産CRUD→解約→eligibility→chat/help は
+        //   API / フローレベルの検証 (signup 完全送信・DB 状態遷移・FAB 配線) で、mobile viewport 固有の
+        //   挙動とは無関係。chromium project でのみ実行し CI 時間を節約する。
+        /19-signup-lifecycle\.spec\.ts/,
+        /20-signup-eligibility-complete\.spec\.ts/,
+        /21-tenant-self-delete\.spec\.ts/,
+        /22-onboarding\.spec\.ts/,
+        /23-chat-help\.spec\.ts/,
       ],
     },
   ],
@@ -158,6 +166,11 @@ export default defineConfig({
           // inbox プロバイダを使用。INBOX_DIR 配下に 1 通 1 JSON で書き出される。
           MAIL_PROVIDER: 'inbox',
           INBOX_DIR,
+          // test/release-acceptance-e2e (2026-06): embedding/LLM の E2E スタブ provider を
+          //   standalone サーバプロセスに伝搬する (= chat 意味検索 / ヘルプチャットの配線検証用)。
+          //   本番事故防止: 本番コードは NODE_ENV=production なら env を無視する (二重ガード)。
+          EMBEDDING_PROVIDER: process.env.EMBEDDING_PROVIDER || 'stub',
+          LLM_PROVIDER: process.env.LLM_PROVIDER || 'stub',
           // 2026-05-13 (security/auth-secret-hardening, B-2 follow-up):
           //   E2E は並列 worker が同一 IP (localhost) から大量に login するため、
           //   middleware の login IP rate limit (max=20 / 5min) が 429 を引き起こす。

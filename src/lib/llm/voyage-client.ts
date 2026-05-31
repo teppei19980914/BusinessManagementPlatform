@@ -113,6 +113,49 @@ function getFetcher(): Fetcher {
 }
 
 // ================================================================
+// テスト専用: E2E スタブ provider
+// ================================================================
+
+/**
+ * EMBEDDING_PROVIDER=stub かつ非 production のときのみ true。
+ * production では env を無視する (本番で偽ベクトルを返さないための強制ガード)。
+ */
+export function isEmbeddingStubEnabled(): boolean {
+  return process.env.EMBEDDING_PROVIDER === 'stub' && process.env.NODE_ENV !== 'production';
+}
+
+/**
+ * 入力テキストから決定論的な擬似 embedding ベクトルを生成する (E2E スタブ用)。
+ * - 長さは EMBEDDING_DIMENSIONS に厳密一致 (= 本物と同じ次元、後段の pgvector に流せる)
+ * - 各要素は [-1, 1] の finite な値 (NaN/Infinity を出さない = pgvector が受理する)
+ * - 同じ入力には同じベクトル (= 検索結果が決定論的になり flaky を避ける)
+ */
+function stubEmbeddings(texts: string[]): VoyageEmbedResult {
+  const embeddings = texts.map((t) => deterministicVector(t));
+  // totalTokens は概算 (課金は LEARNING_FREE / Beginner=0 等で別管理のため値自体は重要でない)
+  const totalTokens = texts.reduce((sum, t) => sum + Math.ceil(t.length / 4), 0);
+  return { embeddings, totalTokens };
+}
+
+/** FNV-1a + xorshift で決定論的に EMBEDDING_DIMENSIONS 次元の擬似ベクトルを作る。 */
+function deterministicVector(text: string): number[] {
+  let h = 2166136261 >>> 0; // FNV offset basis
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 16777619) >>> 0; // FNV prime
+  }
+  const vec = new Array<number>(EMBEDDING_DIMENSIONS);
+  for (let d = 0; d < EMBEDDING_DIMENSIONS; d++) {
+    // xorshift32 で次の擬似乱数を得る
+    h ^= h << 13; h >>>= 0;
+    h ^= h >>> 17;
+    h ^= h << 5; h >>>= 0;
+    vec[d] = (h / 0xffffffff) * 2 - 1; // [-1, 1]
+  }
+  return vec;
+}
+
+// ================================================================
 // 公開関数
 // ================================================================
 
@@ -124,6 +167,16 @@ function getFetcher(): Fetcher {
  * @throws Error              レスポンス JSON のパース失敗 / ネットワーク失敗
  */
 export async function voyageEmbed(input: VoyageEmbedInput): Promise<VoyageEmbedResult> {
+  // ★テスト専用★ E2E スタブ provider (test/release-acceptance-e2e / 2026-06)。
+  //   メールの MAIL_PROVIDER=inbox と同じ「provider 切替」パターン。CI の E2E では VOYAGE_API_KEY を
+  //   設定しないため、EMBEDDING_PROVIDER=stub のとき決定論的な疑似ベクトルを返し、API 課金/鍵なしで
+  //   embedding 経路 (チャット意味検索 / ヘルプ RAG / 資産 embedding) を通せるようにする。
+  //   ★本番事故防止★ NODE_ENV=production では env を無視し、絶対にスタブを使わない (= 偽ベクトルで
+  //   提案エンジンが壊れるのを防ぐ二重ガード)。
+  if (isEmbeddingStubEnabled()) {
+    return stubEmbeddings(input.texts);
+  }
+
   const apiKey = process.env.VOYAGE_API_KEY;
   if (!apiKey || apiKey.trim() === '') {
     throw new VoyageConfigError(
