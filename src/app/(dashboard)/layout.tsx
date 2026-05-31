@@ -10,6 +10,8 @@ import { getDegradedModeState } from '@/services/degraded-mode.service';
 import { DegradedModeBanner } from '@/components/degraded-mode-banner';
 // PR #373 / chat-semantic-search: 全ページ右下のチャット意味検索 FAB
 import { ChatSemanticSearchFab } from '@/components/chat-semantic-search';
+// G2-e-3 (2026-05-31): 初回ログイン時のオンボーディングモーダル (自動表示コントローラ)
+import { WelcomeOwlAutoOpen } from '@/components/onboarding/welcome-owl-modal';
 import type { SystemRole } from '@/config/master-data';
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -52,6 +54,9 @@ export default async function DashboardLayout({ children }: { children: React.Re
           <main className="px-4 py-6 sm:px-6 lg:px-8">{children}</main>
         </div>
         <ChatSemanticSearchFab />
+        {/* G2-e-3: 初回ログイン (たすきば未利用) ユーザにウェルカム案内を 1 回だけ自動表示。
+            super_admin 除外・当セッション once ガードは本コンポーネント内で判定。 */}
+        <WelcomeOwlAutoOpen />
       </ToastProvider>
     </LoadingProvider>
   );

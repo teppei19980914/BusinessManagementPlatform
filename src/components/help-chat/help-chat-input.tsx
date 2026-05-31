@@ -35,6 +35,18 @@ const HISTORY_STORAGE_KEY = 'tasukiba_help_chat_history_v1';
 const MAX_HISTORY_TURNS = 50;
 const MAX_QUERY_CHARS = 2000;
 
+// G1-f (2026-05-31): 初期状態 (会話 0 件) で表示する質問例チップ。
+//   ★全ロールで必ず回答が返る visibleTo='all' の例のみ★ にする (権限外の例を出すと
+//   一般ロールが permission-denied で弾かれ「使えない」印象になるため)。
+//   - 「最初に何をすればいいですか?」→ getting-started-what-to-do (all)
+//   - 「リスクと課題の違いは?」→ risk-vs-issue (all)
+//   - 「データはどう扱われますか?」→ ai-data-sent / 他テナント分離 (all)
+const EXAMPLE_QUERIES = [
+  '最初に何をすればいいですか?',
+  'リスクと課題の違いは?',
+  'データはどう扱われますか?',
+] as const;
+
 type HelpChatTurn = {
   id: string;
   userQuery: string;
@@ -317,6 +329,26 @@ export function HelpChatInput({
           </p>
         </AssistantBubble>
 
+        {/* G1-f: 初期状態の質問例チップ (全ロール安全な all 段の例のみ)。クリックで入力欄に投入。 */}
+        {turns.length === 0 && (
+          <div
+            className="mb-3 ml-9 flex flex-wrap gap-1.5"
+            data-testid="help-chat-example-chips"
+          >
+            {EXAMPLE_QUERIES.map((ex) => (
+              <button
+                key={ex}
+                type="button"
+                onClick={() => setQuery(ex)}
+                disabled={submitting || rateLimited}
+                className="rounded-full border border-border bg-muted px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
+              >
+                {ex}
+              </button>
+            ))}
+          </div>
+        )}
+
         {turns.map((turn) => (
           <HelpChatTurnView key={turn.id} turn={turn} />
         ))}
@@ -348,7 +380,7 @@ export function HelpChatInput({
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKeyDown}
             disabled={submitting || rateLimited}
-            placeholder="例: いつ請求されますか? / プロジェクト作成の手順を教えて"
+            placeholder="例: 最初に何をすればいいですか? / リスクと課題の違いは?"
             rows={2}
             data-testid="help-chat-input-textarea"
             className={cn(
@@ -434,10 +466,14 @@ function AnswerCard({ result }: { result: HelpChatOutput }) {
 
       {(sourceFaqIds.length > 0 || sourceGuideStepIds.length > 0) && (
         <div className="mt-2 flex flex-wrap gap-1.5 text-xs">
+          {/* G2-d (2026-05-31): チャットは FAB に一本化され任意のページから開くため、
+              旧 `#faq-{id}` 同一ページ内アンカー (help-client 側に未定義 = 不発) を廃止し、
+              出典の種別ページ (FAQ → /help、ガイド → /guide) への遷移に修正する。
+              /help では検索ボックスで当該 id の語を絞り込める。 */}
           {sourceFaqIds.map((id) => (
             <a
               key={`faq-${id}`}
-              href={`#faq-${id}`}
+              href="/help"
               data-testid="help-chat-source-faq-link"
               className="rounded-full border border-border bg-muted px-2 py-0.5 text-muted-foreground hover:text-foreground"
             >
@@ -447,7 +483,7 @@ function AnswerCard({ result }: { result: HelpChatOutput }) {
           {sourceGuideStepIds.map((id) => (
             <a
               key={`guide-${id}`}
-              href={`/guide#guide-${id}`}
+              href="/guide"
               data-testid="help-chat-source-guide-link"
               className="rounded-full border border-border bg-muted px-2 py-0.5 text-muted-foreground hover:text-foreground"
             >

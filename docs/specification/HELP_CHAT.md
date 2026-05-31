@@ -181,6 +181,34 @@ model FaqFeedback {
 - helpful 率が低い FAQ → 文言改善対象
 - outOfScope 率の高い質問パターン → 新規 FAQ 追加候補
 
+## 6.5. 2026-05-31 変更 (開示4段化 / チャットFAB一本化 / 初回オンボーディング)
+
+### 開示権限の 4 段化 (最小権限の厳格化)
+`FaqVisibleTo` を 3 段 (`all` / `project_pm` / `tenant_admin`) から **4 段**へ拡張:
+
+| 段 | 開示条件 (ViewerRoles) | 例 |
+|---|---|---|
+| `all` | 全員 | サービス概要・ログイン・MFA・データ取扱い・チャット検索の使い方 |
+| `project_member` (新設) | `hasAnyProjectMembership` (member/pm_tl) | 課題・リスク・ナレッジ作成、タスク進捗更新 |
+| `project_pm` | `hasAnyProjectPmRole` (pm_tl) | 参考タブ(提案エンジン)・ステークホルダー・プロジェクト作成 |
+| `tenant_admin` | `isTenantAdmin` (admin/super_admin) | 料金・課金・招待・CSV 移行・容量課金 |
+
+- 判定は `canViewerSee(visibleTo, viewer)` に集約 (★階層内包★: admin ⊇ pm ⊇ member ⊇ all)。FAQ/Guide 共通。
+- SQL 段 (help-search.service.ts) は `viewerTierFlags` の `canAdmin/canPm/canMember` を渡して同じ内包を表現。`faq_embeddings` / `guide_embeddings` に `requires_project_member` 列を追加 (migration `20260606_help_chat_project_member_tier`)。
+- 実権限は `src/lib/permissions/check-permission.ts` の ROLE_PERMISSIONS に厳格準拠 (例: stakeholder/参考タブ=PM 以上、risk:create=member 以上)。
+- `buildRoleGuardancePromptSection` は権限外質問への返答を **「短い謝罪 + 該当ロール誘導の 1 文のみ。画面名・問い合わせ先・確認方法などの追加案内を付けない」** に締める (冗長応答防止)。
+
+### チャットを FAB に一本化 (同一 UI 原則)
+- `/help`・`/guide` の埋め込みチャット (`HelpChatInput variant="page"`) を撤去。チャットは画面右下の FAB のみ。
+- `/help` に「全○○」一覧と同じ **キーワード全文検索ボックス** (`FaqSearchBox`、`FilterBar`+`Input` 流用) を新設。FAQ を質問+回答の全文 (`extractText`) で client-side 絞り込み。`/guide` には検索ボックスを設けない (用語集の Ctrl+F で代替)。
+
+### 初回ログインユーザのオンボーディング (G2-e)
+- **検知 (方針 II)**: `authorize` で email 単位の過去 `login_success` が 0 件なら `isFirstTimeUser=true` (= たすきば未利用)。テナント横断・テナント削除後も `auth_event_logs`/`users` は purge 対象外で堅牢 (super-admin.service.ts 確認済)。email index `idx_auth_events_email` (migration `20260607_auth_events_email_index`)。
+- **伝播**: `authorize → jwt → session.user.isFirstTimeUser` (next-auth.d.ts に型追加)。初回セッションの間だけ true。
+- **モーダル** (`WelcomeOwlModal` / `WelcomeOwlAutoOpen`): admin/general のみ (super_admin 除外)、`/projects` 着地で 1 回自動表示 (sessionStorage once ガード + ユーザ ID 分離、forcePW/MFA 後)。CTA はヘルプ導線ハブ (🦉チャット=FAB を開く / 使い方ガイド / よくある質問 / Discord / 案内を閉じる)。
+- **再表示** (`WelcomeOwlReplayButton`): `/help` に常設し手動でモーダルを開ける (表示と検知を疎結合 = 認証状態を触らず再現可能)。
+- FAB の出典リンク (AnswerCard) は `#faq-{id}` 同一ページアンカー (未定義) を廃止し `/help`・`/guide` 遷移に修正。
+
 ## 7. 関連
 
 - ADR: [ADR-0028 (Current, RAG 版)](../adr/0028-help-chat-rag-migration.md) — full-context → RAG への移行設計

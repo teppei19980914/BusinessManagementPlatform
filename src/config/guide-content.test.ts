@@ -12,9 +12,10 @@ import {
 } from './guide-content';
 import type { ViewerRoles } from './faq-content';
 
-const VIEWER_GENERAL: ViewerRoles = { isTenantAdmin: false, hasAnyProjectPmRole: false };
-const VIEWER_PM: ViewerRoles = { isTenantAdmin: false, hasAnyProjectPmRole: true };
-const VIEWER_ADMIN: ViewerRoles = { isTenantAdmin: true, hasAnyProjectPmRole: true };
+// VIEWER_GENERAL = 未所属 / viewer のみ (project_member も project_pm も見られない)
+const VIEWER_GENERAL: ViewerRoles = { isTenantAdmin: false, hasAnyProjectPmRole: false, hasAnyProjectMembership: false };
+const VIEWER_PM: ViewerRoles = { isTenantAdmin: false, hasAnyProjectPmRole: true, hasAnyProjectMembership: true };
+const VIEWER_ADMIN: ViewerRoles = { isTenantAdmin: true, hasAnyProjectPmRole: true, hasAnyProjectMembership: true };
 
 describe('GUIDE_STEPS 基本 invariant', () => {
   it('全 step の id が一意である', () => {

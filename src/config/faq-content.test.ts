@@ -14,20 +14,31 @@ import {
   getFaqEntryById,
   buildFaqPromptSection,
   buildRoleGuardancePromptSection,
+  canViewerSee,
   type ViewerRoles,
 } from './faq-content';
 
+// VIEWER_GENERAL = 未所属 / viewer のみの一般ユーザ (project_member も見られない)
 const VIEWER_GENERAL: ViewerRoles = {
   isTenantAdmin: false,
   hasAnyProjectPmRole: false,
+  hasAnyProjectMembership: false,
+};
+// VIEWER_MEMBER = どこかのプロジェクトで member 以上 (project_member は見られるが PM 限定は不可)
+const VIEWER_MEMBER: ViewerRoles = {
+  isTenantAdmin: false,
+  hasAnyProjectPmRole: false,
+  hasAnyProjectMembership: true,
 };
 const VIEWER_PM: ViewerRoles = {
   isTenantAdmin: false,
   hasAnyProjectPmRole: true,
+  hasAnyProjectMembership: true,
 };
 const VIEWER_ADMIN: ViewerRoles = {
   isTenantAdmin: true,
   hasAnyProjectPmRole: true,
+  hasAnyProjectMembership: true,
 };
 
 describe('FAQ_ENTRIES 基本 invariant', () => {
@@ -41,6 +52,36 @@ describe('FAQ_ENTRIES 基本 invariant', () => {
       expect(e.q.length).toBeGreaterThan(0);
       expect(e.a.length).toBeGreaterThan(0);
     }
+  });
+});
+
+describe('canViewerSee 開示4段の階層内包 (★severity-1★ 最小権限)', () => {
+  it('all は全員に開示', () => {
+    expect(canViewerSee('all', VIEWER_GENERAL)).toBe(true);
+    expect(canViewerSee('all', VIEWER_MEMBER)).toBe(true);
+    expect(canViewerSee('all', VIEWER_PM)).toBe(true);
+    expect(canViewerSee('all', VIEWER_ADMIN)).toBe(true);
+  });
+
+  it('project_member は member 以上 / PM / admin のみ (viewer・未所属は不可)', () => {
+    expect(canViewerSee('project_member', VIEWER_GENERAL)).toBe(false);
+    expect(canViewerSee('project_member', VIEWER_MEMBER)).toBe(true);
+    expect(canViewerSee('project_member', VIEWER_PM)).toBe(true);
+    expect(canViewerSee('project_member', VIEWER_ADMIN)).toBe(true);
+  });
+
+  it('project_pm は PM / admin のみ (member は不可 = 内包の上限)', () => {
+    expect(canViewerSee('project_pm', VIEWER_GENERAL)).toBe(false);
+    expect(canViewerSee('project_pm', VIEWER_MEMBER)).toBe(false);
+    expect(canViewerSee('project_pm', VIEWER_PM)).toBe(true);
+    expect(canViewerSee('project_pm', VIEWER_ADMIN)).toBe(true);
+  });
+
+  it('tenant_admin は admin のみ (PM・member は不可)', () => {
+    expect(canViewerSee('tenant_admin', VIEWER_GENERAL)).toBe(false);
+    expect(canViewerSee('tenant_admin', VIEWER_MEMBER)).toBe(false);
+    expect(canViewerSee('tenant_admin', VIEWER_PM)).toBe(false);
+    expect(canViewerSee('tenant_admin', VIEWER_ADMIN)).toBe(true);
   });
 });
 
@@ -69,13 +110,25 @@ describe('getFaqEntriesForRole 権限フィルタ (★severity-1★)', () => {
     }
   });
 
-  it('PM/PL ロール持ちは all + project_pm を受け取る (tenant_admin 限定は除外)', () => {
+  it('PM/PL ロール持ちは all + project_member + project_pm を受け取る (tenant_admin 限定は除外)', () => {
     const result = getFaqEntriesForRole(VIEWER_PM);
     for (const e of result) {
-      expect(['all', 'project_pm']).toContain(e.visibleTo);
+      // PM/PL は project_member (作業者向け) も内包して見られる
+      expect(['all', 'project_member', 'project_pm']).toContain(e.visibleTo);
     }
-    // billing / admin / import は依然として除外
+    // billing / admin / import (= tenant_admin 限定) は依然として除外
     expect(result.filter((e) => e.category === 'billing').length).toBe(0);
+  });
+
+  it('member (どこかのPで member 以上) は all + project_member を受け取る (project_pm / tenant_admin は除外)', () => {
+    const result = getFaqEntriesForRole(VIEWER_MEMBER);
+    for (const e of result) {
+      expect(['all', 'project_member']).toContain(e.visibleTo);
+    }
+    // PM 限定 (参考タブ等) は含まれない
+    expect(result.find((e) => e.id === 'reference-tab-howto')).toBeUndefined();
+    // 作業者向け (課題作成等) は含まれる
+    expect(result.find((e) => e.id === 'create-risk-issue-howto')).toBeDefined();
   });
 
   it('テナント管理者 + PM は全 FAQ が見える', () => {
@@ -218,6 +271,7 @@ describe('PR9 業務操作の詳細手順 FAQ invariant', () => {
     const general = getFaqEntriesForRole({
       isTenantAdmin: false,
       hasAnyProjectPmRole: false,
+      hasAnyProjectMembership: false,
     });
     // tenant_admin 限定の CSV / インポート FAQ が一切含まれていないこと
     const csvAdminFaqs = general.filter(
@@ -236,6 +290,7 @@ describe('PR9 buildRoleGuardancePromptSection fail-open 防御', () => {
     const guidance = buildRoleGuardancePromptSection({
       isTenantAdmin: true,
       hasAnyProjectPmRole: true,
+      hasAnyProjectMembership: true,
     });
     expect(guidance).toContain('許可された FAQ');
     // 旧 fail-open フレーズが残っていないこと
@@ -246,8 +301,11 @@ describe('PR9 buildRoleGuardancePromptSection fail-open 防御', () => {
     const guidance = buildRoleGuardancePromptSection({
       isTenantAdmin: false,
       hasAnyProjectPmRole: false,
+      hasAnyProjectMembership: false,
     });
-    expect(guidance).toContain('回答本文に該当する情報を一切含めず');
-    expect(guidance).toContain('具体的な金額・期間・上限値・操作手順なども一切出さず');
+    // ★G2-a2★ 「短い謝罪 + 該当ロール誘導の 1 文のみ」。金額/期間/上限/操作手順は出さず、
+    //   画面名・問い合わせ先・確認方法などの追加案内も付けない。
+    expect(guidance).toContain('具体的な金額・期間・上限値・操作手順は一切含めず');
+    expect(guidance).toContain('画面名・問い合わせ先・確認方法などの追加案内も付けず');
   });
 });

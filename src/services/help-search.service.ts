@@ -135,23 +135,44 @@ export function computeContentHash(text: string): string {
 }
 
 /**
- * `visibleTo` を denormalize した 2 つの boolean フラグに変換する。
+ * `visibleTo` を denormalize した 3 つの boolean フラグに変換する。
  *
- * - `all`: 両 false (= 誰でも見れる)
- * - `tenant_admin`: requiresAdmin=true
+ * - `all`: 全 false (= 誰でも見れる)
+ * - `project_member`: requiresProjectMember=true
  * - `project_pm`: requiresProjectPm=true
+ * - `tenant_admin`: requiresAdmin=true
  *
- * SQL 側で `WHERE requires_admin = false OR ${viewer.isTenantAdmin}` の形で
- * フィルタするための前処理。
+ * SQL 側で `WHERE requires_xxx = false OR ${canXxx}` の形でフィルタするための前処理
+ * (各エントリは高々 1 フラグのみ true)。
  */
 export function mapVisibleToFlags(visibleTo: FaqVisibleTo): {
   requiresAdmin: boolean;
   requiresProjectPm: boolean;
+  requiresProjectMember: boolean;
 } {
   return {
     requiresAdmin: visibleTo === 'tenant_admin',
     requiresProjectPm: visibleTo === 'project_pm',
+    requiresProjectMember: visibleTo === 'project_member',
   };
+}
+
+/**
+ * viewer の権限を「各開示段を見られるか」の階層内包 boolean に変換する。
+ * SQL の権限フィルタ (Layer 1) に渡す。canViewerSee (TS Layer 2) と同じ内包関係:
+ *   - canAdmin  = isTenantAdmin
+ *   - canPm     = hasAnyProjectPmRole OR isTenantAdmin
+ *   - canMember = hasAnyProjectMembership OR hasAnyProjectPmRole OR isTenantAdmin
+ */
+function viewerTierFlags(viewer: ViewerRoles): {
+  canAdmin: boolean;
+  canPm: boolean;
+  canMember: boolean;
+} {
+  const canAdmin = viewer.isTenantAdmin;
+  const canPm = viewer.hasAnyProjectPmRole || canAdmin;
+  const canMember = viewer.hasAnyProjectMembership || canPm;
+  return { canAdmin, canPm, canMember };
 }
 
 // ================================================================
@@ -175,12 +196,14 @@ async function pgvectorSearchFaq(
   viewer: ViewerRoles,
   limit: number,
 ): Promise<RawHit[]> {
+  const { canAdmin, canPm, canMember } = viewerTierFlags(viewer);
   return prisma.$queryRaw<RawHit[]>`
     SELECT "entry_id" AS entry_id,
            1 - (("content_embedding" <=> ${queryEmbeddingText}::vector) / 2) AS score
     FROM "faq_embeddings"
-    WHERE ("requires_admin" = false OR ${viewer.isTenantAdmin}::boolean)
-      AND ("requires_project_pm" = false OR ${viewer.hasAnyProjectPmRole}::boolean)
+    WHERE ("requires_admin" = false OR ${canAdmin}::boolean)
+      AND ("requires_project_pm" = false OR ${canPm}::boolean)
+      AND ("requires_project_member" = false OR ${canMember}::boolean)
     ORDER BY "content_embedding" <=> ${queryEmbeddingText}::vector
     LIMIT ${limit}
   `;
@@ -194,12 +217,14 @@ async function pgvectorSearchGuide(
   viewer: ViewerRoles,
   limit: number,
 ): Promise<RawHit[]> {
+  const { canAdmin, canPm, canMember } = viewerTierFlags(viewer);
   return prisma.$queryRaw<RawHit[]>`
     SELECT "entry_id" AS entry_id,
            1 - (("content_embedding" <=> ${queryEmbeddingText}::vector) / 2) AS score
     FROM "guide_embeddings"
-    WHERE ("requires_admin" = false OR ${viewer.isTenantAdmin}::boolean)
-      AND ("requires_project_pm" = false OR ${viewer.hasAnyProjectPmRole}::boolean)
+    WHERE ("requires_admin" = false OR ${canAdmin}::boolean)
+      AND ("requires_project_pm" = false OR ${canPm}::boolean)
+      AND ("requires_project_member" = false OR ${canMember}::boolean)
     ORDER BY "content_embedding" <=> ${queryEmbeddingText}::vector
     LIMIT ${limit}
   `;

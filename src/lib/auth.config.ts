@@ -201,6 +201,11 @@ export const authConfig: NextAuthConfig = {
     jwt({ token, user, trigger, session }) {
       if (user) {
         token.id = user.id;
+        // G2-e-2 (2026-05-31): 初回ログイン (たすきば未利用) フラグ。authorize が算出し、
+        //   session.user.isFirstTimeUser に伝播してオンボーディングモーダル表示判定に使う。
+        //   初回セッションの間だけ true (次回ログイン時は新しい authorize 結果で false になる)。
+        token.isFirstTimeUser =
+          (user as unknown as { isFirstTimeUser?: boolean }).isFirstTimeUser ?? false;
         // PR #2-b (T-03): tenantId を JWT に格納し、session callback で session.user に
         //   伝播する。テナント境界チェック (requireSameTenant) の起点。
         token.tenantId = (user as unknown as { tenantId: string }).tenantId;
@@ -262,6 +267,9 @@ export const authConfig: NextAuthConfig = {
     session({ session, token }) {
       if (session.user) {
         session.user.id = token.id as string;
+        // G2-e-2: 初回ログイン (たすきば未利用) フラグを session.user に公開。
+        session.user.isFirstTimeUser =
+          (token.isFirstTimeUser as boolean | undefined) ?? false;
         // PR #2-b (T-03): JWT に格納された tenantId を session.user に公開。
         //   これ以降のサーバ側コードは session.user.tenantId を信頼源として参照する。
         session.user.tenantId = token.tenantId as string;

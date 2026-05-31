@@ -64,6 +64,13 @@ declare module 'next-auth' {
        * admin が increment した瞬間に既存 JWT は API route 入口で 401 になる。
        */
       tokenVersion: number;
+      /**
+       * G2-e-1/2 (2026-05-31): 初回ログイン (たすきば未利用) フラグ。
+       * authorize が email 単位の過去 login_success 0 件で true を返す。初回セッションの間だけ
+       * true (次回ログインで false)。オンボーディングモーダルの自動表示判定に使う
+       * (admin/general のみ対象、super_admin は UI 側で除外)。
+       */
+      isFirstTimeUser: boolean;
     };
   }
 }
@@ -78,5 +85,7 @@ declare module 'next-auth/jwt' {
     tenantSuspendedAt?: string | null;
     /** 2026-05-13 (security/jwt-invalidation, L-1): JWT 失効カウンタ */
     tokenVersion?: number;
+    /** G2-e-1/2 (2026-05-31): 初回ログイン (たすきば未利用) フラグ */
+    isFirstTimeUser?: boolean;
   }
 }

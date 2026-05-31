@@ -22,21 +22,88 @@ import {
   GUIDE_ROUTE,
   getFeatureRequestUrl,
 } from '@/config';
-import { HelpChatInput } from '@/components/help-chat/help-chat-input';
+import { createContext, useContext, useState, Children, isValidElement } from 'react';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { FilterBar } from '@/components/common/filter-bar';
+import { WelcomeOwlReplayButton } from '@/components/onboarding/welcome-owl-modal';
+import {
+  FAQ_ENTRIES,
+  canViewerSee,
+  type ViewerRoles,
+} from '@/config/faq-content';
 
 type Props = {
   isTenantAdmin: boolean;
+  /** G1-c: 開示 4 段フィルタ用の viewer ロール (FAQ_ENTRIES の data-driven 描画に使用)。 */
+  viewer: ViewerRoles;
 };
 
-export function HelpClient({ isTenantAdmin }: Props) {
+// G1-c (2026-05-31): G1-a で FAQ_ENTRIES に追加した「ロール別・最初の一歩 / しくみ概念」エントリを
+//   /help でも owl と同じデータから描画する (二重管理を避けつつ全 FAQ を /help に載せる)。
+//   開示段は各エントリの visibleTo に従い canViewerSee で出し分ける (権限に応じて表示)。
+const FIRST_STEP_FAQ_IDS: readonly string[] = [
+  'getting-started-what-to-do',
+  'semantic-search-vs-fulltext',
+  'db-vs-file-storage-concept',
+  'member-first-step',
+  'create-risk-issue-howto',
+  'create-knowledge-howto',
+  'update-task-progress-howto',
+  'pm-first-step',
+  'create-project-howto',
+  'reference-tab-howto',
+  'stakeholder-howto',
+  'db-capacity-vs-file-storage',
+  'admin-first-step',
+];
+
+// G2-g: FAQ キーワード検索の現在値を子の FaqCategory / FaqItem に配るための context。
+//   小文字 trim 済の検索語を流す。空文字 = 絞り込みなし (全件表示)。
+const FaqQueryContext = createContext('');
+
+/**
+ * FAQ キーワード検索ボックス。「全○○」一覧と同じ FilterBar + Label + Input を流用し、
+ * 高さ・幅・色・ラベル様式を統一する ([[feedback_sibling_ui_pattern_horizontal_rollout]])。
+ */
+function FaqSearchBox({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <FilterBar>
+      <Label htmlFor="faq-search-keyword" className="text-xs">
+        キーワード検索 (質問・回答)
+      </Label>
+      <Input
+        id="faq-search-keyword"
+        type="search"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="例: 課金 / ナレッジ / ログイン"
+        data-testid="faq-search-keyword"
+        autoComplete="off"
+      />
+    </FilterBar>
+  );
+}
+
+export function HelpClient({ isTenantAdmin, viewer }: Props) {
   // 2026-05-11: Discord / LP は AccountMenu (画面右上) に集約したため当画面の末尾 CTA から削除。
   //   機能要望リンクのみ /help 末尾に残す (= 機能改善依頼は FAQ 文脈で発生しやすいため)。
-  // ADR-0027 (2026-05-29 PR6): ページ上部にたすきフクロウ AI チャット入力を追加。
-  //   下部の FAQ アコーディオンは継続表示し、「チャットで聞く / 一覧から探す」の 2 経路を並列提供。
+  // G2-f (2026-05-31): 埋め込みチャット (HelpChatInput) を撤去。チャットは画面右下の FAB に一本化
+  //   (同一機能の UI は一箇所に統一する美学 [[feedback_worldview_scope_onboarding_chat_only]])。
+  //   代わりに G2-g で「全○○」と同じキーワード検索ボックスを設け、FAQ を全文で絞り込む。
   const tNav = useTranslations('nav');
   const featureRequest = getFeatureRequestUrl();
+  // G2-g: FAQ 全文 (質問 + 回答) のキーワード絞り込み。下の各 FaqItem / FaqCategory に伝播する。
+  const [faqQuery, setFaqQuery] = useState('');
 
   return (
+    <FaqQueryContext.Provider value={faqQuery.trim().toLowerCase()}>
     <div className="mx-auto max-w-4xl space-y-8 pb-12">
       {/* ヘッダ */}
       <header className="space-y-2">
@@ -46,12 +113,21 @@ export function HelpClient({ isTenantAdmin }: Props) {
           <Link href={GUIDE_ROUTE} className="text-primary underline">
             使い方ガイド
           </Link>{' '}
-          を先に読むのがおすすめです。下のフクロウチャットでも質問できますし、一覧から個別の「困った」も探せます。
+          を先に読むのがおすすめです。下の検索ボックスでキーワードから探せます。使い方の質問は、画面右下のたすきフクロウ (🦉) にいつでもどうぞ。
         </p>
       </header>
 
-      {/* たすきフクロウ AI ヘルプチャット (ADR-0027) */}
-      <HelpChatInput variant="page" />
+      {/* G2-e-4: 初回オンボーディング案内を手動で再表示 (テナント管理者・一般のみ表示。運営者には非表示) */}
+      <div>
+        <WelcomeOwlReplayButton />
+      </div>
+
+      {/* G2-g: FAQ キーワード全文検索 (「全○○」一覧と同じ FilterBar + Label + Input を流用) */}
+      <FaqSearchBox value={faqQuery} onChange={setFaqQuery} />
+
+      {/* G1-c: G1-a で追加した「ロール別・最初の一歩 / しくみ概念」を owl と同じ FAQ_ENTRIES から
+          描画 (二重管理回避)。開示段は canViewerSee で出し分け、検索の対象にもなる。 */}
+      <FirstStepFaqSection viewer={viewer} />
 
       {/* サービスについて (マスコット紹介) */}
       <FaqCategory title="サービスについて">
@@ -1094,6 +1170,53 @@ export function HelpClient({ isTenantAdmin }: Props) {
         )}
       </section>
     </div>
+    </FaqQueryContext.Provider>
+  );
+}
+
+/**
+ * G2-g: React ノードからテキストを再帰抽出する (FAQ 回答の全文検索用)。
+ *   文字列 / 数値はそのまま、要素は props.children を再帰。表セルやリンク文言も拾える。
+ */
+function extractText(node: React.ReactNode): string {
+  if (node == null || typeof node === 'boolean') return '';
+  if (typeof node === 'string' || typeof node === 'number') return String(node);
+  if (Array.isArray(node)) return node.map(extractText).join(' ');
+  if (isValidElement(node)) {
+    const props = node.props as { children?: React.ReactNode };
+    return extractText(props.children);
+  }
+  return '';
+}
+
+/** FaqItem 要素 (props.q を持つ) から「質問 + 回答」の検索対象テキストを得る。 */
+function faqItemHaystack(child: React.ReactNode): string | null {
+  if (!isValidElement(child)) return null;
+  const props = child.props as { q?: string; a?: React.ReactNode };
+  if (typeof props.q !== 'string') return null;
+  return `${props.q} ${extractText(props.a)}`.toLowerCase();
+}
+
+/**
+ * G1-c: G1-a の新エントリ (ロール別・最初の一歩 / しくみ概念) を FAQ_ENTRIES から描画する。
+ * owl (RAG) と完全に同じデータを単一ソースとして使い、開示段は canViewerSee で出し分ける。
+ * 既存のハードコード FaqCategory/FaqItem と同じ見た目・検索対象になる。
+ */
+function FirstStepFaqSection({ viewer }: { viewer: ViewerRoles }) {
+  const entries = FAQ_ENTRIES.filter(
+    (e) => FIRST_STEP_FAQ_IDS.includes(e.id) && canViewerSee(e.visibleTo, viewer),
+  );
+  if (entries.length === 0) return null;
+  return (
+    <FaqCategory title="🚀 はじめての方へ・役割別ガイド">
+      {entries.map((e) => (
+        <FaqItem
+          key={e.id}
+          q={e.q}
+          a={<p className="whitespace-pre-line leading-relaxed">{e.a}</p>}
+        />
+      ))}
+    </FaqCategory>
   );
 }
 
@@ -1106,6 +1229,24 @@ function FaqCategory({
   tone?: 'admin';
   children: React.ReactNode;
 }) {
+  const query = useContext(FaqQueryContext);
+  const childArray = Children.toArray(children);
+  // 検索中は「質問 + 回答」が一致する FaqItem のみ残す。FaqItem 以外 (説明等) は常に残す。
+  const visible =
+    query === ''
+      ? childArray
+      : childArray.filter((c) => {
+          const hay = faqItemHaystack(c);
+          return hay === null ? true : hay.includes(query);
+        });
+  // 検索中に一致する FaqItem が 1 件も無いカテゴリは丸ごと非表示にする。
+  if (query !== '' && visible.length > 0) {
+    const hasMatchingItem = childArray.some((c) => {
+      const hay = faqItemHaystack(c);
+      return hay !== null && hay.includes(query);
+    });
+    if (!hasMatchingItem) return null;
+  }
   return (
     <section
       className={
@@ -1115,14 +1256,21 @@ function FaqCategory({
       }
     >
       <h2 className="text-lg font-semibold">{title}</h2>
-      <div className="mt-3 space-y-2">{children}</div>
+      <div className="mt-3 space-y-2">{visible}</div>
     </section>
   );
 }
 
 function FaqItem({ q, a }: { q: string; a: React.ReactNode }) {
+  const query = useContext(FaqQueryContext);
+  // 検索中で一致する項目は自動的に開いて回答を見せる (探しやすさ向上)。
+  const matched =
+    query !== '' && `${q} ${extractText(a)}`.toLowerCase().includes(query);
   return (
-    <details className="group rounded border bg-background p-3 [&[open]]:bg-accent/30">
+    <details
+      open={matched || undefined}
+      className="group rounded border bg-background p-3 [&[open]]:bg-accent/30"
+    >
       <summary className="cursor-pointer list-none text-sm font-medium [&::-webkit-details-marker]:hidden">
         <span className="mr-2 text-muted-foreground group-open:hidden" aria-hidden>
           ▶

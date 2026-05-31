@@ -47,14 +47,25 @@ export type FaqCategory =
 /**
  * 開示権限のスコープ。**フクロウが情報流出を防ぐ鍵として機能する核**。
  *
- * - `all`: 全員に開示可。使い方・データ取扱い・コンセプト系
- * - `tenant_admin`: テナント管理者 (admin / super_admin 含む) のみ開示可。
- *   料金体系・課金詳細・テナント運営 (席数管理・プラン変更等)
- * - `project_pm`: 少なくとも 1 プロジェクトで PM/PL ロールを持つユーザのみ開示可。
- *   提案エンジン (参考タブ) の動作詳細・プロジェクト編集権限の挙動など。
- *   ※ Phase 2 (PR6 以降): ProjectMembership から動的解決。PR5 では型のみ定義、未使用。
+ * ★severity-1★ 厳格な最小権限 (least privilege)。実権限は check-permission.ts の
+ * ROLE_PERMISSIONS に基づいて付与すること (画面で実行できない操作の手順を、その操作を
+ * 実行できないロールに開示しない)。フクロウ単体では権限を理解できないため、ここで明示した
+ * タグが唯一の開示根拠となる。
+ *
+ * 開示段 (階層内包: all ⊆ project_member ⊆ project_pm。tenant_admin は systemRole 軸で別建て):
+ * - `all`: 全員に開示可。サービス概要・ログイン/アカウント・MFA・データ取扱い・コンセプト系
+ * - `project_member`: 少なくとも 1 プロジェクトで member 以上 (member / pm_tl) のユーザのみ。
+ *   課題・リスク・ナレッジの作成、タスク進捗更新など「作業者として実行する操作」の手順。
+ *   viewer のみ / 未所属ユーザには開示しない (check-permission.ts: risk:create 等は member+ のみ)。
+ * - `project_pm`: 少なくとも 1 プロジェクトで PM/PL (pm_tl) ロールを持つユーザのみ。
+ *   提案エンジン (参考タブ)・ステークホルダータブ・プロジェクト作成/編集・プロジェクトへの
+ *   メンバー割当など (check-permission.ts: stakeholder:* / project:create 等は pm_tl+ のみ)。
+ * - `tenant_admin`: テナント管理者 (admin / super_admin) のみ。
+ *   料金体系・課金詳細・新規ユーザ招待・CSV 外部移行ウィザード・テナント運営。
+ *
+ * 複数プロジェクトで異なるロールを持つユーザは「最大ロール」を採用 (guide-role.service.ts と整合)。
  */
-export type FaqVisibleTo = 'all' | 'tenant_admin' | 'project_pm';
+export type FaqVisibleTo = 'all' | 'project_member' | 'project_pm' | 'tenant_admin';
 
 export type FaqEntry = {
   /** 出典 ID として AI 出力で sourceFaqIds[] に含まれる。kebab-case で全 FAQ ユニーク */
@@ -74,10 +85,16 @@ export type ViewerRoles = {
   /** tenant_admin / admin / super_admin のいずれか */
   isTenantAdmin: boolean;
   /**
-   * 少なくとも 1 プロジェクトで PM/PL ロールを持つか (= project_pm 開示判定)。
-   * Phase 2 (PR6) で ProjectMembership から動的解決予定。PR5 では常に false 想定。
+   * 少なくとも 1 プロジェクトで PM/PL (pm_tl) ロールを持つか (= project_pm 開示判定)。
+   * ProjectMember から動的解決 (help/chat route が算出)。
    */
   hasAnyProjectPmRole: boolean;
+  /**
+   * 少なくとも 1 プロジェクトで member 以上 (member / pm_tl) のメンバーシップを持つか
+   * (= project_member 開示判定)。viewer のみ / 未所属は false。
+   * ProjectMember から動的解決 (help/chat route が算出)。
+   */
+  hasAnyProjectMembership: boolean;
 };
 
 /**
@@ -492,6 +509,115 @@ export const FAQ_ENTRIES: readonly FaqEntry[] = [
     a: '手順 (テナント管理者のみ):\n1. 画面右上のアカウントメニュー → 「ユーザ管理」\n2. 「メンバーを招待」ボタン\n3. 招待先のメールアドレスと付与するロール (テナント管理者 / 一般メンバー) を入力\n4. 「招待を送信」ボタン\n相手にパスワード設定リンク付きの招待メールが noreply@tasukiba.com から届きます (有効期限 24 時間)。届かない場合は迷惑メールフォルダを確認するか、再招待してください。',
     visibleTo: 'tenant_admin',
   },
+
+  // ===========================================================================
+  // G1-a (2026-05-31): docs/public 全面リフレッシュを根拠に「初めて使う人の疑問」を拡充。
+  //   開示段は roles-permissions-guide.md / check-permission.ts の実権限に厳格準拠。
+  //   - 最初の一歩 (ロール別)・しくみ概念・作業者向け操作・PM 向け機能・容量課金。
+  //   出典: about.md / account-setup-guide.md / project-creation-guide.md /
+  //         concepts-guide.md / roles-permissions-guide.md / db-capacity-billing-guide.md /
+  //         file-storage-billing-guide.md / risk-issue-guide.md / knowledge-guide.md /
+  //         my-tasks-guide.md / suggestion-guide.md / stakeholder-guide.md
+  // ===========================================================================
+
+  // ----- all: 最初の一歩 (ロール非依存の道案内) + しくみ概念 -----
+  {
+    id: 'getting-started-what-to-do',
+    category: 'business',
+    q: 'ログインしました。まず何をすればいいですか？',
+    a: 'あなたの役割によって最初の一歩が変わります。\n- プロジェクトを任されている方: 画面左メニューの「プロジェクト一覧」から担当プロジェクトを開いて内容を確認しましょう。\n- 作業を担当する方: 画面右上メニューの「マイタスク」で自分の担当作業を確認しましょう。\n- まだ何も割り当てられていない方: 管理者からプロジェクトに招待されるのを待つか、「使い方ガイド」で全体像をつかんでください。\n迷ったときは、画面右下のたすきフクロウ (🦉アイコン) に話しかけるか、「使い方ガイド」「よくある質問」をご覧ください。',
+    visibleTo: 'all',
+  },
+  {
+    id: 'db-vs-file-storage-concept',
+    category: 'data',
+    q: '「DB容量」と「ファイルストレージ」は何が違うのですか？',
+    a: '保存先と中身が違います。\n- DB容量: 入力した文字データ (プロジェクトの目的・ナレッジ本文・コメント・タグ・URL の文字列など) を集計します。\n- ファイルストレージ: 添付したファイル本体 (PDF・Excel・画像など) を集計します。\nURL リンクは「文字」なので DB容量、ファイルをアップロードした場合だけファイルストレージに数えられます。それぞれの無料枠や料金については、テナント管理者の方にご確認ください。',
+    visibleTo: 'all',
+  },
+  {
+    id: 'semantic-search-vs-fulltext',
+    category: 'business',
+    q: 'たすきばの検索はキーワード検索と何が違うのですか？',
+    a: 'たすきばの「意味検索」は、入力した文字を含むものを返すのではなく、「意味の近さ」で並べ替えて返します。そのため「請求書」と「インボイス」のように言い方が違っても、近い内容として拾えます。画面右下のたすきフクロウに、50〜200 字くらいの文章で具体的に書くとよりよく見つかります。よくある質問ページの検索ボックスは、こちらとは別に FAQ の文言を直接さがすためのものです。',
+    visibleTo: 'all',
+  },
+
+  // ----- project_member (member 以上): 作業者として行う操作の手順 -----
+  {
+    id: 'member-first-step',
+    category: 'business',
+    q: 'プロジェクトのメンバーに入りました。まず何をすればいいですか？',
+    a: 'まず画面右上メニューの「マイタスク」で自分の担当作業を確認しましょう。作業を進めながら、これから起きそうな心配ごとは「リスク」、すでに起きた問題は「課題」に登録します。共有したい気づきは「ナレッジ」に書き残してください。コメントで @ を付けると、関係者に確実に通知できます。',
+    visibleTo: 'project_member',
+  },
+  {
+    id: 'create-risk-issue-howto',
+    category: 'business',
+    q: 'リスクや課題はどうやって登録しますか？',
+    a: 'プロジェクトに参加しているメンバーなら登録できます。プロジェクト詳細画面の「リスク」「課題」タブを開き、「新規作成」から入力します。リスクは「まだ起きていないが、起こるかもしれない問題」、課題は「すでに起きていて対応が必要な問題」です。公開範囲を「公開」にすると、他のメンバーや今後のプロジェクトの参考に活用されます (下書きのままだと自分だけが見られます)。',
+    visibleTo: 'project_member',
+  },
+  {
+    id: 'create-knowledge-howto',
+    category: 'business',
+    q: 'ナレッジはどうやって書けばいいですか？',
+    a: '画面左メニューの「ナレッジ」→「新規作成」から、タイトルと本文を入力して保存します。最初は公開範囲「下書き (自分のみ)」で書きためても構いません。整理できたら公開範囲を「公開」に変えると、他のメンバーや今後のプロジェクトの提案に活用されます。「他のチームでも役立ちそうな工夫」を残すと、組織の財産になっていきます。',
+    visibleTo: 'project_member',
+  },
+  {
+    id: 'update-task-progress-howto',
+    category: 'business',
+    q: '自分の担当タスクの進捗はどこで更新しますか？',
+    a: '画面右上メニューの「マイタスク」を開くと、自分が担当する作業がプロジェクトごとに表示されます。各タスクの状態 (未着手 / 着手 / 完了) や実績を更新すると進捗に反映されます。更新できるのは自分が担当しているタスクのみです (他の人が作った計画そのものの編集は PM/PL が行います)。',
+    visibleTo: 'project_member',
+  },
+
+  // ----- project_pm (PM/PL): 判断業務・PM 限定機能 -----
+  {
+    id: 'pm-first-step',
+    category: 'business',
+    q: 'プロジェクトを任されました (PM/PL)。最初に何をすればいいですか？',
+    a: 'まず担当プロジェクトを開き、作成直後の「参考」タブで過去の似た事例 (リスク・課題・ナレッジ・振り返り) を確認します。次に「WBS」タブで作業を WP (作業のまとまり) → Activity (実作業) に分解し、担当者・予定工数・期間を設定します。進行中はリスク・課題を記録し、完了後は「振り返り」で Keep / Problem / Try を整理してください。',
+    visibleTo: 'project_pm',
+  },
+  {
+    id: 'create-project-howto',
+    category: 'business',
+    q: '新しいプロジェクトはどうやって作りますか？',
+    a: 'PM/PL またはテナント管理者が作成できます。「プロジェクト一覧」→「新規作成」から、プロジェクト名・顧客・開始/終了予定日・担当などを入力します。「目的・背景・スコープ」を具体的に書くほど、AI が内容を読み取って「参考」タブに並べる過去事例の精度が上がります。',
+    visibleTo: 'project_pm',
+  },
+  {
+    id: 'reference-tab-howto',
+    category: 'business',
+    q: '「参考」タブには何が表示されますか？どう使いますか？',
+    a: 'プロジェクト詳細の「参考」タブには、今のプロジェクトと内容が似た過去のリスク・課題・ナレッジ・振り返りが、関連の強い順に自動で並びます。プロジェクト作成直後に必ず目を通すと、過去の教訓の見落としを防げます。自社内のデータと、運営が用意した参考事例の両方が対象です (参考事例の参照はテナント設定で OFF にもできます)。',
+    visibleTo: 'project_pm',
+  },
+  {
+    id: 'stakeholder-howto',
+    category: 'business',
+    q: 'ステークホルダータブとは何ですか？',
+    a: '案件の関係者 (発注元の担当者・キーパーソンなど) の情報を整理する場所です。個人情報や人物評を含むため、メンバー・閲覧者には表示されません。プロジェクト詳細の「ステークホルダー」タブから登録・編集できます。',
+    visibleTo: 'project_pm',
+  },
+
+  // ----- tenant_admin: 容量課金の違い + 管理者の最初の一歩 -----
+  {
+    id: 'db-capacity-vs-file-storage',
+    category: 'billing',
+    q: '「DB容量(従量課金)」と「ファイルストレージ(添付ファイル従量課金)」の違いと料金は？',
+    a: 'テナント設定の「使用量」では、2 種類の容量を別々に集計・課金しています。\n- DB容量(従量課金): 入力したテキストデータ (目的・ナレッジ本文・コメント・タグ・URL の文字列など) を集計します。無料枠は 50MB で、超えた分は 1GB ごとに ¥50 です。\n- ファイルストレージ(添付ファイル従量課金): 添付したファイル本体 (PDF・Excel・画像など) を集計します。無料枠は 100MB で、超えた分は 1GB ごとに ¥10 です (1 ファイルの上限は 50MB)。\nどちらも全プラン共通で 50GB に達すると新規の保存・編集が止まります。最新の使用量はテナント設定の「使用量」タブで確認できます (ページを開いた瞬間に再集計されます)。',
+    visibleTo: 'tenant_admin',
+  },
+  {
+    id: 'admin-first-step',
+    category: 'admin',
+    q: 'テナント管理者です。組織を作った直後にやるべきことは？',
+    a: 'おすすめの順番です:\n1. 自分の MFA (二段階認証) を有効化 (設定 →「セキュリティ」)\n2. メンバーを招待 (アカウントメニュー →「ユーザ管理」→「メンバーを招待」)\n3. 社内 wiki や旧ツールに既存のナレッジ・課題があれば、テナント設定 →「外部データ移行ウィザード」で CSV 一括取込\n4. Expert / Pro の場合は「月次予算上限」を設定して想定外の請求を防止\n各手順の詳細は、画面右下のたすきフクロウや「使い方ガイド」でご確認いただけます。',
+    visibleTo: 'tenant_admin',
+  },
 ] as const;
 
 /**
@@ -514,19 +640,43 @@ export const FAQ_CATEGORY_LABELS: Record<FaqCategory, string> = {
  * **必ず API レイヤで本関数を通してから AI に渡すこと**。直接 FAQ_ENTRIES を渡すと
  * 一般ユーザに料金詳細が漏洩する。フクロウの「情報流出を防ぐ鍵」コンセプトの実装核。
  *
- * 開示ロジック:
+ * 開示ロジック (★階層内包★: 上位ロールは下位段を見られる):
  *   - `all`: 全員
+ *   - `project_member`: hasAnyProjectMembership / hasAnyProjectPmRole / isTenantAdmin のいずれか
+ *     (= member 以上のメンバーシップを持つ、または PM/PL、またはテナント管理者)
+ *   - `project_pm`: hasAnyProjectPmRole / isTenantAdmin のいずれか
+ *     (= PM/PL ロールを持つ、またはテナント管理者。admin は全プロジェクトの PM 操作が可能なため内包)
  *   - `tenant_admin`: viewer.isTenantAdmin が true のときのみ
- *   - `project_pm`: viewer.hasAnyProjectPmRole が true のときのみ
- *     (= 少なくとも 1 プロジェクトで PM/PL ロールを持つ場合)
  */
 export function getFaqEntriesForRole(viewer: ViewerRoles): readonly FaqEntry[] {
-  return FAQ_ENTRIES.filter((e) => {
-    if (e.visibleTo === 'all') return true;
-    if (e.visibleTo === 'tenant_admin') return viewer.isTenantAdmin;
-    if (e.visibleTo === 'project_pm') return viewer.hasAnyProjectPmRole;
-    return false; // 未知の visibleTo は fail-closed (デフォルト非開示)
-  });
+  return FAQ_ENTRIES.filter((e) => canViewerSee(e.visibleTo, viewer));
+}
+
+/**
+ * 単一の開示段に対する可視判定 (★階層内包★)。FAQ / Guide で共通利用する。
+ * admin (isTenantAdmin) は全プロジェクト操作が可能なため project_pm / project_member を内包し、
+ * PM/PL は project_member を内包する。
+ */
+export function canViewerSee(
+  visibleTo: FaqVisibleTo,
+  viewer: ViewerRoles,
+): boolean {
+  switch (visibleTo) {
+    case 'all':
+      return true;
+    case 'project_member':
+      return (
+        viewer.hasAnyProjectMembership ||
+        viewer.hasAnyProjectPmRole ||
+        viewer.isTenantAdmin
+      );
+    case 'project_pm':
+      return viewer.hasAnyProjectPmRole || viewer.isTenantAdmin;
+    case 'tenant_admin':
+      return viewer.isTenantAdmin;
+    default:
+      return false; // 未知の visibleTo は fail-closed (デフォルト非開示)
+  }
 }
 
 /**
@@ -565,12 +715,17 @@ export function buildRoleGuardancePromptSection(viewer: ViewerRoles): string {
   const denied: string[] = [];
   if (!viewer.isTenantAdmin) {
     denied.push(
-      '- 料金体系・課金詳細・テナント運営 (席数管理・プラン変更・解約等) はテナント管理者のみが知ることができます。一般ユーザから質問されたら「申し訳ありません、料金や運営の詳細はテナント管理者の方にお尋ねください」とお答えしてください。',
+      '- 料金体系・課金詳細・テナント運営 (席数管理・プラン変更・解約・新規ユーザ招待等) はテナント管理者のみが知ることができます。それ以外の方から質問されたら「申し訳ありません、料金や運営の詳細はテナント管理者の方にお尋ねください」とだけお答えしてください。',
     );
   }
-  if (!viewer.hasAnyProjectPmRole) {
+  if (!viewer.hasAnyProjectPmRole && !viewer.isTenantAdmin) {
     denied.push(
-      '- 提案エンジン (参考タブ) の動作詳細やプロジェクト編集の挙動など、PM/PL 限定機能の質問には「申し訳ありません、その機能の詳細は PM/PL ロールの方にお尋ねください」とお答えしてください。',
+      '- 提案エンジン (参考タブ)・ステークホルダー・プロジェクト作成/編集など、PM/PL 限定機能の質問には「申し訳ありません、その機能の詳細は PM/PL ロールの方にお尋ねください」とだけお答えしてください。',
+    );
+  }
+  if (!canViewerSee('project_member', viewer)) {
+    denied.push(
+      '- 課題・リスク・ナレッジの作成やタスクの進捗更新など、プロジェクトのメンバー (作業者) が行う操作手順は、プロジェクトに参加しているメンバーの方のみにご案内します。未参加・閲覧のみの方から質問されたら「申し訳ありません、その操作はプロジェクトのメンバーの方にお尋ねください」とだけお答えしてください。',
     );
   }
   if (denied.length === 0) {
@@ -582,6 +737,9 @@ export function buildRoleGuardancePromptSection(viewer: ViewerRoles): string {
   return [
     '★重要★ あなたは「情報流出を防ぐ鍵」の役割を持ちます。下記の開示制限を必ず守ってください:',
     ...denied,
-    '上記の制限対象について質問されたら、回答本文に該当する情報を一切含めず (具体的な金額・期間・上限値・操作手順なども一切出さず)、「申し訳ありません、(ロール) の方にお尋ねください」とのみ返答してください。',
+    // ★G2-a2★ 制限対象への返答は「短い謝罪 + 該当ロールへの誘導 1 文のみ」。
+    //   具体的な金額・期間・上限値・操作手順は当然出さず、加えて画面名・問い合わせ先・
+    //   確認方法などの追加案内も一切付けない (冗長な回答を防ぐ)。
+    '上記の制限対象について質問されたら、具体的な金額・期間・上限値・操作手順は一切含めず、かつ画面名・問い合わせ先・確認方法などの追加案内も付けず、「申し訳ありません、(ロール) の方にお尋ねください」のような短い謝罪と誘導の 1 文のみで返答してください。',
   ].join('\n');
 }

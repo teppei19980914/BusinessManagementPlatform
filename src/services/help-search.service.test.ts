@@ -36,8 +36,8 @@ const mockedGenerate = vi.mocked(generateBatchEmbeddings);
 const TENANT_ID = '00000000-0000-0000-0000-000000000001';
 const USER_ID = '00000000-0000-0000-0000-000000000010';
 
-const VIEWER_ALL = { isTenantAdmin: false, hasAnyProjectPmRole: false };
-const VIEWER_ADMIN = { isTenantAdmin: true, hasAnyProjectPmRole: false };
+const VIEWER_ALL = { isTenantAdmin: false, hasAnyProjectPmRole: false, hasAnyProjectMembership: false };
+const VIEWER_ADMIN = { isTenantAdmin: true, hasAnyProjectPmRole: false, hasAnyProjectMembership: false };
 
 function fakeEmbedding(): number[] {
   return Array.from({ length: 1024 }, (_, i) => (i % 2 === 0 ? 0.1 : -0.1));
@@ -81,14 +81,33 @@ describe('computeContentHash', () => {
 });
 
 describe('mapVisibleToFlags', () => {
-  it('all → 両 false', () => {
-    expect(mapVisibleToFlags('all')).toEqual({ requiresAdmin: false, requiresProjectPm: false });
+  it('all → 全 false', () => {
+    expect(mapVisibleToFlags('all')).toEqual({
+      requiresAdmin: false,
+      requiresProjectPm: false,
+      requiresProjectMember: false,
+    });
   });
   it('tenant_admin → requiresAdmin=true', () => {
-    expect(mapVisibleToFlags('tenant_admin')).toEqual({ requiresAdmin: true, requiresProjectPm: false });
+    expect(mapVisibleToFlags('tenant_admin')).toEqual({
+      requiresAdmin: true,
+      requiresProjectPm: false,
+      requiresProjectMember: false,
+    });
   });
   it('project_pm → requiresProjectPm=true', () => {
-    expect(mapVisibleToFlags('project_pm')).toEqual({ requiresAdmin: false, requiresProjectPm: true });
+    expect(mapVisibleToFlags('project_pm')).toEqual({
+      requiresAdmin: false,
+      requiresProjectPm: true,
+      requiresProjectMember: false,
+    });
+  });
+  it('project_member → requiresProjectMember=true', () => {
+    expect(mapVisibleToFlags('project_member')).toEqual({
+      requiresAdmin: false,
+      requiresProjectPm: false,
+      requiresProjectMember: true,
+    });
   });
 });
 
