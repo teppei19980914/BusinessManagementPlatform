@@ -10,6 +10,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const authMock = vi.fn();
 vi.mock('@/lib/auth', () => ({ auth: () => authMock() }));
 
+// G1-c (2026-05-31): page.tsx は viewer ロール構築のため ProjectMember を引く。
+//   ここでは空配列を返し (= 未所属 general)、isTenantAdmin prop の検証に影響させない。
+vi.mock('@/lib/db', () => ({
+  prisma: {
+    projectMember: { findMany: vi.fn().mockResolvedValue([]) },
+  },
+}));
+
 vi.mock('next/navigation', () => ({
   redirect: vi.fn((url: string) => {
     throw new Error(`__REDIRECT__:${url}`);

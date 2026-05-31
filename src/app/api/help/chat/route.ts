@@ -286,26 +286,26 @@ async function handlePost(req: NextRequest): Promise<NextResponse> {
     );
   }
 
-  // 4. viewer roles 構築
+  // 4. viewer roles 構築 (開示 4 段の入力)
   //   - isTenantAdmin: systemRole から判定
-  //   - hasAnyProjectPmRole: ProjectMembership から「少なくとも 1 プロジェクトで pm_tl ロールを
-  //     持つか」を判定 (リリース前必須、PR8 で動的解決を追加)。
-  //     これにより PM/PL ユーザに対して project_pm 限定 FAQ (提案エンジン参考タブ等) が
-  //     開示されるようになる。
+  //   - hasAnyProjectPmRole: 少なくとも 1 プロジェクトで pm_tl ロールを持つか (project_pm 開示)
+  //   - hasAnyProjectMembership: 少なくとも 1 プロジェクトで member 以上 (member/pm_tl) か
+  //     (project_member 開示)。viewer のみ / 未所属は false。
+  //   削除済プロジェクト・他テナントの membership は除外。複数所属時は最大ロール採用と等価。
   const isTenantAdmin =
     user.systemRole === 'admin' || user.systemRole === 'super_admin';
-  const pmMembership = await prisma.projectMember.findFirst({
+  const memberships = await prisma.projectMember.findMany({
     where: {
       userId: user.id,
-      projectRole: 'pm_tl',
-      // 削除済プロジェクト・他テナントの membership は除外
       project: { deletedAt: null, tenantId: user.tenantId },
     },
-    select: { id: true },
+    select: { projectRole: true },
   });
+  const roleSet = new Set(memberships.map((m) => m.projectRole));
   const viewer: ViewerRoles = {
     isTenantAdmin,
-    hasAnyProjectPmRole: pmMembership !== null,
+    hasAnyProjectPmRole: roleSet.has('pm_tl'),
+    hasAnyProjectMembership: roleSet.has('pm_tl') || roleSet.has('member'),
   };
 
   // 5. RAG 検索 (ADR-0028)

@@ -218,10 +218,10 @@ async function syncFaqTable(
       await prisma.$executeRaw`
         INSERT INTO "faq_embeddings" (
           "entry_id", "content_hash", "content_snapshot", "content_embedding",
-          "requires_admin", "requires_project_pm", "category", "generated_at"
+          "requires_admin", "requires_project_pm", "requires_project_member", "category", "generated_at"
         ) VALUES (
           ${entry.id}, ${hash}, ${text}, ${vecText}::vector,
-          ${flags.requiresAdmin}, ${flags.requiresProjectPm}, ${entry.category}, NOW()
+          ${flags.requiresAdmin}, ${flags.requiresProjectPm}, ${flags.requiresProjectMember}, ${entry.category}, NOW()
         )
         ON CONFLICT ("entry_id") DO UPDATE SET
           "content_hash" = EXCLUDED."content_hash",
@@ -229,6 +229,7 @@ async function syncFaqTable(
           "content_embedding" = EXCLUDED."content_embedding",
           "requires_admin" = EXCLUDED."requires_admin",
           "requires_project_pm" = EXCLUDED."requires_project_pm",
+          "requires_project_member" = EXCLUDED."requires_project_member",
           "category" = EXCLUDED."category",
           "generated_at" = EXCLUDED."generated_at",
           "updated_at" = NOW()
@@ -323,10 +324,10 @@ async function syncGuideTable(
       await prisma.$executeRaw`
         INSERT INTO "guide_embeddings" (
           "entry_id", "content_hash", "content_snapshot", "content_embedding",
-          "requires_admin", "requires_project_pm", "step_order", "generated_at"
+          "requires_admin", "requires_project_pm", "requires_project_member", "step_order", "generated_at"
         ) VALUES (
           ${step.id}, ${hash}, ${text}, ${vecText}::vector,
-          ${flags.requiresAdmin}, ${flags.requiresProjectPm}, ${stepOrder}, NOW()
+          ${flags.requiresAdmin}, ${flags.requiresProjectPm}, ${flags.requiresProjectMember}, ${stepOrder}, NOW()
         )
         ON CONFLICT ("entry_id") DO UPDATE SET
           "content_hash" = EXCLUDED."content_hash",
@@ -334,6 +335,7 @@ async function syncGuideTable(
           "content_embedding" = EXCLUDED."content_embedding",
           "requires_admin" = EXCLUDED."requires_admin",
           "requires_project_pm" = EXCLUDED."requires_project_pm",
+          "requires_project_member" = EXCLUDED."requires_project_member",
           "step_order" = EXCLUDED."step_order",
           "generated_at" = EXCLUDED."generated_at",
           "updated_at" = NOW()

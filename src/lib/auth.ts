@@ -235,10 +235,24 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           },
         });
 
+        // G2-e-1 (2026-05-31): 「たすきばを使ったことがないユーザ」判定 (方針 II)。
+        //   email 単位で過去の login_success が 1 件も無ければ初回利用とみなす。
+        //   - テナント横断 (別組織で利用経験があれば初回ではない)。
+        //   - テナント削除後も auth_event_logs / users 行は保持される
+        //     (super-admin.service.ts purge の対象外 = G2-e-0 で確認済) ため履歴が消えず堅牢。
+        //   ★現在の login_success を記録する「前」に数える★ (記録後だと必ず 1 以上になる)。
+        const priorLoginSuccessCount = await prisma.authEventLog.count({
+          where: { email, eventType: 'login_success' },
+        });
+        const isFirstTimeUser = priorLoginSuccessCount === 0;
+
         await recordAuthEvent({ eventType: 'login_success', tenantId: user.tenantId, userId: user.id, email });
 
         return {
           id: user.id,
+          // G2-e-1: 初回ログイン (たすきば未利用) フラグ。jwt/session callback で session.user に
+          //   伝播し、オンボーディングモーダルの自動表示判定に使う (admin/general のみ対象)。
+          isFirstTimeUser,
           // PR #2-b (T-03): テナント境界の起点。session.user.tenantId に伝播し、
           //   後続のすべての API ルートが requireSameTenant() で同テナント検証する。
           tenantId: user.tenantId,

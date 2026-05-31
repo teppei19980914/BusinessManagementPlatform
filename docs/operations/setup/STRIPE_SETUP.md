@@ -27,6 +27,39 @@
 
 ---
 
+## §1.5 決済手段 (Payment methods) の有効/無効設定
+
+Dashboard → **設定** → **Payments (決済手段)**
+
+> **2026-05-31 追記**: 本番 (Live) の決済手段設定を実画面から記録。すべて 23 / 有効 6 / 無効 17 / 要対応 0。
+
+### 有効 (6 件)
+
+| 決済手段 | タイプ | 対応地域 | 備考 |
+|---|---|---|---|
+| **カード** | カード | すべての地域 | カード詳細パネルの記載: 「**Visa / Mastercard / American Express** の支払いを受け取ります」。**Diners Club / Discover / UnionPay (銀聯) は含まれない**。取引額レンジ JPY 50〜99,999,999、継続課金・返金・不審請求申立サポートあり、顧客所在地は全世界対応 |
+| **JCB** | カード | 日本 | 別の決済手段として有効 |
+| カード分割払い | カード | 日本 | 分割払い (= ブランドではない) |
+| Apple Pay | デジタルウォレット | すべての地域 | |
+| Link | デジタルウォレット | すべての地域 | Stripe Link |
+| MB WAY | デジタルウォレット | ポルトガル | |
+
+### 保留中 (1 件)
+- Cartes Bancaires (カード / フランス)
+
+### 無効 (主なもの、17 件)
+- 韓国のカード / Alipay / Google Pay / Kakao Pay / Naver Pay / PAYCO / Samsung Pay / WeChat Pay / コンビニ決済 / Bancontact / EPS / iDEAL\|Wero / Przelewy24 / SEPA Direct Debit / 銀行振込 (= Stripe の bank transfer method)
+- PayPay は「プレビューで利用可能」(= 未有効化)
+
+### ★結論: 顧客に提示されるカードブランド = 4 種★
+
+**Visa / Mastercard / American Express / JCB** の 4 種。**Diners Club / Discover / UnionPay (銀聯) は対象外**。
+
+> **整合ルール**: 公開ドキュメント ([docs/public/credit-card-payment-guide.md](../../public/credit-card-payment-guide.md) ほか) と HomePage の LP のカードブランド表記は、本節の **4 種** に一致させること。旧記述「6 種 (Diners/Discover 含む)」「7 種 (銀聯 含む)」は誤りで是正済。
+> 引落失敗時の自動再試行は §8.2 のとおり **2 週間 / 最大 8 回**。
+
+---
+
 ## §2. Product と Meter / Price の作成
 
 Dashboard → **商品カタログ** → **商品を追加**

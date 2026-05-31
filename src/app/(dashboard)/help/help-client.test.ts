@@ -292,20 +292,52 @@ describe('HelpClient PR4 低優先 4 件 invariant', () => {
 });
 
 /**
- * PR6 (feat/faq-pr6-ai-ui-minimal 2026-05-29):
- *   /help ページ上部にたすきフクロウ AI チャット (HelpChatInput) を統合。
- *   ヘッダ直後に <HelpChatInput variant="page" /> が描画されることを担保。
+ * G2-f / G2-g (2026-05-31): /help の埋め込みチャットを撤去し FAB に一本化。
+ *   代わりに「全○○」一覧と同じキーワード検索ボックス (FaqSearchBox) を新設し、
+ *   FAQ を質問 + 回答の全文で client-side 絞り込みする。
  */
-describe('HelpClient PR6 たすきフクロウチャット統合 invariant', () => {
-  it('HelpChatInput を @/components/help-chat/help-chat-input から import', () => {
-    expect(source).toMatch(/from\s+'@\/components\/help-chat\/help-chat-input'/);
+describe('HelpClient G2-f/g チャットFAB一本化 + 全文検索ボックス invariant', () => {
+  it('埋め込みチャット (HelpChatInput) を import / 描画しない (チャットは画面右下 FAB に一本化)', () => {
+    expect(source).not.toMatch(/help-chat\/help-chat-input/);
+    expect(source).not.toMatch(/<HelpChatInput/);
   });
 
-  it('JSX 内に <HelpChatInput variant="page" /> が含まれる (ヘッダ直後の配置)', () => {
-    expect(source).toMatch(/<HelpChatInput\s+variant="page"\s*\/>/);
+  it('旧「下のフクロウチャット」誘導文言が残っていない', () => {
+    expect(source).not.toMatch(/下のフクロウチャット/);
   });
 
-  it('ヘッダ説明文に「下のフクロウチャット」誘導が含まれる', () => {
-    expect(source).toMatch(/下のフクロウチャットでも質問できます/);
+  it('FAQ キーワード検索ボックス (FaqSearchBox) を備え、FilterBar を流用する', () => {
+    expect(source).toMatch(/FaqSearchBox/);
+    expect(source).toMatch(/キーワード検索/);
+    expect(source).toMatch(/from\s+'@\/components\/common\/filter-bar'/);
+  });
+
+  it('検索は質問 + 回答の全文 (extractText) を対象にする', () => {
+    expect(source).toMatch(/extractText/);
+  });
+
+  it('画面右下のたすきフクロウ (FAB) への誘導文言を含む', () => {
+    expect(source).toMatch(/画面右下のたすきフクロウ/);
+  });
+});
+
+/**
+ * G1-c (2026-05-31): G1-a で FAQ_ENTRIES に追加した「ロール別・最初の一歩 / しくみ概念」を
+ *   /help でも owl と同じデータから描画 (二重管理回避)。開示段は canViewerSee で出し分け。
+ */
+describe('HelpClient G1-c 新FAQの data-driven 描画 invariant', () => {
+  it('FAQ_ENTRIES / canViewerSee を @/config/faq-content から import する', () => {
+    expect(source).toMatch(/from\s+'@\/config\/faq-content'/);
+    expect(source).toMatch(/FAQ_ENTRIES/);
+    expect(source).toMatch(/canViewerSee/);
+  });
+
+  it('FirstStepFaqSection が viewer に応じて開示段でフィルタする', () => {
+    expect(source).toMatch(/FirstStepFaqSection/);
+    expect(source).toMatch(/canViewerSee\(e\.visibleTo, viewer\)/);
+  });
+
+  it('「はじめての方へ・役割別ガイド」セクションを持つ', () => {
+    expect(source).toMatch(/はじめての方へ・役割別ガイド/);
   });
 });

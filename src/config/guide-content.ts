@@ -18,7 +18,7 @@
  *   - /api/help/chat route.ts (本データを system prompt に同梱)
  */
 
-import type { FaqVisibleTo, ViewerRoles } from './faq-content';
+import { canViewerSee, type FaqVisibleTo, type ViewerRoles } from './faq-content';
 
 export type GuideStep = {
   /** 出典 ID として AI 出力で sourceGuideStepIds[] に含まれる */
@@ -171,18 +171,36 @@ export const GUIDE_STEPS: readonly GuideStep[] = [
     body: 'CSV インポート (外部データ移行ウィザード / sync-import 共通) で失敗を防ぐための Excel 操作のコツです。\n\n1. 必ず UTF-8 で保存\n  「ファイル」→「名前を付けて保存」→ ファイル形式から「CSV UTF-8 (コンマ区切り) (*.csv)」を選択\n  既定の Shift_JIS では日本語が文字化けします。Windows / Mac とも同じ手順。\n\n2. 改行を含むセルの書き方\n  改行を入れたい位置で Alt + Enter (Mac は Option + 改行) を押す\n  Excel が自動的にセル全体をダブルクォート (") で囲んでくれるはずですが、念のため保存後にメモ帳で開いてクォートが入っているか確認してください。\n  ダブルクォートが抜けると、取込後に本文の 2 行目以降が消える事故が起こります。\n\n3. 日付は YYYY-MM-DD ハイフン区切り\n  Excel は日付セルを自動で「2026/12/31」表示にしてしまうため:\n  - 該当列を選択 →「セルの書式設定」→「分類: 文字列」に変更してから入力\n  - または保存後にメモ帳で確認・修正\n\n4. 選択肢の値は半角小文字\n  impact / priority / likelihood = low / medium / high\n  knowledgeType = failure / success / lesson / template / general\n  visibility = draft / project / company (Knowledge) or draft / public (RiskIssue)\n  type = risk / issue (RiskIssue のみ)\n  reusability = high / medium / low\n  devMethod = waterfall / agile / hybrid\n  riskNature = threat / opportunity (RiskIssue の type=risk のみ)\n  大文字混在 / 日本語 / 全角はエラーになります。\n\n5. 複数タグはカンマ区切り\n  techTags / processTags / businessDomainTags は 1 セル内で半角カンマ区切り (例: react,nextjs,prisma)\n  半角カンマを含むセルは自動的にダブルクォートで囲まれます',
     visibleTo: 'tenant_admin',
   },
+
+  // ============================================================================
+  // G1-b (2026-05-31): ロール別「ログイン後の最初の流れ」を補完。
+  //   現状 admin 初日のみ充実だったため、メンバー / PM の初動を追加。
+  //   開示段は roles-permissions-guide.md / check-permission.ts に厳格準拠。
+  //   出典: my-tasks-guide.md / risk-issue-guide.md / knowledge-guide.md /
+  //         project-creation-guide.md / suggestion-guide.md / stakeholder-guide.md
+  // ============================================================================
+  {
+    id: 'member-getting-started',
+    audience: 'member',
+    title: '★メンバーの最初の流れ★ アサインされたらまずやること',
+    body: 'プロジェクトのメンバーに追加されたら、次の順で進めるとスムーズです。\n1. 画面右上メニュー →「マイタスク」で自分の担当作業を確認する\n2. 各タスクの状態 (未着手 / 着手 / 完了) と実績を更新する (更新できるのは自分の担当タスクのみ)\n3. 進行中に気づいた心配ごとは「リスク」、すでに起きた問題は「課題」に登録する\n4. 共有したい気づきは「ナレッジ」に記録する (下書きで書きためて、整理できたら公開)\n5. 関係者への連絡はコメントで @ メンション (確実に通知が届きます)',
+    visibleTo: 'project_member',
+  },
+  {
+    id: 'pm-getting-started',
+    audience: 'pm',
+    title: '★PM/PL の最初の流れ★ プロジェクトを任されたら',
+    body: '1. 「プロジェクト一覧」から担当プロジェクトを開き、目的・期間・顧客を確認する (自分で立ち上げる場合は「新規作成」)\n2. 作成直後の「参考」タブで、過去の似たリスク・課題・ナレッジ・振り返りを必ず確認する (見落とし防止)\n3. 「WBS」タブで作業を WP (作業のまとまり) → Activity (実作業) に分解し、担当者・予定工数・期間を設定する\n4. ガントチャートで進捗・期日超過を把握する\n5. リスク・課題を記録し、完了後は「振り返り」で Keep / Problem / Try を整理する\n6. 必要に応じて「ステークホルダー」タブで関係者情報を管理する',
+    visibleTo: 'project_pm',
+  },
 ] as const;
 
 /**
  * ユーザロールに応じてフィルタしたガイドを返す (faq-content.ts と同じ ViewerRoles を共有)。
+ * 開示判定は canViewerSee に集約 (★階層内包★: all ⊆ project_member ⊆ project_pm、tenant_admin)。
  */
 export function getGuideStepsForRole(viewer: ViewerRoles): readonly GuideStep[] {
-  return GUIDE_STEPS.filter((s) => {
-    if (s.visibleTo === 'all') return true;
-    if (s.visibleTo === 'tenant_admin') return viewer.isTenantAdmin;
-    if (s.visibleTo === 'project_pm') return viewer.hasAnyProjectPmRole;
-    return false; // fail-closed
-  });
+  return GUIDE_STEPS.filter((s) => canViewerSee(s.visibleTo, viewer));
 }
 
 /**

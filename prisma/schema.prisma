@@ -1140,6 +1140,8 @@ model AuthEventLog {
   @@index([userId, createdAt(sort: Desc)], map: "idx_auth_events_user")
   @@index([eventType, createdAt(sort: Desc)], map: "idx_auth_events_type")
   @@index([tenantId, createdAt(sort: Desc)], map: "idx_auth_events_tenant")
+  // G2-e-1 (2026-05-31): 初回ログイン判定 (email 単位の login_success 件数) を高速化。
+  @@index([email, eventType], map: "idx_auth_events_email")
   @@map("auth_event_logs")
 }
 
@@ -1955,8 +1957,11 @@ model FaqEmbedding {
   contentEmbedding  Unsupported("vector(1024)") @map("content_embedding")
   /// 権限フィルタ (SQL 段で top-K を絞り込む。defense-in-depth で TS 側でも再検証)。
   requiresAdmin     Boolean                     @default(false) @map("requires_admin")
-  /// 権限フィルタ (Tenant Admin OR Project PM 限定 FAQ かどうか)。
+  /// 権限フィルタ (Project PM/PL 限定 FAQ かどうか = visibleTo='project_pm')。
   requiresProjectPm Boolean                     @default(false) @map("requires_project_pm")
+  /// 権限フィルタ (Project member 以上限定 FAQ かどうか = visibleTo='project_member')。
+  /// 階層内包は help-search.service.ts の viewerTierFlags / canViewerSee で表現する。
+  requiresProjectMember Boolean                 @default(false) @map("requires_project_member")
   /// FAQ カテゴリ (filter / debug 用)。例: 'plan' | 'csv' | 'mfa' | 'role'
   category          String                      @db.VarChar(50)
   /// embedding 生成時刻 (drift 確認 / 監査)。
@@ -1965,7 +1970,7 @@ model FaqEmbedding {
   updatedAt         DateTime                    @updatedAt @map("updated_at") @db.Timestamptz
 
   @@index([category], map: "idx_faq_embeddings_category")
-  @@index([requiresAdmin, requiresProjectPm], map: "idx_faq_embeddings_permission")
+  @@index([requiresAdmin, requiresProjectPm, requiresProjectMember], map: "idx_faq_embeddings_permission")
   @@map("faq_embeddings")
 }
 
@@ -1984,6 +1989,8 @@ model GuideEmbedding {
   contentEmbedding  Unsupported("vector(1024)") @map("content_embedding")
   requiresAdmin     Boolean                     @default(false) @map("requires_admin")
   requiresProjectPm Boolean                     @default(false) @map("requires_project_pm")
+  /// 権限フィルタ (Project member 以上限定 = visibleTo='project_member')。
+  requiresProjectMember Boolean                 @default(false) @map("requires_project_member")
   /// 表示順 (使い方ガイドはステップ順で意味を持つ)。
   stepOrder         Int                         @map("step_order")
   generatedAt       DateTime                    @default(now()) @map("generated_at") @db.Timestamptz
@@ -1991,6 +1998,6 @@ model GuideEmbedding {
   updatedAt         DateTime                    @updatedAt @map("updated_at") @db.Timestamptz
 
   @@index([stepOrder], map: "idx_guide_embeddings_step_order")
-  @@index([requiresAdmin, requiresProjectPm], map: "idx_guide_embeddings_permission")
+  @@index([requiresAdmin, requiresProjectPm, requiresProjectMember], map: "idx_guide_embeddings_permission")
   @@map("guide_embeddings")
 }

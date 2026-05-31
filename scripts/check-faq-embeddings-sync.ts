@@ -36,7 +36,11 @@ import 'dotenv/config';
 import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
 
-import { FAQ_ENTRIES, type FaqVisibleTo } from '../src/config/faq-content';
+import {
+  FAQ_ENTRIES,
+  FAQ_VISIBLE_TO_VALUES,
+  type FaqVisibleTo,
+} from '../src/config/faq-content';
 import { GUIDE_STEPS } from '../src/config/guide-content';
 import {
   composeFaqContentText,
@@ -45,11 +49,10 @@ import {
 } from '../src/services/help-search.service';
 import { MAX_INPUT_CHARS } from '../src/services/embedding.service';
 
-const VALID_VISIBLE_TO: ReadonlySet<FaqVisibleTo> = new Set([
-  'all',
-  'tenant_admin',
-  'project_pm',
-]);
+// ★単一ソース★ faq-content.ts の FAQ_VISIBLE_TO_VALUES から導出する。
+//   開示段を追加するときに本スクリプトの許可リスト更新を漏らして CI fail した反省を踏まえ、
+//   型と検証を 1 箇所 (FAQ_VISIBLE_TO_VALUES) に集約してドリフトを構造的に防ぐ。
+const VALID_VISIBLE_TO: ReadonlySet<FaqVisibleTo> = new Set(FAQ_VISIBLE_TO_VALUES);
 
 const VALID_AUDIENCES = new Set(['all', 'admin', 'pm', 'member']);
 

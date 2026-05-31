@@ -18,16 +18,26 @@
  *     (KDD §5.X+165 の付随 a11y 対策)。
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Image from 'next/image';
 import { cn } from '@/lib/utils';
 import { CHAT_PERSONA } from '@/config';
+import { OPEN_HELP_CHAT_EVENT } from '@/lib/open-help-chat';
 import { ChatPanel } from './chat-panel';
 
 const FAB_SIZE_PX = 64;
 
 export function ChatSemanticSearchFab() {
   const [open, setOpen] = useState(false);
+
+  // G2-e-3 (2026-05-31): オンボーディングモーダル等から「ヘルプ・ガイド」タブで
+  //   チャットを開く要求 (requestOpenHelpChat) を購読する。mode は sessionStorage 経由で
+  //   ChatPanel が 'help' を復元するため、ここでは open するだけでよい。
+  useEffect(() => {
+    const handler = () => setOpen(true);
+    window.addEventListener(OPEN_HELP_CHAT_EVENT, handler);
+    return () => window.removeEventListener(OPEN_HELP_CHAT_EVENT, handler);
+  }, []);
 
   return (
     <>

@@ -1,6 +1,8 @@
 import { auth } from '@/lib/auth';
 import { redirect } from 'next/navigation';
 import { LOGIN_ROUTE } from '@/config';
+import { prisma } from '@/lib/db';
+import type { ViewerRoles } from '@/config/faq-content';
 import { HelpClient } from './help-client';
 
 /**
@@ -23,5 +25,23 @@ export default async function HelpPage() {
   const role = session.user.systemRole;
   const isTenantAdmin = role === 'admin' || role === 'super_admin';
 
-  return <HelpClient isTenantAdmin={isTenantAdmin} />;
+  // G1-c (2026-05-31): FAQ アコーディオンの開示 4 段フィルタ用に viewer ロールを構築する。
+  //   help/chat route と同じく ProjectMember から PM/PL・member 以上を解決
+  //   (削除済プロジェクト / 他テナントは除外)。これにより /help でも owl と同じ
+  //   getFaqEntriesForRole / canViewerSee で権限に応じた FAQ を出し分けできる。
+  const memberships = await prisma.projectMember.findMany({
+    where: {
+      userId: session.user.id,
+      project: { deletedAt: null, tenantId: session.user.tenantId },
+    },
+    select: { projectRole: true },
+  });
+  const roleSet = new Set(memberships.map((m) => m.projectRole));
+  const viewer: ViewerRoles = {
+    isTenantAdmin,
+    hasAnyProjectPmRole: roleSet.has('pm_tl'),
+    hasAnyProjectMembership: roleSet.has('pm_tl') || roleSet.has('member'),
+  };
+
+  return <HelpClient isTenantAdmin={isTenantAdmin} viewer={viewer} />;
 }
