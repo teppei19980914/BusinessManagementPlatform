@@ -19848,12 +19848,24 @@ embedding (Voyage) / LLM (Anthropic) の E2E スタブを `EMBEDDING_PROVIDER===
 
 `14-signup-3tier-eligibility` は beforeAll で **共有 Default テナントの `created_by_user_id` を mutate** する。chromium / chromium-mobile が並列 worker で走ると競合し、chromium-mobile のみ `owned-tenant-warning` 不表示で fail。11/12/13 (テナント分離 / super-admin) と同方針で **chromium-mobile の `testIgnore` に追加** (HTTP/認可境界は viewport 非依存 = mobile 検証価値が薄い)。
 
+### 教訓 5: serial spec は前進のたび次のブロッカーが露見する。API 契約は「実装を読んで」前提を立てる (UI/契約を推測しない)
+
+上記 4 件を直した後も、`19-signup-lifecycle` (describe.serial) が 1 ステップ通るたびに次の前提誤りが順次露見し、4 回追走した。いずれも **spec 側の API 契約の思い込み** (プロダクトバグではない):
+
+1. **プロジェクト作成者は自動メンバーにならない**: `createProject` は ProjectMember を作らない。プロジェクト配下資産 (knowledge/risk/retrospective) の作成は `requireActualProjectMember` で 403。→ 作成後に `addProjectMemberViaApi(pm_tl)` で明示追加 (05-teardown と同パターン)。
+2. **グローバル一覧の表示列は資産ごとに異なる**: `/knowledge` は**タイトル列を持たず「内容」列**を表示 (`listAllKnowledgeForViewer`)。`getByText(title)` は不一致。→ CRUD 真値は **API GET の本文 contains** で確認し、UI は表示確認済みの列でのみ検証。
+3. **グローバル `[id]` ルートは GET + DELETE(admin モデレーション) のみ**で PATCH 非対応。更新は**プロジェクト配下** `/api/projects/[id]/knowledge/[knowledgeId]` (PATCH)。
+4. **visibility='public' は superRefine で必須フィールドが増える**: risk/issue は `title` + `occurrence`、retrospective は `conductedDate`、knowledge/memo は `title`。draft なら任意。
+
+**メタ教訓**: E2E spec を書く前に対象 route の **(a) 認可 (membership/role)・(b) 許可メソッド・(c) スキーマの superRefine 必須条件・(d) 一覧 service の表示列/visibility フィルタ** を実装で確認する。serial spec はブロッカーを 1 つずつしか見せないため、推測で書くと「直す→次が出る」を CI 往復で繰り返す (本 PR で 5 往復)。ローカルで E2E DB を立てて回せば往復を圧縮できる。
+
 ### 横展開チェックリスト
 
 - [ ] テスト専用の分岐 (スタブ/モック) は **専用の opt-in env** で gate し、`NODE_ENV` で分岐しない (standalone E2E は production)
-- [ ] `getByText` は一意性を確認 (関連エンティティ名の部分一致に注意) し、必要なら `.first()` / `exact` / role スコープ
+- [ ] `getByText` は一意性を確認 (関連エンティティ名の部分一致に注意) し、必要なら `.first()` / `exact` / role スコープ。一覧の表示列は資産ごとに異なるので **API GET 真値**を優先
 - [ ] ログイン直後の自動表示を E2E 検証するときは sessionStorage クリア + reload で確立済セッションを使う
 - [ ] 共有テナント等を mutate する HTTP 層 spec は mobile project から除外する
+- [ ] spec を書く前に route の認可・許可メソッド・superRefine 必須条件・一覧 service の visibility/列を実装で確認する (推測しない)
 
 ### 関連
 
