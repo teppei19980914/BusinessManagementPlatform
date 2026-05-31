@@ -310,16 +310,17 @@ export async function listAllRisksForViewer(
   viewerTenantId: string,
 ): Promise<AllRiskDTO[]> {
   const isAdmin = viewerSystemRole === 'admin';
+
+  // perf/phase-5 (2026-06-01): memberships と risks findMany は独立なので Promise.all 並列化。
+  //   セキュリティ invariant 不変:
+  //     - tenantId = viewerTenantId (severity-1 越境防止) 保持
+  //     - visibility='public' (draft 非表示) 保持
+  //     - deletedAt: null 保持
+  //     - memberProjectIds による per-link projectName マスキング (severity-1 個人情報漏洩防止) 保持
+  //
   // ユーザが所属するプロジェクト ID 集合を先に取得 (非メンバー判定に使う)
   // admin の場合はこの後の判定で常に isMember=true として扱う
-  const memberships = isAdmin
-    ? []
-    : await prisma.projectMember.findMany({
-      where: { userId: viewerUserId },
-      select: { projectId: true },
-    });
-  const memberProjectIds = new Set(memberships.map((m) => m.projectId));
-
+  //
   // 2026-04-25 (feat/account-lock-and-ui-consistency): admin であっても draft は
   // 「全○○」横断ビューには出さない (要件: 全○○ には公開範囲='public' のみ表示)。
   // admin が draft を管理削除したい場合はプロジェクト個別画面の○○一覧から行う。
@@ -327,27 +328,38 @@ export async function listAllRisksForViewer(
   // 2026-05-09 feedback: テナント越境防止。`tenantId = viewerTenantId` で自テナントのみ
   //   返す (シードデータは MANAGEMENT_TENANT_ID 所属、super_admin が同テナントの場合のみ見える)。
   //   ※ super_admin の `isSampleData` bypass はテナントフィルタにより不要化したため削除。
-  const risks = await prisma.riskIssue.findMany({
-    where: {
-      deletedAt: null,
-      visibility: 'public',
-      tenantId: viewerTenantId,
-    },
-    include: {
-      reporter: { select: { name: true } },
-      assignee: { select: { name: true } },
-      project: { select: { id: true, name: true, deletedAt: true } },
-      // PR feat/asset-multi-linking-ui (Phase 2): 紐付け先 project の name + deletedAt を含める。
-      //   linkedProjects DTO で表示するため、N+1 を避けるため include 経由で 1 クエリに統合。
-      riskIssueProjects: {
-        select: {
-          projectId: true,
-          project: { select: { id: true, name: true, deletedAt: true } },
+  const [memberships, risks] = await Promise.all([
+    isAdmin
+      ? Promise.resolve(
+          [] as Array<{ projectId: string }>,
+        )
+      : prisma.projectMember.findMany({
+          where: { userId: viewerUserId },
+          select: { projectId: true },
+        }),
+    prisma.riskIssue.findMany({
+      where: {
+        deletedAt: null,
+        visibility: 'public',
+        tenantId: viewerTenantId,
+      },
+      include: {
+        reporter: { select: { name: true } },
+        assignee: { select: { name: true } },
+        project: { select: { id: true, name: true, deletedAt: true } },
+        // PR feat/asset-multi-linking-ui (Phase 2): 紐付け先 project の name + deletedAt を含める。
+        //   linkedProjects DTO で表示するため、N+1 を避けるため include 経由で 1 クエリに統合。
+        riskIssueProjects: {
+          select: {
+            projectId: true,
+            project: { select: { id: true, name: true, deletedAt: true } },
+          },
         },
       },
-    },
-    orderBy: { createdAt: 'desc' },
-  });
+      orderBy: { createdAt: 'desc' },
+    }),
+  ]);
+  const memberProjectIds = new Set(memberships.map((m) => m.projectId));
 
   // createdBy / updatedBy は scalar カラムで User リレーションが張られていないため、
   // 関連ユーザ名をバルクで 1 クエリ取得して map 引きする (N+1 回避)。

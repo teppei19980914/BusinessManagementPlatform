@@ -96,37 +96,50 @@ export async function listAllRetrospectivesForViewer(
   viewerTenantId: string,
 ): Promise<AllRetroDTO[]> {
   const isAdmin = viewerSystemRole === 'admin';
-  const memberships = isAdmin
-    ? []
-    : await prisma.projectMember.findMany({
-      where: { userId: viewerUserId },
-      select: { projectId: true },
-    });
-  const memberProjectIds = new Set(memberships.map((m) => m.projectId));
 
+  // perf/phase-5 (2026-06-01): memberships と retros findMany は完全に独立なので Promise.all で並列化。
+  //   旧: memberships を await → retros を await (非 admin で 2 round-trip)
+  //   新: Promise.all で 1 round-trip (admin の memberships は空配列即時返却)
+  //   セキュリティ invariant 不変:
+  //     - tenantId = viewerTenantId フィルタ (severity-1 越境防止) 保持
+  //     - visibility='public' フィルタ (draft は全○○ ビュー非表示) 保持
+  //     - deletedAt: null 保持
+  //     - memberProjectIds による per-link name マスキング (PR #157 severity-1) 保持
+  //
   // 2026-04-25 (feat/account-lock-and-ui-consistency): admin であっても draft は
   // 「全○○」横断ビューには出さない (要件: 全○○ には公開範囲='public' のみ表示)。
   // admin が draft を管理削除したい場合はプロジェクト個別画面から行う。
   // 2026-05-09 feedback: テナント越境防止のため tenantId フィルタを追加。
   //   旧 super_admin bypass (`isSampleData`) はテナント制御に集約したため削除。
-  const retros = await prisma.retrospective.findMany({
-    where: {
-      deletedAt: null,
-      visibility: 'public',
-      tenantId: viewerTenantId,
-    },
-    include: {
-      project: { select: { id: true, name: true, deletedAt: true } },
-      // PR feat/asset-multi-linking-ui (Phase 2): 紐付け先 project の name + deletedAt を含める。
-      retrospectiveProjects: {
-        select: {
-          projectId: true,
-          project: { select: { id: true, name: true, deletedAt: true } },
+  const [memberships, retros] = await Promise.all([
+    isAdmin
+      ? Promise.resolve(
+          [] as Array<{ projectId: string }>,
+        )
+      : prisma.projectMember.findMany({
+          where: { userId: viewerUserId },
+          select: { projectId: true },
+        }),
+    prisma.retrospective.findMany({
+      where: {
+        deletedAt: null,
+        visibility: 'public',
+        tenantId: viewerTenantId,
+      },
+      include: {
+        project: { select: { id: true, name: true, deletedAt: true } },
+        // PR feat/asset-multi-linking-ui (Phase 2): 紐付け先 project の name + deletedAt を含める。
+        retrospectiveProjects: {
+          select: {
+            projectId: true,
+            project: { select: { id: true, name: true, deletedAt: true } },
+          },
         },
       },
-    },
-    orderBy: { conductedDate: 'desc' },
-  });
+      orderBy: { conductedDate: 'desc' },
+    }),
+  ]);
+  const memberProjectIds = new Set(memberships.map((m) => m.projectId));
 
   // createdBy / updatedBy / assigneeId のユーザ名を解決 (PR #199: コメントは別経路 /api/comments で取得)
   const userIds = [...new Set([
