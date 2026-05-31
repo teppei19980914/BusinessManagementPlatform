@@ -200,8 +200,10 @@ export function KnowledgeClient({ initialKnowledge, systemRole, initialKeyword =
                       {k.linkedProjectCount === 0 ? tKnowledge('notLinked') : tKnowledge('private')}
                     </span>
                   ) : k.canAccessProject && k.primaryProjectId ? (
+                    // perf/comprehensive-perf-2026-06-01 (F): 一覧行 Link 自動 prefetch 抑止
                     <Link
                       href={`/projects/${k.primaryProjectId}`}
+                      prefetch={false}
                       className="text-info hover:underline"
                     >
                       {k.projectName}

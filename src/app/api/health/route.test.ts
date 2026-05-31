@@ -15,6 +15,11 @@ const mockedQueryRaw = vi.mocked(prisma.$queryRaw);
 describe('GET /api/health', () => {
   beforeEach(() => {
     mockedQueryRaw.mockReset();
+    // perf/comprehensive-perf-2026-06-01 (D-1):
+    //   warmup として 6 テーブルへ追加 $queryRaw を発火するため、デフォルトでも resolve するように
+    //   セットしておく。各 it 内では mockResolvedValueOnce / mockRejectedValueOnce で 1 回目 (= 主 SELECT 1)
+    //   のみ振る舞いを上書きする。
+    mockedQueryRaw.mockResolvedValue([]);
   });
 
   it('DB 応答 ok → HTTP 200・status=ok・db=ok', async () => {
@@ -48,5 +53,20 @@ describe('GET /api/health', () => {
     expect(serialized).not.toContain('pass');
     expect(serialized).not.toContain('postgresql://');
     expect(serialized).not.toMatch(/at\s+.+:\d+:\d+/); // stack trace 形式
+  });
+
+  // perf/comprehensive-perf-2026-06-01 (D-1): warmup の振る舞い検証
+  it('DB ok 時は warmup として常用テーブル (tenants/users/projects/risks_issues/retrospectives/knowledges) を追加で 6 回叩く', async () => {
+    mockedQueryRaw.mockResolvedValueOnce([{ '?column?': 1 }]);
+    await GET();
+    // SELECT 1 (主) + 6 テーブル warmup = 計 7 回
+    expect(mockedQueryRaw).toHaveBeenCalledTimes(7);
+  });
+
+  it('DB error 時は warmup を実行しない (副作用なしを担保)', async () => {
+    mockedQueryRaw.mockRejectedValueOnce(new Error('down'));
+    await GET();
+    // 主 SELECT 1 のみ。warmup は dbStatus !== 'ok' の場合スキップ。
+    expect(mockedQueryRaw).toHaveBeenCalledTimes(1);
   });
 });
