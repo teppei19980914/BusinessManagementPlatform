@@ -65,7 +65,18 @@ export type FaqCategory =
  *
  * 複数プロジェクトで異なるロールを持つユーザは「最大ロール」を採用 (guide-role.service.ts と整合)。
  */
-export type FaqVisibleTo = 'all' | 'project_member' | 'project_pm' | 'tenant_admin';
+// ★単一ソース★ 開示段の全値。型 (FaqVisibleTo) とランタイム検証 (check-faq-embeddings-sync.ts の
+//   VALID_VISIBLE_TO) の両方をこの 1 箇所から導出する。段を追加するときはここだけ更新すれば、
+//   型・CI 構造チェック・SQL マッピングが一貫する (project_member 追加時に検証許可リスト更新を
+//   漏らし CI fail した反省。新段追加時の更新漏れを構造的に防ぐ)。
+export const FAQ_VISIBLE_TO_VALUES = [
+  'all',
+  'project_member',
+  'project_pm',
+  'tenant_admin',
+] as const;
+
+export type FaqVisibleTo = (typeof FAQ_VISIBLE_TO_VALUES)[number];
 
 export type FaqEntry = {
   /** 出典 ID として AI 出力で sourceFaqIds[] に含まれる。kebab-case で全 FAQ ユニーク */

@@ -19772,3 +19772,47 @@ E2E spec を新規追加する際:
 - 関連 source: [src/app/(dashboard)/settings/tenant/tenant-settings-client.tsx](../../src/app/\(dashboard\)/settings/tenant/tenant-settings-client.tsx) UsageSection (= 構造提供元) / [e2e/specs/18-embedding-monthly-cap-ui.spec.ts](../../e2e/specs/18-embedding-monthly-cap-ui.spec.ts) (= 修正対象 spec)
 - 関連 docs: [Playwright Strict Mode 公式 (= getByText 仕様)](https://playwright.dev/docs/locators#strictness)
 - Memory: [feedback_visual_baseline_gen](../../C:/Users/SF02512/.claude/projects/c--Users-SF02512-GitHub-Private-BusinessManagementPlatform/memory/feedback_visual_baseline_gen.md) (= ローカル 4 点 PASS でも CI 別レーン fail の前例)
+
+---
+
+## §5.X+203: union 型に値を追加したら「同じ union を列挙するランタイム検証」も必ず更新する (型だけ直すと tsc を素通りして CI/本番で fail)
+
+### 事象
+
+PR #475 で FAQ 開示権限を 3 段 (`all` / `tenant_admin` / `project_pm`) → 4 段 (`project_member` 追加) に拡張。型 `FaqVisibleTo`・config・SQL・テストは更新したが、**CI 専用の構造チェック `scripts/check-faq-embeddings-sync.ts` の `VALID_VISIBLE_TO` (ランタイムの許可 Set) を 3 値ハードコードのまま放置**。結果、`visibleTo='project_member'` のエントリ (FAQ 4 + Guide 1 = 5 件) が「visibleTo が不正」で fail → `pnpm check:faq-embeddings-sync` exit 1 → 後続の test step で `coverage-summary.json` ENOENT (下流症状)。
+
+### 根本原因
+
+`const VALID_VISIBLE_TO: ReadonlySet<FaqVisibleTo> = new Set(['all', 'tenant_admin', 'project_pm'])` のように、**union 型の値を手で再列挙したランタイム集合**が型と別管理だった。TypeScript は「型の全値を網羅しているか」を Set リテラルに対して検査しないため (値が欠けた Set も `ReadonlySet<FaqVisibleTo>` に代入可能)、**tsc は 0 エラーで素通り**。ローカルでも CI 同等の structure mode を回していなかったため push まで露見しなかった。
+
+### 対策 (単一ソース化で構造的に再発防止)
+
+union の値を **ランタイム定数 1 箇所**に集約し、型をそこから導出する:
+
+```ts
+// src/config/faq-content.ts
+export const FAQ_VISIBLE_TO_VALUES = ['all', 'project_member', 'project_pm', 'tenant_admin'] as const;
+export type FaqVisibleTo = (typeof FAQ_VISIBLE_TO_VALUES)[number];
+```
+```ts
+// scripts/check-faq-embeddings-sync.ts
+const VALID_VISIBLE_TO: ReadonlySet<FaqVisibleTo> = new Set(FAQ_VISIBLE_TO_VALUES);
+```
+
+これで段を追加するときは `FAQ_VISIBLE_TO_VALUES` だけ直せば、型・CI 構造チェック・SQL マッピングが一貫する。
+
+### 横展開チェックリスト
+
+union 型 (リテラル文字列の和) に値を追加したら:
+- [ ] その union を **再列挙しているランタイム値** (Set / 配列 / switch の default 以外の case / zod enum / 検証許可リスト) を grep して全て更新したか (`grep "'既存値'"` で芋づる検出)
+- [ ] 可能なら `as const` 配列を単一ソースにして型を `(typeof X)[number]` で導出し、ランタイム検証もその配列から生成する (手の再列挙を物理的に無くす)
+- [ ] **tsc が通っても安心しない**: Set/配列の「値の欠落」は型検査されない。網羅性は実行時テストか単一ソース化で担保する
+- [ ] push 前に **CI と同じコマンド**をローカル実行 ([feedback_quality_gate_exit_code](../../C:/Users/SF02512/.claude/projects/c--Users-SF02512-GitHub-Private-BusinessManagementPlatform/memory/feedback_quality_gate_exit_code.md))。本件は `pnpm check:faq-embeddings-sync` を 4 点セット (lint/tsc/test/build) と別に回す必要があった
+
+### 関連
+
+- 関連 PR: PR #475 (FAQ/ガイド拡充 + 開示4段化)
+- 関連 fail run: [GitHub Actions #26704193252](https://github.com/teppei19980914/BusinessManagementPlatform/actions/runs/26704193252)
+- 関連 source: [src/config/faq-content.ts](../../src/config/faq-content.ts) (`FAQ_VISIBLE_TO_VALUES` 単一ソース) / [scripts/check-faq-embeddings-sync.ts](../../scripts/check-faq-embeddings-sync.ts) (`VALID_VISIBLE_TO`)
+- 関連 migration: `20260606_help_chat_project_member_tier` (`requires_project_member` 列)
+- 派生症状: `coverage-summary.json` ENOENT は下流。根本は先行 step の exit 1 ([feedback_pnpm_lockfile_sync](../../C:/Users/SF02512/.claude/projects/c--Users-SF02512-GitHub-Private-BusinessManagementPlatform/memory/feedback_pnpm_lockfile_sync.md) と同じ「表面化エラー≠根本原因」構図)
