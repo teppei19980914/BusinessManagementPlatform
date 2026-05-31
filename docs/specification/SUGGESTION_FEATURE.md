@@ -129,7 +129,11 @@ Supabase pgvector が **保存済の embedding 同士の Cosine 類似度を DB 
 - 文字列類似度 0.2: pg_trgm (3-gram 部分一致)。「請求書」⇔「請求」のような表記ゆれを拾う
 - 意味類似度 0.5: Voyage embedding の Cosine 類似度。「請求書」⇔「インボイス」のような意味的な近さを拾う (本軸)
 
-各カテゴリで `SUGGESTION_SCORE_THRESHOLD = 0.05` 以上のものをスコア降順でソートし、`SUGGESTION_DEFAULT_LIMIT = 10` 件まで返す → **各カテゴリ最大 10 件、5 カテゴリ (Knowledge / 過去リスク / 過去課題 / 振り返り / メモ) 合計最大 50 件**。
+各カテゴリで `SUGGESTION_SCORE_THRESHOLD = 0.01` ([src/config/suggestion.ts:72](../../src/config/suggestion.ts)) 以上のものをスコア降順でソートし、`SUGGESTION_DEFAULT_LIMIT = 50` ([src/config/suggestion.ts:81](../../src/config/suggestion.ts)) 件まで返す → **各カテゴリ最大 50 件、5 カテゴリ (Knowledge / 過去リスク / 過去課題 / 振り返り / メモ) 合計最大 250 件**。
+
+> **PR-X6 (2026-05-07) 改定**: 閾値 0.05 → **0.01**、件数上限 10 → **50** に変更済 (旧「高精度・低再現率」設計から「全網羅 + 段階表示」の高再現率設計へ転換)。weak tier は UI 折りたたみで情報過多を回避する。本ドキュメント内に旧値 (0.05 / 10) が残っていた場合は config を真値とする。
+
+**最低件数保証**: 閾値以上の候補が `SUGGESTION_MINIMUM_GUARANTEED_COUNT = 5` 件未満の場合、閾値を無視してスコア降順 Top 5 を返す (`applyMinimumGuarantee`、[src/config/suggestion.ts:266](../../src/config/suggestion.ts))。シードと異業種プロジェクトでも 0 件にならない設計。
 
 **Memo の tagScore は常に 0** (Memo はタグを持たない設計 + 親 Project もないため proxy にできない) → 縮退モード重み再配分の対象になり、text と embedding 類似度で実用ランキング。「なぜ?」説明文 (Phase 3) も Memo 対応済。
 
@@ -149,11 +153,13 @@ Supabase pgvector が **保存済の embedding 同士の Cosine 類似度を DB 
 
 提案結果は **3 段階の tier 表示** に分かれ、それぞれ初期表示状態が異なる。これは「**強く関連の上位 5 件で判断できる**」サービス哲学を UI レイヤで強化するための設計判断で、姉妹機能であるチャット意味検索 ([CHAT_SEMANTIC_SEARCH.md §UI 段階表示](./CHAT_SEMANTIC_SEARCH.md)) と同一パターンを採用する。
 
-| Tier | UI ラベル | スコア範囲 | 初期表示状態 | 装飾 |
-|---|---|---|---|---|
-| **strong** | 「🟢 強く関連 (N 件)」 | score ≥ 0.3 (絶対閾値方式) または上位 30% (パーセンタイル方式) | **上位 5 件のみ展開**。6 件目以降は「▶ さらに N 件を表示」アコーディオン (デフォルト閉じ) | 緑のボーダー |
-| **medium** | 「🟡 中程度の関連 (N 件)」 | 0.1 ≤ score < 0.3 または中段 50% | **デフォルト折りたたみ** (2026-05-29 改修、旧仕様: 常時展開) | 黄色のボーダー |
-| **weak** | 「⚪ 弱い関連性 (N 件)」 | score < 0.1 または下位 20% | **デフォルト折りたたみ** (PR-X6 から不変) | 灰色のボーダー |
+**tier 分類は `assignPercentileTiers()` ([src/config/suggestion.ts:224](../../src/config/suggestion.ts)) の相対分位方式が通常パス**。各カテゴリの候補をスコア降順ソートし、上位 30% (`SUGGESTION_TIER_PERCENTILE_STRONG_RATIO`) を strong、続く 50% (`..._MEDIUM_RATIO`) を medium、残り 20% を weak とする。候補が 5 件 (`SUGGESTION_TIER_PERCENTILE_FALLBACK_THRESHOLD`) 以下の少件数時は絶対閾値方式 (`classifyTier`) にフォールバックする。strong に昇格しても score が `SUGGESTION_TIER_ABSOLUTE_FLOOR_FOR_STRONG = 0.05` 未満なら medium に降格 (誤誘導防止ハイブリッド)。
+
+| Tier | UI ラベル | 分類 (通常パス = パーセンタイル) | 少件数時 (≤5 件) の絶対閾値 | 初期表示状態 | 装飾 |
+|---|---|---|---|---|---|
+| **strong** | 「🟢 強く関連 (N 件)」 | 上位 30% (かつ score ≥ 0.05) | score ≥ 0.3 (`SUGGESTION_TIER_STRONG_THRESHOLD`) | **上位 5 件のみ展開**。6 件目以降は「▶ さらに N 件を表示」アコーディオン (デフォルト閉じ) | 緑のボーダー |
+| **medium** | 「🟡 中程度の関連 (N 件)」 | 続く 50% | 0.1 ≤ score < 0.3 (`SUGGESTION_TIER_MEDIUM_THRESHOLD`) | **デフォルト折りたたみ** (2026-05-29 改修、旧仕様: 常時展開) | 黄色のボーダー |
+| **weak** | 「⚪ 弱い関連性 (N 件)」 | 残り 20% | score < 0.1 | **デフォルト折りたたみ** (PR-X6 から不変) | 灰色のボーダー |
 
 #### 設計判断の根拠
 
@@ -194,9 +200,15 @@ Supabase pgvector が **保存済の embedding 同士の Cosine 類似度を DB 
 
 対応するコンテンツ要素には `id` 属性を付与してスクリーンリーダーで関係が伝わるようにする。
 
-### 3.7 将来構想: Phase 3 LLM Re-ranking (6/1 リリース時点で未実装)
+### 3.7 Pro 限定「なぜ?」説明文 (実装済 / P-3)
 
-Pro プランの差別化価値として、提案結果上位 N 件に **Anthropic Sonnet が「なぜ関連するか」の人間ライクな説明文を付与しつつ再ランキング** する機能を Phase 3 で実装予定。6/1 リリース時点では **未実装** で、現状は Pro プランも Expert プランと同じ提案結果 (検索のみ、説明文なし) を表示する。
+Pro プランの差別化価値として、提案結果の各候補に **「なぜこのプロジェクトに関連するのか」の自然言語説明文を Lazy 生成** する機能は **実装済** ([src/services/suggestion-explanation.service.ts](../../src/services/suggestion-explanation.service.ts)、API: `src/app/api/projects/[projectId]/suggestions/explain/route.ts`)。
+
+- **Pro 限定**: サービス層で `tenant.plan !== 'pro'` を `plan_forbidden` で拒否する defense-in-depth。Beginner / Expert は UI でも button 非表示 ([suggestion-explanation.service.ts:173](../../src/services/suggestion-explanation.service.ts))。
+- **モデル**: `withMeteredLLM` が `resolveModelForPlan` で Pro → Claude Sonnet (`claude-sonnet-4-6`) を自動選択。`featureUnit='suggestion-explanation'` で ¥15/call 課金 (LLM_BILLABLE)。
+- **Lazy + DB キャッシュ**: ユーザが「なぜ?」をクリックした候補のみ生成。`SuggestionExplanation` テーブル (unique key: projectId × candidateKind × candidateId) にキャッシュし、cache hit 時は再課金しない。
+- **対応候補種別**: knowledge / issue / risk / retrospective / memo の 5 種 (`CandidateKind`、[suggestion-explanation.service.ts:50](../../src/services/suggestion-explanation.service.ts))。
+- **再ランキング**: LLM による並べ替え (re-ranking) は行わない。説明文付与のみ (検索順位は 3 軸スコアのまま)。
 
 ---
 
@@ -206,9 +218,9 @@ Pro プランの差別化価値として、提案結果上位 N 件に **Anthrop
 
 | プラン | 席数 | 月額固定 | 従量課金 (ADR-0019 改定後) | API 呼び出し上限 | 自動タグ抽出モデル | 提案機能 (検索) | 提案機能 (説明文付与) |
 |---|---|---|---|---|---|---|---|
-| **Beginner** | 5 席まで | ¥0 | なし | プロジェクト作成・更新 月 50 回まで無料、超過後縮退 | Haiku | ✅ 3 軸スコアリング | ❌ 未実装 |
-| **Expert** | 無制限 | ¥0 | **¥10 / プロジェクト作成・更新 1 回** | 無制限 | Haiku | ✅ 3 軸スコアリング | ❌ 未実装 |
-| **Pro** | 無制限 | ¥0 | **¥15 / プロジェクト作成・更新 1 回** + **¥15 / 「なぜ?」1 回** (Pro 限定) | 無制限 | Sonnet | ✅ 3 軸スコアリング | ✅ 「なぜ?」機能で実装 |
+| **Beginner** | 5 席まで | ¥0 | なし | プロジェクト作成・更新 月 50 回まで無料、超過後縮退 | Haiku | ✅ 3 軸スコアリング | ❌ Pro 限定 (plan_forbidden) |
+| **Expert** | 無制限 | ¥0 | **¥10 / プロジェクト作成・更新 1 回** | 無制限 | Haiku | ✅ 3 軸スコアリング | ❌ Pro 限定 (plan_forbidden) |
+| **Pro** | 無制限 | ¥0 | **¥15 / プロジェクト作成・更新 1 回** + **¥15 / 「なぜ?」1 回** (Pro 限定) | 無制限 | Sonnet | ✅ 3 軸スコアリング | ✅ 「なぜ?」説明文 実装済 (§3.7) |
 
 **3 プラン共通**: 上限到達時は **縮退モード**（[docs/business/TENANT_AND_BILLING.md §34.14.4](../business/TENANT_AND_BILLING.md) / NF-13.14 参照）に遷移。エンティティ作成・更新は HTTP 200 で継続、embedding 生成と auto-tag 抽出は一時停止。提案エンジンは NULL 候補をタグ：テキスト = 5：5 の重み再配分で評価。月初バッチで一括補完して翌月には完全回復する fail-safe 設計。
 
@@ -332,4 +344,4 @@ Pro プランの差別化価値として、提案結果上位 N 件に **Anthrop
 | [../business/TENANT_AND_BILLING.md](../business/TENANT_AND_BILLING.md) | プラン構成 / ダウングレード制御 / 月次予算上限 UI 仕様 |
 | [../operations/MIGRATION_TO_AWS.md](../operations/MIGRATION_TO_AWS.md) | DB 容量試算 / Supabase Pro 昇格判断 / AWS RDS 移行検討 |
 | [../security/SUGGESTION_ENGINE_THREAT_MODEL.md](../security/SUGGESTION_ENGINE_THREAT_MODEL.md) | 5 層悪用防止アーキテクチャ / 脅威モデル STRIDE 分析 |
-| [../roadmap/SUGGESTION_ENGINE_PLAN.md](../roadmap/SUGGESTION_ENGINE_PLAN.md) | Phase 1〜3 の実装計画 / Phase 3 LLM Re-ranking 仕様 |
+| [../archive/roadmap/SUGGESTION_ENGINE_PLAN.md](../archive/roadmap/SUGGESTION_ENGINE_PLAN.md) | Phase 1〜3 の実装計画 (実装完了済・archive) / Phase 3 LLM Re-ranking 仕様 |

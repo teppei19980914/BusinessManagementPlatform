@@ -652,9 +652,9 @@ export function HelpClient({ isTenantAdmin }: Props) {
                           <td className="border-b p-2 text-amber-700 dark:text-amber-400">⚠ 警告 (取込可)</td>
                         </tr>
                         <tr>
-                          <td className="p-2">≥ 50 GB (ハードキャップ)</td>
+                          <td className="p-2">≥ 50 GB (L3 監視アラート)</td>
                           <td className="p-2 text-destructive">⛔ 取込ブロック</td>
-                          <td className="p-2 text-destructive">⛔ 取込ブロック</td>
+                          <td className="p-2 text-emerald-700 dark:text-emerald-400">取込可 (累積上限なし)</td>
                         </tr>
                       </tbody>
                     </table>
@@ -663,7 +663,7 @@ export function HelpClient({ isTenantAdmin }: Props) {
                     <strong>Beginner プランの方</strong>: 50 MB 無料枠を超える取込は preview で警告表示 + 取込ボタン無効化されます (= 意図せず課金が発生することはありません)。50 MB を超えるデータをまとめて取り込みたい場合は Expert / Pro プランへアップグレードしてください。
                   </p>
                   <p className="mt-2 text-muted-foreground">
-                    <strong>Expert / Pro プランの方</strong>: preview 画面で「取込後の予測使用量」と「予測月次課金額」が表示されます。内容を確認のうえ取込を実行してください。詳細は{' '}
+                    <strong>Expert / Pro プランの方</strong>: 累積容量に上限はなく、蓄積したデータが増えたことを理由に取込が止まることはありません (L3 = 50 GB は運営側が動作速度を監視する目安で、取込は継続できます)。preview 画面で「取込後の予測使用量」と「予測月次課金額」が表示されますので、内容を確認のうえ取込を実行してください。詳細は{' '}
                     <Link href="/settings/tenant" className="text-primary underline">
                       テナント設定
                     </Link>{' '}
@@ -764,10 +764,10 @@ export function HelpClient({ isTenantAdmin }: Props) {
               }
             />
             <FaqItem
-              q="50 GB のハードキャップに達したら何が起こりますか？"
+              q="データ容量・ファイル容量に上限はありますか？大量に蓄積しても保存は止まりませんか？"
               a={
                 <p>
-                  全プラン共通で <strong>新規データの保存・編集が止まります</strong> (エクスポート・既存データ閲覧・削除は引き続き可能)。サービス全体の安定性を守るための上限値で、継続利用には不要データの削除をお願いします。
+                  <strong>累積容量に上限はありません</strong> (2026-05-31 改定)。Expert / Pro プランでは、蓄積したデータがどれだけ増えても従量課金 (DB 1 GB ごと ¥50・ファイル 1 GB ごと ¥10) が続くだけで、<strong>保存・編集・アップロードが止まることはありません</strong> (「データはたすきばの命」)。1 回の登録で送れる本文は DB 5 MB まで、1 ファイルは 50 MB までという上限はありますが、これは 1 回の操作の瞬間的なサーバ負荷を抑えるためのもので、累積容量とは無関係です。50 GB 到達 (L3) は運営側が動作速度を監視する目安であり、書き込みには影響しません。なお Beginner プランのみ、無料枠 (DB 50 MB / ファイル 100 MB) 超過で新規作成・更新・アップロードが止まります (削除は可能、課金は発生しません)。
                 </p>
               }
             />

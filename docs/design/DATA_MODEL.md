@@ -1,1093 +1,1212 @@
 # データモデルとテーブル定義 (Program Design)
 
-本ドキュメントは、Prisma スキーマと Postgres テーブル定義を集約する (DESIGN.md §4〜§5、§13、§15)。マイグレーション戦略は [../operations/DB_MIGRATION_PROCEDURE.md](../operations/DB_MIGRATION_PROCEDURE.md) を参照。
+本ドキュメントは **`prisma/schema.prisma` (42 model) と実 Postgres (Supabase) の完全ミラー** を目的とした基盤文書です。1 ファイルで全テーブルの構造・インデックス・FK ポリシー・PostgreSQL 拡張・RLS・ベクトル検索の実装まで把握できることをゴールとします。
 
-> ⚠️ **最新スキーマの真値は [prisma/schema.prisma](../../prisma/schema.prisma)**。本ドキュメントは主要な設計判断を要約するもので、細部 (新規カラム追加等) は schema 直接参照を推奨。
+> ⚠️ **最終的な真値は [prisma/schema.prisma](../../prisma/schema.prisma) と実 DB**。本ドキュメントは schema を 1:1 に転記し設計判断を補足したものです。schema に存在しないカラム・テーブルは記載しません (推測でカラムを足さない方針)。マイグレーション戦略は [../operations/DB_MIGRATION_PROCEDURE.md](../operations/develop/DB_MIGRATION_PROCEDURE.md) を参照。
 
-## ADR ベースの最近の追加
-
-- **ADR-0019 (2026-05-24)** 課金 featureUnit の中央定義: `src/config/billing-feature-units.ts` (ADR-0022 で 4 階層化、部分 supersede)
-- **ADR-0022 (2026-06-01) / ADR-0029 (2026-05-30 ¥1→¥5 改定)** Embedding 機能の従量課金 (Beginner ¥0 維持、Expert/Pro ¥5/業務操作):
-  - `Tenant` 3 列追加: `currentMonthEmbeddingCallCount` / `currentMonthEmbeddingCostJpy` (= LLM counter とは別カラムで管理、Beginner 50 件上限の判定対象外) / `stripeSubscriptionItemEmbeddingId` (= Stripe-ready、optional)
-  - `TenantMonthlyUsageHistory` 2 列追加: `embeddingCallCount` / `embeddingCostJpy` (= ADR-0022 適用前の過去月は null、内訳表示用 subset)
-  - `StripeUsageRecordQueue.callType` に 'embedding' を追加 (= 既存 'haiku' / 'sonnet' / 'db_capacity_overage' / 'storage_file_overage' に並ぶ)
-  - `src/config/embedding-pricing.ts` 新規: `resolveEmbeddingCostJpy(plan)` (Beginner=0 / Expert=1 / Pro=1)
-  - 詳細: [ADR-0022](../adr/0022-embedding-usage-based-billing.md)
-- **ADR-0020 (2026-05-25)** DB 容量従量課金: `Tenant` に `storageBytesUsed` / `storageBytesPeakThisMonth` / `dbCapacityWarningLevel` / `storageGuardCircuitFailCount` 等を追加
-- **ADR-0021 (2026-05-26)** ファイル添付ストレージ従量課金 + Attachment Embedding:
-  - `Tenant` 7 列追加: `storageFileBytesUsed` / `storageFileBytesUsedAt` / `storageFileBytesPeakThisMonth` / `storageFileBytesPeakAt` / `storageBucketBytesPeakThisMonth` (drift 検知用) / `fileStorageWarningLevel` (none/l1/l2/l3) / `storageFileBytesYesterday` (anomaly baseline)
-  - `Attachment` 9 列追加: `storageProvider` ('url'/'supabase') / `storageObjectKey` / `sizeBytes` / `contentEmbedding` (vector(1024)) / `embeddingStatus` ('pending'/'completed'/'unsupported'/'failed') / `extractedTextHash` (SHA-256) / `embeddingGeneratedAt` / `embeddingRetryCount` / `embeddingLastRetryAt`
-  - 既存 URL 型は backfill で `storageProvider='url'` + `embeddingStatus='unsupported'`
-  - インデックス: `idx_attachments_embedding_status` (cron 部分インデックス) / `idx_attachments_tenant_provider` (集計用)
+最終再生成: 2026-05-31 (schema.prisma 42 model + Supabase introspection 照合)。
 
 ---
 
-## §4. データモデル
+## 目次
 
-## 4. データモデル
+- [§1. テーブル一覧 (42 + Prisma 管理表)](#1-テーブル一覧-42--prisma-管理表)
+- [§2. PostgreSQL 拡張機能](#2-postgresql-拡張機能)
+- [§3. ベクトル検索の実装 (pgvector)](#3-ベクトル検索の実装-pgvector)
+- [§4. 全文検索インデックス (pg_trgm)](#4-全文検索インデックス-pg_trgm)
+- [§5. RLS とテナント分離](#5-rls-とテナント分離)
+- [§6. FK onDelete ポリシー](#6-fk-ondelete-ポリシー)
+- [§7. ER 図](#7-er-図)
+- [§8. テーブル定義 (§8.1〜§8.42)](#8-テーブル定義)
+- [§14. 初期データ・シード設計](#14-初期データシード設計)
+- [§15. インデックス戦略](#15-インデックス戦略)
 
-### 4.1 ER 図
+---
+
+## §1. テーブル一覧 (42 + Prisma 管理表)
+
+| # | 物理名 | 日本語名 | 区分 |
+|---|---|---|---|
+| 8.1 | `tenants` | テナント | 中核 |
+| 8.2 | `users` | ユーザ | 中核 / 認証 |
+| 8.3 | `sessions` | セッション | 認証 |
+| 8.4 | `email_verification_tokens` | メール検証トークン | 認証 |
+| 8.5 | `password_reset_tokens` | パスワードリセットトークン | 認証 |
+| 8.6 | `recovery_codes` | リカバリコード | 認証 |
+| 8.7 | `password_histories` | パスワード履歴 | 認証 |
+| 8.8 | `customers` | 顧客 | 業務 |
+| 8.9 | `projects` | プロジェクト | 業務 |
+| 8.10 | `estimates` | 見積もり | 業務 |
+| 8.11 | `project_members` | プロジェクトメンバー | 業務 / M2M |
+| 8.12 | `tasks` | タスク (WBS) | 業務 |
+| 8.13 | `task_progress_logs` | 進捗・実績ログ | 業務 |
+| 8.14 | `risks_issues` | リスク・課題 | 業務 |
+| 8.15 | `risk_issue_projects` | リスク課題-PJ 中間 | M2M |
+| 8.16 | `stakeholders` | ステークホルダー | 業務 |
+| 8.17 | `knowledges` | ナレッジ | 業務 |
+| 8.18 | `knowledge_projects` | ナレッジ-PJ 中間 | M2M |
+| 8.19 | `task_knowledges` | タスク-ナレッジ中間 | M2M |
+| 8.20 | `retrospectives` | 振り返り | 業務 |
+| 8.21 | `retrospective_projects` | 振り返り-PJ 中間 | M2M |
+| 8.22 | `audit_logs` | 監査ログ | ログ |
+| 8.23 | `auth_event_logs` | 認証イベントログ | ログ |
+| 8.24 | `system_error_logs` | システムエラーログ | ログ |
+| 8.25 | `cron_execution_logs` | cron 実行履歴 | ログ |
+| 8.26 | `role_change_logs` | 権限変更履歴 | ログ |
+| 8.27 | `attachments` | 添付ファイル | 業務 / embedding |
+| 8.28 | `comments` | コメント | 業務 |
+| 8.29 | `mentions` | メンション | 業務 |
+| 8.30 | `notifications` | 通知 | 業務 |
+| 8.31 | `memos` | 個人メモ | 業務 / embedding |
+| 8.32 | `api_call_logs` | API 呼び出しログ | 課金 / ログ |
+| 8.33 | `suggestion_explanations` | 提案説明文キャッシュ | 業務 / 課金 |
+| 8.34 | `tenant_monthly_usage_history` | 月次使用量履歴 | 課金 |
+| 8.35 | `tenant_import_preview` | 外部インポートプレビュー | 業務 |
+| 8.36 | `email_send_logs` | メール送信ログ | ログ |
+| 8.37 | `stripe_webhook_events` | Stripe Webhook イベント | 課金 |
+| 8.38 | `billing_history` | 請求履歴 | 課金 |
+| 8.39 | `stripe_usage_record_queue` | Stripe Usage Record キュー | 課金 |
+| 8.40 | `tenant_consent_logs` | 規約同意ログ | 課金 / 法務 |
+| 8.41 | `faq_embeddings` | FAQ embedding | embedding / RAG |
+| 8.42 | `guide_embeddings` | ガイド embedding | embedding / RAG |
+| — | `_prisma_migrations` | Prisma マイグレーション管理表 (65 行) | システム |
+
+> `_prisma_migrations` は Prisma Migrate が管理するシステム表で `public` スキーマに存在する (適用済みマイグレーションのチェックサム・適用時刻を記録)。アプリは直接参照せず、本ドキュメントでは存在のみ注記。
+
+> **過去 doc からの是正**: 旧 DATA_MODEL.md にあった `decisions` / `change_requests` / `operation_trace_logs` および §4.2 の `estimate_knowledges` / `task_risks` / `task_estimates` / `task_dependencies` / `risk_knowledges` / `decision_*` / `retrospective_knowledges` / `knowledge_links` は **schema/実 DB に存在しない陳腐化テーブル** のため全削除した (grep 0 件で確認済)。
+
+---
+
+## §2. PostgreSQL 拡張機能
+
+実 Supabase インスタンスで有効な拡張 (introspection 確定値):
+
+| 拡張 | バージョン | 用途 |
+|---|---|---|
+| `vector` (pgvector) | 0.8.0 | 1024 次元 embedding 列の格納と Cosine 類似度検索 |
+| `pg_trgm` | 1.6 | トライグラム全文検索 (GIN index)。`knowledges` / `risks_issues` / `retrospectives` のテキスト検索 |
+| `pgcrypto` | (有効) | `gen_random_uuid()` (全 PK の既定値) |
+| `uuid-ossp` | 1.1 | UUID 生成補助 |
+| `pg_stat_statements` | 1.11 | クエリ統計 (運用観測) |
+| `supabase_vault` | 0.3.1 | Supabase Vault (秘密情報管理、Supabase 標準) |
+| `plpgsql` | (標準) | PL/pgSQL (PostgreSQL 標準同梱) |
+
+- `id` 列の既定値は `gen_random_uuid()` (pgcrypto)。timestamp 列は `now()` / `CURRENT_TIMESTAMP`。
+- **トリガ 0 件 / カスタム関数なし** (pg_trgm 由来の関数を除く)。`updated_at` は DB トリガではなく Prisma の `@updatedAt` (アプリ側) で更新される。
+
+---
+
+## §3. ベクトル検索の実装 (pgvector)
+
+embedding 列はすべて `vector(1024)` 型 (Voyage AI `voyage-4-lite`)。Prisma は vector 型を認識できないため schema 上は `Unsupported("vector(1024)")` 宣言で、read/write は `$queryRaw` 経由。
+
+| テーブル | 列 | NULL | 備考 |
+|---|---|---|---|
+| `projects` | `content_embedding` | YES | purpose+background+scope 結合の embedding |
+| `risks_issues` | `content_embedding` | YES | title+content+cause+lessonLearned 等 |
+| `retrospectives` | `content_embedding` | YES | planSummary+actualSummary+goodPoints+improvements 等 |
+| `knowledges` | `content_embedding` | YES | title+background+content+result+conclusion |
+| `memos` | `content_embedding` | YES | title+content |
+| `attachments` | `content_embedding` | YES | 抽出テキストの embedding (テキスト抽出成功時のみ) |
+| `faq_embeddings` | `content_embedding` | **NO** | NOT NULL = 生成完了の証跡 (row が存在 = embedding 済) |
+| `guide_embeddings` | `content_embedding` | **NO** | 同上 |
+
+- **業務エンティティ (projects/risks_issues/retrospectives/knowledges/memos/attachments) は nullable**: ADR-0026 で embedding 生成を非同期化したため、本体 INSERT/UPDATE は embedding なしでも成功する (生成失敗時 NULL の fail-safe)。`attachments` は `embedding_status` 状態機械 (pending → generating → completed / failed / unsupported) で追跡。
+- **`faq_embeddings` / `guide_embeddings` は NOT NULL**: source-of-truth は `src/config/faq-content.ts` / `guide-content.ts`。embedding 生成失敗時は row 自体を作らない設計 (chat/help RAG, ADR-0028)。
+- **★pgvector の専用インデックス (ivfflat / hnsw) は存在しない (introspection で 0 件)★**: 現状すべての vector 類似検索は **ブルートフォース全走査** (`ORDER BY content_embedding <=> $query`)。現データ規模では許容範囲。データ量が増えた時点で ivfflat / hnsw index 追加を検討する。
+- 検索サービス: チャット意味検索 `src/services/chat-search.service.ts` (pgvector + pg_trgm fallback)、ヘルプ RAG `src/services/help-search` (FaqEmbedding / GuideEmbedding)。
+
+---
+
+## §4. 全文検索インデックス (pg_trgm)
+
+pg_trgm の GIN index が以下に存在する (introspection 確定、`gin_trgm_ops`):
+
+| テーブル | 対象列 |
+|---|---|
+| `knowledges` | `title`, `content` |
+| `risks_issues` | `title`, `content` |
+| `retrospectives` | `problems`, `improvements` |
+
+embedding 検索が利用できない場合 (embedding 未生成等) のテキストフォールバックや、部分一致検索に使用される。
+
+---
+
+## §5. RLS とテナント分離
+
+実 DB introspection 確定事実 (★設計上極めて重要★):
+
+- **大半のテーブルで RLS は `enabled` だが、ポリシーは 0 件 (`forced=false`)** → 実効的に無効。
+- アプリは **Prisma 特権 (service) ロールで接続するため RLS をバイパス** する。
+- **テナント分離の唯一の防御線は service 層の `where.tenantId` フィルタ** (`viewerTenantId` を必須引数で受ける設計、memory `feedback_tenant_isolation`)。DB 層 RLS には依存しない。
+- 一覧系サービスは `viewerTenantId` を必須引数で受け取り、`where: { tenantId: viewerTenantId, ... }` を強制する。これが越境防止 (severity-1 個人情報漏洩リスク予防) の根本。
+
+RLS が **OFF** のテーブル (introspection 確定):
+
+`billing_history` / `cron_execution_logs` / `faq_embeddings` / `guide_embeddings` / `stripe_usage_record_queue` / `stripe_webhook_events` / `tenant_consent_logs`
+
+(いずれもテナント横断のシステム/課金/RAG 系で、テナント越境 read のリスクが構造的に低いか、そもそも tenant_id を持たない `faq_embeddings`/`guide_embeddings`/`cron_execution_logs`。)
+
+---
+
+## §6. FK onDelete ポリシー
+
+ADR-0015 (アプリ層 cascade) に基づき、FK の onDelete は以下の方針 (introspection + schema 確定):
+
+| FK の種別 | onDelete | 理由 |
+|---|---|---|
+| `tenant_id` → `tenants.id` | **NO ACTION** | テナント削除はアプリ層で明示的に全関連を cascade 削除する (ADR-0015)。DB FK での自動 cascade は使わない |
+| 作成者 (`created_by`) / reporter (`reporter_id`) | **RESTRICT** | 作成者 User を物理削除しようとすると拒否 (監査整合性を保つ) |
+| 担当者 (`assignee_id`) / `stakeholders.user_id` / `memos.assignee_id` / `knowledges.assignee_id` / `retrospectives.assignee_id` | **SET NULL** | 担当者 User 物理削除時は担当解除し本体は残す |
+| `projects.customer_id` → `customers.id` | **SET NULL** | Customer 物理削除時、論理削除済 Project の customer_id を dangling にしない |
+| `risks_issues.project_id` / `retrospectives.project_id` (作成元 PJ) | **SET NULL** | M2M 化に伴い「作成元 PJ」の audit 用途。作成元 PJ 物理削除で NULL 化 (orphan 許容) |
+| M2M 中間 (`knowledge_projects` / `retrospective_projects` / `risk_issue_projects`) | **CASCADE** | リンク両端の物理削除でリンク行を自動削除 |
+| `mentions.comment_id` → `comments.id` | **CASCADE** | コメント削除でメンションも物理削除 |
+| `sessions.user_id` → `users.id` | **CASCADE** | User 削除でセッション破棄 |
+| その他の参照 (token 系の user_id/tenant_id 等) | NO ACTION / RESTRICT | Prisma 既定。アプリ層で整合性を担保 |
+
+> 各列の正確な onDelete は §8 の各テーブル定義に明記。
+
+---
+
+## §7. ER 図
+
+主要な業務エンティティの関連 (M2M 中間・課金・ログ系は省略、全リレーションは §8 各テーブルの FK 欄を参照):
 
 ```mermaid
 erDiagram
-    users {
-        uuid id PK
-        varchar name
-        varchar email UK
-        varchar password_hash
-        enum system_role "admin | general"
-        boolean is_active
-        integer failed_login_count
-        timestamp locked_until
-        boolean permanent_lock
-        boolean mfa_enabled
-        varchar mfa_secret_encrypted
-        timestamp mfa_enabled_at
-        timestamp last_login_at
-        timestamp created_at
-        timestamp updated_at
-        timestamp deleted_at
-    }
+    tenants ||--o{ users : "has"
+    tenants ||--o{ customers : "has"
+    tenants ||--o{ projects : "has"
+    tenants ||--o{ knowledges : "has"
+    tenants ||--o{ risks_issues : "has"
+    tenants ||--o{ retrospectives : "has"
+    tenants ||--o{ memos : "has"
+    tenants ||--o{ stakeholders : "has"
 
-    recovery_codes {
-        uuid id PK
-        uuid user_id FK
-        varchar code_hash
-        timestamp used_at
-        timestamp created_at
-    }
-
-    email_verification_tokens {
-        uuid id PK
-        uuid user_id FK
-        varchar token_hash
-        timestamp expires_at
-        timestamp used_at
-        timestamp created_at
-    }
-
-    password_reset_tokens {
-        uuid id PK
-        uuid user_id FK
-        varchar token_hash
-        timestamp expires_at
-        timestamp used_at
-        timestamp created_at
-    }
-
-    password_histories {
-        uuid id PK
-        uuid user_id FK
-        varchar password_hash
-        timestamp created_at
-    }
-
-    auth_event_logs {
-        uuid id PK
-        varchar event_type
-        uuid user_id FK
-        varchar email
-        varchar ip_address
-        text user_agent
-        jsonb detail
-        timestamp created_at
-    }
-
-    operation_trace_logs {
-        uuid id PK
-        uuid user_id FK
-        varchar session_id
-        uuid request_id
-        varchar http_method
-        varchar path
-        jsonb query_params
-        varchar entity_type
-        uuid entity_id
-        varchar action
-        varchar ip_address
-        text user_agent
-        integer response_status
-        integer duration_ms
-        timestamp created_at
-    }
-
-    projects {
-        uuid id PK
-        varchar name
-        uuid customer_id FK "PR #111-2: customers.id / ON DELETE SET NULL"
-        text purpose
-        text background
-        text scope
-        text out_of_scope
-        enum dev_method "scratch | power_platform | package | other"
-        varchar tech_stack_tags "JSONB array"
-        varchar business_domain_tags "JSONB array"
-        date planned_start_date
-        date planned_end_date
-        enum status "planning | estimating | scheduling | executing | completed | retrospected | closed"
-        text notes
-        uuid created_by FK
-        uuid updated_by FK
-        timestamp created_at
-        timestamp updated_at
-        timestamp deleted_at
-    }
-
-    project_members {
-        uuid id PK
-        uuid project_id FK
-        uuid user_id FK
-        enum project_role "pm_tl | member | viewer"
-        uuid assigned_by FK
-        timestamp created_at
-        timestamp updated_at
-    }
-
-    estimates {
-        uuid id PK
-        uuid project_id FK
-        varchar item_name
-        enum category "requirements | design | development | testing | other"
-        enum dev_method "scratch | power_platform | package | other"
-        decimal estimated_effort
-        enum effort_unit "person_hour | person_day"
-        text rationale
-        text preconditions
-        boolean is_confirmed
-        text notes
-        uuid created_by FK
-        uuid updated_by FK
-        timestamp created_at
-        timestamp updated_at
-        timestamp deleted_at
-    }
-
-    tasks {
-        uuid id PK
-        uuid project_id FK
-        uuid parent_task_id FK
-        enum type "work_package | activity"
-        varchar wbs_number
-        varchar name
-        text description
-        enum category "requirements | design | development | testing | review | management | other"
-        uuid assignee_id FK "nullable - WP は null"
-        date planned_start_date "nullable - WP は子から自動計算"
-        date planned_end_date "nullable - WP は子から自動計算"
-        decimal planned_effort "WP は子の合計を自動計算"
-        enum priority "low | medium | high"
-        enum status "not_started | in_progress | completed | on_hold"
-        integer progress_rate "0-100 - WP は子の加重平均"
-        boolean is_milestone
-        text notes
-        uuid created_by FK
-        uuid updated_by FK
-        timestamp created_at
-        timestamp updated_at
-        timestamp deleted_at
-    }
-
-    task_progress_logs {
-        uuid id PK
-        uuid task_id FK
-        uuid updated_by FK
-        date update_date
-        integer progress_rate "0-100"
-        decimal actual_effort
-        decimal remaining_effort
-        enum status "not_started | in_progress | completed | on_hold"
-        boolean is_delayed
-        text delay_reason
-        text work_memo
-        boolean has_issue
-        text next_action
-        date completed_date
-        timestamp created_at
-    }
-
-    risks_issues {
-        uuid id PK
-        uuid project_id FK
-        enum type "risk | issue"
-        varchar title
-        text occurrence "発生事象 (issue) / 考えられる事象 (risk)。NULL 許容"
-        text content "メモ (旧「内容」の UI ラベルをリネーム、DB 列名は維持)"
-        text cause "直接原因 (issue) / 考えられる原因 (risk)。NULL 許容"
-        enum impact "low | medium | high"
-        enum likelihood "low | medium | high"
-        enum priority "low | medium | high"
-        text response_policy
-        text response_detail
-        uuid reporter_id FK
-        uuid assignee_id FK
-        date deadline
-        enum state "open | in_progress | monitoring | resolved"
-        text result
-        text lesson_learned
-        uuid created_by FK
-        uuid updated_by FK
-        timestamp created_at
-        timestamp updated_at
-        timestamp deleted_at
-    }
-
-    knowledges {
-        uuid id PK
-        varchar title
-        enum knowledge_type "research | verification | incident | decision | lesson | best_practice | other"
-        text background
-        text content
-        text result
-        text conclusion
-        text recommendation
-        enum reusability "low | medium | high"
-        varchar tech_tags "JSONB array"
-        enum dev_method "scratch | power_platform | package | other"
-        varchar process_tags "JSONB array"
-        enum visibility "draft | project | company"
-        uuid created_by FK
-        uuid assignee_id FK "feat/asset-assignee-expansion (2026-05-26): 担当者 (作成者と並ぶ編集権限保持者)。NULL 許容、ON DELETE SET NULL"
-        uuid updated_by FK
-        timestamp created_at
-        timestamp updated_at
-        timestamp deleted_at
-    }
-
-    retrospectives {
-        uuid id PK
-        uuid project_id FK
-        date conducted_date
-        text plan_summary
-        text actual_summary
-        text good_points
-        text problems
-        text estimate_gap_factors
-        text schedule_gap_factors
-        text quality_issues
-        text risk_response_evaluation
-        text improvements
-        text knowledge_to_share
-        enum state "draft | confirmed"
-        uuid created_by FK
-        uuid assignee_id FK "feat/asset-assignee-expansion (2026-05-26): 担当者。NULL 許容、ON DELETE SET NULL"
-        uuid updated_by FK
-        timestamp created_at
-        timestamp updated_at
-        timestamp deleted_at
-    }
-
-    comments {
-        uuid id PK
-        varchar entity_type
-        uuid entity_id
-        uuid user_id FK
-        text content
-        timestamp created_at
-        timestamp updated_at
-        timestamp deleted_at
-    }
-
-    decisions {
-        uuid id PK
-        uuid project_id FK
-        varchar title
-        text background
-        text issue
-        text options
-        text decision_content
-        text decision_reason
-        date decided_date
-        uuid decided_by FK
-        text impact_scope
-        uuid created_by FK
-        uuid updated_by FK
-        timestamp created_at
-        timestamp updated_at
-        timestamp deleted_at
-    }
-
-    change_requests {
-        uuid id PK
-        uuid project_id FK
-        text request_content
-        text reason
-        uuid requester_id FK
-        text impact_target
-        text impact_assessment
-        boolean needs_approval
-        enum approval_status "pending | approved | rejected"
-        text applied_content
-        enum state "open | applied | rejected | cancelled"
-        uuid created_by FK
-        uuid updated_by FK
-        timestamp created_at
-        timestamp updated_at
-        timestamp deleted_at
-    }
-
-    audit_logs {
-        uuid id PK
-        uuid user_id FK
-        varchar action
-        varchar entity_type
-        uuid entity_id
-        jsonb before_value
-        jsonb after_value
-        varchar ip_address
-        timestamp created_at
-    }
-
-    role_change_logs {
-        uuid id PK
-        uuid changed_by FK
-        uuid target_user_id FK
-        enum change_type "system_role | project_role"
-        uuid project_id FK
-        varchar before_role
-        varchar after_role
-        text reason
-        timestamp created_at
-    }
-
-    %% Relationships
+    customers ||--o{ projects : "customer (SET NULL)"
     projects ||--o{ project_members : "has"
-    users ||--o{ project_members : "belongs to"
+    users ||--o{ project_members : "member of"
     projects ||--o{ estimates : "has"
     projects ||--o{ tasks : "has"
     tasks ||--o{ tasks : "parent-child"
     tasks ||--o{ task_progress_logs : "has"
-    users ||--o{ task_progress_logs : "updates"
-    %% PR feat/asset-multi-project-linking (2026-05-09):
-    %%   risks_issues / retrospectives は M:N (中間テーブル経由)。
-    %%   `risks_issues.project_id` / `retrospectives.project_id` は「**作成元プロジェクト**」(audit) で
-    %%   ON DELETE SET NULL。検索 / 一覧 / cascade はすべて `risk_issue_projects` /
-    %%   `retrospective_projects` 経由で行う。
+    tasks ||--o{ task_knowledges : "links"
+    knowledges ||--o{ task_knowledges : "linked-to"
+    projects ||--o{ stakeholders : "has"
+
+    %% リスク/課題・振り返り・ナレッジは M:N (中間テーブル経由)。
+    %% project_id 列は「作成元プロジェクト」(audit) で ON DELETE SET NULL。
     projects ||--o{ risks_issues : "creator (SET NULL)"
     projects ||--o{ retrospectives : "creator (SET NULL)"
-    projects ||--o{ risk_issue_projects : "linked-by"
-    risks_issues ||--o{ risk_issue_projects : "linked-to"
-    projects ||--o{ retrospective_projects : "linked-by"
-    retrospectives ||--o{ retrospective_projects : "linked-to"
-    %% PR #199: comments は polymorphic (entity_type + entity_id)。FK は持たないため
-    %%   ER 図上では「持つ」リレーションを表現せず単独テーブルとして配置。
-    projects ||--o{ decisions : "has"
-    projects ||--o{ change_requests : "has"
-    users ||--o{ audit_logs : "performs"
-    users ||--o{ role_change_logs : "changes"
-    users ||--o{ recovery_codes : "has"
-    users ||--o{ email_verification_tokens : "has"
-    users ||--o{ password_reset_tokens : "has"
-    users ||--o{ password_histories : "has"
-    users ||--o{ operation_trace_logs : "traced"
-    users ||--o{ auth_event_logs : "logged"
-```
+    projects ||--o{ risk_issue_projects : "linked"
+    risks_issues ||--o{ risk_issue_projects : "linked"
+    projects ||--o{ retrospective_projects : "linked"
+    retrospectives ||--o{ retrospective_projects : "linked"
+    projects ||--o{ knowledge_projects : "linked"
+    knowledges ||--o{ knowledge_projects : "linked"
 
-### 4.2 多対多リレーションテーブル
+    %% comments / attachments / notifications は polymorphic (entity_type + entity_id)。
+    %% FK を持たないため線は引かない。comments ||--o{ mentions は FK あり。
+    comments ||--o{ mentions : "cascade"
+    users ||--o{ comments : "authors"
+    users ||--o{ notifications : "receives"
+    users ||--o{ memos : "authors"
 
-```mermaid
-erDiagram
-    estimate_knowledges {
-        uuid id PK
-        uuid estimate_id FK
-        uuid knowledge_id FK
-    }
-
-    task_knowledges {
-        uuid id PK
-        uuid task_id FK
-        uuid knowledge_id FK
-    }
-
-    task_risks {
-        uuid id PK
-        uuid task_id FK
-        uuid risk_issue_id FK
-    }
-
-    task_estimates {
-        uuid id PK
-        uuid task_id FK
-        uuid estimate_id FK
-    }
-
-    task_dependencies {
-        uuid id PK
-        uuid task_id FK
-        uuid depends_on_task_id FK
-    }
-
-    risk_knowledges {
-        uuid id PK
-        uuid risk_issue_id FK
-        uuid knowledge_id FK
-    }
-
-    decision_tasks {
-        uuid id PK
-        uuid decision_id FK
-        uuid task_id FK
-    }
-
-    decision_risks {
-        uuid id PK
-        uuid decision_id FK
-        uuid risk_issue_id FK
-    }
-
-    decision_knowledges {
-        uuid id PK
-        uuid decision_id FK
-        uuid knowledge_id FK
-    }
-
-    knowledge_projects {
-        uuid id PK
-        uuid knowledge_id FK
-        uuid project_id FK
-    }
-
-    retrospective_knowledges {
-        uuid id PK
-        uuid retrospective_id FK
-        uuid knowledge_id FK
-    }
-
-    knowledge_links {
-        uuid id PK
-        uuid knowledge_id FK
-        varchar url
-        varchar label
-    }
+    tenants ||--o{ api_call_logs : "billed"
+    tenants ||--o{ billing_history : "invoiced"
+    tenants ||--o{ tenant_monthly_usage_history : "snapshot"
 ```
 
 ---
 
+## §8. テーブル定義
 
-## §5. テーブル定義書
+各テーブルは schema.prisma と 1:1。型表記は Prisma `@db.*` の物理型。
 
-## 5. テーブル定義書
+### 8.1 tenants（テナント）
 
-### 5.1 users（ユーザ）
+マルチテナント基盤。全業務エンティティの所属を一元管理する。v1 (2026-06-01) は `default-tenant` 単一テナント運用、v1.x で UI 経由のテナント追加に対応。
 
-| カラム名 | 型 | NULL | デフォルト | 説明 |
-|---|---|---|---|---|
-| id | UUID | NO | gen_random_uuid() | 主キー |
-| name | VARCHAR(100) | NO | - | ユーザ名 |
-| email | VARCHAR(255) | NO | - | メールアドレス（ログインID）。UNIQUE |
-| password_hash | VARCHAR(255) | NO | - | bcrypt ハッシュ済みパスワード |
-| system_role | VARCHAR(20) | NO | 'general' | システムロール: admin / general |
-| is_active | BOOLEAN | NO | true | 有効/無効 |
-| failed_login_count | INTEGER | NO | 0 | ログイン失敗回数 |
-| locked_until | TIMESTAMPTZ | YES | NULL | 一時ロック解除日時 |
-| permanent_lock | BOOLEAN | NO | false | 恒久ロックフラグ |
-| mfa_enabled | BOOLEAN | NO | false | MFA 有効フラグ |
-| mfa_secret_encrypted | VARCHAR(255) | YES | NULL | 暗号化された TOTP シークレットキー |
-| mfa_enabled_at | TIMESTAMPTZ | YES | NULL | MFA 有効化日時 |
-| last_login_at | TIMESTAMPTZ | YES | NULL | 最終ログイン日時 |
-| created_at | TIMESTAMPTZ | NO | now() | 作成日時 |
-| updated_at | TIMESTAMPTZ | NO | now() | 更新日時 |
-| deleted_at | TIMESTAMPTZ | YES | NULL | 論理削除日時 |
+| 論理名 | 物理名 | 型 | NULL | デフォルト | 説明 |
+|---|---|---|---|---|---|
+| ID | id | UUID | NO | gen_random_uuid() | 主キー |
+| slug | slug | VARCHAR(60) | NO | - | URL ルーティング用 slug。UNIQUE。v1 は 'default' 固定 |
+| テナント名 | name | VARCHAR(100) | NO | - | 表示名 |
+| 顧客連番 | tenant_seq | INT | YES | (SEQUENCE) | 人間可読連番。UNIQUE。default=1、管理テナントは null |
+| プラン | plan | VARCHAR(20) | NO | 'beginner' | 'beginner' / 'expert' / 'pro' |
+| 当月 LLM 呼出数 | current_month_api_call_count | INT | NO | 0 | LLM_BILLABLE のみ。Beginner 50 件上限判定対象 |
+| 当月 LLM 課金額 | current_month_api_cost_jpy | INT | NO | 0 | 円整数。予算上限予測判定対象 |
+| 当月 Embedding 呼出数 | current_month_embedding_call_count | INT | NO | 0 | 全プランで件数記録 (ADR-0022) |
+| 当月 Embedding 課金額 | current_month_embedding_cost_jpy | INT | NO | 0 | Beginner=0 / Expert/Pro=件数×¥5 (ADR-0029) |
+| 当月ヘルプチャット数 | current_month_help_chat_count | INT | NO | 0 | 全プラン無料、月 100 回上限 (ADR-0027) |
+| 月次予算上限 | monthly_budget_cap_jpy | INT | YES | NULL | LLM_BILLABLE 用。NULL=無制限 |
+| Embedding 予算上限 | monthly_embedding_budget_cap_jpy | INT | YES | NULL | EMBEDDING_BILLABLE 用 (ADR-0030)。NULL=無制限 |
+| Beginner 月間上限 | beginner_monthly_call_limit | INT | NO | 50 | 課金対象 featureUnit のみカウント (ADR-0019) |
+| Beginner 最大席数 | beginner_max_seats | INT | NO | 5 | |
+| Haiku 単価 | price_per_call_haiku | INT | NO | 10 | Expert ¥10/call (ADR-0019) |
+| Sonnet 単価 | price_per_call_sonnet | INT | NO | 15 | Pro ¥15/call |
+| 請求先種別 | billing_type | VARCHAR(20) | NO | 'corporate' | 'corporate' / 'individual' |
+| 請求先会社名 | billing_company_name | VARCHAR(200) | YES | NULL | 請求書発行先正式名 |
+| 請求先担当者 | billing_contact_name | VARCHAR(100) | YES | NULL | |
+| 請求先メール | billing_contact_email | VARCHAR(255) | YES | NULL | |
+| 請求先住所(legacy) | billing_address | TEXT | YES | NULL | 旧単一住所、フォールバック表示用 |
+| 郵便番号 | billing_postal_code | VARCHAR(10) | YES | NULL | |
+| 都道府県 | billing_prefecture | VARCHAR(20) | YES | NULL | |
+| 市区町村 | billing_city | VARCHAR(100) | YES | NULL | |
+| 番地 | billing_street_address | VARCHAR(200) | YES | NULL | |
+| 建物名 | billing_building_name | VARCHAR(200) | YES | NULL | |
+| 電話番号 | billing_phone_number | VARCHAR(20) | YES | NULL | |
+| 支払い方法 | payment_method | VARCHAR(30) | NO | 'invoice' | 'invoice'(銀行振込) / 'credit_card'。旧 'bank_transfer' は 'invoice' に統合 |
+| プラン変更予約日時 | scheduled_plan_change_at | TIMESTAMPTZ | YES | NULL | ダウングレード翌月適用 |
+| 予約後プラン | scheduled_next_plan | VARCHAR(20) | YES | NULL | |
+| 最終リセット日時 | last_reset_at | TIMESTAMPTZ | YES | NULL | 月初リセット cron が処理した最後の月初 |
+| Beginner 昇格履歴 | beginner_ever_upgraded | BOOLEAN | NO | false | 一度でも Expert/Pro になった (Beginner 永続防止) |
+| 60日警告送信日時 | beginner_notice_day60_sent_at | TIMESTAMPTZ | YES | NULL | |
+| 75日警告送信日時 | beginner_notice_day75_sent_at | TIMESTAMPTZ | YES | NULL | |
+| 90日失効通知日時 | beginner_expired_notice_sent_at | TIMESTAMPTZ | YES | NULL | |
+| 150日削除予告日時 | beginner_auto_delete_notice_day150_sent_at | TIMESTAMPTZ | YES | NULL | |
+| 170日削除予告日時 | beginner_auto_delete_notice_day170_sent_at | TIMESTAMPTZ | YES | NULL | |
+| シード参照有効 | seed_data_enabled | BOOLEAN | NO | true | 提案エンジンに管理テナントのシードを含めるか |
+| インポート中ロック | import_in_progress_at | TIMESTAMPTZ | YES | NULL | 30 分で自動失効 |
+| Storage 使用量 | storage_bytes_used | BIGINT | NO | 0 | DB 容量キャッシュ (日次 cron) |
+| Storage 更新日時 | storage_bytes_used_at | TIMESTAMPTZ | YES | NULL | |
+| 容量超過通知日時 | storage_over_limit_notice_sent_at | TIMESTAMPTZ | YES | NULL | |
+| DB 容量月中 peak | storage_bytes_peak_this_month | BIGINT | NO | 0 | 課金根拠 (ADR-0020) |
+| DB 容量 peak 時刻 | storage_bytes_peak_at | TIMESTAMPTZ | YES | NULL | |
+| DB インスタンス peak | db_instance_bytes_peak_this_month | BIGINT | YES | NULL | drift 監視用 |
+| DB 容量警告 Level | db_capacity_warning_level | VARCHAR(8) | NO | 'none' | none/l1/l2/l3 |
+| circuit 失敗カウンタ | storage_guard_circuit_fail_count | INT | NO | 0 | 3 回で write 拒否 (R3 fail-close) |
+| circuit open 時刻 | storage_guard_circuit_opened_at | TIMESTAMPTZ | YES | NULL | |
+| ファイル容量使用量 | storage_file_bytes_used | BIGINT | NO | 0 | Supabase Storage キャッシュ (ADR-0021) |
+| ファイル容量更新日時 | storage_file_bytes_used_at | TIMESTAMPTZ | YES | NULL | |
+| ファイル容量月中 peak | storage_file_bytes_peak_this_month | BIGINT | NO | 0 | 課金根拠 (storage_file_overage) |
+| ファイル容量 peak 時刻 | storage_file_bytes_peak_at | TIMESTAMPTZ | YES | NULL | |
+| bucket 容量 peak | storage_bucket_bytes_peak_this_month | BIGINT | YES | NULL | drift 検知用 |
+| ファイル容量警告 Level | file_storage_warning_level | VARCHAR(8) | NO | 'none' | none/l1/l2/l3 |
+| ファイル容量前日値 | storage_file_bytes_yesterday | BIGINT | YES | NULL | anomaly baseline (+5GB/24h で alert) |
+| タイムゾーン | timezone | VARCHAR(60) | NO | 'Asia/Tokyo' | IANA TZ 名 |
+| ロケール | locale | VARCHAR(10) | NO | 'ja-JP' | BCP 47 |
+| 作成日時 | created_at | TIMESTAMPTZ | NO | now() | |
+| 更新日時 | updated_at | TIMESTAMPTZ | NO | @updatedAt | |
+| 削除日時 | deleted_at | TIMESTAMPTZ | YES | NULL | 論理削除 |
+| 停止日時 | suspended_at | TIMESTAMPTZ | YES | NULL | not null=read-only 強制 (滞納等) |
+| 停止理由 | suspend_reason | VARCHAR(50) | YES | NULL | 'payment_delinquent' 等 |
+| 停止実行者 | suspended_by | UUID | YES | NULL | super_admin の User.id (FK ではない) |
+| 解除日時 | resumed_at | TIMESTAMPTZ | YES | NULL | |
+| 作成者 User ID | created_by_user_id | UUID | YES | NULL | 初期 admin User.id (FK ではない、ADR-0016) |
+| Stripe Customer ID | stripe_customer_id | VARCHAR(50) | YES | NULL | UNIQUE |
+| Stripe Subscription ID | stripe_subscription_id | VARCHAR(50) | YES | NULL | UNIQUE |
+| Subscription 状態 | stripe_subscription_status | VARCHAR(30) | YES | NULL | active/past_due/canceled 等 |
+| Haiku Item ID | stripe_subscription_item_haiku_id | VARCHAR(50) | YES | NULL | |
+| Sonnet Item ID | stripe_subscription_item_sonnet_id | VARCHAR(50) | YES | NULL | |
+| Embedding Item ID | stripe_subscription_item_embedding_id | VARCHAR(50) | YES | NULL | ADR-0022 (env 設定時のみ) |
+| DB 容量 Item ID | stripe_subscription_item_db_capacity_id | VARCHAR(50) | YES | NULL | ADR-0020/0021 |
+| ファイル容量 Item ID | stripe_subscription_item_storage_file_id | VARCHAR(50) | YES | NULL | |
+| 既定支払方法 ID | stripe_default_payment_method_id | VARCHAR(50) | YES | NULL | |
+| カード最終検証日時 | card_last_verified_at | TIMESTAMPTZ | YES | NULL | |
+| カード検証状態 | card_verification_status | VARCHAR(20) | YES | NULL | valid/expired/declined/never_verified |
+| 自動停止予定日時 | auto_suspend_scheduled_at | TIMESTAMPTZ | YES | NULL | past_due 受信時 now+3日 |
 
-**インデックス**: `idx_users_email` (email, UNIQUE, WHERE deleted_at IS NULL)
+**インデックス**: `idx_tenants_plan` (plan) / `idx_tenants_stripe_subscription_status` (stripe_subscription_status) / UNIQUE(slug) / UNIQUE(tenant_seq) / UNIQUE(stripe_customer_id) / UNIQUE(stripe_subscription_id)
 
-### 5.2 projects（プロジェクト）
+### 8.2 users（ユーザ）
 
-| カラム名 | 型 | NULL | デフォルト | 説明 |
-|---|---|---|---|---|
-| id | UUID | NO | gen_random_uuid() | 主キー |
-| name | VARCHAR(100) | NO | - | プロジェクト名 |
-| customer_id | UUID | NO | - | 顧客 FK (PR #111-2 以降): customers.id / ON DELETE SET NULL |
-| purpose | TEXT | NO | - | 目的（2000文字以内） |
-| background | TEXT | NO | - | 背景（2000文字以内） |
-| scope | TEXT | NO | - | スコープ（2000文字以内） |
-| out_of_scope | TEXT | YES | NULL | スコープ外（2000文字以内） |
-| dev_method | VARCHAR(30) | NO | - | 開発方式 |
-| business_domain_tags | JSONB | YES | '[]' | 対象業務領域（タグ配列） |
-| tech_stack_tags | JSONB | YES | '[]' | 技術スタック（タグ配列） |
-| planned_start_date | DATE | NO | - | 開始予定日 |
-| planned_end_date | DATE | NO | - | 終了予定日 |
-| status | VARCHAR(20) | NO | 'planning' | プロジェクト状態 |
-| notes | TEXT | YES | NULL | 備考（2000文字以内） |
-| created_by | UUID | NO | - | 作成者（FK: users.id） |
-| updated_by | UUID | NO | - | 更新者（FK: users.id） |
-| created_at | TIMESTAMPTZ | NO | now() | 作成日時 |
-| updated_at | TIMESTAMPTZ | NO | now() | 更新日時 |
-| deleted_at | TIMESTAMPTZ | YES | NULL | 論理削除日時 |
+| 論理名 | 物理名 | 型 | NULL | デフォルト | 説明 |
+|---|---|---|---|---|---|
+| ID | id | UUID | NO | gen_random_uuid() | 主キー |
+| テナント | tenant_id | UUID | NO | - | FK→tenants.id (NO ACTION)。ADR-0024 で DB DEFAULT 撤去 |
+| ユーザ名 | name | VARCHAR(100) | NO | - | |
+| メール | email | VARCHAR(255) | NO | - | (tenant_id, email) で UNIQUE |
+| パスワードハッシュ | password_hash | VARCHAR(255) | NO | - | bcrypt |
+| システムロール | system_role | VARCHAR(20) | NO | 'general' | super_admin / admin / general (3 階層) |
+| 有効フラグ | is_active | BOOLEAN | NO | true | |
+| ログイン失敗回数 | failed_login_count | INT | NO | 0 | |
+| 一時ロック解除日時 | locked_until | TIMESTAMPTZ | YES | NULL | |
+| 一時ロック累計 | temporary_lock_count | INT | NO | 0 | 3 で permanent_lock 発火 |
+| 恒久ロック | permanent_lock | BOOLEAN | NO | false | |
+| MFA 有効 | mfa_enabled | BOOLEAN | NO | false | |
+| MFA シークレット | mfa_secret_encrypted | VARCHAR(255) | YES | NULL | 暗号化済 TOTP |
+| MFA 有効化日時 | mfa_enabled_at | TIMESTAMPTZ | YES | NULL | |
+| MFA 失敗回数 | mfa_failed_count | INT | NO | 0 | 3 回で 30 分ロック |
+| MFA ロック解除日時 | mfa_locked_until | TIMESTAMPTZ | YES | NULL | |
+| 最終ログイン日時 | last_login_at | TIMESTAMPTZ | YES | NULL | |
+| パスワード変更強制 | force_password_change | BOOLEAN | NO | false | |
+| トークンバージョン | token_version | INT | NO | 0 | JWT 失効カウンタ (increment で全 JWT 失効) |
+| テーマ設定 | theme_preference | VARCHAR(30) | NO | 'light' | |
+| 作成日時 | created_at | TIMESTAMPTZ | NO | now() | |
+| 更新日時 | updated_at | TIMESTAMPTZ | NO | @updatedAt | |
+| 削除日時 | deleted_at | TIMESTAMPTZ | YES | NULL | 論理削除 |
 
-**status の値**: planning / estimating / scheduling / executing / completed / retrospected / closed
+> timezone / locale は User からは撤去され Tenant に集約 (PR-1)。
 
-**インデックス**:
-- `idx_projects_status` (status, WHERE deleted_at IS NULL)
-- `idx_projects_customer_id` (customer_id) — PR #111-2 以降、`customer_name` 列は廃止
-- `idx_projects_tenant_status` (tenant_id, status) — PR-1 perf (2026-06-02): `/projects` 一覧の `WHERE tenant_id = ? AND status = ?` を 1 回の index scan で完結させるための複合 index。tenantId 単独 / status 単独だと PostgreSQL planner が二度スキャン + マージする plan を選びがちで、テナント内データが増えるほど線形に遅くなる課題への対処
+**インデックス**: UNIQUE(tenant_id, email)=`idx_users_tenant_email` / `idx_users_active` (is_active, last_login_at) / `idx_users_tenant` (tenant_id)
 
-### 5.2b customers（顧客 / PR #111-1 新設、#111-2 完全移行）
+### 8.3 sessions（セッション）
 
-プロジェクト発注元の顧客マスタ。`Project.customer_id` が本テーブルへの FK を持つ (1:N)。
+| 論理名 | 物理名 | 型 | NULL | デフォルト | 説明 |
+|---|---|---|---|---|---|
+| ID | id | UUID | NO | gen_random_uuid() | 主キー |
+| セッショントークン | session_token | VARCHAR(255) | NO | - | UNIQUE |
+| ユーザ | user_id | UUID | NO | - | FK→users.id (**CASCADE**) |
+| 有効期限 | expires | TIMESTAMPTZ | NO | - | |
+| 作成日時 | created_at | TIMESTAMPTZ | NO | now() | |
 
-| カラム名 | 型 | NULL | デフォルト | 説明 |
-|---|---|---|---|---|
-| id | UUID | NO | gen_random_uuid() | 主キー |
-| name | VARCHAR(100) | NO | - | 顧客名 |
-| department | VARCHAR(100) | YES | NULL | 部門 |
-| contact_person | VARCHAR(100) | YES | NULL | 担当者氏名 |
-| contact_email | VARCHAR(255) | YES | NULL | 担当者メール |
-| notes | TEXT | YES | NULL | 備考（1000文字以内） |
-| created_by | UUID | NO | - | 作成者（FK: users.id） |
-| updated_by | UUID | NO | - | 更新者（FK: users.id） |
-| created_at | TIMESTAMPTZ | NO | now() | 作成日時 |
-| updated_at | TIMESTAMPTZ | NO | now() | 更新日時 |
+**インデックス**: UNIQUE(session_token) / `idx_sessions_user` (user_id)
 
-**削除方針**: 物理削除 (`deleted_at` 列を持たない)。`Project.customer_id` FK は `ON DELETE SET NULL` のため、
-論理削除済 Project の `customer_id` は Customer 物理削除時に自動 null 化される。active Project が
-残存する場合は `deleteCustomerCascade` で関連資源を先にカスケード削除してから Customer を削除する。
+### 8.4 email_verification_tokens（メール検証トークン）
 
-**インデックス**: `idx_customers_name` (name)
+| 論理名 | 物理名 | 型 | NULL | デフォルト | 説明 |
+|---|---|---|---|---|---|
+| ID | id | UUID | NO | gen_random_uuid() | 主キー |
+| テナント | tenant_id | UUID | NO | - | FK→tenants.id。越境再利用遮断 |
+| ユーザ | user_id | UUID | NO | - | FK→users.id |
+| トークンハッシュ | token_hash | VARCHAR(255) | NO | - | |
+| 有効期限 | expires_at | TIMESTAMPTZ | NO | - | |
+| 使用日時 | used_at | TIMESTAMPTZ | YES | NULL | |
+| 作成日時 | created_at | TIMESTAMPTZ | NO | now() | |
 
-### 5.3 project_members（プロジェクトメンバー）
+**インデックス**: `idx_email_verification_tokens_tenant` (tenant_id)
 
-ユーザとプロジェクトの多対多の紐付けを管理する中間テーブル。プロジェクトごとに異なるプロジェクトロールを付与する「プロジェクトメンバーシップ」を実現する。
+### 8.5 password_reset_tokens（パスワードリセットトークン）
 
-```
-User ──< project_members >── Project
-            (project_role)
-```
+| 論理名 | 物理名 | 型 | NULL | デフォルト | 説明 |
+|---|---|---|---|---|---|
+| ID | id | UUID | NO | gen_random_uuid() | 主キー |
+| テナント | tenant_id | UUID | NO | - | FK→tenants.id |
+| ユーザ | user_id | UUID | NO | - | FK→users.id |
+| トークンハッシュ | token_hash | VARCHAR(255) | NO | - | |
+| 有効期限 | expires_at | TIMESTAMPTZ | NO | - | |
+| 使用日時 | used_at | TIMESTAMPTZ | YES | NULL | |
+| 作成日時 | created_at | TIMESTAMPTZ | NO | now() | |
 
-**設計意図**: 同一ユーザが複数プロジェクトに参加する際、プロジェクトごとに異なるロール（PM/TL・メンバー・閲覧者）を持てるようにする。例えば、Aプロジェクトではメンバーとして作業し、Bプロジェクトでは PM/TL としてプロジェクトを運営する、といった柔軟な権限運用を可能にする。
+**インデックス**: `idx_password_reset_tokens_tenant` (tenant_id)
 
-| カラム名 | 型 | NULL | デフォルト | 説明 |
-|---|---|---|---|---|
-| id | UUID | NO | gen_random_uuid() | 主キー |
-| project_id | UUID | NO | - | FK: projects.id |
-| user_id | UUID | NO | - | FK: users.id |
-| project_role | VARCHAR(20) | NO | - | pm_tl / member / viewer |
-| assigned_by | UUID | NO | - | 設定者（FK: users.id） |
-| created_at | TIMESTAMPTZ | NO | now() | 作成日時 |
-| updated_at | TIMESTAMPTZ | NO | now() | 更新日時 |
+### 8.6 recovery_codes（リカバリコード）
 
-**制約**: UNIQUE(project_id, user_id) — 同一ユーザは同一プロジェクトに1つのロールのみ
+| 論理名 | 物理名 | 型 | NULL | デフォルト | 説明 |
+|---|---|---|---|---|---|
+| ID | id | UUID | NO | gen_random_uuid() | 主キー |
+| テナント | tenant_id | UUID | NO | - | FK→tenants.id |
+| ユーザ | user_id | UUID | NO | - | FK→users.id |
+| コードハッシュ | code_hash | VARCHAR(255) | NO | - | bcrypt |
+| 使用日時 | used_at | TIMESTAMPTZ | YES | NULL | |
+| 作成日時 | created_at | TIMESTAMPTZ | NO | now() | |
 
-**権限チェックでの利用**: Service 層の権限判定で、操作対象プロジェクトに対するユーザのプロジェクトロールをこのテーブルから取得し、操作可否を判定する（詳細はセクション 8 参照）
+**インデックス**: `idx_recovery_codes_tenant` (tenant_id)
 
-### 5.4 estimates（見積もり）
+### 8.7 password_histories（パスワード履歴）
 
-| カラム名 | 型 | NULL | デフォルト | 説明 |
-|---|---|---|---|---|
-| id | UUID | NO | gen_random_uuid() | 主キー |
-| project_id | UUID | NO | - | FK: projects.id |
-| item_name | VARCHAR(100) | NO | - | 見積項目名 |
-| category | VARCHAR(30) | NO | - | 区分 |
-| dev_method | VARCHAR(30) | NO | - | 開発方式 |
-| estimated_effort | DECIMAL(10,2) | NO | - | 見積工数 |
-| effort_unit | VARCHAR(20) | NO | - | 人時 / 人日 |
-| rationale | TEXT | NO | - | 見積根拠（3000文字以内） |
-| preconditions | TEXT | YES | NULL | 前提条件（2000文字以内） |
-| is_confirmed | BOOLEAN | NO | false | 確定済みフラグ |
-| notes | TEXT | YES | NULL | 備考（1000文字以内） |
-| created_by | UUID | NO | - | FK: users.id |
-| updated_by | UUID | NO | - | FK: users.id |
-| created_at | TIMESTAMPTZ | NO | now() | 作成日時 |
-| updated_at | TIMESTAMPTZ | NO | now() | 更新日時 |
-| deleted_at | TIMESTAMPTZ | YES | NULL | 論理削除日時 |
+| 論理名 | 物理名 | 型 | NULL | デフォルト | 説明 |
+|---|---|---|---|---|---|
+| ID | id | UUID | NO | gen_random_uuid() | 主キー |
+| テナント | tenant_id | UUID | NO | - | FK→tenants.id |
+| ユーザ | user_id | UUID | NO | - | FK→users.id |
+| パスワードハッシュ | password_hash | VARCHAR(255) | NO | - | 再利用防止用 |
+| 作成日時 | created_at | TIMESTAMPTZ | NO | now() | |
 
-### 5.5 tasks（タスク / WBS）
+**インデックス**: `idx_password_histories_tenant` (tenant_id)
 
-| カラム名 | 型 | NULL | デフォルト | 説明 |
-|---|---|---|---|---|
-| id | UUID | NO | gen_random_uuid() | 主キー |
-| project_id | UUID | NO | - | FK: projects.id |
-| parent_task_id | UUID | YES | NULL | FK: tasks.id（親タスク） |
-| wbs_number | VARCHAR(50) | YES | NULL | WBS 番号（例: 1.2.3） |
-| name | VARCHAR(100) | NO | - | タスク名 |
-| description | TEXT | YES | NULL | タスク内容（2000文字以内） |
-| category | VARCHAR(30) | NO | - | 区分 |
-| assignee_id | UUID | NO | - | 担当者（FK: users.id） |
-| planned_start_date | DATE | NO | - | 開始予定日 |
-| planned_end_date | DATE | NO | - | 終了予定日 |
-| planned_effort | DECIMAL(10,2) | NO | - | 予定工数 |
-| priority | VARCHAR(10) | YES | 'medium' | 優先度: low / medium / high |
-| status | VARCHAR(20) | NO | 'not_started' | ステータス |
-| progress_rate | INTEGER | NO | 0 | 進捗率（0〜100） |
-| is_milestone | BOOLEAN | NO | false | マイルストーンフラグ |
-| notes | TEXT | YES | NULL | 備考（1000文字以内） |
-| created_by | UUID | NO | - | FK: users.id |
-| updated_by | UUID | NO | - | FK: users.id |
-| created_at | TIMESTAMPTZ | NO | now() | 作成日時 |
-| updated_at | TIMESTAMPTZ | NO | now() | 更新日時 |
-| deleted_at | TIMESTAMPTZ | YES | NULL | 論理削除日時 |
+### 8.8 customers（顧客）
 
-**インデックス**:
-- `idx_tasks_project` (project_id, WHERE deleted_at IS NULL)
-- `idx_tasks_assignee` (assignee_id, WHERE deleted_at IS NULL)
-- `idx_tasks_parent` (parent_task_id, WHERE deleted_at IS NULL)
-- **`idx_tasks_project_parent_name_unique`** — 部分 UNIQUE インデックス (PR #420 [#C3] / migration `20260525_tasks_unique_parent_name`)
-  - 定義: `(project_id, COALESCE(parent_task_id, '00000000-0000-0000-0000-000000000000'::uuid), name) WHERE deleted_at IS NULL`
-  - 目的: 同一親配下 (root を含む) に同名タスクの重複を DB レベルでブロック
-  - Prisma の `@@unique` は WHERE 句を表現できないため raw SQL migration として追加
-  - NULL parent は COALESCE センチネル UUID にマップ (Postgres の NULL≠NULL 仕様を回避し、ルートレベルでも一意性を担保)
-  - migration の `DO $$ ... $$` ブロックで既存重複を事前検出。1 組でも duplicate があれば `RAISE EXCEPTION` で migration 停止
-  - 本番事前確認スクリプト: `scripts/check-task-name-duplicates.ts`
-  - app 層 defense: sync-import (computeSyncDiff) / bulk-duplicate (pickNonConflictingName) / createTask (assertTaskNameUniqueInParent) / updateTask (同左) で先に検知 → 400 を返す多層防御
+プロジェクト発注元の顧客マスタ。物理削除方針 (deleted_at を持たない)。
 
-### 5.6 task_progress_logs（進捗・実績ログ）
+| 論理名 | 物理名 | 型 | NULL | デフォルト | 説明 |
+|---|---|---|---|---|---|
+| ID | id | UUID | NO | gen_random_uuid() | 主キー |
+| テナント | tenant_id | UUID | NO | - | FK→tenants.id (NO ACTION) |
+| 顧客名 | name | VARCHAR(100) | NO | - | |
+| 部門 | department | VARCHAR(100) | YES | NULL | |
+| 担当者 | contact_person | VARCHAR(100) | YES | NULL | |
+| 担当者メール | contact_email | VARCHAR(255) | YES | NULL | |
+| 備考 | notes | TEXT | YES | NULL | |
+| 作成者 | created_by | UUID | NO | - | FK→users.id (RESTRICT) |
+| 更新者 | updated_by | UUID | NO | - | FK→users.id |
+| 作成日時 | created_at | TIMESTAMPTZ | NO | now() | |
+| 更新日時 | updated_at | TIMESTAMPTZ | NO | @updatedAt | |
 
-| カラム名 | 型 | NULL | デフォルト | 説明 |
-|---|---|---|---|---|
-| id | UUID | NO | gen_random_uuid() | 主キー |
-| task_id | UUID | NO | - | FK: tasks.id |
-| updated_by | UUID | NO | - | 更新者（FK: users.id） |
-| update_date | DATE | NO | - | 更新日 |
-| progress_rate | INTEGER | NO | - | 進捗率（0〜100） |
-| actual_effort | DECIMAL(10,2) | NO | - | 実績工数 |
-| remaining_effort | DECIMAL(10,2) | YES | NULL | 残工数 |
-| status | VARCHAR(20) | NO | - | ステータス |
-| is_delayed | BOOLEAN | NO | false | 遅延有無 |
-| delay_reason | TEXT | YES | NULL | 遅延理由 |
-| work_memo | TEXT | YES | NULL | 作業メモ（2000文字以内） |
-| has_issue | BOOLEAN | NO | false | 課題有無 |
-| next_action | TEXT | YES | NULL | 次アクション（1000文字以内） |
-| completed_date | DATE | YES | NULL | 完了日 |
-| created_at | TIMESTAMPTZ | NO | now() | 作成日時 |
+**インデックス**: `idx_customers_name` (name) / `idx_customers_tenant` (tenant_id)
+
+### 8.9 projects（プロジェクト）
+
+| 論理名 | 物理名 | 型 | NULL | デフォルト | 説明 |
+|---|---|---|---|---|---|
+| ID | id | UUID | NO | gen_random_uuid() | 主キー |
+| テナント | tenant_id | UUID | NO | - | FK→tenants.id (NO ACTION) |
+| プロジェクト名 | name | VARCHAR(100) | NO | - | |
+| 顧客 | customer_id | UUID | NO | - | FK→customers.id (**SET NULL**)。運用上 NOT NULL |
+| 目的 | purpose | TEXT | NO | - | |
+| 背景 | background | TEXT | NO | - | |
+| スコープ | scope | TEXT | NO | - | |
+| スコープ外 | out_of_scope | TEXT | YES | NULL | |
+| 開発方式 | dev_method | VARCHAR(30) | NO | - | |
+| 契約形態 | contract_type | VARCHAR(30) | YES | NULL | 準委任/請負/SES/その他 |
+| 業務領域タグ | business_domain_tags | JSONB | NO | '[]' | |
+| 技術スタックタグ | tech_stack_tags | JSONB | NO | '[]' | |
+| 工程タグ | process_tags | JSONB | NO | '[]' | |
+| 開始予定日 | planned_start_date | DATE | NO | - | |
+| 終了予定日 | planned_end_date | DATE | NO | - | |
+| 状態 | status | VARCHAR(20) | NO | 'planning' | planning/estimating/scheduling/executing/completed/retrospected/closed (7 状態) |
+| 備考 | notes | TEXT | YES | NULL | |
+| サンプルデータ | is_sample_data | BOOLEAN | NO | false | true は一覧非表示・提案では可視 |
+| embedding | content_embedding | vector(1024) | YES | NULL | purpose+background+scope |
+| 作成者 | created_by | UUID | NO | - | FK→users.id (RESTRICT) |
+| 更新者 | updated_by | UUID | NO | - | FK→users.id |
+| 作成日時 | created_at | TIMESTAMPTZ | NO | now() | |
+| 更新日時 | updated_at | TIMESTAMPTZ | NO | @updatedAt | |
+| 削除日時 | deleted_at | TIMESTAMPTZ | YES | NULL | 論理削除 |
+
+**インデックス**: `idx_projects_status` (status) / `idx_projects_customer_id` (customer_id) / `idx_projects_dates` (planned_start_date, planned_end_date) / `idx_projects_tenant` (tenant_id) / `idx_projects_tenant_status` (tenant_id, status) / `idx_projects_is_sample_data` (is_sample_data, partial)
+
+### 8.10 estimates（見積もり）
+
+| 論理名 | 物理名 | 型 | NULL | デフォルト | 説明 |
+|---|---|---|---|---|---|
+| ID | id | UUID | NO | gen_random_uuid() | 主キー |
+| プロジェクト | project_id | UUID | NO | - | FK→projects.id |
+| 見積項目名 | item_name | VARCHAR(100) | NO | - | |
+| 区分 | category | VARCHAR(30) | NO | - | |
+| 開発方式 | dev_method | VARCHAR(30) | NO | - | |
+| 見積工数 | estimated_effort | DECIMAL(10,2) | NO | - | |
+| 工数単位 | effort_unit | VARCHAR(20) | NO | - | person_hour / person_day |
+| 根拠 | rationale | TEXT | NO | - | |
+| 前提条件 | preconditions | TEXT | YES | NULL | |
+| 確定済 | is_confirmed | BOOLEAN | NO | false | |
+| 備考 | notes | TEXT | YES | NULL | |
+| 作成者 | created_by | UUID | NO | - | FK→users.id |
+| 更新者 | updated_by | UUID | NO | - | FK→users.id |
+| 作成日時 | created_at | TIMESTAMPTZ | NO | now() | |
+| 更新日時 | updated_at | TIMESTAMPTZ | NO | @updatedAt | |
+| 削除日時 | deleted_at | TIMESTAMPTZ | YES | NULL | 論理削除 |
+
+**インデックス**: `idx_estimates_project` (project_id)
+
+### 8.11 project_members（プロジェクトメンバー / M2M）
+
+User × Project の中間テーブル。プロジェクトごとに異なる project_role を付与。
+
+| 論理名 | 物理名 | 型 | NULL | デフォルト | 説明 |
+|---|---|---|---|---|---|
+| ID | id | UUID | NO | gen_random_uuid() | 主キー |
+| プロジェクト | project_id | UUID | NO | - | FK→projects.id |
+| ユーザ | user_id | UUID | NO | - | FK→users.id |
+| プロジェクトロール | project_role | VARCHAR(20) | NO | - | pm_tl / member / viewer |
+| 設定者 | assigned_by | UUID | NO | - | FK→users.id |
+| 作成日時 | created_at | TIMESTAMPTZ | NO | now() | |
+| 更新日時 | updated_at | TIMESTAMPTZ | NO | @updatedAt | |
+
+**インデックス**: UNIQUE(project_id, user_id)=`uq_pm_project_user` / `idx_pm_project` / `idx_pm_user`
+
+### 8.12 tasks（タスク / WBS）
+
+| 論理名 | 物理名 | 型 | NULL | デフォルト | 説明 |
+|---|---|---|---|---|---|
+| ID | id | UUID | NO | gen_random_uuid() | 主キー |
+| プロジェクト | project_id | UUID | NO | - | FK→projects.id |
+| 親タスク | parent_task_id | UUID | YES | NULL | FK→tasks.id (自己参照) |
+| 種別 | type | VARCHAR(20) | NO | 'activity' | work_package / activity |
+| WBS 番号 | wbs_number | VARCHAR(50) | YES | NULL | |
+| タスク名 | name | VARCHAR(100) | NO | - | |
+| 説明 | description | TEXT | YES | NULL | |
+| 区分 | category | VARCHAR(30) | NO | - | |
+| 担当者 | assignee_id | UUID | YES | NULL | FK→users.id (SET NULL)。WP は null、ACT は必須 |
+| 開始予定日 | planned_start_date | DATE | YES | NULL | WP は子から自動計算 |
+| 終了予定日 | planned_end_date | DATE | YES | NULL | WP は子から自動計算 |
+| 開始実績日 | actual_start_date | DATE | YES | NULL | |
+| 終了実績日 | actual_end_date | DATE | YES | NULL | |
+| 予定工数 | planned_effort | DECIMAL(10,2) | NO | 0 | WP は子の合計 |
+| 優先度 | priority | VARCHAR(10) | YES | 'medium' | low/medium/high |
+| 状態 | status | VARCHAR(20) | NO | 'not_started' | not_started/in_progress/completed/on_hold |
+| 進捗率 | progress_rate | INT | NO | 0 | 0-100、WP は子の加重平均 |
+| マイルストーン | is_milestone | BOOLEAN | NO | false | |
+| 備考 | notes | TEXT | YES | NULL | |
+| 作成者 | created_by | UUID | NO | - | FK→users.id |
+| 更新者 | updated_by | UUID | NO | - | FK→users.id |
+| 作成日時 | created_at | TIMESTAMPTZ | NO | now() | |
+| 更新日時 | updated_at | TIMESTAMPTZ | NO | @updatedAt | |
+| 削除日時 | deleted_at | TIMESTAMPTZ | YES | NULL | 論理削除 |
+
+**インデックス**: `idx_tasks_project` (project_id) / `idx_tasks_assignee` (assignee_id, status) / `idx_tasks_parent` (parent_task_id) / `idx_tasks_gantt` (project_id, planned_start_date, planned_end_date) / **部分 UNIQUE** `idx_tasks_project_parent_name_unique` = `(project_id, COALESCE(parent_task_id, '0000...'::uuid), name) WHERE deleted_at IS NULL` (raw SQL migration `20260525_tasks_unique_parent_name`、同一親配下の同名重複を DB レベルでブロック)
+
+### 8.13 task_progress_logs（進捗・実績ログ）
+
+| 論理名 | 物理名 | 型 | NULL | デフォルト | 説明 |
+|---|---|---|---|---|---|
+| ID | id | UUID | NO | gen_random_uuid() | 主キー |
+| タスク | task_id | UUID | NO | - | FK→tasks.id |
+| 更新者 | updated_by | UUID | NO | - | FK→users.id |
+| 更新日 | update_date | DATE | NO | - | |
+| 進捗率 | progress_rate | INT | NO | - | 0-100 |
+| 実績工数 | actual_effort | DECIMAL(10,2) | NO | - | |
+| 残工数 | remaining_effort | DECIMAL(10,2) | YES | NULL | |
+| 状態 | status | VARCHAR(20) | NO | - | |
+| 遅延有無 | is_delayed | BOOLEAN | NO | false | |
+| 遅延理由 | delay_reason | TEXT | YES | NULL | |
+| 作業メモ | work_memo | TEXT | YES | NULL | |
+| 課題有無 | has_issue | BOOLEAN | NO | false | |
+| 次アクション | next_action | TEXT | YES | NULL | |
+| 完了日 | completed_date | DATE | YES | NULL | |
+| 作成日時 | created_at | TIMESTAMPTZ | NO | now() | |
 
 **インデックス**: `idx_progress_task` (task_id, update_date DESC)
 
-### 5.7 risks_issues（リスク・課題）
+### 8.14 risks_issues（リスク・課題）
 
-| カラム名 | 型 | NULL | デフォルト | 説明 |
-|---|---|---|---|---|
-| id | UUID | NO | gen_random_uuid() | 主キー |
-| project_id | UUID | NO | - | FK: projects.id |
-| type | VARCHAR(10) | NO | - | risk / issue |
-| title | VARCHAR(100) | NO | - | 件名 |
-| content | TEXT | NO | - | 内容（2000文字以内） |
-| cause | TEXT | YES | NULL | 原因（課題時に推奨） |
-| impact | VARCHAR(10) | NO | - | 影響度: low / medium / high |
-| likelihood | VARCHAR(10) | YES | NULL | 発生可能性（リスク時必須） |
-| priority | VARCHAR(10) | NO | - | 優先度: low / medium / high |
-| response_policy | TEXT | YES | NULL | 対応方針（1000文字以内） |
-| response_detail | TEXT | YES | NULL | 対応策（2000文字以内） |
-| reporter_id | UUID | NO | - | 起票者（FK: users.id） |
-| assignee_id | UUID | YES | NULL | 対応担当者（FK: users.id） |
-| deadline | DATE | YES | NULL | 期限 |
-| state | VARCHAR(20) | NO | 'open' | 状態 |
-| result | TEXT | YES | NULL | 結果（2000文字以内） |
-| lesson_learned | TEXT | YES | NULL | 教訓（2000文字以内） |
-| created_by | UUID | NO | - | FK: users.id |
-| updated_by | UUID | NO | - | FK: users.id |
-| created_at | TIMESTAMPTZ | NO | now() | 作成日時 |
-| updated_at | TIMESTAMPTZ | NO | now() | 更新日時 |
-| deleted_at | TIMESTAMPTZ | YES | NULL | 論理削除日時 |
+| 論理名 | 物理名 | 型 | NULL | デフォルト | 説明 |
+|---|---|---|---|---|---|
+| ID | id | UUID | NO | gen_random_uuid() | 主キー |
+| テナント | tenant_id | UUID | NO | - | FK→tenants.id (NO ACTION) |
+| 作成元 PJ | project_id | UUID | YES | NULL | FK→projects.id (**SET NULL**)。M2N は risk_issue_projects 経由 |
+| 種別 | type | VARCHAR(10) | NO | - | risk / issue |
+| 件名 | title | VARCHAR(100) | NO | - | |
+| 発生事象 | occurrence | TEXT | YES | NULL | 4 セクション化で追加 |
+| メモ | content | TEXT | NO | - | UI ラベルは「メモ」、DB 列名は content |
+| 原因 | cause | TEXT | YES | NULL | |
+| 影響度 | impact | VARCHAR(10) | NO | - | low/medium/high |
+| 発生可能性 | likelihood | VARCHAR(10) | YES | NULL | |
+| 優先度 | priority | VARCHAR(10) | NO | - | low/medium/high |
+| 対応方針 | response_policy | TEXT | YES | NULL | |
+| 対応策 | response_detail | TEXT | YES | NULL | |
+| 起票者 | reporter_id | UUID | NO | - | FK→users.id (RESTRICT) |
+| 担当者 | assignee_id | UUID | YES | NULL | FK→users.id (SET NULL) |
+| 期限 | deadline | DATE | YES | NULL | |
+| 状態 | state | VARCHAR(20) | NO | 'open' | |
+| 結果 | result | TEXT | YES | NULL | |
+| 教訓 | lesson_learned | TEXT | YES | NULL | |
+| 公開範囲 | visibility | VARCHAR(20) | NO | 'draft' | draft / public |
+| リスク性質 | risk_nature | VARCHAR(20) | YES | NULL | threat / opportunity (type=risk のみ) |
+| embedding | content_embedding | vector(1024) | YES | NULL | |
+| 作成者 | created_by | UUID | NO | - | FK→users.id |
+| 更新者 | updated_by | UUID | NO | - | FK→users.id |
+| 作成日時 | created_at | TIMESTAMPTZ | NO | now() | |
+| 更新日時 | updated_at | TIMESTAMPTZ | NO | @updatedAt | |
+| 削除日時 | deleted_at | TIMESTAMPTZ | YES | NULL | 論理削除 |
 
-**インデックス**:
-- `idx_risks_project` (project_id, type, WHERE deleted_at IS NULL)
-- `idx_risks_priority` (priority, state, WHERE deleted_at IS NULL)
+**インデックス**: `idx_risks_project` (project_id, type) / `idx_risks_state` (state, priority) / `idx_risks_assignee` (assignee_id) / `idx_risks_tenant` (tenant_id) / pg_trgm GIN (title, content)
 
-### 5.7b stakeholders（ステークホルダー / feat/stakeholder-management で新設、PMBOK 13）
+### 8.15 risk_issue_projects（リスク課題-PJ 中間 / M2M）
 
-| カラム名 | 型 | NULL | デフォルト | 説明 |
-|---|---|---|---|---|
-| id | UUID | NO | gen_random_uuid() | 主キー |
-| project_id | UUID | NO | - | FK: projects.id |
-| user_id | UUID | YES | NULL | FK: users.id (ON DELETE SET NULL)。内部メンバー紐付け、null=外部関係者 |
-| name | VARCHAR(100) | NO | - | 表示用氏名 (敬称付き表記許容、User.name とは別系列) |
-| organization | VARCHAR(100) | YES | NULL | 所属組織 (例: 顧客企画部、規制機関名) |
-| role | VARCHAR(100) | YES | NULL | 役職 (例: 部長、CTO) |
-| contact_info | TEXT | YES | NULL | 連絡先メモ (1000文字以内) |
-| influence | SMALLINT | NO | - | 影響度 1-5 (DB CHECK 制約あり) |
-| interest | SMALLINT | NO | - | 関心度 1-5 (DB CHECK 制約あり) |
-| attitude | VARCHAR(20) | NO | - | 姿勢: supportive / neutral / opposing |
-| current_engagement | VARCHAR(20) | NO | - | 現在のエンゲージメント (PMBOK 13.1.2 5 段階) |
-| desired_engagement | VARCHAR(20) | NO | - | 望ましいエンゲージメント (5 段階) |
-| personality | TEXT | YES | NULL | 人となり / 考え方 (自由記述、2000文字以内) |
-| tags | JSONB | NO | '[]' | 検索/分類タグ (string[]) |
-| strategy | TEXT | YES | NULL | 対応戦略 / 具体的アクション (2000文字以内) |
-| created_by | UUID | NO | - | FK: users.id |
-| updated_by | UUID | NO | - | FK: users.id |
-| created_at | TIMESTAMPTZ | NO | now() | 作成日時 |
-| updated_at | TIMESTAMPTZ | NO | now() | 更新日時 |
-| deleted_at | TIMESTAMPTZ | YES | NULL | 論理削除日時 |
+| 論理名 | 物理名 | 型 | NULL | デフォルト | 説明 |
+|---|---|---|---|---|---|
+| ID | id | UUID | NO | gen_random_uuid() | 主キー |
+| リスク課題 | risk_issue_id | UUID | NO | - | FK→risks_issues.id (**CASCADE**) |
+| プロジェクト | project_id | UUID | NO | - | FK→projects.id (**CASCADE**) |
 
-**インデックス**:
-- `idx_stakeholders_project` (project_id)
-- `idx_stakeholders_user` (user_id)
+**インデックス**: UNIQUE(risk_issue_id, project_id) / `idx_risk_issue_projects_project` (project_id)
 
-**設計判断**:
-- 内部 (内部メンバー) と外部 (顧客役員、規制機関等) を 1 テーブルで管理。
-  user_id を nullable FK にし、内部の場合のみ User 紐付け。
-- ON DELETE SET NULL: User 物理削除時もステークホルダー記録は残す (人物評の保全)。
-- influence / interest は 1-5 段階で生値保持。UI は閾値 >= 4 で 4 象限分類するが、
-  生値を保持することで将来 5x5 ヒートマップにも丸められる。
-- 可視性は service 層認可で PM/TL + admin に限定。member 以下にはタブ自体を非表示。
-  個人情報・人物評を含むため、認可境界を厳格に保つ (DB レベルでは制約しない、§8 参照)。
+### 8.16 stakeholders（ステークホルダー / PMBOK 13）
 
-### 5.8 knowledges（ナレッジ）
+| 論理名 | 物理名 | 型 | NULL | デフォルト | 説明 |
+|---|---|---|---|---|---|
+| ID | id | UUID | NO | gen_random_uuid() | 主キー |
+| テナント | tenant_id | UUID | NO | - | FK→tenants.id (NO ACTION) |
+| プロジェクト | project_id | UUID | NO | - | FK→projects.id |
+| ユーザ | user_id | UUID | YES | NULL | FK→users.id (**SET NULL**)。null=外部関係者 |
+| 表示氏名 | name | VARCHAR(100) | NO | - | |
+| 所属組織 | organization | VARCHAR(100) | YES | NULL | |
+| 役職 | role | VARCHAR(100) | YES | NULL | |
+| 連絡先メモ | contact_info | TEXT | YES | NULL | |
+| 影響度 | influence | SMALLINT | NO | - | 1-5 |
+| 関心度 | interest | SMALLINT | NO | - | 1-5 |
+| 姿勢 | attitude | VARCHAR(20) | NO | - | supportive/neutral/opposing |
+| 現エンゲージメント | current_engagement | VARCHAR(20) | NO | - | PMBOK 5 段階 |
+| 望ましいエンゲージメント | desired_engagement | VARCHAR(20) | NO | - | 5 段階 |
+| 優先度 | priority | VARCHAR(10) | NO | 'medium' | influence×interest から導出 |
+| 人となり | personality | TEXT | YES | NULL | |
+| タグ | tags | JSONB | NO | '[]' | |
+| 戦略 | strategy | TEXT | YES | NULL | |
+| 作成者 | created_by | UUID | NO | - | FK→users.id |
+| 更新者 | updated_by | UUID | NO | - | FK→users.id |
+| 作成日時 | created_at | TIMESTAMPTZ | NO | now() | |
+| 更新日時 | updated_at | TIMESTAMPTZ | NO | @updatedAt | |
+| 削除日時 | deleted_at | TIMESTAMPTZ | YES | NULL | 論理削除 |
 
-| カラム名 | 型 | NULL | デフォルト | 説明 |
-|---|---|---|---|---|
-| id | UUID | NO | gen_random_uuid() | 主キー |
-| title | VARCHAR(150) | NO | - | タイトル |
-| knowledge_type | VARCHAR(30) | NO | - | 種別 |
-| background | TEXT | NO | - | 背景（2000文字以内） |
-| content | TEXT | NO | - | 内容（5000文字以内） |
-| result | TEXT | NO | - | 結果（3000文字以内） |
-| conclusion | TEXT | YES | NULL | 結論（2000文字以内） |
-| recommendation | TEXT | YES | NULL | 推奨事項（2000文字以内） |
-| reusability | VARCHAR(10) | YES | NULL | 再利用性: low / medium / high |
-| tech_tags | JSONB | YES | '[]' | 対象技術（タグ配列） |
-| dev_method | VARCHAR(30) | YES | NULL | 開発方式 |
-| process_tags | JSONB | YES | '[]' | 対象工程（タグ配列） |
-| visibility | VARCHAR(20) | NO | 'draft' | 公開範囲: draft / project / company |
-| created_by | UUID | NO | - | FK: users.id |
-| updated_by | UUID | NO | - | FK: users.id |
-| created_at | TIMESTAMPTZ | NO | now() | 作成日時 |
-| updated_at | TIMESTAMPTZ | NO | now() | 更新日時 |
-| deleted_at | TIMESTAMPTZ | YES | NULL | 論理削除日時 |
+**インデックス**: `idx_stakeholders_project` / `idx_stakeholders_user` / `idx_stakeholders_priority` / `idx_stakeholders_tenant`
 
-**インデックス**:
-- `idx_knowledges_type` (knowledge_type, WHERE deleted_at IS NULL)
-- `idx_knowledges_visibility` (visibility, WHERE deleted_at IS NULL)
-- `idx_knowledges_fulltext` (GIN index on title, content for 全文検索)
-- `idx_knowledges_tenant_visibility_created` (tenant_id, visibility, created_at) — PR-1 perf (2026-06-02): `/knowledge` 一覧 / 全ナレッジ画面の `WHERE tenant_id = ? AND visibility = 'public' ORDER BY created_at DESC` を index scan のみで完結させる複合 index
+> 可視性は service 層認可で PM/TL + admin に限定 (人物評を含むため、DB レベルでは制約しない)。
 
-### 5.9 retrospectives（振り返り）
+### 8.17 knowledges（ナレッジ）
 
-| カラム名 | 型 | NULL | デフォルト | 説明 |
-|---|---|---|---|---|
-| id | UUID | NO | gen_random_uuid() | 主キー |
-| project_id | UUID | NO | - | FK: projects.id |
-| conducted_date | DATE | NO | - | 実施日 |
-| plan_summary | TEXT | NO | - | 計画総括（2000文字以内） |
-| actual_summary | TEXT | NO | - | 実績総括（2000文字以内） |
-| good_points | TEXT | NO | - | 良かった点（3000文字以内） |
-| problems | TEXT | NO | - | 問題点（3000文字以内） |
-| estimate_gap_factors | TEXT | YES | NULL | 見積差分要因（3000文字以内） |
-| schedule_gap_factors | TEXT | YES | NULL | スケジュール差分要因（3000文字以内） |
-| quality_issues | TEXT | YES | NULL | 品質面課題（3000文字以内） |
-| risk_response_evaluation | TEXT | YES | NULL | リスク対応評価（3000文字以内） |
-| improvements | TEXT | NO | - | 次回改善事項（3000文字以内） |
-| knowledge_to_share | TEXT | YES | NULL | 横展開したい知見（3000文字以内） |
-| state | VARCHAR(20) | NO | 'draft' | 状態: draft / confirmed |
-| created_by | UUID | NO | - | FK: users.id |
-| updated_by | UUID | NO | - | FK: users.id |
-| created_at | TIMESTAMPTZ | NO | now() | 作成日時 |
-| updated_at | TIMESTAMPTZ | NO | now() | 更新日時 |
-| deleted_at | TIMESTAMPTZ | YES | NULL | 論理削除日時 |
+| 論理名 | 物理名 | 型 | NULL | デフォルト | 説明 |
+|---|---|---|---|---|---|
+| ID | id | UUID | NO | gen_random_uuid() | 主キー |
+| テナント | tenant_id | UUID | NO | - | FK→tenants.id (NO ACTION)。テナント間で複製 |
+| タイトル | title | VARCHAR(150) | NO | - | |
+| 種別 | knowledge_type | VARCHAR(30) | NO | - | |
+| 背景 | background | TEXT | NO | - | |
+| 内容 | content | TEXT | NO | - | |
+| 結果 | result | TEXT | NO | - | |
+| 結論 | conclusion | TEXT | YES | NULL | |
+| 推奨事項 | recommendation | TEXT | YES | NULL | |
+| 再利用性 | reusability | VARCHAR(10) | YES | NULL | low/medium/high |
+| 技術タグ | tech_tags | JSONB | NO | '[]' | |
+| 開発方式 | dev_method | VARCHAR(30) | YES | NULL | |
+| 工程タグ | process_tags | JSONB | NO | '[]' | |
+| 業務領域タグ | business_domain_tags | JSONB | NO | '[]' | |
+| 公開範囲 | visibility | VARCHAR(20) | NO | 'draft' | draft / project / company |
+| サンプルデータ | is_sample_data | BOOLEAN | NO | false | |
+| embedding | content_embedding | vector(1024) | YES | NULL | |
+| 作成者 | created_by | UUID | NO | - | FK→users.id (RESTRICT) |
+| 更新者 | updated_by | UUID | NO | - | FK→users.id |
+| 担当者 | assignee_id | UUID | YES | NULL | FK→users.id (**SET NULL**) |
+| 作成日時 | created_at | TIMESTAMPTZ | NO | now() | |
+| 更新日時 | updated_at | TIMESTAMPTZ | NO | @updatedAt | |
+| 削除日時 | deleted_at | TIMESTAMPTZ | YES | NULL | 論理削除 |
 
-### 5.10 comments（コメント / PR #199 で polymorphic 統合）
+**インデックス**: `idx_knowledges_type` / `idx_knowledges_visibility` / `idx_knowledges_tenant` / `idx_knowledges_tenant_visibility_created` (tenant_id, visibility, created_at) / `idx_knowledges_is_sample_data` (partial) / `idx_knowledges_assignee` / pg_trgm GIN (title, content)
 
-PR #199 で旧 `retrospective_comments` を統合し、attachments と同じ polymorphic 設計
-(entity_type + entity_id) に変更。7 エンティティ (issue / task / risk / retrospective /
-knowledge / customer / stakeholder) で 1 テーブル共通。
+### 8.18 knowledge_projects（ナレッジ-PJ 中間 / M2M）
 
-| カラム名 | 型 | NULL | デフォルト | 説明 |
-|---|---|---|---|---|
-| id | UUID | NO | gen_random_uuid() | 主キー |
-| entity_type | VARCHAR(30) | NO | - | 親エンティティ種別 (`issue` / `task` / `risk` / `retrospective` / `knowledge` / `customer` / `stakeholder`) |
-| entity_id | UUID | NO | - | 親エンティティの id (FK は持たない: 削除時整合はアプリ層で担保) |
-| user_id | UUID | NO | - | FK: users.id (投稿者) |
-| content | TEXT | NO | - | コメント内容 (1〜2000 文字、サーバ側 trim 後検証) |
-| created_at | TIMESTAMPTZ | NO | now() | 作成日時 |
-| updated_at | TIMESTAMPTZ | NO | now() | 更新日時 (`@updatedAt` で自動。createdAt と異なれば「編集済」判定) |
-| deleted_at | TIMESTAMPTZ | YES | NULL | 論理削除時刻 (admin / 投稿者本人で削除可) |
+| 論理名 | 物理名 | 型 | NULL | デフォルト | 説明 |
+|---|---|---|---|---|---|
+| ID | id | UUID | NO | gen_random_uuid() | 主キー |
+| ナレッジ | knowledge_id | UUID | NO | - | FK→knowledges.id |
+| プロジェクト | project_id | UUID | NO | - | FK→projects.id |
 
-**インデックス**: `idx_comments_entity (entity_type, entity_id, deleted_at)` — 表示クエリの主索引。
+**インデックス**: UNIQUE(knowledge_id, project_id)
 
-**認可ポリシー**:
-- 投稿 / 閲覧:
-  - issue / risk / retrospective / knowledge: 認証済ユーザは誰でも (project member 非メンバーも可)
-  - task / stakeholder: project member or admin
-  - customer: admin only
-- 編集 / 削除: 投稿者本人 OR システム管理者
+### 8.19 task_knowledges（タスク-ナレッジ中間 / M2M）
 
-**Migration ノート**: `prisma/migrations/20260430_unified_comments/migration.sql` で
-旧 `retrospective_comments` の全行を `entity_type='retrospective'` で `comments` に
-INSERT 後、旧テーブルを DROP する。
+| 論理名 | 物理名 | 型 | NULL | デフォルト | 説明 |
+|---|---|---|---|---|---|
+| ID | id | UUID | NO | gen_random_uuid() | 主キー |
+| タスク | task_id | UUID | NO | - | FK→tasks.id |
+| ナレッジ | knowledge_id | UUID | NO | - | FK→knowledges.id |
 
-### 5.11 decisions（意思決定）
+**インデックス**: UNIQUE(task_id, knowledge_id)
 
-| カラム名 | 型 | NULL | デフォルト | 説明 |
-|---|---|---|---|---|
-| id | UUID | NO | gen_random_uuid() | 主キー |
-| project_id | UUID | NO | - | FK: projects.id |
-| title | VARCHAR(100) | NO | - | 件名 |
-| background | TEXT | YES | NULL | 背景 |
-| issue | TEXT | YES | NULL | 論点 |
-| options | TEXT | YES | NULL | 選択肢 |
-| decision_content | TEXT | NO | - | 決定内容 |
-| decision_reason | TEXT | YES | NULL | 決定理由 |
-| decided_date | DATE | YES | NULL | 決定日 |
-| decided_by | UUID | YES | NULL | 決定者（FK: users.id） |
-| impact_scope | TEXT | YES | NULL | 影響範囲 |
-| created_by | UUID | NO | - | FK: users.id |
-| updated_by | UUID | NO | - | FK: users.id |
-| created_at | TIMESTAMPTZ | NO | now() | 作成日時 |
-| updated_at | TIMESTAMPTZ | NO | now() | 更新日時 |
-| deleted_at | TIMESTAMPTZ | YES | NULL | 論理削除日時 |
+### 8.20 retrospectives（振り返り）
 
-### 5.12 change_requests（変更要求）
+| 論理名 | 物理名 | 型 | NULL | デフォルト | 説明 |
+|---|---|---|---|---|---|
+| ID | id | UUID | NO | gen_random_uuid() | 主キー |
+| テナント | tenant_id | UUID | NO | - | FK→tenants.id (NO ACTION) |
+| 作成元 PJ | project_id | UUID | YES | NULL | FK→projects.id (**SET NULL**)。M2N は retrospective_projects 経由 |
+| 実施日 | conducted_date | DATE | NO | - | |
+| 計画総括 | plan_summary | TEXT | NO | - | |
+| 実績総括 | actual_summary | TEXT | NO | - | |
+| 良かった点 | good_points | TEXT | NO | - | |
+| 問題点 | problems | TEXT | NO | - | |
+| 見積差分要因 | estimate_gap_factors | TEXT | YES | NULL | |
+| スケジュール差分要因 | schedule_gap_factors | TEXT | YES | NULL | |
+| 品質面課題 | quality_issues | TEXT | YES | NULL | |
+| リスク対応評価 | risk_response_evaluation | TEXT | YES | NULL | |
+| 改善事項 | improvements | TEXT | NO | - | |
+| 横展開知見 | knowledge_to_share | TEXT | YES | NULL | |
+| 状態 | state | VARCHAR(20) | NO | 'draft' | |
+| 公開範囲 | visibility | VARCHAR(20) | NO | 'draft' | draft / public |
+| embedding | content_embedding | vector(1024) | YES | NULL | |
+| 作成者 | created_by | UUID | NO | - | FK→users.id |
+| 更新者 | updated_by | UUID | NO | - | FK→users.id |
+| 担当者 | assignee_id | UUID | YES | NULL | FK→users.id (**SET NULL**) |
+| 作成日時 | created_at | TIMESTAMPTZ | NO | now() | |
+| 更新日時 | updated_at | TIMESTAMPTZ | NO | @updatedAt | |
+| 削除日時 | deleted_at | TIMESTAMPTZ | YES | NULL | 論理削除 |
 
-| カラム名 | 型 | NULL | デフォルト | 説明 |
-|---|---|---|---|---|
-| id | UUID | NO | gen_random_uuid() | 主キー |
-| project_id | UUID | NO | - | FK: projects.id |
-| request_content | TEXT | NO | - | 変更要求内容 |
-| reason | TEXT | NO | - | 変更理由 |
-| requester_id | UUID | NO | - | 起票者（FK: users.id） |
-| impact_target | TEXT | YES | NULL | 影響対象 |
-| impact_assessment | TEXT | YES | NULL | 影響評価 |
-| needs_approval | BOOLEAN | NO | false | 承認要否 |
-| approval_status | VARCHAR(20) | YES | NULL | 承認結果: pending / approved / rejected |
-| applied_content | TEXT | YES | NULL | 変更反映内容 |
-| state | VARCHAR(20) | NO | 'open' | 状態: open / applied / rejected / cancelled |
-| created_by | UUID | NO | - | FK: users.id |
-| updated_by | UUID | NO | - | FK: users.id |
-| created_at | TIMESTAMPTZ | NO | now() | 作成日時 |
-| updated_at | TIMESTAMPTZ | NO | now() | 更新日時 |
-| deleted_at | TIMESTAMPTZ | YES | NULL | 論理削除日時 |
+**インデックス**: `idx_retro_project` / `idx_retro_tenant` / `idx_retro_assignee` / pg_trgm GIN (problems, improvements)
 
-### 5.13 audit_logs（監査ログ）
+### 8.21 retrospective_projects（振り返り-PJ 中間 / M2M）
 
-| カラム名 | 型 | NULL | デフォルト | 説明 |
-|---|---|---|---|---|
-| id | UUID | NO | gen_random_uuid() | 主キー |
-| user_id | UUID | NO | - | 操作者（FK: users.id） |
-| action | VARCHAR(50) | NO | - | 操作内容。AuditAction TypeScript 型: `'CREATE' \| 'UPDATE' \| 'DELETE' \| 'SYNC_IMPORT' \| 'EXPORT' \| 'BULK_UPDATE' \| 'BULK_DUPLICATE'` (PR #420 で `BULK_DUPLICATE` 追加) |
-| entity_type | VARCHAR(50) | NO | - | 対象エンティティ種別 |
-| entity_id | UUID | NO | - | 対象エンティティ ID |
-| before_value | JSONB | YES | NULL | 変更前の値 |
-| after_value | JSONB | YES | NULL | 変更後の値 |
-| ip_address | VARCHAR(45) | YES | NULL | 操作元 IP |
-| created_at | TIMESTAMPTZ | NO | now() | 操作日時 |
+| 論理名 | 物理名 | 型 | NULL | デフォルト | 説明 |
+|---|---|---|---|---|---|
+| ID | id | UUID | NO | gen_random_uuid() | 主キー |
+| 振り返り | retrospective_id | UUID | NO | - | FK→retrospectives.id (**CASCADE**) |
+| プロジェクト | project_id | UUID | NO | - | FK→projects.id (**CASCADE**) |
 
-**インデックス**:
-- `idx_audit_entity` (entity_type, entity_id)
-- `idx_audit_user` (user_id, created_at DESC)
+**インデックス**: UNIQUE(retrospective_id, project_id) / `idx_retro_projects_project` (project_id)
 
-### 5.14 role_change_logs（権限変更履歴）
+### 8.22 audit_logs（監査ログ）
 
-| カラム名 | 型 | NULL | デフォルト | 説明 |
-|---|---|---|---|---|
-| id | UUID | NO | gen_random_uuid() | 主キー |
-| changed_by | UUID | NO | - | 変更者（FK: users.id） |
-| target_user_id | UUID | NO | - | 対象ユーザ（FK: users.id） |
-| change_type | VARCHAR(20) | NO | - | system_role / project_role |
-| project_id | UUID | YES | NULL | プロジェクトロール時のみ（FK: projects.id） |
-| before_role | VARCHAR(30) | YES | NULL | 変更前ロール |
-| after_role | VARCHAR(30) | NO | - | 変更後ロール |
-| reason | TEXT | YES | NULL | 変更理由（1000文字以内） |
-| created_at | TIMESTAMPTZ | NO | now() | 変更日時 |
+| 論理名 | 物理名 | 型 | NULL | デフォルト | 説明 |
+|---|---|---|---|---|---|
+| ID | id | UUID | NO | gen_random_uuid() | 主キー |
+| テナント | tenant_id | UUID | NO | - | FK→tenants.id |
+| ユーザ | user_id | UUID | NO | - | FK→users.id |
+| 操作 | action | VARCHAR(50) | NO | - | CREATE/UPDATE/DELETE/SYNC_IMPORT/EXPORT/BULK_* |
+| エンティティ種別 | entity_type | VARCHAR(50) | NO | - | |
+| エンティティ ID | entity_id | UUID | NO | - | @db.Uuid (文字列識別子 INSERT は不可) |
+| 変更前 | before_value | JSONB | YES | NULL | |
+| 変更後 | after_value | JSONB | YES | NULL | |
+| IP アドレス | ip_address | VARCHAR(45) | YES | NULL | |
+| 作成日時 | created_at | TIMESTAMPTZ | NO | now() | |
+
+**インデックス**: `idx_audit_entity` (entity_type, entity_id) / `idx_audit_user` (user_id, created_at DESC) / `idx_audit_date` (created_at DESC) / `idx_audit_tenant` (tenant_id, created_at DESC)
+
+### 8.23 auth_event_logs（認証イベントログ）
+
+| 論理名 | 物理名 | 型 | NULL | デフォルト | 説明 |
+|---|---|---|---|---|---|
+| ID | id | UUID | NO | gen_random_uuid() | 主キー |
+| テナント | tenant_id | UUID | YES | NULL | FK→tenants.id。pre-auth 失敗は null |
+| イベント種別 | event_type | VARCHAR(30) | NO | - | |
+| ユーザ | user_id | UUID | YES | NULL | FK→users.id |
+| メール | email | VARCHAR(255) | YES | NULL | |
+| IP アドレス | ip_address | VARCHAR(45) | YES | NULL | |
+| User-Agent | user_agent | TEXT | YES | NULL | |
+| 詳細 | detail | JSONB | YES | NULL | |
+| 作成日時 | created_at | TIMESTAMPTZ | NO | now() | |
+
+**インデックス**: `idx_auth_events_user` (user_id, created_at DESC) / `idx_auth_events_type` (event_type, created_at DESC) / `idx_auth_events_tenant` (tenant_id, created_at DESC)
+
+### 8.24 system_error_logs（システムエラーログ）
+
+| 論理名 | 物理名 | 型 | NULL | デフォルト | 説明 |
+|---|---|---|---|---|---|
+| ID | id | UUID | NO | gen_random_uuid() | 主キー |
+| テナント | tenant_id | UUID | NO | - | FK→tenants.id。pre-auth は default-tenant |
+| 重要度 | severity | VARCHAR(10) | NO | - | info/warn/error/fatal |
+| 発生箇所 | source | VARCHAR(30) | NO | - | server/client/cron/mail 等 |
+| メッセージ | message | TEXT | NO | - | |
+| スタック | stack | TEXT | YES | NULL | |
+| ユーザ | user_id | UUID | YES | NULL | FK→users.id |
+| リクエスト ID | request_id | VARCHAR(64) | YES | NULL | |
+| コンテキスト | context | JSONB | YES | NULL | IP / path / メタ |
+| 作成日時 | created_at | TIMESTAMPTZ | NO | now() | |
+
+**インデックス**: `idx_system_errors_severity` / `idx_system_errors_source` / `idx_system_errors_user` / `idx_system_errors_date` / `idx_system_errors_tenant`
+
+### 8.25 cron_execution_logs（cron 実行履歴）
+
+tenant_id / user_id を持たない (cron は全テナント横断のシステム実行)。
+
+| 論理名 | 物理名 | 型 | NULL | デフォルト | 説明 |
+|---|---|---|---|---|---|
+| ID | id | UUID | NO | gen_random_uuid() | 主キー |
+| cron 名 | cron_name | VARCHAR(64) | NO | - | |
+| 開始時刻 | started_at | TIMESTAMPTZ | NO | now() | |
+| 完了時刻 | completed_at | TIMESTAMPTZ | YES | NULL | null=実行中 or timeout |
+| 所要 ms | duration_ms | INT | YES | NULL | 完了時のみ |
+| 状態 | status | VARCHAR(20) | NO | - | running/success/failure |
+| エラーメッセージ | error_message | TEXT | YES | NULL | |
+| エラースタック | error_stack | TEXT | YES | NULL | |
+| 結果サマリ | payload_json | JSONB | YES | NULL | cron route の返却値 |
+| 呼出元 IP | invoker_ip | VARCHAR(45) | YES | NULL | cron-job.org IP |
+
+**インデックス**: `idx_cron_exec_name_date` / `idx_cron_exec_status_date` / `idx_cron_exec_date`
+
+### 8.26 role_change_logs（権限変更履歴）
+
+| 論理名 | 物理名 | 型 | NULL | デフォルト | 説明 |
+|---|---|---|---|---|---|
+| ID | id | UUID | NO | gen_random_uuid() | 主キー |
+| テナント | tenant_id | UUID | NO | - | FK→tenants.id (target user の tenant) |
+| 変更者 | changed_by | UUID | NO | - | FK→users.id |
+| 対象ユーザ | target_user_id | UUID | NO | - | FK→users.id |
+| 変更種別 | change_type | VARCHAR(20) | NO | - | system_role / project_role |
+| プロジェクト | project_id | UUID | YES | NULL | project_role 時のみ |
+| 変更前ロール | before_role | VARCHAR(30) | YES | NULL | |
+| 変更後ロール | after_role | VARCHAR(30) | NO | - | |
+| 理由 | reason | TEXT | YES | NULL | |
+| 作成日時 | created_at | TIMESTAMPTZ | NO | now() | |
+
+**インデックス**: `idx_role_change_logs_tenant` (tenant_id, created_at DESC)
+
+### 8.27 attachments（添付ファイル）
+
+polymorphic (entity_type + entity_id) で 6 種 (project/task/estimate/risk/retrospective/knowledge) と連携。ADR-0021 で Supabase Storage 本体 + embedding 対応。
+
+| 論理名 | 物理名 | 型 | NULL | デフォルト | 説明 |
+|---|---|---|---|---|---|
+| ID | id | UUID | NO | gen_random_uuid() | 主キー |
+| テナント | tenant_id | UUID | NO | - | FK→tenants.id |
+| エンティティ種別 | entity_type | VARCHAR(30) | NO | - | |
+| エンティティ ID | entity_id | UUID | NO | - | FK は持たない (polymorphic) |
+| スロット | slot | VARCHAR(30) | NO | 'general' | primary/source/general 等 |
+| 表示名 | display_name | VARCHAR(200) | NO | - | |
+| URL | url | VARCHAR(2000) | NO | - | |
+| MIME ヒント | mime_hint | VARCHAR(50) | YES | NULL | |
+| 追加者 | added_by | UUID | NO | - | FK→users.id |
+| 作成日時 | created_at | TIMESTAMPTZ | NO | now() | |
+| 更新日時 | updated_at | TIMESTAMPTZ | NO | @updatedAt | |
+| 削除日時 | deleted_at | TIMESTAMPTZ | YES | NULL | 論理削除 |
+| 保存先 | storage_provider | VARCHAR(20) | NO | 'url' | 'url' / 'supabase' |
+| オブジェクトキー | storage_object_key | VARCHAR(500) | YES | NULL | Supabase Storage key |
+| サイズ | size_bytes | BIGINT | YES | NULL | |
+| embedding | content_embedding | vector(1024) | YES | NULL | 抽出テキストの embedding |
+| embedding 状態 | embedding_status | VARCHAR(20) | NO | 'pending' | pending/generating/completed/failed/unsupported |
+| 抽出テキストハッシュ | extracted_text_hash | VARCHAR(64) | YES | NULL | SHA-256 |
+| embedding 生成日時 | embedding_generated_at | TIMESTAMPTZ | YES | NULL | |
+| embedding リトライ数 | embedding_retry_count | INT | NO | 0 | 3 で failed |
+| 最終リトライ時刻 | embedding_last_retry_at | TIMESTAMPTZ | YES | NULL | |
+
+**インデックス**: `idx_attachments_entity` (entity_type, entity_id) / `idx_attachments_slot` (entity_type, entity_id, slot) / `idx_attachments_tenant` / `idx_attachments_embedding_status` (embedding_status, embedding_last_retry_at) / `idx_attachments_tenant_provider` (tenant_id, storage_provider, deleted_at) / **UNIQUE active** (storage_object_key WHERE deleted_at IS NULL、introspection 確定の部分 unique)
+
+### 8.28 comments（コメント）
+
+polymorphic (entity_type + entity_id) で 7 種 (issue/task/risk/retrospective/knowledge/customer/stakeholder) と連携。
+
+| 論理名 | 物理名 | 型 | NULL | デフォルト | 説明 |
+|---|---|---|---|---|---|
+| ID | id | UUID | NO | gen_random_uuid() | 主キー |
+| テナント | tenant_id | UUID | NO | - | FK→tenants.id |
+| エンティティ種別 | entity_type | VARCHAR(30) | NO | - | |
+| エンティティ ID | entity_id | UUID | NO | - | FK は持たない |
+| ユーザ | user_id | UUID | NO | - | FK→users.id (投稿者) |
+| 内容 | content | TEXT | NO | - | |
+| 作成日時 | created_at | TIMESTAMPTZ | NO | now() | |
+| 更新日時 | updated_at | TIMESTAMPTZ | NO | @updatedAt | |
+| 削除日時 | deleted_at | TIMESTAMPTZ | YES | NULL | 論理削除 |
+
+**インデックス**: `idx_comments_entity` (entity_type, entity_id, deleted_at) / `idx_comments_tenant`
+
+### 8.29 mentions（メンション）
+
+| 論理名 | 物理名 | 型 | NULL | デフォルト | 説明 |
+|---|---|---|---|---|---|
+| ID | id | UUID | NO | gen_random_uuid() | 主キー |
+| テナント | tenant_id | UUID | NO | - | FK→tenants.id |
+| コメント | comment_id | UUID | NO | - | FK→comments.id (**CASCADE**) |
+| 種別 | kind | VARCHAR(40) | NO | - | user/all/project_member/role_*/assignee |
+| 対象ユーザ | target_user_id | UUID | YES | NULL | FK→users.id。kind='user' のみ |
+| 作成日時 | created_at | TIMESTAMPTZ | NO | now() | |
+
+**インデックス**: `idx_mentions_comment` / `idx_mentions_tenant`
+
+### 8.30 notifications（通知）
+
+アプリ内通知 (ベル UI)。polymorphic (entity_type + entity_id)。
+
+| 論理名 | 物理名 | 型 | NULL | デフォルト | 説明 |
+|---|---|---|---|---|---|
+| ID | id | UUID | NO | gen_random_uuid() | 主キー |
+| テナント | tenant_id | UUID | NO | - | FK→tenants.id |
+| ユーザ | user_id | UUID | NO | - | FK→users.id (受信者) |
+| 種別 | type | VARCHAR(40) | NO | - | task_start_due 等 |
+| エンティティ種別 | entity_type | VARCHAR(30) | NO | - | |
+| エンティティ ID | entity_id | UUID | NO | - | |
+| タイトル | title | VARCHAR(200) | NO | - | |
+| リンク | link | VARCHAR(500) | NO | - | |
+| 重複抑止キー | dedupe_key | VARCHAR(200) | NO | - | UNIQUE |
+| 既読日時 | read_at | TIMESTAMPTZ | YES | NULL | |
+| 作成日時 | created_at | TIMESTAMPTZ | NO | now() | |
+
+**インデックス**: UNIQUE(dedupe_key)=`idx_notifications_dedupe` / `idx_notifications_user_unread` (user_id, read_at, created_at DESC) / `idx_notifications_tenant`
+
+### 8.31 memos（個人メモ）
+
+| 論理名 | 物理名 | 型 | NULL | デフォルト | 説明 |
+|---|---|---|---|---|---|
+| ID | id | UUID | NO | gen_random_uuid() | 主キー |
+| テナント | tenant_id | UUID | NO | - | FK→tenants.id |
+| ユーザ | user_id | UUID | NO | - | FK→users.id (作成者) |
+| タイトル | title | VARCHAR(150) | NO | - | |
+| 内容 | content | TEXT | NO | - | |
+| 公開範囲 | visibility | VARCHAR(20) | NO | 'private' | private / public |
+| embedding | content_embedding | vector(1024) | YES | NULL | title+content |
+| 担当者 | assignee_id | UUID | YES | NULL | FK→users.id (**SET NULL**) |
+| 作成日時 | created_at | TIMESTAMPTZ | NO | now() | |
+| 更新日時 | updated_at | TIMESTAMPTZ | NO | @updatedAt | |
+| 削除日時 | deleted_at | TIMESTAMPTZ | YES | NULL | 論理削除 |
+
+**インデックス**: `idx_memos_user_recent` (user_id, created_at DESC) / `idx_memos_visibility_recent` (visibility, created_at DESC) / `idx_memos_tenant` / `idx_memos_assignee`
+
+### 8.32 api_call_logs（API 呼び出しログ）
+
+各 LLM / Embedding API 呼び出しの記録。**課金根拠データ (feedback_billing_invariant: ApiCallLog SUM=画面表示=請求金額)**。
+
+| 論理名 | 物理名 | 型 | NULL | デフォルト | 説明 |
+|---|---|---|---|---|---|
+| ID | id | UUID | NO | gen_random_uuid() | 主キー |
+| テナント | tenant_id | UUID | NO | - | FK→tenants.id |
+| ユーザ | user_id | UUID | YES | NULL | FK→users.id。cron/システムは null |
+| featureUnit | feature_unit | VARCHAR(40) | NO | - | project-upsert / knowledge-embedding 等 |
+| モデル名 | model_name | VARCHAR(60) | NO | - | |
+| LLM 入力トークン | llm_input_tokens | INT | YES | NULL | embedding のみは null |
+| LLM 出力トークン | llm_output_tokens | INT | YES | NULL | |
+| embedding トークン | embedding_tokens | INT | YES | NULL | LLM のみは null |
+| 課金額 | cost_jpy | INT | NO | - | テナント側課金額 (円整数) |
+| レイテンシ ms | latency_ms | INT | NO | - | |
+| リクエスト ID | request_id | VARCHAR(64) | NO | - | |
+| 作成日時 | created_at | TIMESTAMPTZ | NO | now() | |
+
+**インデックス**: `idx_api_call_logs_tenant` (tenant_id, created_at DESC) / `idx_api_call_logs_request` (request_id) / `idx_api_call_logs_feature` (feature_unit, created_at DESC)
+
+### 8.33 suggestion_explanations（提案説明文キャッシュ）
+
+提案候補の「なぜ関連するか」を LLM 生成しキャッシュ (再課金防止)。
+
+| 論理名 | 物理名 | 型 | NULL | デフォルト | 説明 |
+|---|---|---|---|---|---|
+| ID | id | UUID | NO | gen_random_uuid() | 主キー |
+| テナント | tenant_id | UUID | NO | - | FK→tenants.id (denormalized 認可境界) |
+| プロジェクト | project_id | UUID | NO | - | FK→projects.id |
+| 候補種別 | candidate_kind | VARCHAR(20) | NO | - | knowledge/issue/retrospective |
+| 候補 ID | candidate_id | UUID | NO | - | |
+| 説明文 | explanation | TEXT | NO | - | |
+| モデル名 | model_name | VARCHAR(60) | NO | - | |
+| 課金額 | cost_jpy | INT | NO | - | |
+| 生成者 | generated_by | UUID | NO | - | FK→users.id |
+| 生成日時 | generated_at | TIMESTAMPTZ | NO | now() | |
+
+**インデックス**: UNIQUE(project_id, candidate_kind, candidate_id)=`uq_suggestion_explanation_target` / `idx_suggestion_explanations_tenant` (tenant_id, generated_at DESC)
+
+### 8.34 tenant_monthly_usage_history（月次使用量履歴）
+
+月初リセット直前の値を yearMonth で永続化 (請求書根拠の正本)。
+
+| 論理名 | 物理名 | 型 | NULL | デフォルト | 説明 |
+|---|---|---|---|---|---|
+| ID | id | UUID | NO | gen_random_uuid() | 主キー |
+| テナント | tenant_id | UUID | NO | - | FK→tenants.id |
+| 対象月 | year_month | VARCHAR(7) | NO | - | "YYYY-MM" |
+| 総コール数 | api_call_count | INT | NO | - | BILLABLE_FEATURE_UNITS SUM |
+| 総課金額 | api_cost_jpy | INT | NO | - | 円整数 |
+| Embedding 呼出数 | embedding_call_count | INT | YES | NULL | 内訳 subset。NULL=ADR-0022 前の過去月 |
+| Embedding 課金額 | embedding_cost_jpy | INT | YES | NULL | 内訳 subset |
+| プラン | plan | VARCHAR(20) | NO | - | 当月末時点 |
+| アクティブユーザ数 | active_user_count | INT | NO | - | |
+| DB 容量 | storage_bytes_used | BIGINT | NO | 0 | 過去月の容量推移用 |
+| ファイル容量 peak | file_storage_bytes_peak | BIGINT | YES | NULL | ADR-0021 |
+| ファイル容量超過額 | file_storage_overage_jpy | INT | YES | NULL | |
+| 総課金額(合算) | total_jpy | INT | NO | 0 | LLM+Storage 合算 |
+| 作成日時 | created_at | TIMESTAMPTZ | NO | now() | |
+
+**インデックス**: UNIQUE(tenant_id, year_month)=`uq_tenant_monthly_usage_history` / `idx_monthly_usage_year_month` (year_month)
+
+### 8.35 tenant_import_preview（外部インポートプレビュー）
+
+preview 結果を 24h TTL 保存し apply で確定する 2 段階フロー。
+
+| 論理名 | 物理名 | 型 | NULL | デフォルト | 説明 |
+|---|---|---|---|---|---|
+| ID | id | UUID | NO | gen_random_uuid() | 主キー |
+| テナント | tenant_id | UUID | NO | - | FK→tenants.id |
+| 作成者 | created_by_user_id | UUID | NO | - | FK→users.id (同一ユーザのみ apply 可) |
+| パース済データ | parsed_json | JSONB | NO | - | knowledge[]/risksIssues[] |
+| 課金見積 | cost_estimate | JSONB | NO | - | |
+| サマリ | summary | JSONB | NO | - | |
+| 作成日時 | created_at | TIMESTAMPTZ | NO | now() | |
+| 有効期限 | expires_at | TIMESTAMPTZ | NO | - | createdAt+24h |
+
+**インデックス**: `idx_tenant_import_preview_tenant` (tenant_id, created_at DESC) / `idx_tenant_import_preview_expires` (expires_at)
+
+### 8.36 email_send_logs（メール送信ログ）
+
+本文・件名は保存しない (PII 防止)。recipient は SHA-256 ハッシュ。
+
+| 論理名 | 物理名 | 型 | NULL | デフォルト | 説明 |
+|---|---|---|---|---|---|
+| ID | id | UUID | NO | gen_random_uuid() | 主キー |
+| テナント | tenant_id | UUID | YES | NULL | cron 経由のシステム通知は null |
+| 種別 | type | VARCHAR(40) | NO | - | invitation/usage_alert/beginner_* |
+| 宛先ハッシュ | recipient_hash | VARCHAR(64) | NO | - | SHA-256 |
+| 宛先ドメイン | recipient_domain | VARCHAR(255) | NO | - | |
+| 成功 | success | BOOLEAN | NO | - | |
+| エラーメッセージ | error_message | TEXT | YES | NULL | |
+| プロバイダ名 | provider_name | VARCHAR(20) | NO | - | brevo/resend/console/inbox/smtp |
+| 送信日時 | sent_at | TIMESTAMPTZ | NO | now() | |
+
+**インデックス**: `idx_email_send_logs_sent_at` (sent_at DESC) / `idx_email_send_logs_type` (type, sent_at DESC)
+
+### 8.37 stripe_webhook_events（Stripe Webhook イベント）
+
+冪等性保証 + 再送/リプレイ用。`id` = Stripe event.id。
+
+| 論理名 | 物理名 | 型 | NULL | デフォルト | 説明 |
+|---|---|---|---|---|---|
+| ID | id | VARCHAR(50) | NO | - | = Stripe event.id (冪等性キー、PK) |
+| 種別 | type | VARCHAR(60) | NO | - | customer.subscription.updated 等 |
+| ペイロード | payload_json | JSONB | NO | - | |
+| 受信時刻 | received_at | TIMESTAMPTZ | NO | now() | |
+| 処理完了時刻 | processed_at | TIMESTAMPTZ | YES | NULL | null=未処理 |
+| エラーメッセージ | error_message | TEXT | YES | NULL | |
+| 失敗回数 | retry_count | INT | NO | 0 | 3 で DLQ |
+| 次回再試行時刻 | next_retry_at | TIMESTAMPTZ | YES | NULL | null=DLQ |
+
+**インデックス**: `idx_stripe_webhook_events_type` (type) / `idx_stripe_webhook_events_retry_candidates` (processed_at, next_retry_at)
+
+### 8.38 billing_history（請求履歴）
+
+全支払い方法 (invoice/credit_card) を統一管理。
+
+| 論理名 | 物理名 | 型 | NULL | デフォルト | 説明 |
+|---|---|---|---|---|---|
+| ID | id | UUID | NO | gen_random_uuid() | 主キー |
+| テナント | tenant_id | UUID | NO | - | FK→tenants.id |
+| 対象月 | year_month | VARCHAR(7) | NO | - | "YYYY-MM" |
+| 支払い方法 | payment_method | VARCHAR(20) | NO | - | invoice / credit_card |
+| 課金額(税抜) | amount_jpy | INT | NO | - | |
+| 消費税額 | tax_amount_jpy | INT | NO | - | |
+| 税込合計 | total_amount_jpy | INT | NO | - | |
+| 状態 | status | VARCHAR(20) | NO | - | pending/paid/failed/refunded/canceled/replaced_by_stripe |
+| Stripe Invoice ID | stripe_invoice_id | VARCHAR(50) | YES | NULL | credit_card のみ |
+| 入金確認日時 | paid_at | TIMESTAMPTZ | YES | NULL | |
+| 失敗理由 | failure_reason | VARCHAR(50) | YES | NULL | |
+| リトライ回数 | retry_count | INT | NO | 0 | credit_card のみ |
+| 支払期日 | payment_due_date | TIMESTAMPTZ | YES | NULL | 銀行振込は翌月25日 |
+| 期日超過 alert 日時 | overdue_alert_sent_at | TIMESTAMPTZ | YES | NULL | |
+| 次回引落予定 | next_payment_attempt | TIMESTAMPTZ | YES | NULL | |
+| 消込実行者 | confirmed_by | UUID | YES | NULL | 銀行振込手動消込者 |
+| 消込実行時刻 | confirmed_at | TIMESTAMPTZ | YES | NULL | |
+| 作成日時 | created_at | TIMESTAMPTZ | NO | now() | |
+| 更新日時 | updated_at | TIMESTAMPTZ | NO | @updatedAt | |
+
+**インデックス**: UNIQUE(tenant_id, year_month)=`uq_billing_history_tenant_month` / `idx_billing_history_status` / `idx_billing_history_stripe_invoice` / `idx_billing_history_due_date` (payment_due_date, status)
+
+### 8.39 stripe_usage_record_queue（Stripe Usage Record キュー）
+
+withMeteredLLM が INSERT、5 分 cron で Stripe へ送信。apiCallLogId を idempotency_key に使用。
+
+| 論理名 | 物理名 | 型 | NULL | デフォルト | 説明 |
+|---|---|---|---|---|---|
+| ID | id | UUID | NO | gen_random_uuid() | 主キー |
+| テナント | tenant_id | UUID | NO | - | FK→tenants.id |
+| 呼出種別 | call_type | VARCHAR(20) | NO | - | haiku/sonnet/embedding (ADR-0022) |
+| ApiCallLog ID | api_call_log_id | UUID | NO | - | idempotency_key |
+| 数量 | quantity | INT | NO | 1 | |
+| 発生時刻 | occurred_at | TIMESTAMPTZ | NO | - | |
+| 送信試行回数 | retry_count | INT | NO | 0 | 0〜5 |
+| 次回送信予定 | next_send_at | TIMESTAMPTZ | YES | NULL | null=DLQ |
+| 送信成功時刻 | sent_at | TIMESTAMPTZ | YES | NULL | |
+| 直近エラー | last_error | TEXT | YES | NULL | |
+| 作成日時 | created_at | TIMESTAMPTZ | NO | now() | |
+
+**インデックス**: `idx_stripe_usage_queue_pending` (sent_at, next_send_at) / `idx_stripe_usage_queue_tenant` (tenant_id)
+
+### 8.40 tenant_consent_logs（規約同意ログ）
+
+利用規約・プラポリ同意の不可変ログ (法的証跡)。
+
+| 論理名 | 物理名 | 型 | NULL | デフォルト | 説明 |
+|---|---|---|---|---|---|
+| ID | id | UUID | NO | gen_random_uuid() | 主キー |
+| テナント | tenant_id | UUID | NO | - | FK→tenants.id |
+| ユーザ | user_id | UUID | NO | - | 初期 admin (FK は張らず String 保持) |
+| 同意種別 | consent_type | VARCHAR(20) | NO | - | terms / privacy |
+| バージョン | version | VARCHAR(20) | NO | - | LP 側 version と一致 |
+| IP アドレス | ip_address | VARCHAR(45) | YES | NULL | |
+| User-Agent | user_agent | TEXT | YES | NULL | |
+| 同意日時 | accepted_at | TIMESTAMPTZ | NO | now() | immutable |
+
+**インデックス**: UNIQUE(tenant_id, consent_type, version) / `idx_tenant_consent_logs_tenant` (tenant_id)
+
+### 8.41 faq_embeddings（FAQ embedding / RAG）
+
+`src/config/faq-content.ts` の embedding。テナント横断 (tenant_id を持たない)。
+
+| 論理名 | 物理名 | 型 | NULL | デフォルト | 説明 |
+|---|---|---|---|---|---|
+| ID | id | UUID | NO | gen_random_uuid() | 主キー |
+| エントリ ID | entry_id | VARCHAR(150) | NO | - | FaqEntry.id と一致。UNIQUE |
+| コンテンツハッシュ | content_hash | VARCHAR(64) | NO | - | SHA-256、drift 検知 |
+| 本文 snapshot | content_snapshot | TEXT | NO | - | RAG 入力用 |
+| embedding | content_embedding | vector(1024) | **NO** | - | NOT NULL = 生成完了の証跡 |
+| admin 限定 | requires_admin | BOOLEAN | NO | false | 権限フィルタ |
+| PM 限定 | requires_project_pm | BOOLEAN | NO | false | |
+| カテゴリ | category | VARCHAR(50) | NO | - | plan/csv/mfa/role 等 |
+| 生成日時 | generated_at | TIMESTAMPTZ | NO | now() | |
+| 作成日時 | created_at | TIMESTAMPTZ | NO | now() | |
+| 更新日時 | updated_at | TIMESTAMPTZ | NO | @updatedAt | |
+
+**インデックス**: UNIQUE(entry_id) / `idx_faq_embeddings_category` / `idx_faq_embeddings_permission` (requires_admin, requires_project_pm)
+
+### 8.42 guide_embeddings（ガイド embedding / RAG）
+
+`src/config/guide-content.ts` の embedding。FaqEmbedding と同型 + step_order。
+
+| 論理名 | 物理名 | 型 | NULL | デフォルト | 説明 |
+|---|---|---|---|---|---|
+| ID | id | UUID | NO | gen_random_uuid() | 主キー |
+| エントリ ID | entry_id | VARCHAR(150) | NO | - | GuideStep.id と一致。UNIQUE |
+| コンテンツハッシュ | content_hash | VARCHAR(64) | NO | - | SHA-256 |
+| 本文 snapshot | content_snapshot | TEXT | NO | - | |
+| embedding | content_embedding | vector(1024) | **NO** | - | NOT NULL |
+| admin 限定 | requires_admin | BOOLEAN | NO | false | |
+| PM 限定 | requires_project_pm | BOOLEAN | NO | false | |
+| 表示順 | step_order | INT | NO | - | ステップ順 |
+| 生成日時 | generated_at | TIMESTAMPTZ | NO | now() | |
+| 作成日時 | created_at | TIMESTAMPTZ | NO | now() | |
+| 更新日時 | updated_at | TIMESTAMPTZ | NO | @updatedAt | |
+
+**インデックス**: UNIQUE(entry_id) / `idx_guide_embeddings_step_order` (step_order) / `idx_guide_embeddings_permission` (requires_admin, requires_project_pm)
 
 ---
 
+## §14. 初期データ・シード設計
 
-## §13. 初期データ・シード設計
+### 14.1 初期管理者アカウント
 
-## 13. 初期データ・シード設計
-
-### 13.1 初期管理者アカウント
-
-システム起動後に最初のログインを可能にするため、シードスクリプトで初期管理者アカウントを作成する。
-
-#### 作成方法
+システム起動後に最初のログインを可能にするため、シードスクリプトで初期管理者を作成する。
 
 ```
 pnpm db:seed
 ```
 
-#### 処理フロー
+処理フロー: 環境変数 (`INITIAL_ADMIN_EMAIL` / `INITIAL_ADMIN_PASSWORD`) から管理者情報を取得 → `system_role='admin'` / `is_active=true` / bcrypt ハッシュ / `force_password_change=true` で作成 → リカバリコード 10 個を生成して bcrypt ハッシュ保存 → コンソールに 1 回限り出力。冪等性: 同一メールが既存ならスキップ。
 
-```
-[1] 環境変数から初期管理者情報を取得
-    - INITIAL_ADMIN_EMAIL（必須）
-    - INITIAL_ADMIN_PASSWORD（必須、パスワードポリシー準拠）
-    |
-    v
-[2] 管理者アカウント作成
-    - system_role = admin
-    - is_active = true（シード時はメール検証をスキップ）
-    - パスワードを bcrypt ハッシュ化
-    - force_password_change = true（初回ログイン時にパスワード変更を強制）
-    |
-    v
-[3] リカバリーコード10個を生成
-    - 各コードを bcrypt ハッシュ化して DB 保存
-    |
-    v
-[4] コンソールに出力（1回限り）
-    === 初期管理者アカウント作成 ===
-    メール:           (環境変数の値)
-    初回ログイン後にパスワード変更が強制されます
-    リカバリーコード:
-      1. XXXX-XXXX
-      2. XXXX-XXXX
-      ... (10個)
-    このリカバリーコードを安全な場所に保管してください。
-    再表示はできません。
-    ================================
-```
+| 変数名 | 説明 |
+|---|---|
+| INITIAL_ADMIN_EMAIL | 初期管理者のメールアドレス |
+| INITIAL_ADMIN_PASSWORD | 初期管理者のパスワード (ポリシー準拠) |
 
-#### 冪等性
+### 14.2 マスタデータ
 
-- 同一メールアドレスのユーザが既に存在する場合はスキップする
-- 複数回実行しても安全
+MVP ではマスタデータをコード内定数 (`src/config/master-data.ts`) で管理する。
 
-#### 環境変数
-
-| 変数名 | 説明 | 例 |
+| 定数名 | 値 (英数キー) | 値域となるテーブル/カラム |
 |---|---|---|
-| INITIAL_ADMIN_EMAIL | 初期管理者のメールアドレス | admin@example.com |
-| INITIAL_ADMIN_PASSWORD | 初期管理者のパスワード | （ポリシー準拠の強力なパスワード） |
-
-### 13.2 マスタデータ
-
-MVP ではマスタデータをコード内定数（enum / 定数オブジェクト）として管理する。DB マスタテーブルは MVP 後に必要に応じて導入する。
-
-#### 定数定義一覧
-
-| 定数名 | 値 | 利用箇所 |
-|---|---|---|
-| DevMethod | scratch / power_platform / package / other | プロジェクト、見積もり |
-| TaskCategory | requirements / design / development / testing / review / management / other | タスク |
-| KnowledgeType | research / verification / incident / decision / lesson / best_practice / other | ナレッジ |
-| ProjectStatus | planning / estimating / scheduling / executing / completed / retrospected / closed | プロジェクト |
-| TaskStatus | not_started / in_progress / completed / on_hold | タスク |
-| Priority | low / medium / high | タスク、リスク/課題 |
-| Impact | low / medium / high | リスク/課題 |
-| RiskIssueState | open / in_progress / monitoring / resolved | リスク/課題 |
-| Visibility | draft / project / company | ナレッジ |
-| SystemRole | admin / general | ユーザ |
-| ProjectRole | pm_tl / member / viewer | プロジェクトメンバー |
-| EffortUnit | person_hour / person_day | 見積もり |
-
-#### 実装方針
-
-```typescript
-// lib/constants/master.ts
-export const DEV_METHODS = {
-  scratch: 'スクラッチ開発',
-  power_platform: 'PowerPlatform',
-  package: 'パッケージ導入',
-  other: 'その他',
-} as const;
-
-export type DevMethod = keyof typeof DEV_METHODS;
-```
+| DevMethod | scratch / low_code_no_code / package / other | projects.dev_method (見積もりでも参照) |
+| ContractType | quasi_mandate / lump_sum / ses / other | projects.contract_type (null 許容) |
+| TaskCategory | requirements / design / development / testing / review / management / other | tasks.category |
+| KnowledgeType | research / verification / incident / decision / lesson / best_practice / other | knowledges.type |
+| ProjectStatus | planning / estimating / scheduling / executing / completed / retrospected / closed | projects.status |
+| WbsType | work_package / activity | tasks.wbs_type |
+| TaskStatus | not_started / in_progress / completed / on_hold | tasks.status |
+| Priority | high / medium / low / minimal | tasks.priority、risk_issues.priority (リスク/課題は impact × likelihood から自動算出) |
+| ImpactLevel | high / medium / low | risk_issues.impact / likelihood 等の入力値域 (minimal は含まない) |
+| RiskIssueState | open / in_progress / monitoring / resolved | risk_issues.state |
+| Visibility | draft / public | knowledges / risk_issues / retrospectives の visibility (旧 project/company は public に集約済) |
+| RiskNature | threat / opportunity | risk_issues.nature (type='risk' 時のみ使用) |
+| SystemRole | **super_admin / admin / general** (3 階層) | users.system_role |
+| ProjectRole | pm_tl / member / viewer | project_members.role |
+| EffortUnit | person_hour / person_day | 見積もり (effort 単位) |
+| StakeholderAttitude | supportive / neutral / opposing | stakeholders.attitude |
+| StakeholderEngagement | unaware / resistant / neutral / supportive / leading | stakeholders.current_engagement / desired_engagement |
+| StakeholderQuadrant | manage_closely / keep_satisfied / keep_informed / monitor | Power/Interest grid 分類 (influence × interest から自動算出) |
+| StakeholderPriority | high / medium / low | stakeholders 優先度 (quadrant から自動分類、3 段階) |
 
 ---
 
-
 ## §15. インデックス戦略
-
-## 15. インデックス戦略
 
 ### 15.1 設計原則
 
 | 原則 | 説明 |
 |---|---|
-| WHERE 句頻出カラム | 一覧のフィルタ条件になるカラムにインデックスを付与 |
-| 全 FK カラム | JOIN の高速化 |
-| 複合インデックス | WHERE 句で複数カラムを同時に使うパターンに対応 |
-| 部分インデックス | `WHERE deleted_at IS NULL` で論理削除レコードを除外 |
-| 過剰インデックス回避 | 書き込み性能低下を防ぐため必要最小限に |
+| WHERE 句頻出カラム | 一覧フィルタ条件にインデックス付与 |
+| 全 FK カラム | JOIN 高速化 (特に tenant_id) |
+| 複合インデックス | 同時使用パターン (tenant_id + status 等) に対応 |
+| 部分インデックス | `WHERE deleted_at IS NULL` 等で対象行を限定 |
+| 過剰インデックス回避 | 書き込み性能低下を防ぐため必要最小限 |
 
-### 15.2 テーブル別インデックス定義
+### 15.2 特記すべき実インデックス (introspection + schema @@index)
 
-#### users
+**部分インデックス (partial)**:
+- `projects`: `idx_projects_is_sample_data` (is_sample_data) — サンプルデータのみ index
+- `knowledges`: `idx_knowledges_is_sample_data` (is_sample_data)
+- `tenants`: `idx_tenants_created_by_user_id_partial` (created_by_user_id) WHERE created_by_user_id IS NOT NULL — 3 層判定 hot path 用、`idx_tenants_suspended_at_partial` (suspended_at) WHERE suspended_at IS NOT NULL — 停止中テナント一覧用
+- `attachments`: **UNIQUE active** = (storage_object_key) WHERE deleted_at IS NULL — 同一キーの重複登録を論理削除済を除いてブロック
 
-| インデックス名 | カラム | 種別 | 用途 |
-|---|---|---|---|
-| idx_users_email | email | UNIQUE, 部分 | ログイン時のメール検索 |
-| idx_users_active | is_active, last_login_at | 部分 | 未使用アカウントバッチ |
+**通常の複合インデックス**:
+- `tasks`: `idx_tasks_gantt` (project_id, planned_start_date, planned_end_date) — ガントチャート用 (WHERE 句なし。schema.prisma:770)
 
-#### projects
+**複合 UNIQUE**:
+- `users`: (tenant_id, email) — tenant-scoped 一意 (ADR-0016)
+- `tasks`: **(project_id, COALESCE(parent_task_id, sentinel), name) WHERE deleted_at IS NULL** — 同一親配下の同名重複を DB レベルでブロック (raw SQL migration `20260525_tasks_unique_parent_name`、Prisma `@@unique` は WHERE 句を表現できないため schema 側はコメントのみ)
+- `billing_history`: (tenant_id, year_month)
+- `tenant_monthly_usage_history`: (tenant_id, year_month)
+- `project_members`: (project_id, user_id)
+- `suggestion_explanations`: (project_id, candidate_kind, candidate_id)
+- `tenant_consent_logs`: (tenant_id, consent_type, version)
+- M2M: (knowledge_id, project_id) / (retrospective_id, project_id) / (risk_issue_id, project_id) / (task_id, knowledge_id)
+- `notifications`: (dedupe_key)
 
-| インデックス名 | カラム | 種別 | 用途 |
-|---|---|---|---|
-| idx_projects_status | status | 部分 | 一覧のステータスフィルタ |
-| idx_projects_customer_id | customer_id | 通常 | 顧客経由の絞込 (PR #111-2 以降、customer_name 索引は廃止) |
-| idx_projects_dates | planned_start_date, planned_end_date | 部分 | 一覧の日付範囲フィルタ |
-| idx_projects_tenant_status | tenant_id, status | 通常 | `/projects` 一覧の `tenantId + status` 複合フィルタ (PR-1 perf 2026-06-02) |
+**全文検索 GIN (pg_trgm)**: knowledges(title,content) / risks_issues(title,content) / retrospectives(problems,improvements) — §4 参照。
 
-#### project_members
+**ベクトル類似 (pgvector)**: 専用 index 無し。ブルートフォース全走査 — §3 参照。
 
-| インデックス名 | カラム | 種別 | 用途 |
-|---|---|---|---|
-| idx_pm_project | project_id | - | プロジェクトのメンバー一覧 |
-| idx_pm_user | user_id | - | ユーザの参加プロジェクト一覧 |
-| uq_pm_project_user | project_id, user_id | UNIQUE | 重複追加防止 |
-
-#### estimates
-
-| インデックス名 | カラム | 種別 | 用途 |
-|---|---|---|---|
-| idx_estimates_project | project_id | 部分 | プロジェクト内の見積一覧 |
-
-#### tasks
-
-| インデックス名 | カラム | 種別 | 用途 |
-|---|---|---|---|
-| idx_tasks_project | project_id | 部分 | プロジェクト内タスク一覧 |
-| idx_tasks_assignee | assignee_id, status | 部分 | マイタスク画面 |
-| idx_tasks_parent | parent_task_id | 部分 | WBS ツリー構築 |
-| idx_tasks_gantt | project_id, planned_start_date, planned_end_date | 部分 | ガントチャートデータ取得 |
-
-#### task_progress_logs
-
-| インデックス名 | カラム | 種別 | 用途 |
-|---|---|---|---|
-| idx_progress_task | task_id, update_date DESC | - | 進捗履歴取得 |
-
-#### risks_issues
-
-| インデックス名 | カラム | 種別 | 用途 |
-|---|---|---|---|
-| idx_risks_project | project_id, type | 部分 | 一覧表示（リスク/課題別） |
-| idx_risks_state | state, priority | 部分 | 未対応の高優先度フィルタ |
-| idx_risks_assignee | assignee_id | 部分 | 担当者別フィルタ |
-
-#### knowledges
-
-| インデックス名 | カラム | 種別 | 用途 |
-|---|---|---|---|
-| idx_knowledges_type | knowledge_type | 部分 | 種別フィルタ |
-| idx_knowledges_visibility | visibility | 部分 | 公開範囲フィルタ |
-| idx_knowledges_search | (title, content 連結) | GIN (pg_trgm) | 全文検索（セクション16） |
-| idx_knowledges_tenant_visibility_created | tenant_id, visibility, created_at | 通常 | `/knowledge` 一覧の `tenantId + visibility + ORDER BY createdAt DESC` を一括 index scan (PR-1 perf 2026-06-02) |
-
-#### retrospectives
-
-| インデックス名 | カラム | 種別 | 用途 |
-|---|---|---|---|
-| idx_retro_project | project_id | 部分 | プロジェクト内の振り返り一覧 |
-
-#### audit_logs
-
-| インデックス名 | カラム | 種別 | 用途 |
-|---|---|---|---|
-| idx_audit_entity | entity_type, entity_id | - | エンティティ別の変更履歴 |
-| idx_audit_user | user_id, created_at DESC | - | ユーザ別の操作履歴 |
-| idx_audit_date | created_at DESC | - | 日時範囲での検索 |
-
-#### operation_trace_logs
-
-| インデックス名 | カラム | 種別 | 用途 |
-|---|---|---|---|
-| idx_trace_user | user_id, created_at DESC | - | ユーザ別のアクセスログ |
-| idx_trace_entity | entity_type, entity_id, created_at DESC | - | エンティティ別の操作履歴 |
-| idx_trace_request | request_id | - | リクエスト追跡 |
-| idx_trace_date | created_at DESC | - | 日時範囲での検索 |
-
-#### auth_event_logs
-
-| インデックス名 | カラム | 種別 | 用途 |
-|---|---|---|---|
-| idx_auth_events_user | user_id, created_at DESC | - | ユーザ別の認証履歴 |
-| idx_auth_events_type | event_type, created_at DESC | - | イベント種別別の検索 |
+各テーブルの完全なインデックス一覧は §8 の各定義の「インデックス」欄を参照。
 
 ### 15.3 パーティショニング
 
-初期フェーズでは不要。500MB の無料枠内で数年間運用可能なため、パーティショニングは実装しない。
-本格運用でデータ量が増大した場合（100万レコード超過目安）に、audit_logs / operation_trace_logs を月次パーティションに分割することを検討する。
-
----
-
+初期フェーズでは不要 (Supabase Free 500MB で数年運用可能)。本格運用でデータ量が増大した場合 (100 万レコード超過目安) に audit_logs / api_call_logs を月次パーティションに分割することを検討する。

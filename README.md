@@ -66,7 +66,7 @@
 | エラー集約 | 全エラーを `system_error_logs` DB に記録し、画面には固定文言のみ表示（機密情報の漏洩面最小化） |
 | 未使用アカウント管理 | 30日未ログインで自動無効化、60日で物理削除 |
 
-セキュリティ実装の多層防御の詳細は [docs/design/SECURITY.md](docs/design/SECURITY.md) を参照。運用時の監視・MFA ロック対応は [docs/operations/SECURITY_OPS.md](docs/operations/SECURITY_OPS.md) と [docs/operations/INCIDENT_RESPONSE.md §6.5](docs/operations/INCIDENT_RESPONSE.md) を参照。
+セキュリティ実装の多層防御の詳細は [docs/design/SECURITY.md](docs/design/SECURITY.md) を参照。運用時の監視・MFA ロック対応は [docs/operations/operate/SECURITY_OPS.md](docs/operations/operate/SECURITY_OPS.md) と [docs/operations/operate/INCIDENT_RESPONSE.md §6.5](docs/operations/operate/INCIDENT_RESPONSE.md) を参照。
 
 ## 技術スタック
 
@@ -113,7 +113,7 @@ graph TD
 
 > **2026-05-18 Vercel → Netlify 移行 + その後 Personal 昇格**: Vercel Hobby プランは規約上**商用利用不可**のため、6/1 正式リリース (Expert/Pro プラン課金) に備えて Netlify Starter (商用利用 OK) に初期移行し、その後 credits 300/月では Production deploy 約 20 回で逼迫することから **Netlify Personal ($9/seat/month、credits 1,000/月)** へ昇格しました。Supabase Free / Brevo Free も無料枠制約はあり、スケール時は有償プランへ段階移行します。詳細は [docs/adr/0023-netlify-starter-migration.md](docs/adr/0023-netlify-starter-migration.md) と [docs/design/INFRASTRUCTURE.md §10](docs/design/INFRASTRUCTURE.md) を参照。
 
-デプロイ手順は [docs/operations/DEPLOYMENT.md](docs/operations/DEPLOYMENT.md)、スキーマ変更時の運用は [docs/operations/DB_MIGRATION_PROCEDURE.md](docs/operations/DB_MIGRATION_PROCEDURE.md) を参照してください。
+デプロイ手順は [docs/operations/develop/DEPLOYMENT.md](docs/operations/develop/DEPLOYMENT.md)、スキーマ変更時の運用は [docs/operations/develop/DB_MIGRATION_PROCEDURE.md](docs/operations/develop/DB_MIGRATION_PROCEDURE.md) を参照してください。
 
 ## セットアップ
 
@@ -137,7 +137,7 @@ pnpm db:seed                     # 初期管理者の作成
 pnpm dev                         # http://localhost:3000
 ```
 
-詰まったら [docs/operations/SETUP_LOCAL.md](docs/operations/SETUP_LOCAL.md) のトラブルシューティング節へ。
+詰まったら [docs/operations/develop/SETUP_LOCAL.md](docs/operations/develop/SETUP_LOCAL.md) のトラブルシューティング節へ。
 
 ## ドキュメント
 

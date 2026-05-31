@@ -17,7 +17,7 @@
 | **Deploy Preview** | PR ごとの個別検証 (= ステージング) | `https://deploy-preview-NNN--tasukiba.netlify.app` |
 | **Branch Deploy** | 固定 URL での反復検証 (Stripe Webhook 固定先) | `https://<branch-name>--tasukiba.netlify.app` |
 
-各 build の使い分け詳細は [`DEPLOYMENT.md §3`](../operations/DEPLOYMENT.md#3-開発フロー-ローカル--ステージング--本番) を参照。
+各 build の使い分け詳細は [`DEPLOYMENT.md §3`](../operations/develop/DEPLOYMENT.md#3-開発フロー-ローカル--ステージング--本番) を参照。
 
 ### 1.2 Stripe Test mode の確認
 
@@ -333,7 +333,7 @@ Branch Deploy の場合: `https://<branch-name>--tasukiba.netlify.app`
    https://<検証環境 URL>/api/stripe/webhook
    ```
    例: `https://deploy-preview-419--tasukiba.netlify.app/api/stripe/webhook`
-3. **イベント選択**: 以下を購読 (= [STRIPE_SETUP.md §4.2](../operations/STRIPE_SETUP.md) の本番購読セットと同じ)
+3. **イベント選択**: 以下を購読 (= [STRIPE_SETUP.md §4.2](../operations/setup/STRIPE_SETUP.md) の本番購読セットと同じ)
    - `checkout.session.completed`
    - `customer.subscription.created`
    - `customer.subscription.updated`
@@ -437,14 +437,14 @@ PR ごとにこのリストを使って完了確認:
 | Webhook が `Recent deliveries` に出ない | endpoint URL の typo / Netlify env 未反映 | endpoint URL の `/api/stripe/webhook` を再確認 + redeploy |
 | Webhook 配信は来るが 401 で fail | `STRIPE_WEBHOOK_SECRET` 不一致 | Stripe Dashboard の Signing secret と Netlify env を一致させる |
 | `tenant.plan` が 'pro' に変わらない | Subscription 作成失敗 / DB 接続エラー | Netlify Function logs を確認 (Netlify Admin → Functions → `/api/...` のログ) |
-| 課金 invariant 不一致 (TC-6) | severity-1 リグレッション | 即時開発チームエスカレーション、deploy を rollback ([ROLLBACK.md](../operations/ROLLBACK.md)) |
+| 課金 invariant 不一致 (TC-6) | severity-1 リグレッション | 即時開発チームエスカレーション、deploy を rollback ([DEPLOYMENT.md §7 ロールバック](../operations/develop/DEPLOYMENT.md#7-ロールバック)) |
 
 ---
 
 ## 8. 関連ドキュメント
 
-- [`docs/operations/STRIPE_SETUP.md`](../operations/STRIPE_SETUP.md) — Stripe Dashboard 設定 (Product / Meter / Webhook イベント一覧)
-- [`docs/operations/STRIPE_WEBHOOK_EVENTS.md`](../operations/STRIPE_WEBHOOK_EVENTS.md) — Webhook イベント仕様
+- [`docs/operations/STRIPE_SETUP.md`](../operations/setup/STRIPE_SETUP.md) — Stripe Dashboard 設定 (Product / Meter / Webhook イベント一覧)
+- [`docs/operations/STRIPE_WEBHOOK_EVENTS.md`](../operations/operate/STRIPE_WEBHOOK_EVENTS.md) — Webhook イベント仕様
 - [`docs/design/STRIPE_TECHNICAL_DESIGN.md`](../design/STRIPE_TECHNICAL_DESIGN.md) — Stripe 統合の設計判断
-- [`docs/operations/DEPLOYMENT.md §3`](../operations/DEPLOYMENT.md#3-開発フロー-ローカル--ステージング--本番) — 検証環境 (Deploy Preview / Branch Deploy) の使い分け
+- [`docs/operations/DEPLOYMENT.md §3`](../operations/develop/DEPLOYMENT.md#3-開発フロー-ローカル--ステージング--本番) — 検証環境 (Deploy Preview / Branch Deploy) の使い分け
 - `feedback_billing_invariant.md` (CLAUDE.md memory) — 課金 invariant 規約 (★最重要)

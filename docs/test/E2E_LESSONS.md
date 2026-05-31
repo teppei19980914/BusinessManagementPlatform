@@ -19,9 +19,9 @@ PR #90 以降、E2E 基盤を整備・拡張する過程で **毎回の CI 失�
 
 関連文書:
 - [e2e/README.md](../../e2e/README.md) — テストの内容説明 (WHAT)
-- [docs/developer/DEVELOPER_GUIDE.md §9](./DEVELOPER_GUIDE.md) — 実行手順 + 失敗調査手順 (HOW)
-- [docs/developer/E2E_COVERAGE.md](./E2E_COVERAGE.md) — カバレッジマニフェスト (COVERAGE)
-- [docs/developer/TESTING_STRATEGY.md](./TESTING_STRATEGY.md) — 自動テスト + 手動テストの全体戦略 (STRATEGY)
+- [docs/developer-guide/E2E_TEST_GUIDE.md](../operations/develop/E2E_TEST_GUIDE.md) — 実行手順 + 失敗調査手順 (HOW)
+- [docs/test/E2E_COVERAGE.md](./E2E_COVERAGE.md) — カバレッジマニフェスト (COVERAGE)
+- [docs/test/STRATEGY.md](./STRATEGY.md) — 自動テスト + 手動テストの全体戦略 (STRATEGY)
 - 本文書 — 実装判断の背景 (WHY)
 
 ---
@@ -1024,7 +1024,7 @@ await expect(page.getByRole('heading', { name: ... })).toBeVisible({ timeout: 10
 単独は「現在 idle なら即 resolve」の意味であり、navigation 開始を待つ保証がない。
 
 **関連**: §4.20 (router.refresh race) / §4.19 (長い click chain) /
-docs/developer/DEVELOPER_GUIDE.md §10.5 (CI race パターン集)
+docs/operations/develop/E2E_TEST_GUIDE.md (CI race パターン集)
 
 ---
 
@@ -2495,7 +2495,7 @@ meta: { modelName: 'Project', driverAdapterError: ColumnNotFound }
 
 本プロジェクトは **Vercel build で `prisma migrate deploy` を実行しない** 運用 (Supabase 直結 URL が
 IPv4-only で Vercel build 環境から到達不能なため)。Migration の本番適用は **Supabase ダッシュボードの
-SQL Editor から手動実行** することが [OPERATION.md §3.3](../administrator/OPERATION.md) で規約化されている。
+SQL Editor から手動実行** することが [DB_MIGRATION_PROCEDURE.md](../operations/develop/DB_MIGRATION_PROCEDURE.md) で規約化されている。
 
 PR レビュー / マージ時に migration の手動適用を **失念** すると、
 
@@ -2850,11 +2850,11 @@ bucket key は内部で `${key}:${ip}` に組み立てられるので、**同一
 
 `src/lib/rate-limit.test.ts` の **「別 key は別バケット」** ケースで担保。新しい endpoint を追加するときは **同じ pattern の test を 1 件足す**。
 
-#### 3. Vercel serverless の **in-memory rate-limit は instance 数 multiplier 効果がある**
+#### 3. serverless の **in-memory rate-limit は instance 数 multiplier 効果がある**
 
 ##### 罠の正体
 
-`new Map<string, BucketEntry>()` を module スコープで持つ簡易 rate-limit は、**Vercel の function instance ごとに別 Map** になる。最大 N instance 並行で攻撃側が均等に分散できる場合、**実効上限は (max × N)** に増えてしまう。これは「分散レート制限」ではなく「instance-local rate-limit」である。
+`new Map<string, BucketEntry>()` を module スコープで持つ簡易 rate-limit は、**Netlify Function の instance ごとに別 Map** になる。最大 N instance 並行で攻撃側が均等に分散できる場合、**実効上限は (max × N)** に増えてしまう。これは「分散レート制限」ではなく「instance-local rate-limit」である。
 
 ##### 採用した立場 (defense-in-depth の 1 層として運用)
 
@@ -3382,7 +3382,7 @@ export default auth((req) => {
 ##### 2. CI workflow にだけフラグをセットする (本番 env では未設定)
 
 `.github/workflows/e2e.yml` および `e2e-visual-baseline.yml` の `env:` に
-`DISABLE_LOGIN_RATE_LIMIT: 'true'` を追加。**Vercel 本番 env では絶対に設定しない**
+`DISABLE_LOGIN_RATE_LIMIT: 'true'` を追加。**Netlify 本番 env では絶対に設定しない**
 (設定すると credential stuffing 対策が無効化される) ことを workflow コメントで明示。
 
 ##### 3. playwright.config.ts の webServer.env で子プロセスにも明示伝搬
@@ -3420,7 +3420,7 @@ export default auth((req) => {
 - 関連 PR: PR #345 (`security/auth-secret-hardening`) — 本罠を作り込んだ commit と本罠を修正した commit が同一 PR
 - 関連 ファイル:
   - [src/middleware.ts](../../src/middleware.ts) — rate limit 適用と disable フラグ
-  - [src/lib/rate-limit.ts](../../src/lib/rate-limit.ts) — in-memory Map ベースの実装と Vercel 分散の限界 (§13-21)
+  - [src/lib/rate-limit.ts](../../src/lib/rate-limit.ts) — in-memory Map ベースの実装と serverless 分散の限界 (§13-21)
   - [.github/workflows/e2e.yml](../../.github/workflows/e2e.yml) — `DISABLE_LOGIN_RATE_LIMIT: 'true'`
   - [.github/workflows/e2e-visual-baseline.yml](../../.github/workflows/e2e-visual-baseline.yml) — 同上
   - [playwright.config.ts](../../playwright.config.ts) — webServer.env で子プロセスに伝搬

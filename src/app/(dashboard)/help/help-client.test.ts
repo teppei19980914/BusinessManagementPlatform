@@ -58,7 +58,7 @@ describe('HelpClient のマスコット FAQ invariant (feat/mascot-owl 2026-05-2
  *     - beginner-expiry.service.ts:43-51 (Day 90/180 マイルストーン)
  *     - PAYMENT_TERMS.md §1.1 (25 日固定 / 銀行振込 + クレカ)
  *     - suggestion.service.ts:184-221 (seedDataEnabled フラグ)
- *     - src/config/db-capacity-pricing.ts (50 GB ハードキャップ)
+ *     - src/config/db-capacity-pricing.ts (累積上限なし / 1 回 5MB ペイロード上限。2026-05-31 ハードキャップ撤廃)
  */
 describe('HelpClient PR1 緊急 FAQ invariant (退会 / 請求 / 容量)', () => {
   it('退会 FAQ がプラン別の正確な期間を含む (Beginner 180 日 / Expert・Pro セルフ解約 + 90 日)', () => {
@@ -85,7 +85,11 @@ describe('HelpClient PR1 緊急 FAQ invariant (退会 / 請求 / 容量)', () =>
     expect(source).toMatch(/q="消費税はどう計算されますか？"/);
     expect(source).toMatch(/q="Beginner プランで DB 容量 50 MB を超えるとどうなりますか？"/);
     expect(source).toMatch(/q="DB 容量・ファイル容量はどこで確認できますか？"/);
-    expect(source).toMatch(/q="50 GB のハードキャップに達したら何が起こりますか？"/);
+    // 2026-05-31: 累積ハードキャップ撤廃に伴い「50 GB ハードキャップ」Q を「累積上限なし」Q に改定。
+    expect(source).toMatch(/q="データ容量・ファイル容量に上限はありますか？大量に蓄積しても保存は止まりませんか？"/);
+    // 旧ハードキャップ文言が再混入しないこと (たすきフクロウ AI チャットが旧仕様で回答しないよう担保)。
+    expect(source).not.toMatch(/ハードキャップ/);
+    expect(source).not.toMatch(/全プラン共通で.*新規データの保存・編集が止まります/);
   });
 
   it('請求サイクル文言が「翌月 25 日固定」「土日祝に当たる場合は翌営業日」を含む', () => {

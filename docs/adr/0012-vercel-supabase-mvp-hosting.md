@@ -79,10 +79,10 @@ MVP 期 (2026/04 開発開始 〜 2026/06 外部公開 〜 数ヶ月) のイン�
 - **Supabase Free の自動 pause**: 1 週間ユーザアクセスがないと DB が pause。ステージング環境で起こりやすい
 
 ### Risk / 留意事項
-- **DB 容量の継続モニタリング**: `db-capacity.service.ts` で日次チェック、500MB の 80% (400MB) でアラート ([INCIDENT_RESPONSE.md §6.9](../operations/INCIDENT_RESPONSE.md))
+- **DB 容量の継続モニタリング**: `db-capacity.service.ts` で日次チェック、500MB の 80% (400MB) でアラート ([INCIDENT_RESPONSE.md §6.9](../operations/operate/INCIDENT_RESPONSE.md))
 - **Pro プラン移行のトリガ条件を事前に決めておく**: 例「DB 容量 400MB 到達」「MAU 30,000 到達」「Vercel bandwidth 80GB 到達」のいずれかでアップグレード
 - **AWS / Azure 移行計画**: [docs/operations/MIGRATION_TO_AWS.md](../operations/MIGRATION_TO_AWS.md) に予備計画を文書化済。実行は規模拡大後
-- **本番障害時の対応**: Supabase / Vercel 全停止時の対処 ([INCIDENT_RESPONSE.md §6.9](../operations/INCIDENT_RESPONSE.md))
+- **本番障害時の対応**: Supabase / Vercel 全停止時の対処 ([INCIDENT_RESPONSE.md §6.9](../operations/operate/INCIDENT_RESPONSE.md))
 
 ## Alternatives Considered
 
@@ -115,4 +115,4 @@ MVP 期 (2026/04 開発開始 〜 2026/06 外部公開 〜 数ヶ月) のイン�
 - DB 選定: [ADR-0004](./0004-postgresql-prisma.md)
 - 認証: [ADR-0009](./0009-nextauth-credentials-mfa-totp.md) (Supabase Auth 不採用の理由)
 - 認可: [ADR-0005](./0005-rbac-two-stage-tenant-authorization.md) (RLS 不採用の理由)
-- インシデント対応 (Supabase 全停止): [docs/operations/INCIDENT_RESPONSE.md §6.9](../operations/INCIDENT_RESPONSE.md)
+- インシデント対応 (Supabase 全停止): [docs/operations/INCIDENT_RESPONSE.md §6.9](../operations/operate/INCIDENT_RESPONSE.md)

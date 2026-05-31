@@ -40,6 +40,7 @@
     "groupHelp": "ヘルプ",
     "guide": "使い方ガイド",
     "help": "よくある質問",
+    "versionInfo": "バージョンアップ情報",
     "contactDeveloper": "たすきばコミュニティで話す (Discord)",
     "contactDeveloperTooltip": "たすきば Discord コミュニティで開発者や他ユーザと話す (質問・利用事例の共有・バグ報告・要望)",
     "featureRequest": "機能要望・案件依頼",
@@ -115,33 +116,14 @@
     "metaDescription": "知見を残す。判断をつなぐ。プロジェクトを強くする。"
   },
   "footer": {
-    "lastUpdated": "最終更新",
+    "navLabel": "サービス情報",
+    "productPage": "製品ページ",
+    "terms": "利用規約",
+    "privacy": "プライバシーポリシー",
+    "operatorInfo": "運営者情報",
+    "tokushoho": "特定商取引法に基づく表記",
     "announcements": "お知らせ",
-    "about": "サービス情報",
-    "copyright": "© {year} {operator}"
-  },
-  "about": {
-    "pageTitle": "サービス情報",
-    "pageDescription": "たすきば Knowledge Relay の運営・バージョン情報",
-    "sectionService": "サービス",
-    "serviceName": "サービス名",
-    "serviceDescription": "サービス概要",
-    "sectionVersion": "バージョン情報",
-    "currentVersion": "現在のバージョン",
-    "releaseDate": "リリース日",
-    "viewChangelog": "更新履歴を見る",
-    "sectionOperator": "運営者",
-    "operatorName": "運営",
-    "operatorForm": "事業形態",
-    "operatorFormValue": "個人事業",
-    "sectionContact": "連絡先",
-    "contactGeneral": "一般のお問い合わせ",
-    "contactGeneralLink": "お問い合わせフォーム",
-    "contactSecurity": "セキュリティ報告",
-    "contactSecurityLink": "GitHub Security Advisory",
-    "sectionLegal": "法的事項",
-    "termsLink": "利用規約",
-    "privacyLink": "プライバシーポリシー"
+    "securityReport": "セキュリティ報告"
   },
   "changelogPage": {
     "pageTitle": "更新履歴",

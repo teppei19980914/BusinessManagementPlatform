@@ -11,15 +11,20 @@
  *   - 単位は SI (1GB = 10^9 bytes, 1MB = 10^6 bytes) — LP 表記・Supabase 料金体系と整合
  *   - 計測時点: 月中 peak (月末削除→月初再投入の抜け道防止 / Supabase GB-Hours と乖離最小)
  *
- * 4 層防御 (R3 「他テナント影響は絶対不許容」原則の技術実装):
+ * 監視アラート閾値 (2026-05-31 改定: 累積ハードキャップ撤廃):
  *   - L1 1GB: ユーザ通知 (テナント設定画面に表示)
  *   - L2 10GB: super_admin 通知 (recordError + ダッシュボード)
- *   - L3 50GB: write 拒否 (ハードキャップ、StorageLimitExceededError 流用)
+ *   - L3 50GB: **super_admin への監視アラート閾値** (write は止めない。Compute 増強検討の合図)
  *   - L4 instance-wide: Compute 推奨容量の 80% で super_admin alert
+ *
+ *   ※ 旧仕様 (〜2026-05-30) では L3 = write 拒否の累積ハードキャップだったが、
+ *      「データはたすきばの命」原則 (ADR-0030) に基づき**累積による write block は撤廃**。
+ *      noisy-neighbor は運用 (Supabase Compute 増強) で吸収する方針へ変更。
+ *      1 操作あたりの瞬間負荷は DB_WRITE_PAYLOAD_MAX_BYTES (5MB) で別途抑制する。
  *
  * 関連:
  *   - ADR: docs/adr/0020-db-capacity-usage-based-billing.md
- *   - 計測: src/services/storage-guard.service.ts (write 時 peak update + hard cap)
+ *   - 計測: src/services/storage-guard.service.ts (write 時 peak update + Beginner 無料枠ガード。累積 hard cap は ADR-0030 で撤廃)
  *   - 月初集計: src/services/tenant-monthly-reset.service.ts
  *   - Stripe: src/services/stripe-usage-flush.service.ts (callType='db_capacity_overage')
  *   - Memory: feedback_billing_invariant.md (ApiCallLog SUM = 表示 = 請求 invariant)
@@ -70,7 +75,30 @@ export const BEGINNER_DB_FREE_TIER_BYTES = DB_CAPACITY_FREE_TIER_BYTES;
 export const DB_CAPACITY_PRICE_JPY_PER_GB_TIER = 50;
 
 // ============================================================
-// 4 層防御閾値 (ADR-0020 §2.4)
+// 1 操作あたりペイロード上限 (2026-05-31 / 瞬間負荷ガード)
+// ============================================================
+
+/**
+ * 1 回の write API リクエスト (作成/更新) で受け付ける DB ペイロードの上限 (UTF-8 バイト)。
+ *
+ * 目的:
+ *   累積ハードキャップ撤廃に伴い、「1 操作あたりの瞬間サーバ負荷」を抑える唯一のアプリ層ガード。
+ *   Netlify Functions (= AWS Lambda) のリクエストペイロード硬上限 6MB の **1MB 手前**に置き、
+ *   プラットフォームが不透明な 413 を返す前に、アプリがクリーンなエラーを返せるようにする。
+ *
+ * 単位の注意:
+ *   **UTF-8 バイト基準** (`Buffer.byteLength(body, 'utf8')` / Content-Length)。
+ *   `String.length` (= UTF-16 code unit 数) で比較すると日本語 (3 byte/字) で約 3 倍ずれ、
+ *   Netlify 6MB より後ろにずれて空振りするため使用しない。
+ *
+ * 関連:
+ *   - 実装: src/lib/api-helpers.ts requireStorageQuotaForWrite
+ *   - 背景: Netlify Functions overview (公式) のペイロード 6MB 制約
+ */
+export const DB_WRITE_PAYLOAD_MAX_BYTES = 5_000_000;
+
+// ============================================================
+// 監視アラート閾値 (ADR-0020 §2.4 / 2026-05-31: 累積ハードキャップ撤廃により write block ではなく alert)
 // ============================================================
 
 /** L1: ユーザ通知 (1GB SI = 1,000,000,000 bytes) */
@@ -80,11 +108,17 @@ export const DB_CAPACITY_L1_USER_WARNING_BYTES = 1 * SI_GB_BYTES;
 export const DB_CAPACITY_L2_ADMIN_ALERT_BYTES = 10 * SI_GB_BYTES;
 
 /**
- * L3: ハードキャップ (50GB SI = 50,000,000,000 bytes)
+ * L3: 監視アラート閾値 (50GB SI = 50,000,000,000 bytes)
  *
- * write 拒否される技術上限。Supabase Micro Compute (1GB RAM) の
- * マルチテナント運用で「他テナントの cache hit ratio を破壊する閾値」(Neon 公式知見)。
- * コスト抑制目的ではなく、他テナント保護の技術的安全弁。
+ * **2026-05-31 改定**: 旧仕様では「write 拒否の累積ハードキャップ」だったが、
+ * 「データはたすきばの命」(ADR-0030) に基づき**累積 write block は撤廃**。
+ * 本値は現在、super_admin に「このテナントが 50GB に到達。Supabase Compute 増強を検討」
+ * を知らせる**監視アラート閾値**として機能する (write は止めない)。
+ *
+ * noisy-neighbor (Supabase Micro 1GB RAM の cache hit ratio 劣化) は、本閾値で write を
+ * 止めるのではなく、L4 instance-wide alert + Compute 増強という運用で吸収する方針。
+ *
+ * 注: 定数名に HARD_CAP を残しているのは import 影響を避けるため (リネームは別 PR 候補)。
  */
 export const DB_CAPACITY_L3_HARD_CAP_BYTES = 50 * SI_GB_BYTES;
 
@@ -115,12 +149,15 @@ export const DB_DRIFT_WARNING_RATIO = 0.5;
 export const DB_DRIFT_CRITICAL_RATIO = 1.0;
 
 // ============================================================
-// circuit breaker 設定 (R3: fail-close)
+// circuit breaker 設定 (dormant: ADR-0030 でロジック撤去)
 // ============================================================
 
 /**
- * storage-guard の計測失敗が連続して発生した場合に circuit breaker を open する閾値。
- * open 状態では write を拒否し、super_admin に緊急アラートを送る。
+ * @deprecated 2026-05-31 (ADR-0030「データはたすきばの命」): 累積ハードキャップ撤廃に伴い
+ * circuit-breaker (計測失敗時 fail-close で write 拒否) は撤去し、fail-open 化した
+ * (計測失敗でも write を通し、日次 cron `updateAllStorageBytesUsed` が peak を補正)。
+ * 本定数は import 影響回避のため残置しているが storage-guard.service.ts からは未参照 (dormant)。
+ * 定数・関連 schema 列 (storageGuardCircuitFailCount 等)・storage-guard-reset route の削除は別 PR。
  */
 export const STORAGE_GUARD_CIRCUIT_BREAKER_THRESHOLD = 3;
 
@@ -181,7 +218,7 @@ export function calculateStripeMeterQuantity(costJpy: number): number {
  * 4 層防御の Level 判定 (peak bytes から L1-L3 のどこに到達しているか)。
  *
  * @param peakBytes 月中 peak バイト数
- * @returns 'none' | 'l1' | 'l2' | 'l3' (l3 はハードキャップ到達)
+ * @returns 'none' | 'l1' | 'l2' | 'l3' (l3 は 50GB 監視アラート閾値到達。2026-05-31: write は止めない ADR-0030)
  */
 export type DbCapacityWarningLevel = 'none' | 'l1' | 'l2' | 'l3';
 

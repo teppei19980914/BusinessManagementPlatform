@@ -96,7 +96,7 @@
 ## Related
 
 - 詳細設計: [docs/design/DATA_MODEL.md §4.2](../design/DATA_MODEL.md) / [docs/design/SECURITY.md](../design/SECURITY.md)
-- インシデント対応: [docs/operations/INCIDENT_RESPONSE.md §6.5](../operations/INCIDENT_RESPONSE.md) (auth_event_logs の活用例)
+- インシデント対応: [docs/operations/INCIDENT_RESPONSE.md §6.5](../operations/operate/INCIDENT_RESPONSE.md) (auth_event_logs の活用例)
 - 認可方式 (テナント越境防止): [ADR-0005](./0005-rbac-two-stage-tenant-authorization.md)
 - 用語: [docs/business/GLOSSARY.md (監査ログ / 論理削除)](../business/GLOSSARY.md)
 - DB 容量モニタリング: `src/services/db-capacity.service.ts` ([docs/business/FEATURE_CATALOG.md](../business/FEATURE_CATALOG.md) G カテゴリ)

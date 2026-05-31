@@ -10,8 +10,8 @@
  *   - 現在の使用量 (storageFileBytesUsed、最新 daily cron 同期値)
  *   - 月中 peak (storageFileBytesPeakThisMonth、課金根拠)
  *   - 想定請求額 (calculateFileStorageOverageJpy で peak から算出、月末確定額)
- *   - 4 層防御 Level バッジ (none / L1 1GB / L2 10GB / L3 50GB)
- *   - 無料枠 100MB / ハードキャップ 50GB の説明
+ *   - 監視アラート Level バッジ (none / L1 1GB / L2 10GB / L3 50GB)
+ *   - 無料枠 100MB の説明 (2026-05-31: 50GB 累積ハードキャップは撤去 ADR-0030、L3 は監視アラート閾値)
  *
  * 関連:
  *   - ADR: docs/adr/0021-file-storage-usage-based-billing.md
@@ -66,7 +66,7 @@ const LEVEL_BADGES: Record<FileStorageWarningLevel, { label: string; color: stri
   none: { label: '正常', color: 'bg-green-100 text-green-800' },
   l1: { label: 'Level 1 (1GB 到達)', color: 'bg-blue-100 text-blue-800' },
   l2: { label: 'Level 2 (10GB 到達)', color: 'bg-yellow-100 text-yellow-800' },
-  l3: { label: 'Level 3 (50GB / ハードキャップ到達)', color: 'bg-red-100 text-red-800' },
+  l3: { label: 'Level 3 (50GB 到達 / 監視アラート)', color: 'bg-red-100 text-red-800' },
 };
 
 export async function FileStorageSection({ tenantId }: { tenantId: string }) {
@@ -110,7 +110,8 @@ export async function FileStorageSection({ tenantId }: { tenantId: string }) {
     currentLevel in LEVEL_BADGES ? currentLevel : 'none';
   const badge = LEVEL_BADGES[safeLevel];
 
-  // 進捗率: Beginner は 100MB 基準、Expert/Pro は 50GB 基準
+  // 進捗率: Beginner は 100MB 基準、Expert/Pro は 50GB (L3 監視アラート閾値) 基準
+  //   2026-05-31: 50GB は累積ハードキャップではなく監視アラート閾値 (ADR-0030、write は止めない)
   const capBytes = isBeginner
     ? BEGINNER_STORAGE_FREE_TIER_BYTES
     : FILE_STORAGE_L3_HARD_CAP_BYTES;
@@ -218,7 +219,7 @@ export async function FileStorageSection({ tenantId }: { tenantId: string }) {
           <span>
             {isBeginner
               ? `Beginner 無料枠 ${BEGINNER_STORAGE_FREE_TIER_BYTES / SI_MB_BYTES}MB`
-              : '50GB ハードキャップ'}{' '}
+              : '50GB (L3 監視アラート閾値)'}{' '}
             ({usagePercent.toFixed(1)}%)
           </span>
         </div>
@@ -288,11 +289,10 @@ export async function FileStorageSection({ tenantId }: { tenantId: string }) {
                 例: 200MB → ¥10 / 1GB → ¥10 / 1.5GB → ¥20 /{' '}
                 {FILE_STORAGE_L1_USER_WARNING_BYTES / SI_GB_BYTES}GB → 表示通知 (Level 1) /{' '}
                 {FILE_STORAGE_L2_ADMIN_ALERT_BYTES / SI_GB_BYTES}GB → 管理者通知 (Level 2) /{' '}
-                {FILE_STORAGE_L3_HARD_CAP_BYTES / SI_GB_BYTES}GB → アップロード停止 (Level 3
-                ハードキャップ)
+                {FILE_STORAGE_L3_HARD_CAP_BYTES / SI_GB_BYTES}GB → 監視アラート (Level 3)
               </p>
               <p className="text-xs text-gray-500">
-                ハードキャップ到達時もダウンロード・削除は継続可能です。アップロードされたファイルは自動で検索インデックスが作成され、チャット検索や提案エンジンの対象になります (= 無料)。
+                2026-05-31: 累積ハードキャップは撤去 (ADR-0030)。容量超過でアップロードが止まることはなく、使った分だけ従量課金されます。アップロードされたファイルは自動で検索インデックスが作成され、チャット検索や提案エンジンの対象になります (= 無料)。
               </p>
             </>
           )}

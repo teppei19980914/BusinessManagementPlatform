@@ -234,10 +234,10 @@ PR #89 で cold start 分析をしているが、定期的に再計測が必要�
 
 ## 5. 関連ドキュメント
 
-- [docs/developer/E2E_COVERAGE.md](./E2E_COVERAGE.md) — 自動 E2E カバレッジマニフェスト
-- [docs/developer/E2E_LESSONS_LEARNED.md](./E2E_LESSONS_LEARNED.md) — E2E 実装で得られた罠パターン集 (§4.1〜§4.25、PR #90 以降累積)
-- [docs/developer/DEVELOPER_GUIDE.md §9](./DEVELOPER_GUIDE.md) — 開発者向け実行/調査手順
-- [docs/administrator/OPERATION.md](../administrator/OPERATION.md) — 運用手順 (デプロイ / migration / 障害対応)
+- [docs/test/E2E_COVERAGE.md](./E2E_COVERAGE.md) — 自動 E2E カバレッジマニフェスト
+- [docs/test/E2E_LESSONS.md](./E2E_LESSONS.md) — E2E 実装で得られた罠パターン集 (§4.1〜§4.25、PR #90 以降累積)
+- [docs/developer-guide/E2E_TEST_GUIDE.md](../operations/develop/E2E_TEST_GUIDE.md) — 開発者向け実行/調査手順
+- [docs/operations/DEPLOYMENT.md](../operations/develop/DEPLOYMENT.md) — 運用手順 (デプロイ / migration / 障害対応)
 - [CLAUDE.md](../../CLAUDE.md) — プロジェクト運用ガイド
 
 ---
@@ -372,7 +372,7 @@ test.describe('モバイル専用シナリオ', () => {
 ### 5.4 視覚回帰 baseline の運用
 
 PC + モバイルで 2 セットの baseline が必要なので、`[gen-visual]` commit で両方一括生成される。
-詳細は [DEVELOPER_GUIDE.md §9.6](./DEVELOPER_GUIDE.md) 参照。
+詳細は [developer-guide/E2E_TEST_GUIDE.md](../operations/develop/E2E_TEST_GUIDE.md) 参照。
 
 ---
 

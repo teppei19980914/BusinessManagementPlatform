@@ -75,7 +75,7 @@ export async function POST(
   // PR-5 (2026-05-15): ストレージ容量 Pre-check
   const quotaErr = await requireStorageQuotaForWrite(
     user.tenantId,
-    JSON.stringify(parsed.data).length,
+    Buffer.byteLength(JSON.stringify(parsed.data), 'utf8'),
   );
   if (quotaErr) return quotaErr;
 

@@ -1,6 +1,6 @@
 # インフラ構成 (Program Design / Infrastructure)
 
-本ドキュメントは、Netlify + Supabase の現行インフラ構成を集約する (DESIGN.md §10、§18)。AWS / Azure 移行計画は [../operations/MIGRATION_TO_AWS.md](../operations/MIGRATION_TO_AWS.md)、デプロイ手順は [../operations/DEPLOYMENT.md](../operations/DEPLOYMENT.md)、Vercel→Netlify 移行の経緯は [ADR-0023](../adr/0023-netlify-starter-migration.md) を参照。
+本ドキュメントは、Netlify + Supabase の現行インフラ構成を集約する (DESIGN.md §10、§18)。AWS / Azure 移行計画は [../operations/MIGRATION_TO_AWS.md](../operations/MIGRATION_TO_AWS.md)、デプロイ手順は [../operations/DEPLOYMENT.md](../operations/develop/DEPLOYMENT.md)、Vercel→Netlify 移行の経緯は [ADR-0023](../adr/0023-netlify-starter-migration.md) を参照。
 
 ---
 
@@ -55,6 +55,9 @@ git 履歴から過去記述を参照できる。
 6/1 正式リリース以降、本サービスは商用利用 (Expert/Pro 課金プラン稼働) フェーズに入る。
 **Vercel Hobby は規約上商用利用不可** のため、2026-05-18 に **Netlify Starter** へ移行し、credits 制約により **Netlify Personal ($9/seat/month)** へ昇格した。詳細は [ADR-0023](../adr/0023-netlify-starter-migration.md) を参照。
 
+> ⚠️ **as-built の真値は Netlify Personal ($9/月・統合 credits 1,000/月)**。
+> `netlify.toml` の build skip コメント内に残る「Starter 統合 credits 300/月」および ADR-0023 本文の「Starter / Pro」表記は **移行途中のレガシー記述** であり、現行プランは Personal。コスト・credits 判断は本書を正とする (memory: 現行ホスティングは Netlify Personal $9、Pro ではない)。
+
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │  Browser (HTTPS)                                              │
@@ -72,12 +75,18 @@ git 履歴から過去記述を参照できる。
 │    └─ Web req / Compute / Bandwidth は微小消費                │
 │  - Function 実行: 10 秒 (Sync 固定、Background Functions は Pro 以上限定) │
 └──────────────┬───────────────────────────────────────────────┘
-               | Connection Pooler (IPv4, port 6543)
+               | アプリ実行: Pooler (IPv4, port 6543, DATABASE_URL)
+               | migration : 直結 (port 5432, DIRECT_URL)
 ┌──────────────┴───────────────────────────────────────────────┐
 │  Supabase Free (無料)                                         │
-│  - PostgreSQL 15                                              │
-│  - ストレージ: 500MB                                          │
-│  - Pooler 経由接続（Transaction mode, ?pgbouncer=true）       │
+│  - PostgreSQL 16 系 (ARCHITECTURE.md と統一)                  │
+│  - 拡張: vector(pgvector) / pg_trgm 有効 (= 意味検索 + 全文検索)│
+│  - ストレージ: 500MB (DB) + Storage bucket `attachments`      │
+│  - 接続2系統:                                                 │
+│    · DATABASE_URL = Pooler (port 6543, Transaction mode,      │
+│      ?pgbouncer=true) — アプリ実行時 (接続数抑制)             │
+│    · DIRECT_URL   = 直結 (port 5432, Session mode) —          │
+│      Prisma migration 用 (pooler では advisory lock 不可)     │
 │  - 1週間無操作でプロジェクト一時停止（手動再開可）              │
 │  制約: バックアップは日次自動のみ                              │
 └──────────────────────────────────────────────────────────────┘
@@ -87,6 +96,17 @@ git 履歴から過去記述を参照できる。
   CI/CD: GitHub Actions (無料枠: 2,000分/月)
   ドメイン: Netlify サブドメイン (*.netlify.app)
 ```
+
+#### PostgreSQL 拡張 (as-built)
+
+実 Supabase (PostgreSQL 16 系) で有効化済の拡張 (= migration で `CREATE EXTENSION` 実行済):
+
+| 拡張 | 用途 | 投入元 migration |
+|---|---|---|
+| `vector` (pgvector) | 意味検索の embedding 類似度 (vector(1024) 列: knowledges / memos / attachments / faq_embeddings / guide_embeddings の `content_embedding`) | `20260502_pgvector_embedding` |
+| `pg_trgm` | 全文検索 / あいまい一致 (`gin_trgm_ops` GIN index)。`SEARCH_PROVIDER=pg_trgm` の実体 | `20260419_project_process_tags_and_suggestion` |
+
+> 他に Supabase 既定の `pgcrypto` / `uuid-ossp` (id 既定 `gen_random_uuid()`) / `pg_stat_statements` / `supabase_vault` / `plpgsql` が introspection で確認されている。詳細なテーブル/index/RLS の as-built は [DATA_MODEL.md](./DATA_MODEL.md) を参照。
 
 #### 月額コスト
 
@@ -137,46 +157,18 @@ git 履歴から過去記述を参照できる。
 
 ### 10.4 環境変数一覧
 
-> 詳細は [`docs/administrator/OPERATION.md §1`](../administrator/OPERATION.md#1-環境変数一覧) に集約。本節は概要のみ。
-
-| 変数名 | 説明 | 例 |
-|---|---|---|
-| DATABASE_URL | PostgreSQL 接続文字列 (Supabase pooler) | postgresql://...:6543/postgres?pgbouncer=true |
-| DIRECT_URL | 直接接続文字列 (migration 用) | postgresql://...:5432/postgres |
-| NEXTAUTH_URL | アプリケーション URL | http://localhost:3000 or Netlify URL (deploy context ごとに `scripts/netlify-build.sh` で同期) |
-| NEXTAUTH_SECRET | NextAuth 暗号化キー | ランダム文字列（32文字以上） |
-| NODE_ENV | 実行環境 | development / production |
-| MAIL_PROVIDER | メール送信プロバイダ | console（デフォルト）/ brevo（本番推奨）/ resend（代替）/ inbox（E2E 専用） |
-| BREVO_API_KEY | Brevo API キー（MAIL_PROVIDER=brevo 時、本番既定） | xkeysib-xxxxxxxxxx |
-| MAIL_FROM_NAME | メール送信元表示名（Brevo のみ） | たすきば |
-| RESEND_API_KEY | Resend API キー（MAIL_PROVIDER=resend 時、代替選択肢） | re_xxxxxxxxxx |
-| MAIL_FROM | メール送信元アドレス | noreply@tasukiba.com (受信不能の自動送信専用) |
-| INITIAL_ADMIN_EMAIL | 初期管理者メールアドレス（シード用） | admin@example.com |
-| INITIAL_ADMIN_PASSWORD | 初期管理者パスワード（シード用） | （ポリシー準拠のパスワード） |
-| SEARCH_PROVIDER | 検索プロバイダ | pg_trgm（デフォルト） |
-| ENABLE_OPERATION_TRACE | 操作トレースログの有効/無効 | false（初期）/ true（本格運用時） |
-| APP_DEFAULT_TIMEZONE / APP_DEFAULT_LOCALE | i18n 既定値 (PR #118) | Asia/Tokyo / ja-JP |
-
-> **注**: `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` の記載を PR #123 で削除。
-> 過去 docs に記載されていたが、`src/lib/mail/index.ts` の `createMailProvider()` に `smtp`
-> ケースが存在せず (実装未提供)、指定しても console フォールバックになるため誤認回避。
-
-#### ローカル開発時のみ (Docker Compose)
-
-| 変数名 | 説明 | デフォルト |
-|---|---|---|
-| APP_PORT | アプリケーション公開ポート | 3000 |
-| DB_PORT | PostgreSQL 公開ポート | 5433（5432 との競合回避） |
-| DB_NAME | データベース名 | tasukiba |
-| DB_USER | データベースユーザ | postgres |
-| DB_PASSWORD | データベースパスワード | （必須設定） |
+> **環境変数の真実源は [ENVIRONMENT_VARIABLES.md](./ENVIRONMENT_VARIABLES.md)** (2026-05-30 に env doc を一本化、旧 `docs/operations/ENV_VARS.md` は archive)。
+> 全 env の用途・context 別実値・取得方法・Stripe Price 対応は同書を参照。本節はインフラ接続に直結する DB 接続 2 系統のみ補足する。
 
 #### 環境別の DATABASE_URL / DIRECT_URL
 
-| 環境 | DATABASE_URL | DIRECT_URL |
+| 環境 | DATABASE_URL (アプリ実行) | DIRECT_URL (migration) |
 |---|---|---|
-| 自社 (Supabase、本番) | Pooler 経由 (ポート 6543, ?pgbouncer=true) | 直接接続 (ポート 5432) |
-| ローカル開発 (Docker) | postgresql://postgres:postgres@localhost:5433/tasukiba | DATABASE_URL と同一 |
+| 自社 (Supabase、本番) | Pooler 経由 (ポート **6543**, Transaction mode, `?pgbouncer=true`) | 直結 (ポート **5432**, Session mode) |
+| ローカル開発 (Docker) | `postgresql://postgres:postgres@localhost:5433/tasukiba` | DATABASE_URL と同一 |
+
+> migration は pooler だと advisory lock が取れないため **DIRECT_URL (5432 直結) が必須**。
+> アプリ実行は接続数抑制のため pooler (6543)。Netlify build は `pnpm build:netlify` で `prisma migrate deploy` を DIRECT_URL 経由で実行する (`netlify.toml` / `scripts/netlify-build.sh`)。
 
 > **注**: Docker 配布 / 非 Docker 配布 / オンプレミス構成は PR #123 で記載削除 (体制・構成未整備、§10.0 参照)。
 

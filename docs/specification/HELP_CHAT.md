@@ -10,9 +10,9 @@ ADR-0027 (2026-05-29) で導入された `/help` / `/guide` ページ上のた�
 |---|---|---|
 | `/help` ヘッダ直後 | 上部に HelpChatInput、下部に FAQ アコーディオン | `variant="page"` |
 | `/guide` ヘッダ直後 | 上部に HelpChatInput (ロールベース挨拶)、下部にガイド本文 | `variant="page"` + `greeting` |
-| 全画面 FAB (Phase 2) | 既存 ChatPanel にタブ [過去資産検索 \| ヘルプ・ガイド] を追加し、ヘルプタブで HelpChatInput を再利用 | `variant="panel"` |
+| 全画面 FAB タブ (実装済 / PR #471) | 既存 ChatPanel に `PanelMode = 'search' \| 'help'` タブ [過去資産検索 \| ヘルプ・ガイド] を追加し、ヘルプタブで HelpChatInput を再利用 | `variant="panel"` + `hideHeader` |
 
-すべて同一 component `src/components/help-chat/help-chat-input.tsx` を使用。
+3 箇所すべて同一 component `src/components/help-chat/help-chat-input.tsx` を再利用 ([help-chat-input.tsx](../../src/components/help-chat/help-chat-input.tsx))。panel variant では ChatPanel 側ヘッダで「アバター + たすきフクロウ + クリアボタン」を一元化するため `hideHeader=true` を渡し、自前ヘッダを suppress する ([chat-panel.tsx:159](../../src/components/chat-semantic-search/chat-panel.tsx) `PanelMode`、[help-chat-input.tsx:102](../../src/components/help-chat/help-chat-input.tsx) `hideHeader`)。タブ状態は sessionStorage に保存し、値破損時は `'search'` に fail-safe。
 
 ### 1.2 UI 要素
 
@@ -101,10 +101,12 @@ ADR-0027 (2026-05-29) で導入された `/help` / `/guide` ページ上のた�
 ```ts
 type FaqVisibleTo = 'all' | 'tenant_admin' | 'project_pm';
 type ViewerRoles = {
-  isTenantAdmin: boolean;
-  hasAnyProjectPmRole: boolean; // PR6 で動的解決、PR5 では false 固定
+  isTenantAdmin: boolean;       // viewer の systemRole から判定 (admin / super_admin)
+  hasAnyProjectPmRole: boolean; // ProjectMembership から動的解決 (実装済)
 };
 ```
+
+> **実装済**: `hasAnyProjectPmRole` は route 内で `prisma.projectMember.findFirst` により「少なくとも 1 プロジェクトで PM/TL ロールを持つか」を動的解決する ([route.ts:297-308](../../src/app/api/help/chat/route.ts))。旧仕様の「PR5 では false 固定」は解消済。なお `src/config/faq-content.ts` のヘッダコメントには旧 Phase 注記が残るが、実装は動的解決済。
 
 | visibleTo | 開示対象 | 例 |
 |---|---|---|
@@ -183,8 +185,8 @@ model FaqFeedback {
 
 - ADR: [ADR-0028 (Current, RAG 版)](../adr/0028-help-chat-rag-migration.md) — full-context → RAG への移行設計
 - ADR: [ADR-0027 (Superseded)](../adr/0027-help-ai-concierge.md) — 旧 full-context 設計、ADR-0028 で撤回
-- 開発者ガイド: [FAQ_AND_OWL_CHAT_GUIDE.md](../developer-guide/FAQ_AND_OWL_CHAT_GUIDE.md) (特に §7 FAQ ライフサイクル SOP)
-- 運用 SOP: [DEPLOYMENT.md](../operations/DEPLOYMENT.md) (FAQ embedding 生成スクリプトの deploy 後実行)
+- 開発者ガイド: [FAQ_AND_OWL_CHAT_GUIDE.md](../operations/develop/FAQ_AND_OWL_CHAT_GUIDE.md) (特に §7 FAQ ライフサイクル SOP)
+- 運用 SOP: [DEPLOYMENT.md](../operations/develop/DEPLOYMENT.md) (FAQ embedding 生成スクリプトの deploy 後実行)
 - KDD: §5.X+188 (ハルシネーション対策) / §5.X+189 (LEARNING_FREE ALLOWLIST) / §5.X+190 (runtime='nodejs') / §5.X+191 (Prompt Caching) / §5.X+192 (ADR 撤回の判断ミス事例) / §5.X+193 (drift 検知 4 層防御)
 - 実装: `src/config/faq-content.ts` / `src/config/guide-content.ts` / `src/services/help-search.service.ts` / `src/app/api/help/chat/route.ts` / `scripts/generate-faq-embeddings.ts` / `scripts/check-faq-embeddings-sync.ts`
 - 実装 (PR6): `src/components/help-chat/help-chat-input.tsx`

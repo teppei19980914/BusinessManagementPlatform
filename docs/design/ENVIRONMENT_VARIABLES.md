@@ -1,6 +1,6 @@
 # 環境変数 as-built インベントリ (Netlify 登録実態 / 2026-05-30)
 
-最終更新: 2026-05-30
+最終更新: 2026-05-31 (コード grep で未記載 env を追補: `AUTH_SECRET` / `DISABLE_LOGIN_RATE_LIMIT` / `SUGGESTION_ENGINE_DISABLED` / `URL` / `DEPLOY_PRIME_URL` / `NEXT_PUBLIC_APP_VERSION` / `NEXT_PUBLIC_RELEASE_DATE` / `DB_CAPACITY_LIMIT_BYTES`、コミュニティ URL / Upstash の分類是正)
 ステータス: **as-built 記録** — Netlify Dashboard に実際に登録されている環境変数の棚卸し
 関連:
 - 仕様・取得方法 (how-to): [docs/operations/ENV_VARS.md](../operations/ENV_VARS.md)
@@ -39,7 +39,8 @@
 | 変数名 | スコープ | 用途 | 設定 context | 値 |
 |---|---|---|---|---|
 | `NEXTAUTH_SECRET` | 🔒 | NextAuth JWT 署名鍵 (+ MFA `mfaSecretEncrypted` の AES 鍵に流用)。`openssl rand -base64 32` | Prod/Prev/Branch (PSAR/Local 空) | 🔒 記載省略 |
-| `NEXTAUTH_URL` | 平文 | NextAuth のリダイレクト URL 解決。**Production のみ固定設定**、Prev/Branch は未設定で trustHost フォールバック (ENV_VARS.md §1.3 設計通り) | **Prod のみ** | `https://tasukiba.com` |
+| `AUTH_SECRET` | 🔒 | **`NEXTAUTH_SECRET` の別名フォールバック** (NextAuth v5 標準名)。`secret: process.env.NEXTAUTH_SECRET \|\| process.env.AUTH_SECRET` (`src/lib/auth.config.ts:27`、再署名は `src/lib/auth-jwt-helper.ts:105`)。通常は `NEXTAUTH_SECRET` のみ設定し本変数は未設定で可 | 任意 (未設定可) | 🔒 記載省略 |
+| `NEXTAUTH_URL` | 平文 | NextAuth のリダイレクト URL 解決。**Production のみ固定設定**、Prev/Branch は未設定で trustHost フォールバック (§12.1 設計通り) | **Prod のみ** | `https://tasukiba.com` |
 
 ## 4. Stripe (決済)
 
@@ -96,6 +97,10 @@
 | `SYSTEM_USER_ID` | 平文 | cron/Webhook の auditLog `userId` に記録する system ユーザ UUID (seed 生成済) | 全 context | `63cf718f-98cf-4882-9d6d-286441607d16` |
 | `NETLIFY_API_TOKEN` | 🔒 | Netlify API トークン (env 管理・デプロイ操作等) | Prod/Prev/Branch (PSAR/Local 空) | 🔒 記載省略 |
 | `NETLIFY_SITE_ID` | 平文 | Netlify サイト ID | 全 context | `ecff671c-6346-468a-a332-b21dc458d1f3` |
+| `DISABLE_LOGIN_RATE_LIMIT` | 平文 | `'true'` でログイン rate limit をバイパス (`src/middleware.ts:57`)。E2E (CI e2e.yml) でのみ使用、**本番では未設定 (= 無効)** | CI/E2E のみ | (本番未設定) |
+| `SUGGESTION_ENGINE_DISABLED` | 平文 | `'true'` で提案エンジンを緊急停止し空配列を返す (`src/config/suggestion.ts:300` / `src/services/suggestion.service.ts:400`)。障害時の kill switch、平時未設定 | 任意 (未設定=有効) | (未設定) |
+| `URL` | 平文 | **Netlify 自動設定** (deploy context の正規 URL)。`/api/.../stripe/setup/complete` の return URL 解決に使用 (`route.ts:138`)。⚠️ **build 時のみ有効、runtime では undefined の可能性** | Netlify 自動 (build) | (Netlify 生成) |
+| `DEPLOY_PRIME_URL` | 平文 | **Netlify 自動設定** (deploy preview の URL)。`URL` 同様 Stripe setup/complete の URL フォールバック (`route.ts:139`) | Netlify 自動 (build) | (Netlify 生成) |
 
 ## 9. アプリ既定値 / ビルド
 
@@ -106,6 +111,9 @@
 | `SEARCH_PROVIDER` | 全文検索プロバイダ (現状 pg_trgm のみ実装) | 全 context | `pg_trgm` |
 | `ENABLE_OPERATION_TRACE` | 操作トレース有効化フラグ | 全 context | `false` |
 | `NODE_VERSION` | ビルド時 Node.js バージョン | 全 context | `22` |
+| `NEXT_PUBLIC_RELEASE_DATE` | リリース日 (フッタ表示)。未設定時は `2026-06-01` を既定 (`next.config.ts:21` / `src/lib/app-version.ts:38`) | 任意 (未設定=既定) | `2026-06-01` |
+| `NEXT_PUBLIC_APP_VERSION` | アプリバージョン (フッタ/changelog 表示)。**build 時に `next.config.ts:90` が `package.json` の version から自動注入** (= 手動設定不要、client bundle に公開) | build 自動注入 | (`package.json` version) |
+| `DB_CAPACITY_LIMIT_BYTES` | DB 容量上限の上書き (`src/config/db-capacity.ts:29`)。未設定時は Supabase Free=`524288000` (500MB)。Pro 昇格時は `8589934592` (8GB)。80% warn / 90% alert | 任意 (未設定=500MB) | `524288000` |
 
 ---
 
@@ -145,7 +153,7 @@
 | `BREVO_API_KEY` | <https://app.brevo.com/settings/keys/api> (送信元アドレスは Brevo で事前検証必須) |
 
 ### 11.2 ★severity-high★ `NEXTAUTH_SECRET` ローテーション時の MFA 復号不能
-`NEXTAUTH_SECRET` 変更で全 JWT 失効 (強制再ログイン) に加え、**MFA 有効ユーザの `mfaSecretEncrypted` が復号不能** になり TOTP 認証時に 500 (`bad decrypt`)。[src/services/mfa.service.ts](../../src/services/mfa.service.ts) の AES-256-CBC が `NEXTAUTH_SECRET` 先頭 32 文字を鍵に流用しているため。ローテーション時は MFA ユーザ事前一覧化 → 告知 → 変更 → `mfa_secret_encrypted` を NULL 化 → 再 setup 依頼の手順を厳守 ([MAINTENANCE_OPERATIONS.md §2.2](../operations/MAINTENANCE_OPERATIONS.md))。セッション有効期限は `src/config/security.ts` `SESSION_JWT_MAX_AGE_SEC` = 9h。Cookie sameSite は `'lax'` 維持 (Stripe Checkout コールバックの session 切れ防止、`'strict'` に戻さない)。
+`NEXTAUTH_SECRET` 変更で全 JWT 失効 (強制再ログイン) に加え、**MFA 有効ユーザの `mfaSecretEncrypted` が復号不能** になり TOTP 認証時に 500 (`bad decrypt`)。[src/services/mfa.service.ts](../../src/services/mfa.service.ts) の AES-256-CBC が `NEXTAUTH_SECRET` 先頭 32 文字を鍵に流用しているため。ローテーション時は MFA ユーザ事前一覧化 → 告知 → 変更 → `mfa_secret_encrypted` を NULL 化 → 再 setup 依頼の手順を厳守 ([MAINTENANCE_OPERATIONS.md §2.2](../operations/operate/MAINTENANCE_OPERATIONS.md))。セッション有効期限は `src/config/security.ts` `SESSION_JWT_MAX_AGE_SEC` = 9h。Cookie sameSite は `'lax'` 維持 (Stripe Checkout コールバックの session 切れ防止、`'strict'` に戻さない)。
 
 ### 11.3 メール送信プロバイダ参考値
 | プロバイダ | 設定例 |
@@ -188,4 +196,11 @@ netlify env:set STRIPE_SECRET_KEY "sk_test_xxx" --secret --context deploy-previe
 ```
 
 ## 13. ローカル専用・その他の変数 (Netlify 未登録、`.env.example` 由来)
-`APP_PORT`(3000)/ `DB_PORT`(5433)/ `DB_NAME`/`DB_USER`/`DB_PASSWORD`(ローカル Docker DB)/ `RESEND_API_KEY` / `INBOX_DIR`(E2E)/ `EMAIL_MONTHLY_LIMIT`(未設定=制限なし)/ `NEXT_PUBLIC_DISCORD_INVITE_URL` / `NEXT_PUBLIC_FEATURE_REQUEST_URL`。本番で既定値運用の意図なら未登録で問題なし。
+`APP_PORT`(3000)/ `DB_PORT`(5433)/ `DB_NAME`/`DB_USER`/`DB_PASSWORD`(ローカル Docker DB)/ `RESEND_API_KEY` / `INBOX_DIR`(E2E)/ `EMAIL_MONTHLY_LIMIT`(未設定=制限なし)。本番で既定値運用の意図なら未登録で問題なし。
+
+### 13.1 コミュニティ URL (★ローカル専用ではない / 本番 UI で参照)
+`NEXT_PUBLIC_DISCORD_INVITE_URL` / `NEXT_PUBLIC_FEATURE_REQUEST_URL` は **client bundle に公開され本番 UI のリンク先**になる (`src/config/community.ts:36,47`)。
+未設定時は既定の招待 URL / フォーラム URL にフォールバックする設計のため Netlify 未登録でも UI は壊れないが、「ローカル専用」ではない。運営が専用チャンネルを切り出したい場合は **Production context に設定**する (`NEXT_PUBLIC_*` のため build 時注入)。Discord 系を無効化したい場合は `disabled` を指定 (`community.ts` で空表示)。
+
+### 13.2 ★将来予約★ Upstash Redis (現状未使用)
+`UPSTASH_REDIS_REST_URL` 系は **現状コードで使用していない予約変数**。`src/lib/llm/rate-limiter.ts:119` のコメントで「将来 Upstash 切替時はここを `process.env.UPSTASH_REDIS_REST_URL` の有無で分岐させる予定」と記載されているのみで、現行 rate limiter は **in-memory 実装**。SECURITY 設計の「Redis を入れない」方針と矛盾しない (= 現時点で Redis 依存なし)。Netlify 未登録で正。実際に Upstash を導入する際に本節を更新する。

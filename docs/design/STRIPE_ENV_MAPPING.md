@@ -1,18 +1,18 @@
 # Stripe 設定 ↔ 環境変数 対応表 (Sandbox / Live)
 
-最終更新: 2026-05-30
-ステータス: **ドラフト (二人三脚で実値確認中)** — `要確認` 欄は Stripe Dashboard / Netlify の実値を反映して確定する
+最終更新: 2026-05-31
+ステータス: **確定 (as-built)** — Price ID / Meter / env context は実値確認済 ([ENVIRONMENT_VARIABLES.md §4](./ENVIRONMENT_VARIABLES.md))。残るのは Dashboard 表示名・lookup_key 統一 (任意・請求無影響) のみ
 関連:
 - as-built 設定記録: [STRIPE_EMBEDDING_PRICE_SETTINGS.md](./STRIPE_EMBEDDING_PRICE_SETTINGS.md) (Embedding ¥5 改定の個別記録)
-- env var 全体 + Netlify context マトリクス: [ENV_VARS.md](../operations/ENV_VARS.md) (★後述のドリフトあり)
-- 設定手順 (how-to): [STRIPE_SETUP.md](../operations/STRIPE_SETUP.md)
+- env var 全体 + Netlify context マトリクス: [ENVIRONMENT_VARIABLES.md](./ENVIRONMENT_VARIABLES.md) (env の真実源、2026-05-30 一本化済。旧 `docs/operations/ENV_VARS.md` は archive)
+- 設定手順 (how-to): [STRIPE_SETUP.md](../operations/setup/STRIPE_SETUP.md)
 - コード: [src/lib/stripe.ts](../../src/lib/stripe.ts) (`getStripePriceConfig` / `STRIPE_METER_EVENT_NAMES` / `isStripeEnabled`)
 
 > **目的**: Stripe の Sandbox (Test mode) と Live mode で作成した各オブジェクト (API key / Webhook / Meter / Price)
 > の実値を、対応する環境変数および Netlify deploy context と 1 枚で突き合わせる。価格改定・環境追加のたびに
 > 「どの env がどの Stripe オブジェクトを指すか」を即座に追跡できる状態を保つ。
 >
-> **本書 (design / 値) と STRIPE_SETUP.md (operations / 手順)・ENV_VARS.md (全 env 網羅) の役割分担**:
+> **本書 (design / 値) と STRIPE_SETUP.md (operations / 手順)・ENVIRONMENT_VARIABLES.md (全 env 網羅) の役割分担**:
 > 本書は **Stripe オブジェクトの実 ID と env の対応**に特化する。
 
 ---
@@ -30,13 +30,15 @@
 
 ## 1. キー / Webhook 系 (環境ごとに別値)
 
-| 環境変数 | 用途 | Sandbox (Test) 実値 | Live 実値 |
+> 設定状況は [ENVIRONMENT_VARIABLES.md §4](./ENVIRONMENT_VARIABLES.md) の as-built 棚卸しで確認済。secret スコープの値は本書には貼らない。
+
+| 環境変数 | 用途 | Sandbox (Test) | Live |
 |---|---|---|---|
-| `STRIPE_ENABLED` | feature flag (`'true'` で有効) | `要確認` | `要確認` (= `true` 想定) |
-| `STRIPE_SECRET_KEY` | サーバ API キー | `sk_test_…` `要確認` | `sk_live_…` `要確認` (secret) |
-| `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` | ブラウザ用 publishable key | `pk_test_…` `要確認` | `pk_live_…` `要確認` |
-| `STRIPE_WEBHOOK_SECRET` | Webhook 署名検証 (`whsec_`) | Test endpoint の `要確認` | Live endpoint の `要確認` |
-| `SYSTEM_USER_ID` | cron/Webhook の auditLog 用 system ユーザ UUID | `要確認` | `要確認` |
+| `STRIPE_ENABLED` | feature flag (`'true'` で有効) | `true` (Prev/Branch) / `false` (PSAR/Local) | `true` (Prod) |
+| `STRIPE_SECRET_KEY` | サーバ API キー | `sk_test_…` 設定済 (Prev/Branch、secret) | `sk_live_…` 設定済 (Prod、secret) |
+| `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` | ブラウザ用 publishable key | `pk_test_51TYb8uK3…` (平文公開鍵) | `pk_live_51TXEw…` (平文公開鍵) |
+| `STRIPE_WEBHOOK_SECRET` | Webhook 署名検証 (`whsec_`) | Test endpoint 設定済 (secret) | Live endpoint 設定済 (secret) |
+| `SYSTEM_USER_ID` | cron/Webhook の auditLog 用 system ユーザ UUID | `63cf718f-98cf-4882-9d6d-286441607d16` (全 context 共通) | 同左 |
 
 ---
 
@@ -93,19 +95,20 @@
 | `STRIPE_PRICE_*` (全 Price ID) | Live `price_` | Test `price_` | Test `price_` | Test `price_` |
 | `STRIPE_ENABLED` | `true` | `true` (TC 実行時) | 任意 | 通常 `false` |
 
-> ⚠️ **Live を preview/branch/local に共有しない** (本番カードへの誤課金リスク)。詳細手順は [ENV_VARS.md §2](../operations/ENV_VARS.md)。
+> ⚠️ **Live を preview/branch/local に共有しない** (本番カードへの誤課金リスク)。詳細手順は [ENVIRONMENT_VARIABLES.md §12](./ENVIRONMENT_VARIABLES.md)。
 
 ---
 
-## 4. ★ENV_VARS.md のドリフト (要是正)★
+## 4. ✅ ENV_VARS ドリフト是正 (解決済 / 2026-05-30〜31)
 
-[ENV_VARS.md](../operations/ENV_VARS.md) の context マトリクス (§2) が現行 Price 構成とズレている:
-
-- ❌ 廃止済 `STRIPE_PRICE_STORAGE_PLUS` / `STRIPE_PRICE_STORAGE_PRO` がマトリクスに残存
-- ❌ `STRIPE_PRICE_EMBEDDING` / `STRIPE_PRICE_DB_CAPACITY_OVERAGE` / `STRIPE_PRICE_STORAGE_FILE_OVERAGE` がマトリクス未掲載
-  (本文の env 一覧には記載あり、§2 マトリクスのみ欠落)
-
-→ 本改定対応 (ADR-0029) のドキュメント整合 TODO で ENV_VARS.md §2 マトリクスも同期する。
+> **このドリフトは解決済**。env var の真実源は旧 `docs/operations/ENV_VARS.md` から
+> **[docs/design/ENVIRONMENT_VARIABLES.md](./ENVIRONMENT_VARIABLES.md)** に一本化された (2026-05-30、旧 ENV_VARS.md は `docs/archive/` へ移動 + tombstone リダイレクト)。
+> 同書 §4 (Stripe) の context マトリクスは現行 Price 構成 (5 本) と整合済:
+>
+> - ✅ 廃止済 `STRIPE_PRICE_STORAGE_PLUS` / `STRIPE_PRICE_STORAGE_PRO` は不掲載
+> - ✅ `STRIPE_PRICE_EMBEDDING` (¥5, ADR-0029) / `STRIPE_PRICE_DB_CAPACITY_OVERAGE` / `STRIPE_PRICE_STORAGE_FILE_OVERAGE` を Production=Live / その他=Test の分離込みで掲載済
+>
+> 以後、env の context 別実値は [ENVIRONMENT_VARIABLES.md §4](./ENVIRONMENT_VARIABLES.md)、Stripe オブジェクト ID と env の対応は本書 §1〜§3 を参照する。
 
 ---
 
@@ -115,9 +118,11 @@
 - [x] Sandbox / Live の全 `STRIPE_PRICE_*` 実 Price ID (§2、10 件)
 - [x] 各 Meter event_name が Sandbox / Live 双方に存在しコード定数と完全一致
 
+### ✅ 確定済 (2026-05-30〜31、[ENVIRONMENT_VARIABLES.md §4](./ENVIRONMENT_VARIABLES.md) の as-built 棚卸しで確認)
+- [x] `STRIPE_SECRET_KEY` / publishable / `STRIPE_WEBHOOK_SECRET` の Netlify context 別 設定有無 (Prod/Prev/Branch のみ設定、PSAR/Local 空 + `STRIPE_ENABLED=false`)
+- [x] `STRIPE_PRICE_EMBEDDING` env が新 ¥5 Price を指している (production=`price_1Tchn2KH…` Live / staging=`price_1TchuCK3…` Test)
+- [x] `STRIPE_PRICE_*` 他 4 本も env が現行 Price ID を指している (Haiku/Sonnet/DB/Storage、Prod=Live / 他=Test 分離済)
+- [x] `SYSTEM_USER_ID` = `63cf718f-98cf-4882-9d6d-286441607d16` (seed の system ユーザ UUID、全 context)
+
 ### ⏳ 残課題
-- [ ] `STRIPE_SECRET_KEY` / publishable / `STRIPE_WEBHOOK_SECRET` の Netlify context 別 設定有無 (§1、値は貼らず「設定済/未」で可)
-- [ ] `STRIPE_PRICE_EMBEDDING` env が新 ¥5 Price を指しているか (staging=Sandbox / production=Live)
-- [ ] `STRIPE_PRICE_*` 他 4 本も env が現行 Price ID を指しているか (Haiku/Sonnet/DB/Storage)
-- [ ] `SYSTEM_USER_ID` の値 (seed の system ユーザ UUID)
-- [ ] (任意) 環境間の商品名・lookup_key 統一
+- [ ] (任意) 環境間の商品名・lookup_key 統一 (請求影響なし、Dashboard 運用性のみ)

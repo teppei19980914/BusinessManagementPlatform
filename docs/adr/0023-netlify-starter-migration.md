@@ -140,7 +140,7 @@ Vercel 依存機能 (Vercel Cron) は **外部 cron サービス (cron-job.org) 
 
 - 移行元の判断: [ADR-0012](./0012-vercel-supabase-mvp-hosting.md) (Vercel + Supabase を MVP 期に採用、本 ADR で Vercel 部分を Superseded)
 - 詳細設計: [docs/design/INFRASTRUCTURE.md](../design/INFRASTRUCTURE.md)
-- デプロイ手順: [docs/operations/DEPLOYMENT.md](../operations/DEPLOYMENT.md)
+- デプロイ手順: [docs/operations/DEPLOYMENT.md](../operations/develop/DEPLOYMENT.md)
 - 環境変数一覧: [docs/operations/ENV_VARS.md](../operations/ENV_VARS.md)
 - credits 監視: `src/services/netlify-metrics.service.ts` / `src/app/(dashboard)/admin/super/page.tsx`
 - cron 監視設計: memory `feedback_cron_watchdog_pattern`

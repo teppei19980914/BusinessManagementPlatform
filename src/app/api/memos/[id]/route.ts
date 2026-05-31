@@ -52,7 +52,7 @@ export async function PATCH(
   // PR-5 (2026-05-15): ストレージ容量 Pre-check (write 前に拒否し、無駄な service 呼出を回避)
   const quotaErr = await requireStorageQuotaForWrite(
     user.tenantId,
-    JSON.stringify(parsed.data).length,
+    Buffer.byteLength(JSON.stringify(parsed.data), 'utf8'),
   );
   if (quotaErr) return quotaErr;
 

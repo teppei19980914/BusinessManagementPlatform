@@ -20,9 +20,8 @@ import { checkCsvSize, checkCsvRowCount, handleCsvParseError } from '@/lib/csv-i
 import { runImportStoragePrecheck } from '@/services/import-storage-precheck.service';
 import {
   assertStorageLimitInTx,
-  StorageLimitExceededError,
-  mapStorageGuardErrorToResponse,
   // ADR-0025 (2026-05-29): Beginner プラン超過時の専用エラーマッパー
+  // 2026-05-31: 50GB 累積ハードキャップ (StorageLimitExceededError / mapStorageGuardErrorToResponse) は撤去 (ADR-0030)
   mapBeginnerWriteGuardErrorToResponse,
 } from '@/services/storage-guard.service';
 import { prisma } from '@/lib/db';
@@ -109,19 +108,18 @@ export async function POST(
 
   try {
     const result = await applyRetrospectiveSyncImport(projectId, csvRows, removeMode, user.id, user.tenantId);
-    // 4 巡目: apply 後の post-check (50GB hard cap 担保)
+    // apply 後の post-check (peak 計測 + Beginner 無料枠。2026-05-31: 50GB 累積ハードキャップは撤去 ADR-0030)
     try {
       await prisma.$transaction(
         async (tx) => assertStorageLimitInTx(tx, user.tenantId),
         { timeout: 10_000 },
       );
     } catch (storageErr) {
-      // ADR-0025: Beginner プラン超過エラーを最優先で応答 (= 専用 UX 文言)
+      // ADR-0025: Beginner プラン超過エラーは専用 UX 文言で応答 (データは既にコミット済)
       const beginnerMapped = mapBeginnerWriteGuardErrorToResponse(storageErr);
       if (beginnerMapped) return NextResponse.json(beginnerMapped.body, { status: beginnerMapped.status });
-      const mapped = mapStorageGuardErrorToResponse(storageErr);
-      if (mapped) return NextResponse.json(mapped.body, { status: mapped.status });
-      if (storageErr instanceof StorageLimitExceededError) throw storageErr;
+      // 2026-05-31: 50GB 累積ハードキャップ撤去 (ADR-0030)。peak 計測失敗 (fail-open) は
+      //   storage-guard 内で記録済 + 日次 cron が補正するため握りつぶす。
     }
     await recordAuditLog({
       tenantId: user.tenantId,

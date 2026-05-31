@@ -3,8 +3,11 @@
  *
  * 役割:
  *   storage-guard circuit breaker が open 状態のテナントを通常運用へ復旧させる。
- *   ADR-0020 で R3 fail-close circuit breaker (= 3 回連続計測失敗で write 拒否) を実装したが、
- *   open 状態を自動 close する経路がなく永久 write 拒否の死罠になっていた問題への対応 (3 回目検証 B-2)。
+ *
+ *   ⚠ 2026-05-31 (ADR-0030「データはたすきばの命」): 累積ハードキャップ撤去に伴い circuit-breaker
+ *      (fail-close) は撤去され、計測失敗は fail-open に変更。以降 storageGuardCircuitOpenedAt が
+ *      立つことはなく、本 route は **dormant** (= 常に 409 CIRCUIT_NOT_OPEN)。schema 列
+ *      (storageGuardCircuit*) を残している間の保守用として存置し、列削除と同 PR で本 route も撤去予定。
  *
  *   super_admin が以下の手順で実行:
  *     1. recordError ログで `kind: 'storage_guard_circuit', circuitOpened: true` 確認

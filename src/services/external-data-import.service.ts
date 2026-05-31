@@ -54,10 +54,9 @@ import {
 import { generateAndPersistBatchEmbeddings } from '@/services/embedding.service';
 import type { EmbeddingSearchTable } from '@/services/embedding.service';
 import { composeKnowledgeText } from '@/services/knowledge.service';
-// PR-3 (2026-05-15): 取込後の容量超過を検知してロールバックする
+// 取込後に peak 計測を best-effort 実行する (2026-05-31: 50GB 累積ハードキャップ撤去 ADR-0030)
 import {
   assertStorageLimitInTx,
-  StorageLimitExceededError,
 } from '@/services/storage-guard.service';
 import type { Prisma } from '@/generated/prisma/client';
 
@@ -188,9 +187,8 @@ export type ApplyResult =
         | 'BUDGET_CAP_EXCEEDED'
         // ADR-0030 (2026-05-30): Embedding 系 cap apply 拒否
         | 'EMBEDDING_BEGINNER_LIMIT'
-        | 'EMBEDDING_BUDGET_CAP_EXCEEDED'
-        // PR-3 (2026-05-15): 取込後の容量が Storage プラン上限超過 → 全件ロールバック
-        | 'STORAGE_LIMIT_EXCEEDED';
+        | 'EMBEDDING_BUDGET_CAP_EXCEEDED';
+        // 2026-05-31: 'STORAGE_LIMIT_EXCEEDED' (50GB 累積ハードキャップ) は撤去 (ADR-0030)
       message: string;
     };
 
@@ -468,14 +466,13 @@ export async function applyImport(input: {
     };
   }
 
-  // ============ トランザクションで取込 (PR-3: ストレージ Post-check + ロールバック) ============
+  // ============ トランザクションで取込 (2026-05-31: 50GB 累積ハードキャップ撤去 ADR-0030) ============
   // embedding 生成は外部 API 呼出を含むため transaction 外で実施 (内側だと長時間 lock)
-  // 戦略: transaction 内で全件 INSERT → ストレージ上限チェック → コミット後に embedding を順次生成
+  // 戦略: transaction 内で全件 INSERT → コミット後に peak 計測 (best-effort) + embedding を順次生成
   const knowledgeIdMap = new Map<number, string>(); // sourceRow → new id
   const riskIssueIdMap = new Map<number, string>();
 
-  try {
-    await prisma.$transaction(
+  await prisma.$transaction(
     async (tx) => {
       for (const k of parsed.knowledge) {
         const newId = randomUUID();
@@ -535,21 +532,20 @@ export async function applyImport(input: {
 
       // preview を即時削除 (apply 完了 = もう使わないため、TTL 待たず削除)
       await tx.tenantImportPreview.delete({ where: { id: input.previewId } });
-
-      // PR-3 (2026-05-15): ストレージ上限 Post-check。超過時は throw で全件ロールバック。
-      await assertStorageLimitInTx(tx, input.tenantId);
     },
     { timeout: 120_000, maxWait: 10_000 },
   );
-  } catch (error) {
-    if (error instanceof StorageLimitExceededError) {
-      return {
-        ok: false,
-        error: 'STORAGE_LIMIT_EXCEEDED',
-        message: `取込データの合計容量がストレージ上限 (${Math.floor(error.limitBytes / (1024 * 1024))} MB) を超えるためインポートを中止しました。データを削除するか、Storage プランをアップグレードしてください。`,
-      };
-    }
-    throw error;
+
+  // 2026-05-31 (ADR-0030「データはたすきばの命」): 50GB 累積ハードキャップ撤去。write コミット後に
+  //   peak 計測を best-effort で実行 (計測失敗は fail-open、storage-guard 内で記録 + 日次 cron が補正)。
+  //   Beginner 無料枠は apply 前 re-estimate で gate 済のため、ここでは throw を握りつぶす。
+  try {
+    await prisma.$transaction(
+      async (tx) => assertStorageLimitInTx(tx, input.tenantId),
+      { timeout: 10_000 },
+    );
+  } catch {
+    // best-effort: 計測失敗 / Beginner post-check は握りつぶす (write は既にコミット済)
   }
 
   // ============ embedding 生成 (PR #357 / 2026-05-14: 1 ApiCallLog に集約) ============

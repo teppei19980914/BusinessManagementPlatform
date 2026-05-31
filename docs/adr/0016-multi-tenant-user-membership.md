@@ -209,8 +209,8 @@ export function buildLoginUrl(tenantSlug: string, baseUrl: string): string {
 
 ## Related (関連情報)
 
-- 詳細設計: [docs/design/AUTHENTICATION.md](../design/AUTHENTICATION.md)
-- 運用手順: [docs/operations/MULTI_TENANT_OPERATIONS.md](../operations/MULTI_TENANT_OPERATIONS.md)
+- 詳細設計: [docs/design/SECURITY.md](../design/SECURITY.md) (認証・認可・テナント分離)
+- 移行検証記録 (archive): [docs/archive/2026-06-01-pre-ops-reorg/MULTI_TENANT_USER_MIGRATION_VERIFICATION.md](../archive/2026-06-01-pre-ops-reorg/MULTI_TENANT_USER_MIGRATION_VERIFICATION.md)
 - 関連 ADR: 
   - [ADR-0001 マルチテナント基盤](./0001-multitenant-foundation.md)
   - [ADR-0005 RBAC + Two-Stage Tenant Authorization](./0005-rbac-two-stage-tenant-authorization.md)

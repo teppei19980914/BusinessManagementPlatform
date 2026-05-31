@@ -2,6 +2,114 @@
 
 本ドキュメントは、本サービスの全画面における **操作別の権限マトリクス** を集約する (SPECIFICATION.md §7 全体を転記)。ユーザロールの定義は [business/USER_ROLES.md](../business/USER_ROLES.md)、画面の機能仕様は [SCREENS.md](./SCREENS.md) を参照。
 
+§7 は画面・操作単位の仕様マトリクス、§0 は **実装の権限エンジン (`checkPermission`) の完全ミラー** である。両者が矛盾する場合は §0 (= ソースコード) を真値とする。
+
+---
+
+## 0. 権限実装ミラー (`src/lib/permissions/` の完全反映)
+
+> このセクションは推測ではなくソースコードを 1 行ずつ照合した結果である。真値ソース:
+> [`src/lib/permissions/check-permission.ts`](../../src/lib/permissions/check-permission.ts) (`Action` 型 / `ROLE_PERMISSIONS`)、
+> [`src/lib/permissions/role.ts`](../../src/lib/permissions/role.ts) (システムロール判定)、
+> [`src/lib/permissions/membership.ts`](../../src/lib/permissions/membership.ts) (admin/super_admin の pm_tl 昇格)、
+> [`src/config/master-data.ts`](../../src/config/master-data.ts) (`SYSTEM_ROLES` / `PROJECT_ROLES`)。
+
+### 0.1 ロール体系
+
+**システムロール (3 階層、`SYSTEM_ROLES`)**:
+
+| キー | ラベル | 説明 | 判定ヘルパ |
+|---|---|---|---|
+| `super_admin` | システム管理者 | プラットフォーム運営者専用 (管理テナント所属)。全テナント横断アクセス | `isSuperAdmin()` / `isAdminOrAbove()` |
+| `admin` | テナント管理者 | 自テナント内の全権限 | `isTenantAdmin()` / `isAdminOrAbove()` |
+| `general` | 一般ユーザ | プロジェクト/役割に応じた権限 | (なし) |
+
+**プロジェクトロール (`PROJECT_ROLES`)**: `pm_tl` (PM/TL) / `member` (メンバー) / `viewer` (閲覧者)。
+
+### 0.2 システムロール → プロジェクトロールの昇格挙動
+
+- `checkMembership()` ([membership.ts:87](../../src/lib/permissions/membership.ts)) は **`admin` または `super_admin`** に対し `projectRole: 'pm_tl'` を返す。つまり管理者は project_members に行が無くても全プロジェクトで PM/TL 相当の権限を得る。
+- ただし `checkPermission()` ([check-permission.ts:126](../../src/lib/permissions/check-permission.ts)) の短絡 (全操作許可) は **`systemRole === 'admin'` のみ**。`super_admin` はこの短絡に該当しない。
+- テナント越境ガード ([membership.ts:81](../../src/lib/permissions/membership.ts)): `super_admin` 以外は `project.tenantId !== userTenantId` なら `isMember:false` (404 扱い)。`super_admin` のみ越境管理を許可。
+
+### 0.3 ★既知の死角★ super_admin は checkPermission で project:delete を持たない
+
+`super_admin` が `checkMembership() → checkPermission()` 経路を通ると `effectiveRole='pm_tl'` で評価される。
+`checkPermission` の admin 短絡 (line 126) は `super_admin` を含まないため、`super_admin` は **`pm_tl` の許可集合**で判定される。
+`pm_tl` の `ROLE_PERMISSIONS` には `project:delete` / `admin:users` / `admin:audit_logs` が含まれない ([check-permission.ts:74-86](../../src/lib/permissions/check-permission.ts))。
+→ **結果: super_admin はこの経路では `project:delete` を実行できない (既知の死角)。** admin (テナント管理者) は line 126 の短絡で全 Action 可。
+
+### 0.4 Action × プロジェクトロール 完全マトリクス (`ROLE_PERMISSIONS` の Set を逐語反映)
+
+`Action` 型は全 22 種。`admin` 列は `ROLE_PERMISSIONS.admin` の Set 内容 (= `systemRole==='admin'` は別途 line 126 で全許可)。
+○ = Set に含まれる / × = 含まれない。状態制約 (`STATE_RESTRICTIONS`) と所有者条件は §0.5 / §0.6 参照。
+
+| Action | admin (Set) | pm_tl | member | viewer |
+|---|:---:|:---:|:---:|:---:|
+| `project:create` | ○ | ○ | × | × |
+| `project:read` | ○ | ○ | ○ | ○ |
+| `project:update` | ○ | ○ | × | × |
+| `project:delete` | ○ | **×** | × | × |
+| `project:change_status` | ○ | ○ | × | × |
+| `task:create` | ○ | ○ | ○ | × |
+| `task:read` | ○ | ○ | ○ | ○ |
+| `task:update` | ○ | ○ | × | × |
+| `task:update_progress` | ○ | ○ | △ (担当のみ) | × |
+| `task:delete` | ○ | ○ | × | × |
+| `knowledge:create` | ○ | ○ | ○ | × |
+| `knowledge:read` | ○ | ○ | ○ | ○ |
+| `knowledge:update` | ○ | ○ | △ (作成者のみ) | × |
+| `knowledge:delete` | ○ | ○ | × | × |
+| `knowledge:publish` | ○ | ○ | × | × |
+| `risk:create` | ○ | ○ | ○ | × |
+| `risk:read` | ○ | ○ | ○ | ○ |
+| `risk:update` | ○ | ○ | △ (起票/担当のみ) | × |
+| `risk:delete` | ○ | ○ | × | × |
+| `member:read` | ○ | ○ | × | × |
+| `member:manage` | ○ | ○ | × | × |
+| `stakeholder:read` | ○ | ○ | × | × |
+| `stakeholder:create` | ○ | ○ | × | × |
+| `stakeholder:update` | ○ | ○ | × | × |
+| `stakeholder:delete` | ○ | ○ | × | × |
+| `admin:users` | ○ | **×** | × | × |
+| `admin:audit_logs` | ○ | **×** | × | × |
+
+> `pm_tl` と `admin` (Set) の差分は **`project:delete` / `admin:users` / `admin:audit_logs` の 3 件のみ**。その他の Action は完全一致。
+
+> **注意 (§0.4 と §7 系の整合)**: 上表 `knowledge:delete` / `risk:delete` の member=× は **`checkPermission` の Action** の話。
+> 一方、ナレッジ/リスク/振り返り/メモの「自分作成を削除」は `ROLE_PERMISSIONS` ではなく **service 層** (例: [`deleteKnowledge`](../../src/services/knowledge.service.ts) の `createdBy === userId OR assigneeId === userId` 判定 + `context: 'project'`) で認可される。
+> よって §7.8 等で member が「自分作成を削除 ○」なのは正しい (service 層ゲート)。`knowledge:delete` Action は「全○○」横断経路の admin モデレーション削除でのみ評価される。
+
+### 0.5 member の所有者条件 (`resourceOwnerId === userId`)
+
+`effectiveRole === 'member'` の場合、以下 3 Action は `resourceOwnerId` が指定されると本人のみ許可 ([check-permission.ts:154-173](../../src/lib/permissions/check-permission.ts)):
+
+| Action | 条件 | 拒否理由 |
+|---|---|---|
+| `knowledge:update` | 自分が作成したナレッジのみ | 自分が作成したナレッジのみ編集できます |
+| `task:update_progress` | 自分が担当のタスクのみ | 自分が担当のタスクのみ進捗更新できます |
+| `risk:update` | 自分が起票/担当のリスク/課題のみ | 自分が起票または担当のリスク/課題のみ編集できます |
+
+> `resourceOwnerId` 未指定時は所有者条件をスキップ (= ロール許可のみで判定)。
+
+### 0.6 プロジェクト状態制約 (`STATE_RESTRICTIONS`)
+
+ロール許可を通過しても、`projectStatus` が以下の場合は許可 Action が制限される (admin 短絡経路にも適用):
+
+- **`closed`**: `project:read` / `task:read` / `knowledge:read` / `risk:read` / `stakeholder:read` のみ可 (全て読み取り専用)。
+- **`retrospected`**: 上記 + `project:change_status` / `knowledge:update` を追加で許可。
+
+### 0.7 PM/TL 自律権限 と member 管理の細粒度ガード
+
+- `pm_tl` は `member:manage` を持つ ([check-permission.ts:83](../../src/lib/permissions/check-permission.ts))。member/viewer の追加・削除・ロール変更は PM/TL が実行可。
+- ただし「PM/TL ロール」を扱う操作 (PM/TL 追加・削除、PM/TL↔他ロールの昇格/降格) は **admin only**。この細粒度判定は `checkPermission` では表現できず [`src/services/member.service.ts`](../../src/services/member.service.ts) で実施する。
+
+### 0.8 自己ロール変更禁止 (feat/crud-permission-redesign / [ADR-0014](../adr/0014-crud-permission-redesign.md))
+
+- **プロジェクトロール**: 自分自身の projectRole 変更は不可 → `CANNOT_CHANGE_OWN_PROJECT_ROLE` ([member.service.ts:153](../../src/services/member.service.ts))。
+- **システムロール**: 自分自身の systemRole 変更は不可 → `CANNOT_CHANGE_OWN_ROLE` ([user.service.ts:341](../../src/services/user.service.ts))。
+- 設計意図: 必ず別の管理者が変更する (権限の自己昇格・誤降格による締め出しを防止)。
+
 ---
 
 ## 7. 画面・操作単位の権限マトリクス
@@ -137,7 +245,6 @@
 | ナレッジ一覧 (プロジェクト内) | 自分作成を削除 | ○ | ○ | ○ | × |
 | ナレッジ一覧 (プロジェクト内) | 他人作成を削除 | × | × | × | × |
 | 全ナレッジ画面 | 削除する (モデレーション) | ○ | × | × | × |
-| ナレッジ編集画面 | ナレッジを論理削除する (旧表記、上記参照) | △ | △ | △ | × |
 
 ### 7.9 振り返り画面
 
@@ -234,5 +341,15 @@ member/viewer の閲覧自体を許可するとプロジェクト棚卸し中の
   - bulk 選択 (selectableIds): 作成者 OR 担当者を対象 (旧: 作成者のみ)
   - 行アクション (削除ボタン等): 作成者 OR 担当者を対象 (旧: 作成者のみ)
 - **API 受入**: validator (`createXxxSchema` / `updateXxxSchema`) に `assigneeId: z.string().uuid().nullable().optional()` を追加
+
+## 変更履歴 (docs/design-business-refactor-integrity, 2026-05-31)
+
+権限実装 (`src/lib/permissions/`) との完全ミラー化 (§0 新設) を実施。`ROLE_PERMISSIONS` の Set を 1 件ずつ逐語照合。
+
+- **§0 新設**: `Action` 型 全 22 種 × プロジェクトロール完全マトリクス (§0.4) を実装から逐語反映
+- **システムロール 3 階層** (super_admin/admin/general) とプロジェクトロール昇格挙動 (§0.1-0.2) を明文化
+- **★既知の死角★** super_admin は `checkPermission` の admin 短絡 (line 126 は admin のみ) に該当せず、pm_tl 評価となるため `project:delete` を持たない点を注記 (§0.3)
+- member 所有者条件 (§0.5) / 状態制約 `STATE_RESTRICTIONS` (§0.6) / PM/TL 細粒度ガード (§0.7) / 自己ロール変更禁止 ADR-0014 (§0.8) を実装行番号付きで反映
+- **是正**: §7.8 の obsolete 行「ナレッジを論理削除する (旧表記)」(admin/pm_tl/member すべて△) を削除 — 実装に対応する Action が無く、直上の行 (§7.8) と矛盾していたため
 
 ---

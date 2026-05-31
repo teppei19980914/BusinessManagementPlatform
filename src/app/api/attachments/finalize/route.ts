@@ -13,7 +13,7 @@
  *   7. 実サイズ > 50MB なら即時削除 + 413 reject
  *   8. transaction:
  *      a. Attachment row 作成 (storageProvider='supabase'、embeddingStatus=判定済)
- *      b. assertFileStorageLimitInTx (50GB ハードキャップ + peak MAX + level)
+ *      b. assertFileStorageLimitInTx (peak MAX + level + Beginner 100MB ガード。2026-05-31: 50GB 累積ハードキャップは撤去 ADR-0030)
  *   9. audit log
  *  10. レスポンス: { attachment }
  *
@@ -30,9 +30,8 @@ import { finalizeRequestSchema } from '@/lib/validators/attachment-upload';
 import { authorizeForAttachmentEntity } from '@/services/attachment.service';
 import {
   assertFileStorageLimitInTx,
-  mapFileStorageGuardErrorToResponse,
-  FileStorageLimitExceededError,
   // ADR-0025 (2026-05-29): Beginner プラン超過時の専用エラーマッパー
+  // 2026-05-31: 50GB 累積ハードキャップ (FileStorageLimitExceededError / mapFileStorageGuardErrorToResponse) は撤去 (ADR-0030)
   BeginnerWriteGuardExceededError,
   mapBeginnerWriteGuardErrorToResponse,
 } from '@/services/storage-guard.service';
@@ -152,7 +151,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // 6. transaction: Attachment row 作成 + storage-guard post-check (50GB ハードキャップ)
+  // 6. transaction: Attachment row 作成 + storage-guard post-check (peak 計測 + Beginner 100MB。2026-05-31: 50GB 累積ハードキャップは撤去 ADR-0030)
   const embeddingStatus = isEmbeddingSupported(input.fileName) ? 'pending' : 'unsupported';
 
   try {
@@ -217,14 +216,11 @@ export async function POST(req: NextRequest) {
     //   失敗時にこの cleanup を実行 → 例外を再 throw する設計に統一する。
     await deleteObject(input.objectKey).catch(() => undefined);
 
-    // ADR-0025 (2026-05-29): Beginner プラン超過エラーを最優先で応答 (= 専用 UX 文言、アップロード object はクリーンアップ済)
+    // ADR-0025 (2026-05-29): Beginner プラン超過エラーを応答 (= 専用 UX 文言、アップロード object はクリーンアップ済)
+    //   2026-05-31: 50GB 累積ハードキャップ (FileStorageLimitExceededError) の分岐は撤去 (ADR-0030)
     if (e instanceof BeginnerWriteGuardExceededError) {
       const beginnerMapped = mapBeginnerWriteGuardErrorToResponse(e);
       if (beginnerMapped) return NextResponse.json(beginnerMapped.body, { status: beginnerMapped.status });
-    }
-    if (e instanceof FileStorageLimitExceededError) {
-      const mapped = mapFileStorageGuardErrorToResponse(e);
-      if (mapped) return NextResponse.json(mapped.body, { status: mapped.status });
     }
     throw e;
   }

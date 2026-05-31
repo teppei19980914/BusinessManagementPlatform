@@ -1,8 +1,8 @@
 # ファイルストレージ従量課金 仕様書 (Business Logic + Operational Spec)
 
 > **対象読者**: テナント管理者 / システム管理者 / 開発者 / 経理担当者
-> **根拠 ADR**: [ADR-0021](../adr/0021-file-storage-usage-based-billing.md)
-> **最終更新**: 2026-05-26
+> **根拠 ADR**: [ADR-0021](../adr/0021-file-storage-usage-based-billing.md) / [ADR-0030](../adr/0030-embedding-monthly-budget-cap.md) (2026-05-31 累積ハードキャップ撤廃)
+> **最終更新**: 2026-05-31
 
 ---
 
@@ -12,9 +12,9 @@
 |---|---|
 | **何を課金するか** | Supabase Storage に保存されたファイル本体の合計サイズ (= プロジェクト・知見資産等への添付ファイル) |
 | **無料枠** | **100MB / tenant** (SI 単位 = 100,000,000 bytes) |
-| **超過単価** | **1GB tier ごとに ¥10** (1MB 未満は繰上、税抜) |
-| **ハードキャップ** | **50GB / tenant** (技術安全・他テナント保護のため、超過時アップロード拒否) |
-| **ファイルサイズ上限** | **50MB / 1 ファイル** (= 業務文書・画像をカバー、動画は不可) |
+| **超過単価** | **1GB tier ごとに ¥10** (1MB 未満は繰上、税抜) — **上限なしの青天井従量** (旧「最大 ¥500」は 2026-05-31 撤廃) |
+| **累積上限** | **なし** (2026-05-31 / ADR-0030「データはたすきばの命」で 50GB 累積ハードキャップ = アップロード拒否を撤廃)。L1/L2/L3 は監視アラート閾値のみでアップロードは止めない |
+| **ファイルサイズ上限** | **50MB / 1 ファイル** (= 業務文書・画像をカバー、動画は不可。瞬間負荷ガードとして存続) |
 | **計測時点** | **月中 peak** (= 抜け道防止、ADR-0020 と同設計) |
 | **embedding 生成** | text 系ファイル (PDF/Excel/CSV/text/docx) は **非同期で Voyage embedding 生成** (= 無料、提案エンジン + チャット検索の対象) |
 | **チャット検索** | 「ファイル」「添付」「PDF」等のキーワード検出時、**attachment embedding のみ** スコープ |
@@ -34,8 +34,11 @@
 1,101MB ~ 2,100MB          ¥20  (tier 2)
 2,101MB ~ 3,100MB          ¥30  (tier 3)
 ...
-49,101MB ~ 50,000MB        ¥500 (tier 50 / ハードキャップ)
+49,101MB ~ 50,000MB        ¥500 (tier 50)
+...                        (上限なし。50GB を超えても課金は青天井に継続)
 ```
+
+> **2026-05-31 改定 (ADR-0030)**: 旧仕様には「50GB = tier 50 = 月額最大 ¥500 のハードキャップ」が存在したが、「データはたすきばの命」原則に基づき **累積上限を撤廃**。50GB 超過後もアップロードを止めず、`calculateFileStorageOverageJpy` は階段関数のまま上限なく加算する (= `peakBytes` が増えるほど tier × ¥10 が線形に増える)。ファイルは Supabase Storage (オブジェクトストレージ) で Postgres RAM 非依存のため noisy-neighbor とも無関係。50GB は監視アラート閾値 (L3) としてのみ機能する (§5)。1 ファイル上限 50MB (`FILE_STORAGE_MAX_FILE_SIZE_BYTES`) は瞬間負荷ガードとして存続。
 
 ### 1.2 計算式
 
@@ -91,7 +94,7 @@ WHERE bucket_id = 'attachments'
 ┌──────────────────────────────────────────────────────────────────────┐
 │ 経路 A: アップロード時 post-check (即時)                              │
 │   POST /api/attachments/finalize                                      │
-│     → 実サイズ確認 → ハードキャップ post-check → peak MAX 更新        │
+│     → 実サイズ確認 → peak MAX 更新 + Level 分類 (+ Beginner 無料枠 post-check) │
 └──────────────────────────────────────────────────────────────────────┘
                               ↓ 補完
 ┌──────────────────────────────────────────────────────────────────────┐
@@ -140,7 +143,7 @@ peak:     100MB  →  10GB    →  10GB   →  10GB  ← 月末請求対象
 [Browser] POST /api/attachments/finalize ─→ [Server]
             │                                    │
             │                                    ├─ attachment row 作成 (embeddingStatus='pending')
-            │                                    ├─ post-check (実サイズ / ハードキャップ)
+            │                                    ├─ post-check (実サイズ / peak 更新 / Beginner 無料枠)
             │                                    └─ embedding job キュー投入
             │
 [Browser] ← Response { id, status: 'pending' }
@@ -229,14 +232,18 @@ Stripe Subscription Items でそれぞれの Price で計算 → 単一請求書
 
 ---
 
-## 5. 4 層防御 (Level システム)
+## 5. 4 層 Level システム (監視アラート、2026-05-31 改定で全 Level がアップロード非ブロック)
+
+**2026-05-31 (ADR-0030) で全 Level が「通知のみ・アップロード非ブロック」になった** (旧 L3 のアップロード拒否は撤廃):
 
 | Level | 閾値 | アクション | 想定月額 |
 |---|---|---|---|
 | **none** | 0 ~ 1GB | 通常運用 | ¥0 ~ ¥10 |
-| **L1** | 1GB ~ 10GB | テナント設定画面に警告表示 | ¥10 ~ ¥100 |
+| **L1** | 1GB ~ 10GB | テナント設定画面に使用量表示 | ¥10 ~ ¥100 |
 | **L2** | 10GB ~ 50GB | super_admin に recordError warn | ¥100 ~ ¥500 |
-| **L3** | 50GB ハードキャップ | **アップロード拒否** (= read/download 継続可) | ¥500 |
+| **L3** | 50GB 以上 | **通常運用 (アップロード継続・課金は青天井で継続)** + super_admin に監視アラート | ¥500 ~ (上限なし) |
+
+実装: [src/config/file-storage-pricing.ts](../../src/config/file-storage-pricing.ts) `classifyFileStorageLevel()` / `FILE_STORAGE_L3_HARD_CAP_BYTES` (定数名に HARD_CAP が残るのは import 影響回避のため。実体は監視閾値)。
 
 ---
 
@@ -246,14 +253,14 @@ Stripe Subscription Items でそれぞれの Price で計算 → 単一請求書
 
 | 攻撃 | 対策 |
 |---|---|
-| **大容量ファイル DoS** (= サーバ memory/disk 圧迫) | Pre-signed URL 直接アップロード (= サーバ経由しない) + 50MB/file 上限 |
-| **大量ファイル DoS** (= 50GB 超で他テナント影響) | 50GB ハードキャップ + Pre-signed URL 発行レート 10/min/tenant |
+| **大容量ファイル DoS** (= サーバ memory/disk 圧迫) | Pre-signed URL 直接アップロード (= サーバ経由しない) + 50MB/file 上限 (瞬間負荷ガード、累積上限ではない) |
+| **大量ファイル DoS** (= 過剰アップロード) | Pre-signed URL 発行レート 10/min/tenant + 異常使用検知 (1 日 5GB+ 増加で super_admin alert)。**累積 50GB ハードキャップは 2026-05-31 撤廃** — ファイルは Supabase Storage で Postgres RAM 非依存のため他テナント影響なし、運用は監視アラート (L3) + Compute 増強で吸収 |
 | **悪意ある MIME** (実行ファイル) | 拡張子 blacklist (`.exe` / `.bat` / `.sh` / `.ps1` 等) で拒否 |
 | **path traversal** | ファイル名 sanitize + バケットパスに tenant prefix 強制 + RLS Policy |
 | **Pre-signed URL 漏洩** | 有効期限 60 秒 + tenant_id 検証 + UUID 含むファイル名 |
 | **embedding job 暴走** | per-tenant 5 並列上限 + Voyage 200M tokens watchdog |
 | **delete API 連打** | per-tenant 100/min rate limit |
-| **Storage 計測失敗** | circuit breaker (= 3 回失敗で write 拒否) |
+| **Storage 計測失敗** | **fail-open** (= アップロードは止めず記録のみ、日次 cron が補正)。旧 circuit breaker (3 回失敗で write 拒否) は累積ハードキャップ撤廃に伴い 2026-05-31 撤去 |
 
 ### 6.2 RLS Policy (= テナント越境 DB レベル防止)
 
@@ -293,7 +300,9 @@ function sanitizeFileName(name: string): string {
 
 ### 6.5 異常使用検知 (= anomaly detection)
 
-**1 日で 5GB 以上増加したテナント** → super_admin に anomaly alert (= drift 検知とは別の早期警告)
+**1 日で 5GB 以上増加したテナント** → super_admin に anomaly alert (= drift 検知とは別の早期警告)。
+
+閾値は `FILE_STORAGE_ANOMALY_DAILY_INCREASE_BYTES = 5 * SI_GB_BYTES` (= 5GB、ADR-0021 §10.2.4、[file-storage-pricing.ts:91](../../src/config/file-storage-pricing.ts))。`storage_file_bytes_used` の前日比 (today − yesterday) が本値以上で発火する。判定は daily cron 集計時 ([file-storage-bucket-usage.service.ts:158](../../src/services/file-storage-bucket-usage.service.ts)) と super_admin 画面 ([file-storage-alerts-card.tsx:91](../../src/app/(dashboard)/admin/super/file-storage-alerts-card.tsx)) の双方で行う。乱用 / 大量バッチ投入の早期発見が目的で、Level 判定 (監視アラート) とは独立した早期警告レイヤ。累積上限が撤廃された現行 (2026-05-31 / ADR-0030) では、本 anomaly 検知と L3 監視アラートが「急増・高水準テナントを super_admin が把握して Compute 増強を判断する」運用の主軸となる。
 
 ### 6.6 サーバ全体停止防止
 
@@ -308,17 +317,17 @@ Pre-signed URL アーキテクチャにより、**アップロード本体は Ne
 [src/app/(dashboard)/settings/tenant/file-storage-section.tsx](../../src/app/(dashboard)/settings/tenant/file-storage-section.tsx):
 
 - 現在の使用量 / 月中 peak / 想定請求額
-- Level バッジ + 進捗バー (0-50GB)
+- Level バッジ + 使用量グラフ (上限なし。50GB は監視アラート閾値の目安線)
 - 料金体系の説明
 
 ### 7.2 super_admin 画面 (`/admin/super`)
 
 [src/app/(dashboard)/admin/super/file-storage-alerts-card.tsx](../../src/app/(dashboard)/admin/super/file-storage-alerts-card.tsx):
 
-- L1-L3 テナント一覧
+- L1-L3 テナント一覧 (= 監視アラート。アップロードは止まらない)
 - drift 検知 (peak SUM vs 実バケットサイズ)
 - 異常使用検知 (1 日 5GB+ 増加)
-- circuit breaker open テナント
+- (circuit breaker は撤去済 / 2026-05-31)
 
 ### 7.3 ファイルアップロード UI
 
@@ -340,9 +349,11 @@ Pre-signed URL アーキテクチャにより、**アップロード本体は Ne
 
 `requestId = storage-file-overage-{tenantId}-{yearMonth}-{billingScope}` で composite key 一意性。
 
-### 8.3 fail-close + circuit breaker
+### 8.3 fail-open (2026-05-31 改定 / ADR-0030)
 
-storage-guard の Supabase API 呼出失敗時、3 回連続失敗で write 拒否 + super_admin 通知。
+> **【旧仕様 〜2026-05-30】** storage-guard の Supabase API 呼出失敗時は **fail-close + circuit breaker** (3 回連続失敗でアップロード拒否 + super_admin 通知) だった。累積ハードキャップ撤廃 (ADR-0030) で「計測できないからアップロード拒否」の根拠が消えたため撤去。
+
+現行は **fail-open**: 計測失敗時もアップロード/書込を止めず記録のみ残し、真値は日次 cron `updateAllFileStorageBytesUsed` が再集計して補正する (課金は月内 MAX のため取りこぼさない)。
 
 ### 8.4 並列性制御
 
@@ -364,7 +375,7 @@ storage-guard の Supabase API 呼出失敗時、3 回連続失敗で write 拒�
 - **ADR-0019**: [docs/adr/0019-billable-feature-units-and-free-tier-expansion.md](../adr/0019-billable-feature-units-and-free-tier-expansion.md) — Embedding 無料化原則
 - **DB_CAPACITY_BILLING.md**: [docs/business/DB_CAPACITY_BILLING.md](./DB_CAPACITY_BILLING.md) — DB 容量仕様
 - **TENANT_AND_BILLING.md**: [docs/business/TENANT_AND_BILLING.md](./TENANT_AND_BILLING.md) — 全体課金モデル
-- **STRIPE_SETUP.md**: [docs/operations/STRIPE_SETUP.md](../operations/STRIPE_SETUP.md) — Stripe Meter 登録手順
+- **STRIPE_SETUP.md**: [docs/operations/STRIPE_SETUP.md](../operations/setup/STRIPE_SETUP.md) — Stripe Meter 登録手順
 - **利用者ガイド**: [docs/public/file-storage-billing-guide.md](../public/file-storage-billing-guide.md)
 
 ---
@@ -383,8 +394,8 @@ A. 「ファイル」「添付」「PDF」等のキーワードが含まれる�
 ### Q4. ファイル削除すると Storage コストはすぐ削減されますか?
 A. はい、論理削除と同時に Supabase Storage オブジェクトも削除されます。当月の peak は維持されますが、翌月以降は影響なし。
 
-### Q5. 50GB ハードキャップに達したら他テナントに影響しますか?
-A. 影響しません。Pre-signed URL アーキテクチャで本体は Supabase へ直接アップロードされ、サーバ全体は停止しません。当該テナントのみアップロード拒否、読み取り・ダウンロードは継続可能。
+### Q5. ファイル容量が 50GB を超えたら他テナントに影響しますか? アップロードは止まりますか?
+A. **アップロードは止まりません** (2026-05-31 / ADR-0030「データはたすきばの命」で累積ハードキャップを撤廃)。50GB は監視アラート閾値で、超過後も従量課金 (¥10/GB tier) が青天井で継続します。ファイルは Supabase Storage (オブジェクトストレージ) に Pre-signed URL で直接アップロードされ Postgres RAM に依存しないため、他テナントへの性能影響もありません。1 ファイル 50MB の上限は引き続き有効です。
 
 ### Q6. 危険なファイル (.exe など) はアップロードできますか?
 A. 拡張子 blacklist で拒否されます (`.exe` / `.bat` / `.sh` / `.ps1` 等)。`.zip` は許容 (= 業務利用想定)。

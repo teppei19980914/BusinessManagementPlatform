@@ -47,9 +47,10 @@
 | [0027](./0027-help-ai-concierge.md) | たすきフクロウ AI ヘルプチャット (FAQ コンシェルジュ) の導入 (2026-05-29 採択、ADR-0028 で撤回) | Superseded by 0028 | UX・AI |
 | [0028](./0028-help-chat-rag-migration.md) | たすきフクロウ AI ヘルプチャットを full-context から RAG (Voyage embedding) へ移行 (2026-05-29 採択) | Accepted | UX・AI |
 | [0029](./0029-embedding-price-revision-5jpy.md) | Embedding 従量課金の単価改定 — Expert/Pro ¥1 → ¥5/call (2026-05-30 採択、ADR-0022 を部分 supersede) | Accepted | ビジネス・課金 |
-| [0030](./0030-embedding-monthly-budget-cap.md) | Embedding 月次予算上限の導入 + Beginner Embedding 100 件試用上限 + 請求タブ「今月請求金額」セクション (2026-05-30 採択、ADR-0022 「Embedding は予算上限と独立」判断を一部上書き) | Accepted | ビジネス・課金・UX |
+| [0030](./0030-embedding-monthly-budget-cap.md) | Embedding 月次予算上限の導入 + Beginner Embedding 100 件試用上限 + 請求タブ「今月請求金額」セクション (2026-05-30 採択、ADR-0022 「Embedding は予算上限と独立」判断を一部上書き。§6 で DB/Storage 累積ハードキャップ撤廃を追記) | Accepted | ビジネス・課金・UX |
+| [0031](./0031-footer-auth-aware-and-about-removal.md) | フッター認証出し分け (2 層) + `/settings/about` 廃止 + 共通情報 (規約/プライバシー/運営者/特定商取引法) の外部 LP 集約 (2026-05-31 採択) | Accepted | UX・情報設計 |
 
-> 主要設計判断を時系列で ADR 化しています (現在 29 件)。
+> 主要設計判断を時系列で ADR 化しています (現在 31 件)。
 > 設計変更を検討する際は新規 ADR を追加し、変更が確定したら旧 ADR の Status を Deprecated / Superseded に更新します。
 
 ---

@@ -151,7 +151,7 @@ pnpm dev
 - [ ] super_admin ダッシュボードにアクセスできる(`/admin/super`)
 - [ ] ログアウトして再ログインできる
 
-詰まったら → [docs/operations/SETUP_LOCAL.md](./docs/operations/SETUP_LOCAL.md) のトラブルシューティング節へ。
+詰まったら → [docs/operations/develop/SETUP_LOCAL.md](./docs/operations/develop/SETUP_LOCAL.md) のトラブルシューティング節へ。
 
 ---
 
@@ -259,7 +259,7 @@ PR を作成 / push すると以下の 6 つのワークフローが自動実行
 1. CI 全 green
 2. Security Scan score 90/100 以上
 3. レビュー承認(チームに 2 人以上いる場合)
-4. DB スキーマ変更を含む場合: マージ前に Supabase で migration を手動実行([docs/operations/DB_MIGRATION_PROCEDURE.md](./docs/operations/DB_MIGRATION_PROCEDURE.md))
+4. DB スキーマ変更を含む場合: マージ前に Supabase で migration を手動実行([docs/operations/develop/DB_MIGRATION_PROCEDURE.md](./docs/operations/develop/DB_MIGRATION_PROCEDURE.md))
 5. UI 変更を含む場合: Netlify Deploy Preview で目視確認 (`https://deploy-preview-NNN--tasukiba.netlify.app`)
 
 ### 7.4 マージ後
@@ -285,13 +285,13 @@ PR を作成 / push すると以下の 6 つのワークフローが自動実行
 
 | 困りごと | 参照先 |
 |---|---|
-| 環境構築でハマった (DB 接続 / migration / dev サーバ) | [docs/operations/SETUP_LOCAL.md](./docs/operations/SETUP_LOCAL.md) |
+| 環境構築でハマった (DB 接続 / migration / dev サーバ) | [docs/operations/develop/SETUP_LOCAL.md](./docs/operations/develop/SETUP_LOCAL.md) |
 | 環境変数の意味を知りたい | [docs/operations/ENV_VARS.md](./docs/operations/ENV_VARS.md) |
 | 業務用語が分からない | [docs/business/GLOSSARY.md](./docs/business/GLOSSARY.md) |
 | 「この機能は何のため?」「どのファイルを変更?」 | [docs/business/FEATURE_CATALOG.md](./docs/business/FEATURE_CATALOG.md) |
 | 「なぜこの設計?」 | [docs/adr/](./docs/adr/README.md) (ADR 索引) |
 | 過去の罠・教訓 | [docs/knowledge/](./docs/knowledge/) / [docs/test/E2E_LESSONS.md](./docs/test/E2E_LESSONS.md) |
-| 障害対応 | [docs/operations/INCIDENT_RESPONSE.md](./docs/operations/INCIDENT_RESPONSE.md) |
+| 障害対応 | [docs/operations/operate/INCIDENT_RESPONSE.md](./docs/operations/operate/INCIDENT_RESPONSE.md) |
 | コミット / PR 規約の詳細 | [CONTRIBUTING.md](./CONTRIBUTING.md) |
 
 ---

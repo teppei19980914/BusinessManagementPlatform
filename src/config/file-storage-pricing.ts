@@ -12,10 +12,15 @@
  *   - 計測時点: 月中 peak (= ADR-0020 と同設計)
  *   - ファイル上限: 50MB / 1 ファイル
  *
- * 4 層防御 (= ADR-0020 と同パターン):
+ * 監視アラート閾値 (2026-05-31 改定: 累積ハードキャップ撤廃、= ADR-0020 DB 側と同パターン):
  *   - L1 1GB: ユーザ通知
  *   - L2 10GB: super_admin 通知
- *   - L3 50GB: アップロード拒否 (ハードキャップ)
+ *   - L3 50GB: **super_admin への監視アラート閾値** (アップロードは止めない)
+ *
+ *   ※ 旧仕様では L3 = アップロード拒否の累積ハードキャップだったが、「データはたすきばの命」
+ *      (ADR-0030) に基づき撤廃。ファイルは Supabase Storage (オブジェクトストレージ) で
+ *      Postgres RAM 非依存のため noisy-neighbor とも無関係。1 ファイル上限 50MB
+ *      (FILE_STORAGE_MAX_FILE_SIZE_BYTES) は瞬間負荷ガードとして存続。
  *
  * セキュリティ (= ADR-0021 §10):
  *   - 危険拡張子 blacklist (.exe / .sh 等)
@@ -71,7 +76,7 @@ export const FILE_STORAGE_PRICE_JPY_PER_GB_TIER = 10;
 export const FILE_STORAGE_MAX_FILE_SIZE_BYTES = 50 * SI_MB_BYTES;
 
 // ============================================================
-// 4 層防御閾値 (ADR-0021 §5、DB 容量と同閾値)
+// 監視アラート閾値 (ADR-0021 §5、DB 容量と同閾値。2026-05-31: 累積ハードキャップ撤去で write block ではなく alert)
 // ============================================================
 
 /** L1: ユーザ通知 (1GB) */
@@ -80,7 +85,11 @@ export const FILE_STORAGE_L1_USER_WARNING_BYTES = 1 * SI_GB_BYTES;
 /** L2: super_admin 通知 (10GB) */
 export const FILE_STORAGE_L2_ADMIN_ALERT_BYTES = 10 * SI_GB_BYTES;
 
-/** L3: ハードキャップ (50GB、アップロード拒否) */
+/**
+ * L3: 監視アラート閾値 (50GB)。
+ * 2026-05-31 (ADR-0030): 旧「アップロード拒否の累積ハードキャップ」から変更。現在は super_admin への
+ * 監視アラート閾値で、アップロードは止めない (定数名は import 影響回避のため HARD_CAP を残置)。
+ */
 export const FILE_STORAGE_L3_HARD_CAP_BYTES = 50 * SI_GB_BYTES;
 
 // ============================================================
@@ -192,7 +201,7 @@ export function calculateFileStorageBillableBytes(peakBytes: bigint): bigint {
  *   - 0 ~ 100MB: ¥0
  *   - 101MB ~ 1,100MB: ¥10 (1 tier)
  *   - 1,101MB ~ 2,100MB: ¥20 (2 tier)
- *   - 50GB (ハードキャップ): ¥500 (50 tier)
+ *   - 50GB: ¥500 (50 tier) ※2026-05-31 (ADR-0030) 累積ハードキャップ撤廃。上限なしで tier 加算が継続 (青天井従量)。50GB は監視アラート閾値であり請求上限ではない
  *
  * @param peakBytes 月中 peak バイト数
  * @returns 円単位の請求額 (整数)

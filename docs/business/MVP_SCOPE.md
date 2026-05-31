@@ -239,6 +239,36 @@ MVPでは、すべての機能を高度に作り込むのではなく、プロ�
 - 対応戦略の具体的アクション記録
 - 可視性: 個人情報・人物評を含むため **PM/TL + admin のみ閲覧可** (member 以下は不可)
 
+### 7.12 チャット意味検索・AI ヘルプチャット機能 (2026 実装済 / ADR-0027/0028)
+- **チャット意味検索**: 過去資産 (ナレッジ / リスク・課題 / 振り返り / メモ) を自然文で問い合わせ、
+  embedding (pgvector) + pg_trgm fallback で意味的に近い候補を返す (`chat-search.service` / `api/chat/search`)
+- **AI ヘルプチャット (たすきフクロウ)**: サービスの使い方・FAQ を自然文質問できる学習支援 AI。
+  FAQ/Guide を Voyage embedding で RAG 検索し Claude Haiku で回答 (`help-search.service` / `api/help/chat`)。
+  全プラン無料 (`LEARNING_FREE_FEATURE_UNITS`、課金集計対象外)
+- ChatPanel は `search` / `help` の 2 タブ統合 UI (`src/components/chat-semantic-search/chat-panel.tsx`)
+
+### 7.13 外部データ取込 (CSV 一括 import) 機能
+- テナント管理者自身が他システムの CSV をプロジェクト/ナレッジ等として一括取込 (preview → apply の 2 段)
+- 実装: `src/services/external-data-import.service.ts` / `src/app/api/tenants/me/external-import/` /
+  `src/app/(dashboard)/settings/tenant/external-import/`
+- CSV 100 件取込でも「1 取込操作 = 1 ApiCallLog = 1 課金」に集約 (Expert/Pro は ¥5)
+
+### 7.14 通知・メンション・コメント機能
+- **通知**: 期限・状態変化・メンションを通知ベルで把握 (`notification.service` / 日次 cron `daily-notifications`)
+- **メンション**: コメントで `@ユーザ` 指定し関係者に通知 (`mention.service` / `api/mention-candidates`)
+- **コメント**: タスク・ナレッジ・リスク課題等への自由記述コメント (`comment.service`、polymorphic)
+
+### 7.15 課金・テナント運営機能
+- **プラン管理 / 利用量集計**: Beginner / Expert / Pro の切替、当月請求金額の即時再集計 (`tenant-self.service` / `billing-dashboard.service`)
+- **Embedding 従量課金 (ADR-0022/0029/0030)**: Expert/Pro は ¥5/業務操作、Beginner は月 100 件試用上限
+- **Stripe 決済 (5 Item)**: Haiku / Sonnet / Embedding / DB容量 / Storage の 5 Subscription Item invariant (`stripe-billing.service`)
+- **データエクスポート**: 解約時に全データを CSV 出力 (`data-export.service`)
+
+### 7.16 セキュリティ・認証機能 (MFA / 監査)
+- **MFA (TOTP)**: admin 強制 / 一般ユーザ任意 (`mfa.service`)
+- **監査ログ (WORM)** / 認証イベントログ / アカウントロック / パスワード履歴ポリシー
+- 実装: `audit.service` / `auth-event.service` / `password.service` / `error-log.service` (system_error_logs)
+
 ---
 
 ## 8. MVP対象外（現時点）
@@ -247,14 +277,19 @@ MVPでは、以下の機能は対象外とする。
 
 - AIによる自動見積もり
 - AIによるWBS自動生成
-- 類似案件自動推薦
 - リスク予兆検知
 - 高度なガント編集（ドラッグ操作等）
-- 高度な通知制御
 - 承認ワークフロー
-- チャット機能
 - 高度BIダッシュボード
-- 外部サービスとの複雑な双方向連携
+- 外部サービスとの複雑な双方向連携 (リアルタイム双方向同期等。CSV 一括取込は実装済 → §7.13)
+
+> **2026 改訂注記 (実装との整合)**: 当初「対象外」に挙げていた以下は **実装済** のため除外:
+> - **類似案件自動推薦** → 提案エンジン (意味検索ベースの過去資産推薦) として実装済。「自動推薦」ではなく
+>   段階表示で recall を最大化する設計 ([SUGGESTION_FEATURE.md](../specification/SUGGESTION_FEATURE.md))。
+> - **チャット機能** → **チャット意味検索** (過去資産の自然文検索, `chat-search.service`) と
+>   **AI ヘルプチャット** (たすきフクロウ, FAQ/Guide RAG, `help-search.service`, ADR-0027/0028) として実装済。
+>   人同士のリアルタイムチャット/掲示板は引き続き対象外。
+> - **通知制御** → 通知ベル + 日次 cron 通知 (`notification.service`) を実装済。ユーザ細粒度の通知条件設定は対象外のまま。
 
 ---
 
@@ -383,6 +418,10 @@ MVPでは、以下の機能は対象外とする。
 - 再発防止策
 
 ### 9.7 意思決定・変更管理情報
+
+> **実装状況注記 (2026-05-31 ソース確認)**: 本節の意思決定・変更管理は **未実装**。
+> `decisions` / `change_requests` テーブル・service・route はいずれも存在しない (schema.prisma / src 全域で grep 0 件)。
+> 意思決定の記録は当面 **ナレッジ (種別=意思決定)** および **リスク・課題** で代替している。要件としては残置 (将来の詳細化候補)。
 
 #### 意思決定管理項目
 - 意思決定ID
@@ -546,11 +585,12 @@ MVPでは、以下の機能は対象外とする。
 - 各管理項目の必須／任意
 - 各管理項目の入力タイミング
 - 各管理項目の更新責任者
-- 権限マトリクス
-- 通知要件
-- 外部連携要件
+- 権限マトリクス ([PERMISSION_MATRIX.md](../specification/PERMISSION_MATRIX.md) で別途整備済)
+- 通知要件 (基本通知は §7.14 で実装済。細粒度の通知条件設定は未着手)
+- 外部連携要件 (CSV 一括取込は §7.13 で実装済。リアルタイム双方向同期は未着手)
 - 非機能要件
 - 運用ルール
+- 意思決定・変更管理 (§9.7、未実装)
 
 ---
 
@@ -592,10 +632,10 @@ MVPでは以下のフェーズを対象とする。
 - AI自動見積もり
 - AI自動WBS生成
 - ガント上の直接編集
-- 高度な通知条件設定
+- ユーザ細粒度の通知条件設定 (基本的な通知ベル + 日次 cron 通知は実装済)
 - 高度BIダッシュボード
-- 複雑な外部サービス双方向連携
-- チャット/掲示板機能
+- 複雑な外部サービス双方向連携 (CSV 一括取込は実装済)
+- 人同士のリアルタイムチャット/掲示板機能 (※「チャット意味検索」「AI ヘルプチャット」は別概念で実装済 — §7.12 参照)
 - 承認ワークフロー
 
 ---

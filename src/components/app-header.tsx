@@ -403,6 +403,22 @@ function AccountMenu({ user }: { user: AppHeaderUser }) {
             <span aria-hidden className="mr-1">❓</span>
             {tNav('help')}
           </Link>
+          {/*
+            feat/footer-auth-aware-links (2026-05-31): 旧フッタ + /settings/about に
+            あった「バージョン / 更新履歴」導線をここに移設。ログイン後のみ到達できる
+            AccountMenu 内に置くことで、未ログイン画面では露出しない。リンク先はアプリ内
+            /changelog (本番では https://tasukiba.com/changelog と同一実体)。
+          */}
+          <Link
+            href="/changelog"
+            role="menuitem"
+            className="block px-4 py-2 text-sm text-foreground hover:bg-accent"
+            onClick={() => setOpen(false)}
+            data-testid="account-menu-version-info"
+          >
+            <span aria-hidden className="mr-1">🆕</span>
+            {tNav('versionInfo')}
+          </Link>
           <a
             href={PRODUCT_LP_URL}
             target="_blank"

@@ -105,7 +105,7 @@ DB DEFAULT は撤去するが、コード側で **同等の挙動を明示記述
 - 関連 docs:
   - [docs/knowledge/KDD_PATTERNS.md §"tenant_id DB DEFAULT silent fallthrough"](../knowledge/KDD_PATTERNS.md)
   - [docs/design/SECURITY.md §"テナント分離検証"](../design/SECURITY.md)
-  - [docs/operations/INCIDENT_RESPONSE.md §2026-05-28](../operations/INCIDENT_RESPONSE.md)
+  - [docs/operations/INCIDENT_RESPONSE.md §2026-05-28](../operations/operate/INCIDENT_RESPONSE.md)
   - [docs/test/E2E_LESSONS.md](../test/E2E_LESSONS.md)
 - 影響範囲:
   - schema: `prisma/schema.prisma` (13 model)

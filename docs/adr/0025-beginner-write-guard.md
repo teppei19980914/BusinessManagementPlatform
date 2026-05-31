@@ -1,8 +1,10 @@
 # ADR-0025: Beginner プランの DB / File Storage 無料枠超過時 write ブロック
 
-- **Status**: Accepted
+- **Status**: Accepted (本 ADR の Beginner write guard は不変)
 - **Date**: 2026-05-29
 - **Deciders**: teppei_suyama (Tech Lead)
+
+> **2026-05-31 注記 (ADR-0030)**: 本 ADR が前提としていた「累積 50GB ハードキャップ」は [ADR-0030](./0030-embedding-monthly-budget-cap.md) §6 で**撤廃**された (= Expert/Pro は青天井従量、L3 は監視アラート閾値化)。本 ADR の **Beginner 無料枠ガード (DB 50MB / Storage 100MB の write block) は不変で存続**し、ハードキャップ撤廃後は**唯一存続する容量起因の write block** となる。本文中で「50GB ハードキャップとは別ロジック」等と記している箇所は、現行では「ハードキャップは撤廃済、Beginner ガードのみ存続」と読み替えること。
 
 ---
 
@@ -12,7 +14,7 @@ ADR-0020 (DB 容量従量課金) と ADR-0021 (ファイルストレージ従量
 
 - 無料枠: DB 50MB / File Storage 100MB (全プラン共通)
 - 超過時: 1GB tier ごと ¥50 (DB) / ¥10 (File Storage) で **全プラン共通の従量課金**
-- 50GB ハードキャップで write 拒否 (storage-guard 4 層防御の L3)
+- 50GB ハードキャップで write 拒否 (storage-guard 4 層防御の L3) ※ **このハードキャップは 2026-05-31 (ADR-0030) で撤廃済。L3 は監視アラート閾値化され、Expert/Pro の write は止めない。以下「ハードキャップ」記述は当時の文脈**
 
 しかし、Beginner プランは ADR-0019 / ADR-0022 で「**90 日完全無料**」を訴求している。LP / [docs/public/about.md](../public/about.md) / セットアップガイド等で「Beginner プランは完全無料」と明示しており、ユーザは「課金が発生しない」前提で利用を開始する。
 
@@ -57,12 +59,14 @@ Beginner プランのテナントは、**DB 使用量が 50MB / File Storage 使
 
 [src/services/storage-guard.service.ts](../../src/services/storage-guard.service.ts) の既存 4 関数に plan 判定を追加する:
 
-| 関数 | 既存責務 | 追加判定 |
+| 関数 | 既存責務 (本 ADR 時点 / ※印は 2026-05-31 ADR-0030 で撤廃) | 追加判定 (= 現行も存続) |
 |---|---|---|
-| `precheckStorageLimit()` | DB 50GB hard cap pre-check | + Beginner 50MB 超過判定 |
-| `assertStorageLimitInTx()` | DB 50GB hard cap post-check | + Beginner 50MB 超過判定 |
-| `precheckFileStorageLimit()` | File Storage 50GB hard cap pre-check | + Beginner 100MB 超過判定 |
-| `assertFileStorageLimitInTx()` | File Storage 50GB hard cap post-check | + Beginner 100MB 超過判定 |
+| `precheckStorageLimit()` | ~~DB 50GB hard cap pre-check~~※ → 計測のみ | + Beginner 50MB 超過判定 |
+| `assertStorageLimitInTx()` | ~~DB 50GB hard cap post-check~~※ → peak/level 計測 + fail-open | + Beginner 50MB 超過判定 |
+| `precheckFileStorageLimit()` | ~~File Storage 50GB hard cap pre-check~~※ | + Beginner 100MB 超過判定 |
+| `assertFileStorageLimitInTx()` | ~~File Storage 50GB hard cap post-check~~※ → peak/level 計測 | + Beginner 100MB 超過判定 |
+
+> **2026-05-31 (ADR-0030)**: 上表「既存責務」の 50GB hard cap 判定は撤廃済。4 関数は現在 (a) 月中 peak / 監視アラート Level の計測更新 と (b) 本 ADR の Beginner 無料枠判定 のみを担う。Beginner 無料枠判定 (右列) は不変で存続する。
 
 これら 4 関数は既に複数経路から呼ばれているが、**呼出元ごとにエラーマッパーを個別に Beginner 対応させる必要がある** (= 戻り値の `code` を見ずにハードコードメッセージを返すラッパーが既存にあるため)。本 PR では以下 3 経路にエラーマッパー対応を追加した:
 
@@ -90,7 +94,9 @@ export class BeginnerWriteGuardExceededError extends Error {
 }
 ```
 
-HTTP マッピングは既存 `StorageLimitExceededError` パターンを踏襲: **HTTP 403 Forbidden** + structured error body。
+HTTP マッピングは (当時の) 既存 `StorageLimitExceededError` パターンを踏襲: **HTTP 403 Forbidden** + structured error body。
+
+> **2026-05-31 (ADR-0030)**: `StorageLimitExceededError` は累積ハードキャップ撤廃に伴い実装から撤去済。現行で 403 を返すのは本 ADR の `BeginnerWriteGuardExceededError` → `mapBeginnerWriteGuardErrorToResponse` のみ。HTTP 403 + structured body の方式自体は不変。
 
 ### 4. エラー UX 文言 (3 経路統一)
 
@@ -164,7 +170,7 @@ Beginner プランのテナントに対する `db-capacity-overage` / `storage-f
 
 - DB スキーマ変更なし (既存 `plan` + `storageBytesUsed` + `storageBytesUsedAt` カラムを再利用)
 - migration 不要
-- Expert / Pro テナントの挙動は完全に不変 (50GB hard cap のみで判定、従量課金は従来通り)
+- Expert / Pro テナントの挙動は本 ADR では不変 (本 ADR 時点では 50GB hard cap のみで判定、従量課金は従来通り)。**※ 2026-05-31 (ADR-0030) で Expert/Pro 側の 50GB hard cap は撤廃 → 青天井従量 + 監視アラートに変更。本 ADR の Beginner ガードはそれと独立して不変**
 
 ## Implementation Plan (実装手順)
 
@@ -197,6 +203,7 @@ DB スキーマ変更がないため、データ移行や migration 不要でロ
 - ADR-0020: docs/adr/0020-db-capacity-usage-based-billing.md (§11 = 本 ADR のテンプレート)
 - ADR-0021: docs/adr/0021-file-storage-usage-based-billing.md
 - ADR-0022: docs/adr/0022-embedding-usage-based-billing.md (Beginner 課金 skip の先行事例)
+- ADR-0030: docs/adr/0030-embedding-monthly-budget-cap.md (§6 で累積 50GB ハードキャップ撤廃。本 ADR の Beginner ガードは不変で存続)
 - 仕様書: docs/specification/BEGINNER_PLAN.md (本 ADR 採用後に新規作成)
 - 実装: src/services/storage-guard.service.ts, src/services/tenant-storage.service.ts
 - 設定: src/config/db-capacity-pricing.ts, src/config/file-storage-pricing.ts

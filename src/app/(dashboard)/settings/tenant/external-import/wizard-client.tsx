@@ -60,20 +60,17 @@ type StoragePrecheck = {
   estimatedAddedBytes: number;
   estimatedPostImportBytes: number;
   freeQuotaBytes: number;
-  hardCapBytes: number;
   level:
     | 'none'
     | 'beginner-block'
     | 'l1-warning'
-    | 'l2-warning'
-    | 'l3-block';
+    | 'l2-warning';
   isBlocker: boolean;
   code:
     | 'OK'
     | 'BEGINNER_FREE_QUOTA_EXCEEDED'
     | 'L1_WARNING'
-    | 'L2_WARNING'
-    | 'L3_HARD_CAP_EXCEEDED';
+    | 'L2_WARNING';
   message: string;
   expectedOverageJpy: number;
 };
@@ -650,7 +647,7 @@ function Step3Preview(props: {
 }) {
   const { summary, costEstimate, errors, storagePrecheck } = props.preview;
   const hasError = errors.length > 0;
-  // 4 巡目フルスキャン (2026-05-28): Beginner 50MB block / L3 50GB block の事前判定
+  // Beginner 50MB 無料枠 block の事前判定 (2026-05-31: L3 50GB 累積ハードキャップは撤去 ADR-0030)
   const isStorageBlocker = storagePrecheck?.isBlocker === true;
 
   return (

@@ -131,14 +131,14 @@ const PLAN_OPTIONS: PlanLabel[] = [
     label: 'Expert',
     description:
       'プロジェクト作成/更新 ¥10/call (資産入力とチャット検索は無料・無制限)。' +
-      'DB 容量 ¥50/GB tier・ファイル容量 ¥10/GB tier の従量課金 (50GB ハードキャップ)',
+      'DB 容量 ¥50/GB tier・ファイル容量 ¥10/GB tier の従量課金 (上限なし)',
   },
   {
     value: 'pro',
     label: 'Pro',
     description:
       'プロジェクト作成/更新 + なぜ機能 ¥15/call・Claude Sonnet (資産入力とチャット検索は無料)。' +
-      'DB 容量 ¥50/GB tier・ファイル容量 ¥10/GB tier の従量課金 (50GB ハードキャップ)',
+      'DB 容量 ¥50/GB tier・ファイル容量 ¥10/GB tier の従量課金 (上限なし)',
   },
 ];
 
@@ -1624,7 +1624,8 @@ function DataImportSection() {
                   <strong>¥50/GB tier の従量課金</strong>。preview で「取込後の予測使用量」と「予測月次課金額」が表示されます
                 </li>
                 <li>
-                  <strong>共通</strong>: 50 GB ハードキャップに到達した場合は全プランで書込み拒否 (読取り・エクスポートは可)
+                  <strong>共通</strong>: 1 回の登録で扱える容量は最大 5MB (DB) / 50MB (ファイル 1 件)。
+                  累積容量による書込み拒否はありません (2026-05-31 ADR-0030、Expert / Pro は上限なし従量課金)
                 </li>
               </ul>
             </div>

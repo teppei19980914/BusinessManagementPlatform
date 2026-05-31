@@ -44,10 +44,10 @@ import { randomUUID } from 'crypto';
 import { hash as bcryptHash } from 'bcryptjs';
 import { prisma } from '@/lib/db';
 import type { Prisma } from '@/generated/prisma/client';
-// PR-3 (2026-05-15): 取込後の容量超過を検知してロールバックする
+// 取込後に peak 計測 + Beginner 無料枠 post-check を best-effort 実行する
+//   2026-05-31: 50GB 累積ハードキャップ (StorageLimitExceededError) は撤去 (ADR-0030)
 import {
   assertStorageLimitInTx,
-  StorageLimitExceededError,
   // ADR-0025 (2026-05-29): Beginner プラン超過時の専用エラー型
   BeginnerWriteGuardExceededError,
 } from '@/services/storage-guard.service';
@@ -75,8 +75,6 @@ export type ImportErrorCode =
   | 'IMPORT_IN_PROGRESS' // 二重インポート (in-flight ロック発火)
   | 'BEGINNER_SEAT_LIMIT' // Beginner 5 席超過
   | 'DECOMPRESSED_TOO_LARGE' // D-1: ZIP 解凍後サイズが上限超過 (= ZIP bomb 二重防御)
-  // PR-3 (2026-05-15): 取込後の容量が Storage プラン上限超過 → 全件ロールバック
-  | 'STORAGE_LIMIT_EXCEEDED'
   // ADR-0025 (2026-05-29): Beginner プラン 50MB / 100MB 超過 → ZIP 取込ロールバック
   | 'BEGINNER_QUOTA_EXCEEDED';
 
@@ -175,41 +173,33 @@ export async function importTenantData(
     };
   }
 
-  // ---------- 5. トランザクション内で全件作成 + ストレージ Post-check ----------
-  // PR-3 (2026-05-15): 取込後に容量が Storage プラン上限を超えていたら全件ロールバックする。
-  //   ZIP の中身が大きく、Pre-check (キャッシュ値) を通り抜けても実取込で超過しうるため
-  //   transaction 内で `assertStorageLimitInTx` を呼んで最終境界を担保する。
+  // ---------- 5. 全件作成 (write tx) + ストレージ Post-check (best-effort、別 tx) ----------
+  // 2026-05-31 (ADR-0030「データはたすきばの命」): 50GB 累積ハードキャップ撤去に伴い write tx と
+  //   peak 計測を分離。write は単独コミットし、計測失敗で巻き戻さない (fail-open、日次 cron が補正)。
+  //   Beginner 無料枠超過は pre-check (runImportStoragePrecheck) が事前ブロック。ここは保険の post-check。
   try {
     const summary = await prisma.$transaction(
-      async (tx) => {
-        const s = await runImport(tx, tenantId, parsed, importerUserId);
-        await assertStorageLimitInTx(tx, tenantId);
-        return s;
-      },
+      async (tx) => runImport(tx, tenantId, parsed, importerUserId),
       { timeout: 120_000, maxWait: 10_000 },
     );
+    try {
+      await prisma.$transaction(
+        async (tx) => assertStorageLimitInTx(tx, tenantId),
+        { timeout: 10_000 },
+      );
+    } catch (postErr) {
+      // Beginner 無料枠超過は専用文言を返す (data は既にコミット済、precheck 取り逃しの保険)
+      if (postErr instanceof BeginnerWriteGuardExceededError) {
+        return {
+          ok: false,
+          error: 'BEGINNER_QUOTA_EXCEEDED',
+          message:
+            'Beginner プランの無料枠 (DB 50MB / Storage 100MB) を超えました。不要なデータを削除する、または Expert プランへアップグレードしてください。',
+        };
+      }
+      // 計測失敗 (fail-open): storage-guard 内で記録済 + 日次 cron が補正するため握りつぶす。
+    }
     return { ok: true, summary };
-  } catch (error) {
-    // ADR-0025 (2026-05-29): Beginner プラン超過時の専用文言を返す。
-    //   pre-check (runImportStoragePrecheck) で取り逃した実バイト超過 (= ZIP 解凍後のサイズ
-    //   推定誤差) を post-check (assertStorageLimitInTx) が捕捉した場合に到達する。
-    //   catch 漏れだと 500 Internal Server Error になりユーザに UX 文言が届かない (検証指摘の§1.4)。
-    if (error instanceof BeginnerWriteGuardExceededError) {
-      return {
-        ok: false,
-        error: 'BEGINNER_QUOTA_EXCEEDED',
-        message:
-          'Beginner プランの無料枠 (DB 50MB / Storage 100MB) を超えました。不要なデータを削除する、または Expert プランへアップグレードしてください。',
-      };
-    }
-    if (error instanceof StorageLimitExceededError) {
-      return {
-        ok: false,
-        error: 'STORAGE_LIMIT_EXCEEDED',
-        message: `取込データの合計容量がデータ容量上限 (${Math.floor(error.limitBytes / (1000 * 1000 * 1000))} GB、ADR-0020) を超えるためインポートを中止しました。データを削除してから再度お試しください。`,
-      };
-    }
-    throw error;
   } finally {
     // 例外時もロック解放 (失敗で残らないように try/finally で保証)
     await releaseImportLock(tenantId);

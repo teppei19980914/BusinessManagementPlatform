@@ -11,8 +11,11 @@ import { isAdminOrAbove } from '@/lib/permissions/role';
 import type { Action, PermissionContext } from '@/lib/permissions';
 import type { SystemRole, ProjectRole, ProjectStatus } from '@/types';
 // PR-5 (2026-05-15): ストレージ容量 Pre-check (cached) — write API の入口で
-//   テナント上限超過を早期に弾く。完全な Post-check は import 経路で別途実施。
+//   Beginner 無料枠超過を早期に弾く。
+// 2026-05-31: 累積 50GB ハードキャップ撤去 (ADR-0030) に伴い、1 操作あたりペイロード上限
+//   (DB_WRITE_PAYLOAD_MAX_BYTES = 5MB) を瞬間負荷ガードとして追加。
 import { precheckStorageLimit } from '@/services/storage-guard.service';
+import { DB_WRITE_PAYLOAD_MAX_BYTES } from '@/config/db-capacity-pricing';
 
 export type AuthenticatedUser = {
   id: string;
@@ -203,60 +206,60 @@ export async function requireActualProjectMember(
 }
 
 /**
- * PR-5 (2026-05-15): write 系 API の入口で **ストレージ容量 Pre-check** を行う共通ヘルパ。
+ * write 系 API の入口で **(1) 1 操作ペイロード上限 + (2) Beginner 無料枠** を Pre-check する共通ヘルパ。
  *
- * 役割:
- *   テナントの `storageBytesUsed` (キャッシュ値) + 予測サイズが上限を超える場合に
- *   403 STORAGE_LIMIT_EXCEEDED を返す。
+ * 役割 (2026-05-31 改定 / ADR-0030「データはたすきばの命」):
+ *   1. **1 操作ペイロード上限 (DB_WRITE_PAYLOAD_MAX_BYTES = 5MB)**: 1 リクエストの DB ペイロードが
+ *      5MB (UTF-8 byte) を超えたら 413 PAYLOAD_TOO_LARGE。Netlify Functions の硬上限 6MB の手前で
+ *      クリーンなエラーを返すための瞬間負荷ガード。
+ *   2. **Beginner 無料枠 (50MB)**: Beginner プランで `storageBytesUsed` キャッシュ + 予測サイズが
+ *      50MB を超える場合に 403 BEGINNER_DB_QUOTA_EXCEEDED。
  *
  * 設計判断:
- *   - **Pre-check のみ (キャッシュベース)** で個別 CRUD の入口を守る:
- *     - cache は日次 cron で更新 (= 最大 24h lag)
- *     - 細かい race は許容、daily cron + 7 日 Grace で eventual に補正
- *   - 完全な atomic guard (= Post-check + ロールバック) は **import 経路で別途実施**:
- *     - data-import / external-data-import の `withStorageGuard` で transaction 内 Post-check
- *   - 個別 create/update は payload が kB 規模なので Pre-check で十分
+ *   - **累積 50GB ハードキャップは撤廃** (ADR-0030)。全プラン共通の write block は無くなり、
+ *     Beginner 無料枠ガードのみが残る (Expert/Pro は青天井従量課金)。
+ *   - peak 計測 / 課金根拠の更新は日次 cron `updateAllStorageBytesUsed` が担う (本ヘルパは入口の軽量判定のみ)。
  *
  * @param tenantId 対象テナント
- * @param estimatedBytes 追加見込みバイト数 (= JSON.stringify(body).length 等の近似)。
- *   省略時は 0 (= 既に上限超過しているテナントのみ拒否、新規 payload は通す)。
- * @returns 超過時は NextResponse (403)、OK なら null
+ * @param estimatedBytes 追加見込みバイト数。**UTF-8 byte 基準**で渡すこと
+ *   (= `Buffer.byteLength(JSON.stringify(body), 'utf8')`)。`String.length` (char 数) だと
+ *   日本語で約 3 倍ずれ、5MB ガードが Netlify 6MB より後ろにずれて空振りするため不可。
+ *   省略時は 0 (= 既に Beginner 無料枠超過のテナントのみ拒否)。
+ * @returns 超過時は NextResponse (413/403)、OK なら null
  */
 export async function requireStorageQuotaForWrite(
   tenantId: string,
   estimatedBytes: number = 0,
 ): Promise<NextResponse | null> {
-  const result = await precheckStorageLimit(tenantId, estimatedBytes);
-  if (!result.ok) {
-    // ADR-0025 (2026-05-29): Beginner プラン超過時は専用 UX 文言 + アップグレード誘導を返す。
-    //   precheckStorageLimit が code='BEGINNER_DB_QUOTA_EXCEEDED' を返した場合、
-    //   ハードキャップエラーとは別レスポンス形式で 403 を返す (= mapBeginnerWriteGuardErrorToResponse
-    //   と同じ body 形式)。これにより全 write route で UX 文言が統一される (ADR-0025 §4)。
-    if (result.code === 'BEGINNER_DB_QUOTA_EXCEEDED') {
-      return NextResponse.json(
-        {
-          error: {
-            code: 'BEGINNER_DB_QUOTA_EXCEEDED',
-            message:
-              'Beginner プランの無料枠 (DB 50MB / Storage 100MB) を超えました。不要なデータを削除する、または Expert プランへアップグレードしてください。',
-            quotaType: 'db' as const,
-            currentBytes: result.cachedUsedBytes,
-            limitBytes: result.limitBytes,
-            upgradeUrl: '/settings/tenant',
-          },
-        },
-        { status: 403 },
-      );
-    }
-    // ADR-0020 (2026-05-25): 50GB ハードキャップ。4 段階プランは廃止。
+  // (1) 1 操作ペイロード上限 (Netlify 6MB の手前で clean error)
+  if (estimatedBytes > DB_WRITE_PAYLOAD_MAX_BYTES) {
     return NextResponse.json(
       {
         error: {
-          code: 'STORAGE_LIMIT_EXCEEDED',
+          code: 'PAYLOAD_TOO_LARGE',
+          message: `1 回の登録で扱えるデータ量の上限 (${Math.floor(DB_WRITE_PAYLOAD_MAX_BYTES / 1_000_000)}MB) を超えています。内容を分割して保存してください。`,
+          limitBytes: DB_WRITE_PAYLOAD_MAX_BYTES,
+        },
+      },
+      { status: 413 },
+    );
+  }
+
+  // (2) Beginner 無料枠 Pre-check
+  const result = await precheckStorageLimit(tenantId, estimatedBytes);
+  if (!result.ok) {
+    // ADR-0025 (2026-05-29): Beginner プラン超過時は専用 UX 文言 + アップグレード誘導を返す。
+    //   (= mapBeginnerWriteGuardErrorToResponse と同じ body 形式。全 write route で UX 文言統一)
+    return NextResponse.json(
+      {
+        error: {
+          code: 'BEGINNER_DB_QUOTA_EXCEEDED',
           message:
-            'データ容量が上限 50GB に達しました。データを削除してから再度お試しください。データの読み取り・エクスポートは引き続き可能です。',
+            'Beginner プランの無料枠 (DB 50MB / Storage 100MB) を超えました。不要なデータを削除する、または Expert プランへアップグレードしてください。',
+          quotaType: 'db' as const,
           currentBytes: result.cachedUsedBytes,
           limitBytes: result.limitBytes,
+          upgradeUrl: '/settings/tenant',
         },
       },
       { status: 403 },

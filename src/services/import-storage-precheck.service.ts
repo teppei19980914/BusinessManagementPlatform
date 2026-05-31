@@ -6,8 +6,8 @@
  *   取込前に「現在の DB 使用量 + 取込予測増分」を計算し、プラン別の判定結果を返す:
  *
  *   - **Beginner プラン**: 50MB 無料枠超過なら **取込ブロック** (apply 拒否、preview で警告表示)
- *   - **Expert / Pro プラン**: L1 (1GB) / L2 (10GB) 到達なら **警告表示** (取込は継続可)
- *   - **全プラン共通**: L3 (50GB) ハードキャップは `assertStorageLimitInTx` (post-check) で enforce
+ *   - **Expert / Pro プラン**: L1 (1GB) / L2 (10GB) 到達なら **警告表示** (取込は継続可、青天井従量課金)
+ *   - 2026-05-31: 全プラン共通の L3 (50GB) 累積ハードキャップは撤去 (ADR-0030)
  *
  * 設計判断:
  *   - 行数 × 平均バイト数 で「ざっくり推定」する。完璧な精度は不要 (post-check が真の防衛線)
@@ -15,8 +15,8 @@
  *   - Voyage embedding ベクトル (768 dim × 4 byte = 3KB) も含めて計算 (visibility=draft はカウントしない)
  *
  * 関連:
- *   - ADR-0020 §2.4 (4 層防御閾値) — L1 / L2 / L3 の値はここから参照
- *   - ADR-0020 §X (Beginner 50MB block) — 本 PR で追記予定
+ *   - ADR-0020 §2.4 (監視アラート閾値) — L1 (1GB) / L2 (10GB) の値はここから参照
+ *   - ADR-0030 — 累積ハードキャップ撤去 (L3 50GB block 廃止)
  *   - ADR-0019 (Beginner = 無料試用) との整合: CSV embedding は無料、DB 容量超過時の課金は事前ブロック
  *   - feedback_unjust_billing_risk_cron.md — 「ユーザ起動 vs システム起動」の課金原則
  *   - feedback_tenant_isolation.md — 他テナント影響絶対不許容 (R3)
@@ -27,7 +27,6 @@ import {
   DB_CAPACITY_FREE_TIER_BYTES,
   DB_CAPACITY_L1_USER_WARNING_BYTES,
   DB_CAPACITY_L2_ADMIN_ALERT_BYTES,
-  DB_CAPACITY_L3_HARD_CAP_BYTES,
   calculateOverageJpy,
 } from '@/config/db-capacity-pricing';
 
@@ -68,15 +67,14 @@ export type PlanCode = 'beginner' | 'expert' | 'pro';
  *
  * - `none`: 取込後も 50MB 無料枠内
  * - `beginner-block`: Beginner プランで 50MB 無料枠超過 → apply 拒否
- * - `l1` / `l2`: Expert/Pro で警告レベル到達 (取込は継続可)
- * - `l3-block`: 50GB ハードキャップ予測超過 → apply 拒否 (全プラン共通)
+ * - `l1` / `l2`: Expert/Pro で警告レベル到達 (取込は継続可、青天井従量課金)
+ *   (2026-05-31: 全プラン共通の `l3-block` (50GB ハードキャップ) は撤去、ADR-0030)
  */
 export type ImportStorageLevel =
   | 'none'
   | 'beginner-block'
   | 'l1-warning'
-  | 'l2-warning'
-  | 'l3-block';
+  | 'l2-warning';
 
 /**
  * `precheckImportStorage()` の戻り値。
@@ -92,8 +90,6 @@ export type ImportStoragePrecheckResult = {
   estimatedPostImportBytes: number;
   /** 無料枠 (50MB) */
   freeQuotaBytes: number;
-  /** L3 ハードキャップ (50GB) */
-  hardCapBytes: number;
   /** 判定レベル */
   level: ImportStorageLevel;
   /** apply をブロックすべきか (= preview 警告のみ vs 拒否) */
@@ -103,8 +99,7 @@ export type ImportStoragePrecheckResult = {
     | 'OK'
     | 'BEGINNER_FREE_QUOTA_EXCEEDED'
     | 'L1_WARNING'
-    | 'L2_WARNING'
-    | 'L3_HARD_CAP_EXCEEDED';
+    | 'L2_WARNING';
   /** ユーザ向けメッセージ (日本語) */
   message: string;
   /** 取込後に発生し得る当月従量課金 (¥、Expert/Pro 向け表示用) */
@@ -137,10 +132,10 @@ export function estimateAddedBytes(
  * フロー:
  *   1. テナントの現在使用量 (`storageBytesUsed`) を取得
  *   2. 取込後の予測値 = 現在値 + estimatedAddedBytes を計算
- *   3. 予測値を ADR-0020 4 層防御閾値 (50MB / 1GB / 10GB / 50GB) と Beginner プラン仕様で照合
+ *   3. 予測値を Beginner 無料枠 (50MB) と L1/L2 監視アラート閾値 (1GB / 10GB) で照合
  *   4. ブロック判定 + 警告メッセージ + 予測超過料金を返す
  *
- * 判定マトリクス (ADR-0020 §X / 本 PR で確立):
+ * 判定マトリクス (2026-05-31 改定: 累積 50GB ハードキャップ撤去 ADR-0030):
  *
  *   | 予測使用量 | Beginner | Expert / Pro |
  *   |---|---|---|
@@ -148,10 +143,10 @@ export function estimateAddedBytes(
  *   | 50MB - 1GB | **BLOCK** | OK (¥0 ~ ¥50/月) |
  *   | 1GB - 10GB | **BLOCK** | **L1 warning** (¥50 ~ ¥500/月) |
  *   | 10GB - 50GB | **BLOCK** | **L2 warning** (¥500 ~ ¥2,500/月) |
- *   | ≥ 50GB | **BLOCK** | **BLOCK (L3 hard cap)** |
+ *   | ≥ 50GB | **BLOCK** | continue (青天井従量課金) |
  *
  * Beginner プランは 50MB 超過の時点で全てブロック (= 無料試用契約の保全)。
- * Expert/Pro は L1/L2 では continue 可、L3 でブロック (= apply での post-check と整合)。
+ * Expert/Pro は L1/L2 では警告のみで continue 可、上限なし (青天井従量課金=売上)。
  */
 export async function precheckImportStorage(args: {
   tenantId: string;
@@ -165,34 +160,16 @@ export async function precheckImportStorage(args: {
   const currentBytes = tenant ? Number(tenant.storageBytesUsed) : 0;
   const estimatedPostImportBytes = currentBytes + args.estimatedAddedBytes;
 
-  // L3 (50GB) ハードキャップは全プラン共通でブロック
-  if (estimatedPostImportBytes >= DB_CAPACITY_L3_HARD_CAP_BYTES) {
-    return {
-      currentBytes,
-      estimatedAddedBytes: args.estimatedAddedBytes,
-      estimatedPostImportBytes,
-      freeQuotaBytes: DB_CAPACITY_FREE_TIER_BYTES,
-      hardCapBytes: DB_CAPACITY_L3_HARD_CAP_BYTES,
-      level: 'l3-block',
-      isBlocker: true,
-      code: 'L3_HARD_CAP_EXCEEDED',
-      message:
-        '取込後の DB 容量予測 (' +
-        formatBytes(estimatedPostImportBytes) +
-        ') がハードキャップ (50GB) を超えます。' +
-        '既存データを削除してから再度お試しください。',
-      expectedOverageJpy: 0,
-    };
-  }
+  // 2026-05-31: 全プラン共通の L3 (50GB) ハードキャップは撤去 (ADR-0030「データはたすきばの命」)。
+  //   Expert/Pro は青天井従量課金で取込継続可、Beginner のみ 50MB 無料枠で block する。
 
-  // Beginner プランは 50MB 無料枠を超えたら一律ブロック (本 PR で確立)
+  // Beginner プランは 50MB 無料枠を超えたら一律ブロック
   if (args.plan === 'beginner' && estimatedPostImportBytes > DB_CAPACITY_FREE_TIER_BYTES) {
     return {
       currentBytes,
       estimatedAddedBytes: args.estimatedAddedBytes,
       estimatedPostImportBytes,
       freeQuotaBytes: DB_CAPACITY_FREE_TIER_BYTES,
-      hardCapBytes: DB_CAPACITY_L3_HARD_CAP_BYTES,
       level: 'beginner-block',
       isBlocker: true,
       code: 'BEGINNER_FREE_QUOTA_EXCEEDED',
@@ -214,7 +191,6 @@ export async function precheckImportStorage(args: {
       estimatedAddedBytes: args.estimatedAddedBytes,
       estimatedPostImportBytes,
       freeQuotaBytes: DB_CAPACITY_FREE_TIER_BYTES,
-      hardCapBytes: DB_CAPACITY_L3_HARD_CAP_BYTES,
       level: 'l2-warning',
       isBlocker: false,
       code: 'L2_WARNING',
@@ -233,7 +209,6 @@ export async function precheckImportStorage(args: {
       estimatedAddedBytes: args.estimatedAddedBytes,
       estimatedPostImportBytes,
       freeQuotaBytes: DB_CAPACITY_FREE_TIER_BYTES,
-      hardCapBytes: DB_CAPACITY_L3_HARD_CAP_BYTES,
       level: 'l1-warning',
       isBlocker: false,
       code: 'L1_WARNING',
@@ -253,7 +228,6 @@ export async function precheckImportStorage(args: {
       estimatedAddedBytes: args.estimatedAddedBytes,
       estimatedPostImportBytes,
       freeQuotaBytes: DB_CAPACITY_FREE_TIER_BYTES,
-      hardCapBytes: DB_CAPACITY_L3_HARD_CAP_BYTES,
       level: 'none',
       isBlocker: false,
       code: 'OK',
@@ -272,7 +246,6 @@ export async function precheckImportStorage(args: {
     estimatedAddedBytes: args.estimatedAddedBytes,
     estimatedPostImportBytes,
     freeQuotaBytes: DB_CAPACITY_FREE_TIER_BYTES,
-    hardCapBytes: DB_CAPACITY_L3_HARD_CAP_BYTES,
     level: 'none',
     isBlocker: false,
     code: 'OK',

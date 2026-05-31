@@ -441,13 +441,13 @@ export type StorageUsageTopRow = {
   name: string;
   llmPlan: string;
   storageBytesUsed: number;
-  /** ADR-0020 50GB ハードキャップを上限とした使用率 (0.0-1.0+) */
+  /** 50GB (L3 監視アラート閾値) を上限とした使用率 (0.0-1.0+。2026-05-31: 累積ハードキャップは撤去 ADR-0030) */
   storageUsageRatio: number;
 };
 
 export async function listStorageUsageTop(limit: number = 10): Promise<StorageUsageTopRow[]> {
-  // chore/storage-addon-backend-removal (2026-05-26): 旧 4 段階プラン上限計算を撤去。
-  //   ADR-0020 で固定の 50GB ハードキャップ + 従量課金に統一。
+  // 使用率の分母は 50GB (= L3 監視アラート閾値)。2026-05-31: 累積ハードキャップは撤去 (ADR-0030)、
+  //   非 Beginner は上限なし従量課金。50GB は super_admin への監視アラート閾値として進捗表示に使用。
   const tenants = await prisma.tenant.findMany({
     // 2026-05-09 (PR E / #19): 管理テナント + default テナントを除外
     where: { id: { notIn: SUPER_ADMIN_EXCLUDED_TENANT_IDS }, deletedAt: null },
@@ -606,7 +606,7 @@ export type DefaultTenantOwnSummary = {
   /** ADR-0022 (2026-06-01): Embedding 系の当月課金額 (請求対象外、参考表示) */
   currentMonthEmbeddingCostJpy: number;
   storageBytesUsed: number;
-  /** ADR-0020 50GB ハードキャップ上限の使用率 */
+  /** 50GB (L3 監視アラート閾値) 上限の使用率 (2026-05-31: 累積ハードキャップは撤去 ADR-0030) */
   storageUsageRatio: number;
 };
 
@@ -641,8 +641,7 @@ export async function getDefaultTenantOwnSummary(): Promise<DefaultTenantOwnSumm
     reconcileTenantEmbeddingUsage(DEFAULT_TENANT_ID).catch(() => null),
   ]);
 
-  // chore/storage-addon-backend-removal (2026-05-26): 旧 4 段階プラン上限を撤去、
-  //   ADR-0020 の固定 50GB ハードキャップを上限として使用率算出。
+  // 使用率の分母は 50GB (= L3 監視アラート閾値)。2026-05-31: 累積ハードキャップは撤去 (ADR-0030)。
   const usedBytes = Number(t.storageBytesUsed);
   const usageRatio = DB_CAPACITY_L3_HARD_CAP_BYTES > 0
     ? usedBytes / DB_CAPACITY_L3_HARD_CAP_BYTES

@@ -181,6 +181,6 @@
   - [docs/adr/](../adr/) (主要設計判断)
   - [docs/business/FEATURE_CATALOG.md](../business/FEATURE_CATALOG.md)
   - [docs/business/GLOSSARY.md](../business/GLOSSARY.md)
-- 開発フロー: [docs/developer-guide/](../developer-guide/)
-- 環境構築: [docs/operations/SETUP_LOCAL.md](./SETUP_LOCAL.md)
+- 開発フロー: [docs/operations/develop/](./develop/)
+- 環境構築: [docs/operations/develop/SETUP_LOCAL.md](./develop/SETUP_LOCAL.md)
 - ONBOARDING.md (root, クイックスタート): [../../ONBOARDING.md](../../ONBOARDING.md)

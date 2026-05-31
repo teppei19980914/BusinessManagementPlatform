@@ -3,7 +3,7 @@
 - 起票日: 2026-05-01
 - 最終更新: 2026-05-25 (ADR-0019 価格改定反映)
 - 対象機能: 提案エンジン v2 (Phase 1 + Phase 2、6月1日リリース)
-- 関連: [SUGGESTION_ENGINE_PLAN.md](../developer/SUGGESTION_ENGINE_PLAN.md) / [DESIGN.md §34](../developer/DESIGN.md) / [ADR-0019](../adr/0019-billable-feature-units-and-free-tier-expansion.md) (価格改定)
+- 関連: [design/SUGGESTION_ENGINE.md](../design/SUGGESTION_ENGINE.md) / [design/OBSERVABILITY.md](../design/OBSERVABILITY.md) / [ADR-0019](../adr/0019-billable-feature-units-and-free-tier-expansion.md) (価格改定)
 
 > 🆕 **ADR-0019 (2026-05-24) 価格改定による脅威モデル影響**: 課金対象を `BILLABLE_FEATURE_UNITS` のみに縮小したことで、無料化された featureUnit (chat-semantic-search / *-embedding / *-backfill 等) の **DoS / 経済的攻撃リスク** が新たに顕在化。これに対し以下の防御を追加実装済 (PR #441):
 > - **fair-use-limit** (tenant 単位、月 10,000 calls 上限) — 単一テナントの異常利用を防御
@@ -150,15 +150,15 @@ PR #8 (統合テスト + リリース準備) で、`scripts/security-check.ts` �
 
 ## 監視と検知 (将来のダッシュボード設計)
 
-ご要望に基づき、本機能の異常検知は将来のサービス内ダッシュボードと統合できる設計とする。詳細は [DESIGN.md §34](../developer/DESIGN.md) の監視設計セクションを参照。
+ご要望に基づき、本機能の異常検知は将来のサービス内ダッシュボードと統合できる設計とする。詳細は [design/OBSERVABILITY.md](../design/OBSERVABILITY.md) の監視設計セクションを参照。
 
-短期 (v1) では外部 cron (cron-job.org) による日次バッチで集計し admin にメール通知する最小実装を行い、中期 (v2 以降) で `/admin/observability/llm` ダッシュボードとして可視化する。これは [RELEASE_ROADMAP.md](../administrator/RELEASE_ROADMAP.md) Phase 3c の `/admin/observability` の一部として組み込まれる予定である。
+短期 (v1) では外部 cron (cron-job.org) による日次バッチで集計し admin にメール通知する最小実装を行い、中期 (v2 以降) で `/admin/observability/llm` ダッシュボードとして可視化する。これは [RELEASE_ROADMAP.md](../archive/2026-06-01-pre-ops-reorg/roadmap/RELEASE_ROADMAP.md) Phase 3c の `/admin/observability` の一部として組み込まれる予定である。
 
 ---
 
 ## マルチテナント前提での追加脅威分析
 
-外部公開後の本サービスはマルチテナント SaaS として運用されるため ([DESIGN.md §34.11](../developer/DESIGN.md))、テナント間の認可境界に関する脅威を追加で分析する。
+外部公開後の本サービスはマルチテナント SaaS として運用されるため ([design/ARCHITECTURE.md](../design/ARCHITECTURE.md))、テナント間の認可境界に関する脅威を追加で分析する。
 
 ### MT-1: テナント間データ漏洩 (Information Disclosure)
 

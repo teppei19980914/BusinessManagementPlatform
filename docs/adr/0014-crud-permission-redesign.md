@@ -81,7 +81,7 @@ public 可視性のメモは admin によるモデレーション削除を可能
 - **PM/TL ロールガード文言の追加**: `FORBIDDEN_PMTL_ROLE`, `CANNOT_CHANGE_OWN_ROLE`, `CANNOT_CHANGE_OWN_PROJECT_ROLE` 等の i18n 文言を新規追加
 
 ### Risk / 留意事項
-- **Knowledge per-link gate 非対称**: 一部の knowledge リンク経由参照で gate が非対称な箇所が残存 ([FOLLOW_UP_AFTER_PR416.md](../knowledge/FOLLOW_UP_AFTER_PR416.md) で追跡)
+- **Knowledge per-link gate 非対称**: 一部の knowledge リンク経由参照で gate が非対称な箇所が残存 ([FOLLOW_UP_AFTER_PR416.md](../archive/2026-06-01-pre-ops-reorg/FOLLOW_UP_AFTER_PR416.md) で追跡)
 - **suggestion sourceProjectName 漏洩**: 提案エンジン応答に閲覧不可プロジェクト名が含まれるケースが残存 (同上、フォローアップ予定)
 - **context 引数の付け忘れ**: 新規 route 追加時に service を呼ぶ際 context を渡し忘れると TypeScript で検知できるが、呼び出し側の判断ミス (例: `'project'` を渡すべきところに `'cross'`) は静的検知不可。コードレビューで担保
 
@@ -123,4 +123,4 @@ public 可視性のメモは admin によるモデレーション削除を可能
 - **影響ファイル (仕様文書)**:
   - [docs/specification/PERMISSION_MATRIX.md §7.X](../specification/PERMISSION_MATRIX.md)
   - [docs/business/USER_ROLES.md §6.6](../business/USER_ROLES.md)
-- **フォローアップ**: [docs/knowledge/FOLLOW_UP_AFTER_PR416.md](../knowledge/FOLLOW_UP_AFTER_PR416.md) (Knowledge per-link gate 非対称, suggestion sourceProjectName 漏洩)
+- **フォローアップ**: [FOLLOW_UP_AFTER_PR416.md](../archive/2026-06-01-pre-ops-reorg/FOLLOW_UP_AFTER_PR416.md) (Knowledge per-link gate 非対称, suggestion sourceProjectName 漏洩)

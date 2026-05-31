@@ -218,7 +218,7 @@ export default async function SuperAdminTenantDetailPage({
           <DetailCard
             label="使用量"
             value={formatBytesSuper(tenant.storageBytesUsed)}
-            tooltip="添付ファイル + DB 行サイズの合算 (= ADR-0020 課金根拠)。上限は ADR-0020 で 50GB ハードキャップ。"
+            tooltip="添付ファイル + DB 行サイズの合算 (= 課金根拠)。50GB は L3 監視アラート閾値 (2026-05-31: 累積ハードキャップは撤去 ADR-0030)。Expert/Pro は上限なし従量課金。"
           />
           {/* chore/storage-addon-backend-removal (2026-05-26): 旧 Storage 月額固定費は撤去。
               ApiCallLog 集計 (DB / file storage 超過の従量課金を含む) に統合 */}

@@ -22,7 +22,7 @@
 
 ## 0. cron とは (= 定期実行スケジューラ)
 
-「毎日 21 時に〇〇する」「毎月 1 日に〇〇する」のような **時間トリガで自動実行される処理** を cron と呼びます。本サービスでは [cron-job.org](https://cron-job.org) という外部サービスから本サービスの HTTPS endpoint を叩く形で実装しています ([詳細: DEPLOYMENT.md §6](../operations/DEPLOYMENT.md))。
+「毎日 21 時に〇〇する」「毎月 1 日に〇〇する」のような **時間トリガで自動実行される処理** を cron と呼びます。本サービスでは [cron-job.org](https://cron-job.org) という外部サービスから本サービスの HTTPS endpoint を叩く形で実装しています ([詳細: DEPLOYMENT.md §6](../operations/develop/DEPLOYMENT.md))。
 
 各 cron が「実行された」「失敗した」記録は DB の `cron_execution_logs` テーブルに保存され、`/admin/super/cron-history` 画面で運用者が一覧確認できます。
 
@@ -30,7 +30,9 @@
 
 ## 1. 全 cron の全体像 (日次タイムライン + 月次)
 
-### 1.1 日次 cron (毎日決まった時刻に動く、10 件)
+### 1.1 日次・高頻度 cron (10 件)
+
+> 内訳: 毎日決まった時刻に動く 9 件 (health-check / daily-notifications / billing-overdue-alert / daily-usage-aggregation / diagnostics-daily-alert / cron-failure-alert / stripe-auto-suspend / stripe-usage-flush / lock-inactive-users) + 10 分毎の attachment-embedding 1 件 = **10 件**。月次 3 件 (§1.2) と合わせて全 13 件 (= 本サービス cron 合計、冒頭の件数表参照)。
 
 ```
 JST   00:00 ───┬─────────────────────────────────────────────────────────┐
@@ -318,8 +320,8 @@ stripe-auto-suspend (猶予期限超過を read-only 化)
 
 ### 5.2 運用ドキュメント
 
-- cron-job.org 設定手順: [DEPLOYMENT.md §6](../operations/DEPLOYMENT.md)
-- 障害対応 SOP: [INCIDENT_RESPONSE.md](../operations/INCIDENT_RESPONSE.md)
+- cron-job.org 設定手順: [DEPLOYMENT.md §6](../operations/develop/DEPLOYMENT.md)
+- 障害対応 SOP: [INCIDENT_RESPONSE.md](../operations/operate/INCIDENT_RESPONSE.md)
 
 ### 5.3 過去の知見 (KDD)
 
@@ -333,6 +335,7 @@ stripe-auto-suspend (猶予期限超過を read-only 化)
 | 2026-05-30 | 初版 (PR #471 で人間向けに体系化、ユーザ要請) |
 | 2026-05-30 | 実態同期 1 巡目: cron-job.org 真実源から 3 件の時刻乖離を補正 (lock-inactive 21→12 / attachment-embedding 15→10 / billing-overdue 10→17) + health-check §2.13 追加 + §6 cron-job.org 運用注意セクション追加 |
 | 2026-05-30 | 実態同期 2 巡目: ユーザがスケジュール再変更 (lock-inactive 12→21 / tenant-monthly-reset 9→0 / billing-monthly-aggregation 9→0 / billing-overdue 17→7 / health-check 9→7) + attachment-embedding 重複登録解消済 §6.1 履歴化 + health-check の通知仕様を §2.13 に明示 |
+| 2026-05-31 | §1.1 ラベルを「日次・高頻度 cron (10 件)」に明確化 (毎日決まった時刻 9 件 + 10 分毎 attachment-embedding 1 件 = 10 件、config `CRON_JOBS` 12 件 + health-check で全 13 件)。アンカー生存確認済 |
 
 ---
 

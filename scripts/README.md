@@ -19,15 +19,15 @@
 
 | スクリプト | 用途 | 実行コマンド | 関連ドキュメント |
 |---|---|---|---|
-| [generate-seed-embeddings.ts](./generate-seed-embeddings.ts) | Seed データの embedding 一括生成 (Voyage API 呼出) | `pnpm seed:generate-embeddings` | [docs/developer-guide/SEED_DATA_MAINTENANCE.md](../docs/developer-guide/SEED_DATA_MAINTENANCE.md) |
-| [check-seed-length.ts](./check-seed-length.ts) | Seed データの文字列長が DB 制約に違反していないか検査 | `tsx scripts/check-seed-length.ts` | [docs/developer-guide/SEED_DATA_MAINTENANCE.md](../docs/developer-guide/SEED_DATA_MAINTENANCE.md) |
-| [print-migration.ts](./print-migration.ts) | 指定 migration の SQL 差分を出力 (適用前の確認用) | `pnpm migrate:print <name>` | [docs/operations/DB_MIGRATION_PROCEDURE.md](../docs/operations/DB_MIGRATION_PROCEDURE.md) |
+| [generate-seed-embeddings.ts](./generate-seed-embeddings.ts) | Seed データの embedding 一括生成 (Voyage API 呼出) | `pnpm seed:generate-embeddings` | [docs/operations/develop/SEED_DATA_MAINTENANCE.md](../docs/operations/develop/SEED_DATA_MAINTENANCE.md) |
+| [check-seed-length.ts](./check-seed-length.ts) | Seed データの文字列長が DB 制約に違反していないか検査 | `tsx scripts/check-seed-length.ts` | [docs/operations/develop/SEED_DATA_MAINTENANCE.md](../docs/operations/develop/SEED_DATA_MAINTENANCE.md) |
+| [print-migration.ts](./print-migration.ts) | 指定 migration の SQL 差分を出力 (適用前の確認用) | `pnpm migrate:print <name>` | [docs/operations/develop/DB_MIGRATION_PROCEDURE.md](../docs/operations/develop/DB_MIGRATION_PROCEDURE.md) |
 
 ### 運用 / 緊急対応 (本番運用時のみ手動実行)
 
 | スクリプト | 用途 | 実行コマンド | 想定シナリオ |
 |---|---|---|---|
-| [recover-prisma-migrations.ts](./recover-prisma-migrations.ts) | 失敗した migration の `_prisma_migrations` テーブル不整合を復旧 | `pnpm db:recover` | migration の途中で fail した場合、または `relation already exists` (42P07) が出た場合 ([docs/operations/DB_MIGRATION_PROCEDURE.md](../docs/operations/DB_MIGRATION_PROCEDURE.md)) |
+| [recover-prisma-migrations.ts](./recover-prisma-migrations.ts) | 失敗した migration の `_prisma_migrations` テーブル不整合を復旧 | `pnpm db:recover` | migration の途中で fail した場合、または `relation already exists` (42P07) が出た場合 ([docs/operations/develop/DB_MIGRATION_PROCEDURE.md](../docs/operations/develop/DB_MIGRATION_PROCEDURE.md)) |
 | [cleanup-orphan-user.ts](./cleanup-orphan-user.ts) | テナント削除時に残った孤立ユーザを物理削除 | `tsx scripts/cleanup-orphan-user.ts` | テナント削除運用後の整合性チェック |
 
 ### Stripe / TC 検証 (staging/dev 専用、PR #425 で追加)
@@ -60,7 +60,7 @@
 
 ## 関連ドキュメント
 
-- DB 操作系: [docs/operations/DB_MIGRATION_PROCEDURE.md](../docs/operations/DB_MIGRATION_PROCEDURE.md)
-- Seed メンテ: [docs/developer-guide/SEED_DATA_MAINTENANCE.md](../docs/developer-guide/SEED_DATA_MAINTENANCE.md)
+- DB 操作系: [docs/operations/develop/DB_MIGRATION_PROCEDURE.md](../docs/operations/develop/DB_MIGRATION_PROCEDURE.md)
+- Seed メンテ: [docs/operations/develop/SEED_DATA_MAINTENANCE.md](../docs/operations/develop/SEED_DATA_MAINTENANCE.md)
 - セキュリティチェック仕組み全体: [docs/security/README.md](../docs/security/README.md)
-- インシデント対応 SOP: [docs/operations/INCIDENT_RESPONSE.md](../docs/operations/INCIDENT_RESPONSE.md)
+- インシデント対応 SOP: [docs/operations/operate/INCIDENT_RESPONSE.md](../docs/operations/operate/INCIDENT_RESPONSE.md)

@@ -1,16 +1,19 @@
 /**
  * AppFooter のソースパターン回帰テスト
  * (初版 feat/app-version-changelog-footer / 2026-05-23,
- *  改 feat/app-header-footer-unification / 2026-05-24).
+ *  改 feat/app-header-footer-unification / 2026-05-24,
+ *  改 feat/footer-auth-aware-links / 2026-05-31).
  *
  * 採用理由:
  *   vitest 設定が environment='node' で jsdom 非導入。同等方針で他 component test も
- *   source-pattern 検証している (KDD §5.X+114)。
+ *   source-pattern 検証している (KDD §5.X+114)。Server Component (async) かつ props 分岐の
+ *   ため DOM レンダリングはせず、ソース文字列上の invariant で「何を表示し / 何を削ったか」を縛る。
  *
- * 2026-05-24 リライト方針:
- *   コンテンツ削減でリンク群と表示要素が大幅に変わったため、旧テストの「外部リンクは
- *   _blank + rel noopener」「version helper を参照」等は意味を失った。新仕様の
- *   invariant に書き換え、「画面圧迫を防ぐため何を削ったか」を明示的にテストで縛る。
+ * 2026-05-31 リライト方針 (認証状態で出し分け):
+ *   - 共通情報 (常時表示): 製品ページ / 利用規約 / プライバシーポリシー / 運営者情報 / 特商法
+ *     → すべて外部 LP アンカー (@/config/legal-versions の定数経由)。
+ *   - ログイン後限定 (isAuthenticated): お知らせ (アプリ内 /announcements) / セキュリティ報告 (LP #security)。
+ *   - 旧仕様で表示していた copyright / 最終更新日 / サービス情報 (/settings/about) は全廃。
  */
 
 import { describe, it, expect } from 'vitest';
@@ -20,67 +23,79 @@ import { join } from 'node:path';
 const FOOTER_FILE = join(__dirname, 'app-footer.tsx');
 const source = readFileSync(FOOTER_FILE, 'utf8');
 
-describe('AppFooter の構造 invariant (2026-05-24 改訂仕様)', () => {
+describe('AppFooter の構造 invariant (2026-05-31 認証出し分け仕様)', () => {
   it('<footer> 要素を持つ (semantic HTML)', () => {
     expect(source).toMatch(/<footer\b/);
   });
 
   it('mt-auto クラスを持つ (root layout の flex-col で最下段に押し下げる)', () => {
-    // body の `flex min-h-full flex-col` 構造に依存し children に flex-1 を要求しない
-    // ことが本コンポーネントの設計上の前提。`mt-auto` が消えると children が短い画面で
-    // footer が中央に浮く layout 不具合になる。
     expect(source).toMatch(/\bmt-auto\b/);
   });
 
-  it('内部リンクは /settings/about と /announcements の 2 件のみ (削減仕様)', () => {
-    expect(source).toMatch(/href="\/settings\/about"/);
-    expect(source).toMatch(/href="\/announcements"/);
+  it('isAuthenticated prop を受け取り、データ属性に反映する', () => {
+    expect(source).toMatch(/isAuthenticated/);
+    expect(source).toMatch(/data-authenticated/);
+  });
+});
+
+describe('AppFooter 共通情報リンク (ログイン前後で常時表示)', () => {
+  it('LP アンカー定数を legal-versions から import している (二重管理防止)', () => {
+    expect(source).toMatch(/from '@\/config\/legal-versions'/);
+    expect(source).toMatch(/PRODUCT_USER_PAGE_URL/);
+    expect(source).toMatch(/TERMS_URL/);
+    expect(source).toMatch(/PRIVACY_URL/);
+    expect(source).toMatch(/OPERATOR_INFO_URL/);
+    expect(source).toMatch(/TOKUSHOHO_URL/);
   });
 
-  it('copyright + 最終更新日を残す (健全運営シグナルの最小単位)', () => {
-    expect(source).toMatch(/copyright/);
-    expect(source).toMatch(/lastUpdated/);
-    expect(source).toMatch(/getReleaseDate/);
-    expect(source).toMatch(/OPERATOR_LABEL/);
+  it('共通情報の 5 ラベルを i18n キー経由で表示する', () => {
+    expect(source).toMatch(/t\('productPage'\)/);
+    expect(source).toMatch(/t\('terms'\)/);
+    expect(source).toMatch(/t\('privacy'\)/);
+    expect(source).toMatch(/t\('operatorInfo'\)/);
+    expect(source).toMatch(/t\('tokushoho'\)/);
+  });
+
+  it('共通情報は外部 LP リンク (target=_blank + rel noopener noreferrer)', () => {
+    expect(source).toMatch(/target="_blank"/);
+    expect(source).toMatch(/rel="noopener noreferrer"/);
+  });
+});
+
+describe('AppFooter ログイン後限定情報 (isAuthenticated 分岐内)', () => {
+  it('isAuthenticated のときだけ お知らせ / セキュリティ報告 を出す条件分岐がある', () => {
+    expect(source).toMatch(/\{isAuthenticated\s*&&/);
+  });
+
+  it('お知らせはアプリ内遷移 (next/link で /announcements)', () => {
+    expect(source).toMatch(/from 'next\/link'/);
+    expect(source).toMatch(/href="\/announcements"/);
+    expect(source).toMatch(/t\('announcements'\)/);
+  });
+
+  it('セキュリティ報告は LP #security (SECURITY_REPORT_URL) へ外部遷移', () => {
+    expect(source).toMatch(/SECURITY_REPORT_URL/);
+    expect(source).toMatch(/t\('securityReport'\)/);
   });
 });
 
 describe('AppFooter から削減された要素 (退行防止)', () => {
-  it('旧 1 段目 (サービス名 / バージョン / 運営者) が footer に再出現していない', () => {
-    // ユーザ要望「画面上の表示項目を極力減らす」に従い 1 段目は完全削除済。
-    // 「一貫性のため」「健全運営アピールのため」等の理由で誰かが復活させた場合に検知する。
-    expect(source).not.toMatch(/formatVersionLabel/);
-    expect(source).not.toMatch(/OPERATOR_NAME\b/); // OPERATOR_LABEL (copyright 用) は OK
-    expect(source).not.toMatch(/operatorPrefix/);
+  it('copyright / 最終更新日 (lastUpdated) を表示しない', () => {
+    expect(source).not.toMatch(/copyright/);
+    expect(source).not.toMatch(/lastUpdated/);
+    expect(source).not.toMatch(/getReleaseDate/);
+    expect(source).not.toMatch(/OPERATOR_LABEL/);
   });
 
-  it('旧 2 段目の外部リンク (TERMS / PRIVACY / CONTACT) が footer に再出現していない', () => {
-    // これらは /settings/about (サービス情報) に集約されており、footer からは導線を提供
-    // しないことが「玄関だけ提供」設計の核心。
-    expect(source).not.toMatch(/TERMS_URL/);
-    expect(source).not.toMatch(/PRIVACY_URL/);
-    expect(source).not.toMatch(/CONTACT_FORM_URL/);
+  it('サービス情報リンク (/settings/about) への遷移が消えている (ページごと廃止)', () => {
+    // docblock 内の廃止経緯コメントとしての言及は許容し、href / Link 属性としての
+    // 実リンクが無いことだけを縛る (経緯説明まで消すと将来 drift の理由が失われるため)。
+    expect(source).not.toMatch(/href="\/settings\/about"/);
+    expect(source).not.toMatch(/href={['"`]\/settings\/about/);
+    expect(source).not.toMatch(/t\('about'\)/);
   });
 
-  it('旧 2 段目の内部リンク /changelog が footer から消えている (about に集約済)', () => {
+  it('バージョン / 更新履歴 (/changelog) は footer に持たない (AccountMenu へ移設)', () => {
     expect(source).not.toMatch(/href="\/changelog"/);
-  });
-
-  it('外部リンク (target="_blank") が 1 つも残っていない', () => {
-    // footer から外部リンクを全廃した結果、tabnabbing リスクの面でも安全になった。
-    expect(source).not.toMatch(/target="_blank"/);
-  });
-});
-
-describe('AppFooter の docblock 設計意図 (将来の drift 防止)', () => {
-  it('auto-hide 対象外の理由を docblock に明記している', () => {
-    // 「ヘッダと挙動が非対称」を理由に勝手に fixed-bottom + auto-hide 化されるのを防ぐ。
-    // ChatFab / Toast との重なり対応が必須な点を明示している。
-    expect(source).toMatch(/auto-hide 対象外/);
-    expect(source).toMatch(/ChatSemanticSearchFab|fixed bottom/);
-  });
-
-  it('about ページへの集約意図を docblock に明記している', () => {
-    expect(source).toMatch(/集約/);
   });
 });

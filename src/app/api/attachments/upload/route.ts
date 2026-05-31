@@ -8,7 +8,7 @@
  *   4. per-tenant Pre-signed URL 発行レート制限 (10/min、ADR-0021 §10.2.1)
  *   5. 危険拡張子 blacklist チェック (.exe / .sh 等)
  *   6. ファイル名 sanitize + sizeBytes <= 50MB
- *   7. precheckFileStorageLimit (cache 50GB ハードキャップ判定、ADR-0021 §10.7)
+ *   7. precheckFileStorageLimit (Beginner 100MB 無料枠判定。2026-05-31: 累積 50GB ハードキャップは撤去 ADR-0030)
  *   8. Object Key 構築 (= 'tenants/{tid}/{entityType}/{eid}/{uuid}-{safeName}')
  *   9. Supabase Pre-signed Upload URL 発行 (TTL 60 秒)
  *  10. レスポンス: { uploadUrl, token, objectKey, sanitizedFileName, expiresIn }
@@ -109,34 +109,21 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // 6. ストレージ pre-check (Beginner 100MB / 全プラン 50GB ハードキャップ)
+  // 6. ストレージ pre-check (Beginner 100MB 無料枠)
+  //    2026-05-31: 全プラン共通の 50GB 累積ハードキャップは撤去 (ADR-0030)。Beginner 無料枠のみ判定。
   const cap = await precheckFileStorageLimit(user.tenantId, input.sizeBytes);
   if (!cap.ok) {
     // ADR-0025 (2026-05-29): Beginner プラン専用 UX 文言 + アップグレード誘導
-    if (cap.code === 'BEGINNER_STORAGE_QUOTA_EXCEEDED') {
-      return NextResponse.json(
-        {
-          error: {
-            code: 'BEGINNER_STORAGE_QUOTA_EXCEEDED',
-            message:
-              'Beginner プランの無料枠 (DB 50MB / Storage 100MB) を超えました。不要なデータを削除する、または Expert プランへアップグレードしてください。',
-            quotaType: 'storage' as const,
-            currentBytes: cap.cachedUsedBytes,
-            limitBytes: cap.limitBytes,
-            upgradeUrl: '/settings/tenant',
-          },
-        },
-        { status: 403 },
-      );
-    }
     return NextResponse.json(
       {
         error: {
-          code: cap.code,
+          code: 'BEGINNER_STORAGE_QUOTA_EXCEEDED',
           message:
-            'ファイル添付の容量が上限 50GB に達しました。不要なファイルを削除してから再度お試しください。既存ファイルのダウンロードは引き続き可能です。',
+            'Beginner プランの無料枠 (DB 50MB / Storage 100MB) を超えました。不要なデータを削除する、または Expert プランへアップグレードしてください。',
+          quotaType: 'storage' as const,
           currentBytes: cap.cachedUsedBytes,
           limitBytes: cap.limitBytes,
+          upgradeUrl: '/settings/tenant',
         },
       },
       { status: 403 },

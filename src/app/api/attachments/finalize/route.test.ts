@@ -61,9 +61,9 @@ import { POST } from './route';
 import { getAuthenticatedUser } from '@/lib/api-helpers';
 import { prisma } from '@/lib/db';
 import { authorizeForAttachmentEntity } from '@/services/attachment.service';
-import { FileStorageLimitExceededError } from '@/services/storage-guard.service';
+import { BeginnerWriteGuardExceededError } from '@/services/storage-guard.service';
 import { deleteObject, getObjectInfo } from '@/lib/supabase-storage';
-import { FILE_STORAGE_L3_HARD_CAP_BYTES } from '@/config/file-storage-pricing';
+import { BEGINNER_STORAGE_FREE_TIER_BYTES } from '@/config/file-storage-pricing';
 
 const TENANT_ID = 'aaaaaaaa-1111-4111-8111-111111111111';
 const ENTITY_ID = 'bbbbbbbb-2222-4222-8222-222222222222';
@@ -200,12 +200,13 @@ describe('POST /api/attachments/finalize', () => {
     expect(res.status).toBe(503);
   });
 
-  it('ハードキャップ超過 → 403 + Storage オブジェクト削除', async () => {
+  it('Beginner 無料枠超過 → 403 + Storage オブジェクト削除 (2026-05-31: 50GB 累積ハードキャップは撤去 ADR-0030)', async () => {
     vi.mocked(prisma.$transaction).mockImplementationOnce(async () => {
-      throw new FileStorageLimitExceededError({
+      throw new BeginnerWriteGuardExceededError({
         tenantId: TENANT_ID,
-        currentBytes: FILE_STORAGE_L3_HARD_CAP_BYTES + 1,
-        limitBytes: FILE_STORAGE_L3_HARD_CAP_BYTES,
+        quotaType: 'storage',
+        currentBytes: BEGINNER_STORAGE_FREE_TIER_BYTES + 1,
+        limitBytes: BEGINNER_STORAGE_FREE_TIER_BYTES,
       });
     });
     const res = await POST(makeReq(validBody));

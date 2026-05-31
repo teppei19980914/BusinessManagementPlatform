@@ -1,10 +1,10 @@
 # Stripe Metered Billing 詳細技術設計
 
-最終更新: 2026-05-25 (ADR-0019 価格改定反映)
-ステータス: **詳細設計確定 + 実装済 (PR #425 で UAT 検出問題群を反映、PR #441 で ADR-0019 価格改定反映)**
-関連: [STRIPE_BILLING.md](../business/STRIPE_BILLING.md) (仕様) / [ADR-0006](../adr/0006-stripe-metered-billing-integration.md) (設計判断) / [ADR-0019](../adr/0019-billable-feature-units-and-free-tier-expansion.md) (2026-05-24 価格改定) / [STRIPE_INTEGRATION_PLAN.md](../roadmap/STRIPE_INTEGRATION_PLAN.md) (実装計画)
+最終更新: 2026-05-31 (実装ミラー同期: API バージョン / 5 Item invariant / Meter API / 実 cron 名)
+ステータス: **詳細設計確定 + 実装済 (PR #425 で UAT 検出問題群を反映、PR #441 で ADR-0019 価格改定反映、2026-05-31 に as-built へ整合)**
+関連: [STRIPE_BILLING.md](../business/STRIPE_BILLING.md) (仕様) / [ADR-0006](../adr/0006-stripe-metered-billing-integration.md) (設計判断) / [ADR-0019](../adr/0019-billable-feature-units-and-free-tier-expansion.md) (2026-05-24 価格改定) / [STRIPE_INTEGRATION_PLAN.md](../archive/2026-06-01-pre-ops-reorg/roadmap/STRIPE_INTEGRATION_PLAN.md) (実装計画・実装完了済 archive)
 
-> 🆕 **ADR-0019 (2026-05-24) 反映**: Stripe queue 投入は `BILLABLE_FEATURE_UNITS` のみ (project-upsert / suggestion-explanation / auto-tag-extract)。Haiku Price 単価 ¥5 → ¥10 (新 Price ID 発行 + ENV 切替必要)、Sonnet ¥15 据置。詳細: [ADR-0019](../adr/0019-billable-feature-units-and-free-tier-expansion.md)、運用手順: [STRIPE_SETUP.md](../operations/STRIPE_SETUP.md)
+> 🆕 **ADR-0019 (2026-05-24) 反映**: Stripe queue 投入は `BILLABLE_FEATURE_UNITS` のみ (project-upsert / suggestion-explanation / auto-tag-extract)。Haiku Price 単価 ¥5 → ¥10 (新 Price ID 発行 + ENV 切替必要)、Sonnet ¥15 据置。詳細: [ADR-0019](../adr/0019-billable-feature-units-and-free-tier-expansion.md)、運用手順: [STRIPE_SETUP.md](../operations/setup/STRIPE_SETUP.md)
 
 ## 概要
 
@@ -197,7 +197,7 @@ cancel 後の再 setup は KDD §5.X+106 (= idempotencyKey に paymentMethodId �
 
 - **DB が信頼源**: 「paymentMethod === 'credit_card' なら Stripe Subscription が必ず存在する」が invariant
 - **Phase 4 失敗時のリカバリ**: Stripe Subscription は作成済だが DB は `paymentMethod='invoice'` のまま → 次回 setup 時に「既存 Subscription があれば再利用」のロジックで補正可能
-- **idempotency_key で重複作成防止**: `subscription:create:${tenantId}` で同一テナントへの 2 重作成を Stripe 側で防ぐ
+- **idempotency_key で重複作成防止**: `subscription:create:${tenantId}:${paymentMethodId}` で「同一カードでのリトライ」を冪等化しつつ「異なるカードでの再 setup」は新規作成 (§A-2、PR #425 で `tenantId` のみ → `tenantId + paymentMethodId` に変更)
 
 #### Phase 4 失敗時の検出と補償 cron
 
@@ -383,30 +383,22 @@ model StripeWebhookEvent {
 | 2 (= 2 回失敗後) | 受信時刻 + 30 分 | super_admin に通知 (= mail) |
 | 3 (= 3 回失敗後) | null (DLQ 入り、自動再試行停止) | super_admin に critical アラート |
 
-#### 5 分間隔の cron で再試行
+#### 再送方式 (実装: Stripe 自動再送 + safety-net cron + 手動 DLQ)
 
-```typescript
-// src/app/api/cron/stripe-webhook-retry/route.ts
-export async function GET() {
-  const events = await prisma.stripeWebhookEvent.findMany({
-    where: {
-      processedAt: null,
-      nextRetryAt: { lte: new Date() },
-      retryCount: { lt: 3 },
-    },
-    take: 50,
-  });
-  for (const event of events) {
-    await dispatchWebhookEvent(event); // 成功時は processedAt セット、失敗時は retryCount++ & nextRetryAt 更新
-  }
-}
-```
+> ⚠️ **当初設計の `stripe-webhook-retry` 専用 cron は実装されていない**。実方式は以下の 3 層:
+>
+> 1. **Stripe 自動再送 (一次防御)**: Webhook handler が 2xx を返さない / DB INSERT に失敗した場合、Stripe 側が指数 backoff で最大 3 日間自動再送する (Stripe 標準動作)。専用 retry cron は不要。
+> 2. **`stripe-reconcile` (safety-net cron / 月初 1 日 15:00 JST)**: Webhook 配信遅延・恒久失敗で DB が古いままになったケースを、Stripe Subscription 状態を直接取得して月次で突合・補正する (= §D-2 / `src/app/api/cron/stripe-reconcile/route.ts`)。Webhook を取りこぼしても最終整合はここで担保。
+> 3. **DLQ 手動再投入**: `processedAt=null` の恒久失敗イベントは下記の super_admin DLQ 画面から手動で再処理する。
+>
+> 実在する Stripe 関連 cron は **`stripe-usage-flush` / `stripe-reconcile` / `stripe-auto-suspend`** の 3 件のみ ([CRON_JOBS.md](./CRON_JOBS.md) / `src/config/cron-jobs.ts`)。
 
-#### DLQ 入り (= retryCount >= 3) の取扱い
+#### DLQ 入り (= 恒久失敗) の取扱い
 
-- super_admin ダッシュボード `/admin/super/stripe/dlq` (新設) で一覧表示
-- 手動で「再試行」「破棄」「詳細表示」ボタン
-- 累積件数が 10 件超えたら critical アラート (= 何らかの体系的問題)
+- super_admin ダッシュボード **`/admin/super/stripe-dlq`** (実装済、`src/app/(dashboard)/admin/super/stripe-dlq/page.tsx`) で一覧表示
+  - Webhook 失敗: `src/app/api/admin/super/stripe-dlq/webhook/[id]/retry/route.ts`
+  - Usage 送信失敗: `src/app/api/admin/super/stripe-dlq/usage/[id]/retry/route.ts`
+- 手動で「再試行 (retry)」ボタンから再投入。診断ダッシュボード (`diagnostics-daily-alert`) の 9 検知のうち「Stripe queue」で滞留を検知。
 
 ### B-3. Stripe API ダウン時の挙動
 
@@ -425,7 +417,9 @@ export async function GET() {
 model StripeUsageRecordQueue {
   id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   tenantId        String   @map("tenant_id") @db.Uuid
-  /// 'haiku' / 'sonnet' (= Subscription Item の識別、tenant の subscriptionItemId を解決)
+  /// Meter callType (= STRIPE_METER_EVENT_NAMES のキー):
+  ///   'haiku' / 'sonnet' / 'embedding' / 'db_capacity_overage' / 'storage_file_overage'。
+  ///   Meter API では event_name に変換して Customer 単位で送信する (Subscription Item ID 解決は不要)。
   callType        String   @map("call_type") @db.VarChar(20)
   /// ApiCallLog.id (= idempotency_key として使う、UUID)
   apiCallLogId    String   @map("api_call_log_id") @db.Uuid
@@ -448,10 +442,15 @@ model StripeUsageRecordQueue {
 }
 ```
 
-#### 5 分間隔の送信 cron
+#### 送信 cron: `stripe-usage-flush` (日次 14:00 JST)
+
+> ⚠️ **実装は `stripe-usage-flush`** (`src/app/api/cron/stripe-usage-flush/route.ts` / `src/services/stripe-usage-flush.service.ts`)。当初設計名 `stripe-usage-record-flush` は存在しない。スケジュールは「5 分間隔」ではなく **日次 14:00 JST** ([CRON_JOBS.md §2.6](./CRON_JOBS.md))。
+>
+> ⚠️ **送信 API は Meter API に移行済**。legacy の `stripe.subscriptionItems.createUsageRecord(subscriptionItemId, ...)` ではなく、**`stripe.billing.meterEvents.create({ event_name, payload: { stripe_customer_id, value } })`** を使う (PR-V8 / 2026-05-19、`STRIPE_API_VERSION='2026-04-22.dahlia'` に伴う移行)。送信は Subscription Item ID 単位ではなく **Customer 単位 + event_name** で行い、Stripe 側が active Subscription を経由して該当 Item に課金する。event_name はコード定数 `STRIPE_METER_EVENT_NAMES` (`src/lib/stripe.ts`)。
 
 ```typescript
-// src/app/api/cron/stripe-usage-record-flush/route.ts
+// src/app/api/cron/stripe-usage-flush/route.ts (日次 14:00 JST)
+//   STRIPE_ENABLED=false の環境では no-op 早期 return。
 export async function GET() {
   const pending = await prisma.stripeUsageRecordQueue.findMany({
     where: {
@@ -463,18 +462,20 @@ export async function GET() {
   });
   for (const record of pending) {
     const tenant = await prisma.tenant.findUnique({ where: { id: record.tenantId } });
-    const subscriptionItemId = record.callType === 'haiku'
-      ? tenant.stripeSubscriptionItemHaikuId
-      : tenant.stripeSubscriptionItemSonnetId;
-    if (!subscriptionItemId) {
+    if (!tenant?.stripeCustomerId || tenant.paymentMethod !== 'credit_card') {
       // テナントが既に credit_card じゃない (= invoice 戻し済) → queue から削除
       await prisma.stripeUsageRecordQueue.delete({ where: { id: record.id } });
       continue;
     }
+    // Meter API: Customer 単位 + event_name で送信 (= Subscription Item ID は不要)
     const result = await withStripeError(() =>
-      stripe.subscriptionItems.createUsageRecord(subscriptionItemId, {
-        quantity: record.quantity,
+      stripe.billing.meterEvents.create({
+        event_name: STRIPE_METER_EVENT_NAMES[record.callType], // 'tasukiba_haiku_api_call' 等
         timestamp: Math.floor(record.occurredAt.getTime() / 1000),
+        payload: {
+          stripe_customer_id: tenant.stripeCustomerId,
+          value: String(record.quantity),
+        },
       }, {
         idempotencyKey: `usage:${record.tenantId}:${record.callType}:${record.apiCallLogId}`,
       })
@@ -501,7 +502,7 @@ function nextRetryAt(retryCount: number): Date | null {
   // exponential backoff: 1, 5, 15, 60, 240 分
   const delays = [1, 5, 15, 60, 240];
   const delayMin = delays[retryCount - 1];
-  if (delayMin == null) return null; // = DLQ 入り
+  if (delayMin == null) return null; // = 恒久失敗 (DLQ 手動再投入対象)
   return new Date(Date.now() + delayMin * 60 * 1000);
 }
 ```
@@ -555,7 +556,7 @@ async function completeStripeSetup(tenantId, setupSessionId) {
     automatic_tax: { enabled: true },
     billing_cycle_anchor: jstMonthStart, // 当月の月初に anchor
     proration_behavior: 'none',
-  }, { idempotencyKey: `subscription:create:${tenantId}` });
+  }, { idempotencyKey: `subscription:create:${tenantId}:${paymentMethodId}` });
 
   // 【新規】Phase 3.5: 切替前の当月 Usage を Stripe に遡及送信
   const jstMonthStartDate = new Date(jstMonthStart * 1000);
@@ -621,14 +622,21 @@ async function completeStripeSetup(tenantId, setupSessionId) {
 
 #### 設計判断: **「全アイテム並存、Usage Record 送信先のみ切替」**
 
-Beginner / Expert / Pro はすべて同じ Subscription 上に共存し、Usage Record の送信先 Subscription Item を切り替えるだけ。
+Beginner / Expert / Pro はすべて同じ Subscription 上に共存し、Meter event の送信先 (= event_name) を切り替えるだけ。
+
+> ✅ **2026-05-30 現行構成は 5 Item invariant** (`src/services/stripe-billing.service.ts:869-881`、Production 全 5 env 設定済)。
+> Storage は ADR-0020/0021 で定額 SKU から **従量課金 (Metered)** に変更済のため、旧「定額 Storage Item」記述は廃止。
 
 ```
-Subscription (= 1 つのテナント契約)
-├─ Item Haiku (= STRIPE_PRICE_HAIKU)    ← Expert プラン時のみ Usage 送信
-├─ Item Sonnet (= STRIPE_PRICE_SONNET)  ← Pro プラン時のみ Usage 送信
-└─ Item Storage (= STRIPE_PRICE_STORAGE_*) ← 常時アクティブ
+Subscription (= 1 つのテナント契約) — 5 Item invariant (env 設定済の Item のみ追加される Stripe-ready 設計)
+├─ Item Haiku           (= STRIPE_PRICE_HAIKU,                Meter tasukiba_haiku_api_call)        ← Expert plan の billable call
+├─ Item Sonnet          (= STRIPE_PRICE_SONNET,               Meter tasukiba_sonnet_api_call)       ← Pro plan の billable call
+├─ Item Embedding       (= STRIPE_PRICE_EMBEDDING,            Meter tasukiba_embedding_call)        ← Expert/Pro embedding (¥5, ADR-0029)
+├─ Item DB Capacity     (= STRIPE_PRICE_DB_CAPACITY_OVERAGE,  Meter tasukiba_db_capacity_overage_jpy) ← DB 容量超過 (¥1/unit 円整数)
+└─ Item Storage File    (= STRIPE_PRICE_STORAGE_FILE_OVERAGE, Meter tasukiba_storage_file_overage_jpy)← ファイルストレージ超過 (¥1/unit 円整数)
 ```
+
+> Beginner プラン時は Haiku/Sonnet/Embedding の billable Meter Event を送信しない (= `withMeteredLLM` 内で cost>0 判定)。DB 容量 / ストレージ超過は plan 非依存で発生分のみ送信。
 
 #### プラン変更時の挙動
 
@@ -700,13 +708,13 @@ const subscription = await stripe.subscriptions.create({
 #### Usage Record の timestamp も JST ベースで送信
 
 ```typescript
-// reportUsage で
-await stripe.subscriptionItems.createUsageRecord(itemId, {
-  quantity: 1,
+// reportUsage で (Meter API、PR-V8 移行後)
+await stripe.billing.meterEvents.create({
+  event_name: STRIPE_METER_EVENT_NAMES[callType], // 'tasukiba_haiku_api_call' 等
   // JST 時刻を Unix 秒に変換 → Stripe は受け取って自動で UTC として扱うが、
   // 月末境界の判定で 9 時間ズレないよう、API 呼び出し時刻をそのまま (= UTC ベース) 送信
   timestamp: Math.floor(Date.now() / 1000),
-  action: 'increment',
+  payload: { stripe_customer_id: stripeCustomerId, value: '1' },
 });
 ```
 
@@ -885,16 +893,18 @@ UI 側で `?from=portal` を検知したらトーストで「Stripe ポータル
 
 ### E-2. Webhook から Subscription Item ID を取得するロジック
 
+> ⚠️ **現行は Haiku / Sonnet の 2 Item ID のみ DB に保持** (`tenant.stripeSubscriptionItemHaikuId` / `…SonnetId`)。
+> `stripeSubscriptionItemStorageId` は ADR-0020/0021 で Storage 従量課金化に伴い **撤去済** (chore/storage-addon-backend-removal、2026-05-26)。
+> Embedding / DB容量 / ストレージ超過は **Meter API (event_name + Customer 単位)** で送信するため Subscription Item ID を DB に保持する必要がない (= `price_storage_` 前方一致のロジックも廃止)。
+
 ```typescript
 function extractSubscriptionItemIds(subscription: Stripe.Subscription): {
   haikuItemId: string | null;
   sonnetItemId: string | null;
-  storageItemId: string | null;
 } {
   return {
-    haikuItemId:   subscription.items.data.find(i => i.price.id === process.env.STRIPE_PRICE_HAIKU)?.id ?? null,
-    sonnetItemId:  subscription.items.data.find(i => i.price.id === process.env.STRIPE_PRICE_SONNET)?.id ?? null,
-    storageItemId: subscription.items.data.find(i => i.price.id?.startsWith('price_storage_'))?.id ?? null,
+    haikuItemId:  subscription.items.data.find(i => i.price.id === process.env.STRIPE_PRICE_HAIKU)?.id ?? null,
+    sonnetItemId: subscription.items.data.find(i => i.price.id === process.env.STRIPE_PRICE_SONNET)?.id ?? null,
   };
 }
 ```
@@ -905,8 +915,11 @@ function extractSubscriptionItemIds(subscription: Stripe.Subscription): {
 
 | 環境変数 | 値の例 | 用途 |
 |---|---|---|
-| `SYSTEM_USER_ID` | `00000000-0000-0000-0000-systemsystemid` | 自動操作 (Webhook/cron) の userId |
-| `STRIPE_API_VERSION` | `2024-12-18.acacia` | コード側で固定参照する API バージョン |
+| `SYSTEM_USER_ID` | `63cf718f-98cf-4882-9d6d-286441607d16` | 自動操作 (Webhook/cron) の userId (seed 生成済) |
+
+> `STRIPE_API_VERSION` は環境変数ではなく **コード定数** (`src/lib/stripe.ts:47` `export const STRIPE_API_VERSION = '2026-04-22.dahlia'`)。
+> PR-V8 (2026-05-19) で旧 `2024-12-18.acacia` から `2026-04-22.dahlia` に更新済 (= 2025+ の Stripe 新規アカウントでは旧版が選択不可)。
+> Usage Record 送信も legacy `subscriptionItems.createUsageRecord` から Meter API `billing.meterEvents.create` に移行済。
 
 ### E-4. Stripe Tax 利用時の `BillingHistory.taxAmountJpy` 反映
 
@@ -1084,7 +1097,7 @@ Customer Portal でユーザが手動でデフォルト変更した場合はそ�
 
 ## §F. 各 PR (実装フェーズ) との対応
 
-[STRIPE_INTEGRATION_PLAN.md](../roadmap/STRIPE_INTEGRATION_PLAN.md) の PR-S1〜S6 が本詳細設計のどこを参照するか:
+[STRIPE_INTEGRATION_PLAN.md](../archive/2026-06-01-pre-ops-reorg/roadmap/STRIPE_INTEGRATION_PLAN.md) の PR-S1〜S6 が本詳細設計のどこを参照するか:
 
 | PR | 本書で参照する箇所 |
 |---|---|
@@ -1119,5 +1132,6 @@ UNIQUE 制約 `@@unique([tenantId, yearMonth])` は **維持** (= 同月 2 レ�
 
 | 日付 | 変更 | PR / KDD |
 |---|---|---|
+| 2026-05-31 | 実装ミラー同期: §E-3 `STRIPE_API_VERSION` を `2026-04-22.dahlia` に是正 (コード定数、env ではない) + §B-2 存在しない `stripe-webhook-retry` cron を削除し実方式 (Stripe 自動再送 + `stripe-reconcile` safety-net + DLQ 手動) へ + DLQ パス `stripe/dlq`→`stripe-dlq` + §B-3 `stripe-usage-record-flush`→`stripe-usage-flush` (日次14:00) + Usage 送信を `createUsageRecord`→`billing.meterEvents.create` (Meter API) + §C-2/§E-2 を **5 Item invariant** (Haiku/Sonnet/Embedding/DBCap/Storage) へ + 旧 idempotencyKey に paymentMethodId 付与 + Storage Item ID 撤去反映 | docs/design-business-refactor-integrity / `stripe.ts:47` / `stripe-billing.service.ts:869-881` |
 | 2026-05-22 | §A-1 抜本改修 (Phase 1-5 → Step 1-6 + Step 3.5 全 active cancel + Step 6 Customer デフォルト同期 + cancel 時 DB 即時クリア) + §A-2 idempotencyKey に paymentMethodId 追加 + §H 新規 (cookie sameSite='lax' 根拠) + §I 新規 (getStripeCardSummary Subscription 優先取得) | PR #425 / KDD §5.X+103/§5.X+105/§5.X+106/§5.X+107/§5.X+108 |
 | 2026-05-14 | 初版 (詳細設計確定、10 項目 + 補助 4 項目) | docs/stripe-technical-design |

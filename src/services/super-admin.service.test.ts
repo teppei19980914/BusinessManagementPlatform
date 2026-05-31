@@ -1624,8 +1624,8 @@ describe('listStorageUsageTop — Storage ランキング (顧客のみ)', () =>
 
   // chore/storage-addon-backend-removal (2026-05-26):
   //   旧 4 段階プラン (graceState / storageLimitBytes) 関連テストは撤去。
-  //   ADR-0020 50GB ハードキャップを上限とした使用率のみ検証する。
-  it('使用率を 50GB ハードキャップ上限で計算', async () => {
+  //   50GB (L3 監視アラート閾値) を上限とした使用率のみ検証する (2026-05-31: 累積ハードキャップ撤去 ADR-0030)。
+  it('使用率を 50GB (L3 監視アラート閾値) 上限で計算', async () => {
     vi.mocked(prisma.tenant.findMany).mockResolvedValueOnce([
       {
         id: 'tenant-A', tenantSeq: 1, name: '通常',
