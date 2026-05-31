@@ -39,8 +39,8 @@ ADR-0027 (2026-05-29) で導入された `/help` / `/guide` ページ上のた�
 - **Enter 送信** / Shift+Enter 改行 (`isComposing` チェック必須)
 - **2000 字上限** (`MAX_QUERY_CHARS`)、超過時は警告 + 送信不可
 - **AbortController** で連投時の前回 fetch を破棄
-- **sessionStorage 履歴**: `tasukiba_help_chat_history_v1`、最大 50 ターン
-- **ログアウト時 / ユーザ ID 変化時** に履歴を強制クリア ([[feedback_client_sessionstorage_user_isolation]])
+- **sessionStorage 履歴**: **ユーザスコープキー `tasukiba_help_chat_history_v1:{userId}`** (2026-05-31 に固定キーから変更)、最大 50 ターン。共通実装 `src/lib/chat-history-storage.ts`
+- **ユーザ越境防御 (severity-1)**: キーを userId でスコープ + ログイン時に `purgeOtherUsersHistory()` で他ユーザ分除去。`window.location.href` フルページ遷移で effect が発火しない罠への根本対策。ログアウト時 `purgeAllHistory()` は多層防御 ([[feedback_client_sessionstorage_user_isolation]])
 
 ## 2. API 仕様
 

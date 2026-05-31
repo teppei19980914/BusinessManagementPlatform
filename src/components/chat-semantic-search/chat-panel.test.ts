@@ -99,7 +99,7 @@ describe('ChatPanel のマスコット統合 invariant', () => {
   });
 });
 
-describe('ChatPanel 会話履歴の永続化 invariant (H-1 / H-2)', () => {
+describe('ChatPanel 会話履歴の永続化 + ★severity-1 ユーザ越境防御★ invariant', () => {
   it('ChatTurn 型を定義しており userQuery / result / error フィールドを持つ', () => {
     expect(source).toMatch(/type\s+ChatTurn\s*=\s*\{/);
     expect(source).toMatch(/userQuery:\s*string/);
@@ -107,80 +107,58 @@ describe('ChatPanel 会話履歴の永続化 invariant (H-1 / H-2)', () => {
     expect(source).toMatch(/error\?:\s*string/);
   });
 
-  it('turns state を配列で保持し、ユーザ発言と応答を時系列順で描画する', () => {
-    // useState<ChatTurn[]> または useState の lazy init で turns を持つ。
+  it('turns state を配列で保持し、map で時系列描画する', () => {
     expect(source).toMatch(/useState<ChatTurn\[\]>/);
-    // map で描画している (= 全ターンを連続レンダリング)。
     expect(source).toMatch(/turns\.map\(/);
   });
 
-  it('sessionStorage 永続化ヘルパ (loadHistory / saveHistory / clearHistory) を定義している', () => {
-    expect(source).toMatch(/function\s+loadHistory\s*\(/);
-    expect(source).toMatch(/function\s+saveHistory\s*\(/);
-    expect(source).toMatch(/function\s+clearHistory\s*\(/);
+  it('★越境防御★ 履歴は共有 chat-history-storage の user-scoped ヘルパで永続化する', () => {
+    expect(source).toMatch(/from\s*'@\/lib\/chat-history-storage'/);
+    expect(source).toMatch(/loadScopedHistory/);
+    expect(source).toMatch(/saveScopedHistory/);
+    expect(source).toMatch(/purgeOtherUsersHistory/);
+    expect(source).toMatch(/CHAT_SEARCH_HISTORY_BASE_KEY/);
+    // 固定キーをコンポーネントに直書きしない (= スコープ化されたキーのみ使う)
+    expect(source).not.toMatch(/['"]tasukiba_chat_history_v1['"]/);
   });
 
-  it('sessionStorage の key は version 付き (tasukiba_chat_history_v1)', () => {
-    // schema 変更時に key を bump する運用のため、v1 サフィックスを明示する。
-    expect(source).toMatch(/tasukiba_chat_history_v1/);
+  it('★越境防御★ 固定キーの lazy init を廃止し、viewerUserId 確定後に purge + scoped load する', () => {
+    // 旧: useState(() => loadHistory()) は固定キーから即時復元するため A の履歴が B に漏れる
+    expect(source).not.toMatch(/useState<ChatTurn\[\]>\(\(\)\s*=>\s*loadHistory\(\)\)/);
+    expect(source).toMatch(/useState<ChatTurn\[\]>\(\[\]\)/);
+    // viewerUserId を依存にした load effect で「他ユーザ purge → 現ユーザ scoped load」を行う
+    expect(source).toMatch(
+      /if\s*\(!viewerUserId\)\s*return;[\s\S]{0,260}?purgeOtherUsersHistory\(CHAT_SEARCH_HISTORY_BASE_KEY,\s*viewerUserId\)[\s\S]{0,260}?loadScopedHistory\(CHAT_SEARCH_HISTORY_BASE_KEY/,
+    );
   });
 
-  it('sessionStorage のアクセスは window 経由 (localStorage を使わない)', () => {
-    // タブを閉じたら自動消去される sessionStorage を採用 (DB 容量を消費しない設計)。
-    expect(source).toMatch(/window\.sessionStorage/);
-    expect(source).not.toMatch(/window\.localStorage/);
+  it('★越境防御★ hydrated ゲートで復元前の空配列 clobber を防いでから save する', () => {
+    expect(source).toMatch(/const\s+\[hydrated,\s*setHydrated\]\s*=\s*useState\(false\)/);
+    expect(source).toMatch(
+      /if\s*\(!hydrated\s*\|\|\s*!viewerUserId\s*\|\|\s*isUnauthenticated\)\s*return;[\s\S]{0,140}?saveScopedHistory/,
+    );
   });
 
-  it('SSR safe: window 未定義時のガードを行う', () => {
-    expect(source).toMatch(/typeof\s+window\s*===\s*['"]undefined['"]/);
-  });
-
-  it('parse / quota 失敗を try-catch で graceful degradation する', () => {
-    // loadHistory / saveHistory / clearHistory のいずれも try-catch で囲まれている。
-    const storageBlocks = source.match(/function\s+(loadHistory|saveHistory|clearHistory)[\s\S]*?\n}/g) ?? [];
-    expect(storageBlocks.length).toBeGreaterThanOrEqual(3);
-    for (const block of storageBlocks) {
-      expect(block).toMatch(/try\s*\{/);
-      expect(block).toMatch(/catch/);
-    }
-  });
-
-  it('useSession().status === "unauthenticated" でログアウトを検知し clearHistory を呼ぶ', () => {
+  it('ログアウト (unauthenticated) 検知で全ユーザ分を purgeAllHistory する (多層防御)', () => {
     expect(source).toMatch(/isUnauthenticated/);
     expect(source).toMatch(/session\.status\s*===\s*['"]unauthenticated['"]/);
-    // ログアウト useEffect 内で clearHistory + setTurns([]) を呼ぶ (コメント込みで本体が長いため上限緩め)。
-    const logoutEffect = source.match(
-      /useEffect\(\(\)\s*=>\s*\{[\s\S]{0,400}?isUnauthenticated[\s\S]{0,400}?clearHistory\(\)[\s\S]{0,500}?setTurns\(\[\]\)/,
+    expect(source).toMatch(
+      /if\s*\(!isUnauthenticated\)\s*return;[\s\S]{0,200}?purgeAllHistory\(CHAT_SEARCH_HISTORY_BASE_KEY\)/,
     );
-    expect(logoutEffect).not.toBeNull();
   });
 
   it('履歴クリアボタン (chat-panel-clear-history) をヘッダに配置している', () => {
     expect(source).toMatch(/data-testid="chat-panel-clear-history"/);
   });
 
-  it('履歴件数上限 MAX_HISTORY_TURNS が定義され、load/save で trim される (DevTools 大量挿入 + sessionStorage 5MB 上限の二重防御)', () => {
+  it('履歴件数上限 MAX_HISTORY_TURNS を定義し load/save ヘルパに渡す', () => {
     expect(source).toMatch(/MAX_HISTORY_TURNS\s*=\s*\d+/);
-    // loadHistory / saveHistory のいずれも MAX_HISTORY_TURNS で trim する。
-    const loadFn = source.match(/function\s+loadHistory[\s\S]*?\n}/);
-    expect(loadFn).not.toBeNull();
-    expect(loadFn![0]).toMatch(/MAX_HISTORY_TURNS/);
-    expect(loadFn![0]).toMatch(/slice\(-MAX_HISTORY_TURNS\)/);
-    const saveFn = source.match(/function\s+saveHistory[\s\S]*?\n}/);
-    expect(saveFn).not.toBeNull();
-    expect(saveFn![0]).toMatch(/MAX_HISTORY_TURNS/);
-    expect(saveFn![0]).toMatch(/slice\(-MAX_HISTORY_TURNS\)/);
+    expect(source).toMatch(/loadScopedHistory\([\s\S]{0,90}?MAX_HISTORY_TURNS\)/);
+    expect(source).toMatch(/saveScopedHistory\([\s\S]{0,90}?MAX_HISTORY_TURNS\)/);
   });
 
-  it('H-5: viewerUserId の変化 (= ユーザ越境) を検知して clearHistory + setTurns([]) を呼ぶ', () => {
-    // 同一タブで A → B のユーザ切替シナリオの defense-in-depth。
-    expect(source).toMatch(/prevUserIdRef/);
-    // viewerUserId の遷移を依存にした useEffect が存在する。
-    expect(source).toMatch(
-      /useEffect\(\(\)\s*=>\s*\{[\s\S]{0,800}?prev\s*!==\s*viewerUserId[\s\S]{0,400}?clearHistory\(\)/,
-    );
-    // viewerUserId 依存配列を持つ。
-    expect(source).toMatch(/\},\s*\[viewerUserId\]\)/);
+  it('手動クリアも user-scoped (clearScopedHistory + viewerUserId) で行う', () => {
+    expect(source).toMatch(/clearScopedHistory\(CHAT_SEARCH_HISTORY_BASE_KEY,\s*viewerUserId\)/);
   });
 });
 
@@ -350,8 +328,8 @@ describe('ChatPanel mode タブ統合 (ADR-0028)', () => {
     );
   });
 
-  it('help mode のクリアは sessionStorage 直接削除 + helpResetKey インクリメントで remount', () => {
-    expect(source).toMatch(/tasukiba_help_chat_history_v1/);
+  it('help mode のクリアは user-scoped 削除 (HELP_CHAT_HISTORY_BASE_KEY) + helpResetKey で remount', () => {
+    expect(source).toMatch(/clearScopedHistory\(HELP_CHAT_HISTORY_BASE_KEY,\s*viewerUserId\)/);
     expect(source).toMatch(/setHelpResetKey\(\(k\) => k \+ 1\)/);
   });
 

@@ -30,8 +30,15 @@ import { useSession } from 'next-auth/react';
 import { cn } from '@/lib/utils';
 import { CHAT_PERSONA } from '@/config';
 import type { HelpChatOutput } from '@/app/api/help/chat/route';
+import {
+  HELP_CHAT_HISTORY_BASE_KEY,
+  loadScopedHistory,
+  saveScopedHistory,
+  clearScopedHistory,
+  purgeOtherUsersHistory,
+  purgeAllHistory,
+} from '@/lib/chat-history-storage';
 
-const HISTORY_STORAGE_KEY = 'tasukiba_help_chat_history_v1';
 const MAX_HISTORY_TURNS = 50;
 const MAX_QUERY_CHARS = 2000;
 
@@ -54,44 +61,14 @@ type HelpChatTurn = {
   error?: { message: string; fallbackToAccordion?: boolean };
 };
 
-/** sessionStorage から会話履歴を読む (SSR safe、parse 失敗時は []) */
-function loadHistory(): HelpChatTurn[] {
-  if (typeof window === 'undefined') return [];
-  try {
-    const raw = window.sessionStorage.getItem(HISTORY_STORAGE_KEY);
-    if (!raw) return [];
-    const parsed: unknown = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    const valid = parsed.filter(
-      (item): item is HelpChatTurn =>
-        item !== null &&
-        typeof item === 'object' &&
-        typeof (item as { id?: unknown }).id === 'string' &&
-        typeof (item as { userQuery?: unknown }).userQuery === 'string',
-    );
-    return valid.length > MAX_HISTORY_TURNS ? valid.slice(-MAX_HISTORY_TURNS) : valid;
-  } catch {
-    return [];
-  }
-}
-
-function saveHistory(turns: HelpChatTurn[]): void {
-  if (typeof window === 'undefined') return;
-  try {
-    const trimmed = turns.length > MAX_HISTORY_TURNS ? turns.slice(-MAX_HISTORY_TURNS) : turns;
-    window.sessionStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(trimmed));
-  } catch {
-    // QuotaExceededError 等は黙って捨てる (機能継続優先)
-  }
-}
-
-function clearHistory(): void {
-  if (typeof window === 'undefined') return;
-  try {
-    window.sessionStorage.removeItem(HISTORY_STORAGE_KEY);
-  } catch {
-    // noop
-  }
+/** HelpChatTurn の最小 shape ガード (load 時の trim/検証に使用)。 */
+function isHelpChatTurn(item: unknown): item is HelpChatTurn {
+  return (
+    item !== null &&
+    typeof item === 'object' &&
+    typeof (item as { id?: unknown }).id === 'string' &&
+    typeof (item as { userQuery?: unknown }).userQuery === 'string'
+  );
 }
 
 function generateTurnId(): string {
@@ -127,7 +104,14 @@ export function HelpChatInput({
   const [query, setQuery] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [rateLimited, setRateLimited] = useState(false);
-  const [turns, setTurns] = useState<HelpChatTurn[]>(() => loadHistory());
+  // ★severity-1 ユーザ越境防御★: 履歴はユーザ ID 確定後にユーザスコープキーから復元する
+  //   (固定キーの lazy init を廃止)。chat-panel.tsx と同一方式
+  //   ([[feedback_client_sessionstorage_user_isolation]] / full-navigation 対策)。
+  const [turns, setTurns] = useState<HelpChatTurn[]>([]);
+  // 現ユーザ分で復元済かを表すゲート (復元前の空配列 clobber を防ぐ)。
+  const [hydrated, setHydrated] = useState(false);
+  // 直近に履歴を復元したユーザ ID (A→B 検知用)。
+  const loadedUserRef = useRef<string | null>(null);
   const inFlightAbortRef = useRef<AbortController | null>(null);
   const session = useSession();
   const viewerUserId = session.data?.user?.id;
@@ -141,32 +125,32 @@ export function HelpChatInput({
     onTurnsCountChange?.(turns.length);
   }, [turns.length, onTurnsCountChange]);
 
-  // sessionStorage 永続化
+  // load + ★severity-1 ユーザ越境防御 root fix★: viewerUserId 確定 (or A→B 変化) で
+  //   他ユーザ分 (旧固定キー含む) を purge → 現ユーザのスコープキーから復元。
   useEffect(() => {
-    if (isUnauthenticated) return;
-    saveHistory(turns);
-  }, [turns, isUnauthenticated]);
-
-  // ログアウト時の clear (★severity-1 H-2 from chat-panel.tsx)
-  useEffect(() => {
-    if (isUnauthenticated) {
-      clearHistory();
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setTurns([]);
-    }
-  }, [isUnauthenticated]);
-
-  // ユーザ ID 変化時の clear (★severity-1 H-5 from chat-panel.tsx)
-  const prevUserIdRef = useRef<string | undefined>(viewerUserId);
-  useEffect(() => {
-    const prev = prevUserIdRef.current;
-    if (prev !== undefined && viewerUserId !== undefined && prev !== viewerUserId) {
-      clearHistory();
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setTurns([]);
-    }
-    prevUserIdRef.current = viewerUserId;
+    if (!viewerUserId) return;
+    if (loadedUserRef.current === viewerUserId) return;
+    loadedUserRef.current = viewerUserId;
+    purgeOtherUsersHistory(HELP_CHAT_HISTORY_BASE_KEY, viewerUserId);
+    setTurns(loadScopedHistory(HELP_CHAT_HISTORY_BASE_KEY, viewerUserId, isHelpChatTurn, MAX_HISTORY_TURNS));
+    setHydrated(true);
   }, [viewerUserId]);
+
+  // persist: 復元後 (hydrated) かつ認証中のみ、現ユーザのスコープキーへ書き戻す。
+  useEffect(() => {
+    if (!hydrated || !viewerUserId || isUnauthenticated) return;
+    saveScopedHistory(HELP_CHAT_HISTORY_BASE_KEY, viewerUserId, turns, MAX_HISTORY_TURNS);
+  }, [turns, hydrated, viewerUserId, isUnauthenticated]);
+
+  // ログアウト時の多層防御 clear (full-navigation が起きない SPA 内サインアウト経路向け)。
+  useEffect(() => {
+    if (!isUnauthenticated) return;
+    purgeAllHistory(HELP_CHAT_HISTORY_BASE_KEY);
+    loadedUserRef.current = null;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setTurns([]);
+    setHydrated(false);
+  }, [isUnauthenticated]);
 
   // 最新ターンへ自動スクロール
   const lastTurn = turns[turns.length - 1];
@@ -254,9 +238,10 @@ export function HelpChatInput({
   );
 
   const handleClearHistory = useCallback(() => {
-    clearHistory();
+    if (!viewerUserId) return;
+    clearScopedHistory(HELP_CHAT_HISTORY_BASE_KEY, viewerUserId);
     setTurns([]);
-  }, []);
+  }, [viewerUserId]);
 
   const defaultGreeting =
     'こんにちは、たすきフクロウです。\nお困りごとを教えてください。FAQ や使い方ガイドから一緒にお探ししますね。';

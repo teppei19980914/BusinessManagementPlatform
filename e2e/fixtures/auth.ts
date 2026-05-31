@@ -12,10 +12,33 @@
 import type { BrowserContext, Page } from '@playwright/test';
 import { generateTotpCode } from './totp';
 
+/**
+ * 表示中のウェルカムオンボーディングモーダル (welcome-owl-modal) を閉じる (冪等)。
+ *
+ * fix/onboarding-welcome-flash (2026-05-31): 初回ログインユーザ (isFirstTimeUser) では
+ *   WelcomeOwlAutoOpen がモーダルを自動展開する (= 正しい製品挙動)。Radix Dialog が背景を
+ *   aria-hidden で覆うため、閉じないと以降の getByRole/getByLabel が要素を拾えず timeout する。
+ *   非初回ログインでは出ないので、appearTimeoutMs だけ待って出なければ no-op。
+ *   ※ signup fixture (signupTenantViaUi) は独自に同等処理を持つため本経路は通らない。
+ */
+export async function dismissWelcomeOwlModalIfPresent(
+  page: Page,
+  appearTimeoutMs = 2_500,
+): Promise<void> {
+  const modal = page.getByTestId('welcome-owl-modal');
+  await modal.waitFor({ state: 'visible', timeout: appearTimeoutMs }).catch(() => {});
+  if (await modal.isVisible().catch(() => false)) {
+    await page.getByTestId('welcome-owl-close').click();
+    await modal.waitFor({ state: 'hidden', timeout: 5_000 }).catch(() => {});
+  }
+}
+
 /** 共通: ログイン後のリダイレクトチェーンが完全に落ち着くまで待機する。 */
 export async function waitForProjectsReady(page: Page): Promise<void> {
   await page.waitForURL('**/projects', { timeout: 15_000 });
   await page.waitForLoadState('networkidle');
+  // 初回ログイン時の自動ウェルカムモーダルが後続操作を aria-hidden で阻むため、出ていれば閉じる。
+  await dismissWelcomeOwlModalIfPresent(page);
 }
 
 /**

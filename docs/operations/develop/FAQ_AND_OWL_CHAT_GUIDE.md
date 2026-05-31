@@ -239,8 +239,8 @@ FAQ で扱う情報は LP・公式 docs (account-setup-guide.md / chat-semantic-
 
 | 流用要素 | 既存実装 | help-chat への適用 |
 |---|---|---|
-| sessionStorage 履歴 | `tasukiba_chat_history_v1` (50 turn 上限) | `tasukiba_help_chat_history_v1` (同上限) |
-| ログアウト / ユーザ切替時の clear | `useEffect` で `isUnauthenticated` 監視 + `viewerUserId` 変化監視 ([[feedback_client_sessionstorage_user_isolation]] severity-1) | 同パターンを完全コピー |
+| sessionStorage 履歴 | **ユーザスコープキー `tasukiba_chat_history_v1:{userId}`** (50 turn 上限、共通 `src/lib/chat-history-storage.ts`) | `tasukiba_help_chat_history_v1:{userId}` (同上限・同実装) |
+| ユーザ越境防御 (severity-1) | **キースコープ + ログイン時 `purgeOtherUsersHistory()`** (2026-05-31 root fix。effect ベースの clear は `window.location.href` フルページ遷移で発火しないため不十分だった。[[feedback_client_sessionstorage_user_isolation]]) | 同共通実装を流用 |
 | UserBubble / AssistantBubble | `chat-panel.tsx:541-577` 右寄せ user / 左寄せ assistant + アバター | 同コンポーネントを export して再利用 |
 | AbortController による race 解消 | `inFlightAbortRef` で連投時の前回 fetch を破棄 | 同パターン |
 | Enter 送信 / Shift+Enter 改行 | `handleKeyDown` で `isComposing` チェック | 同パターン |

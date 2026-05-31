@@ -117,14 +117,14 @@
 
 | 観点 | 仕様 |
 |---|---|
-| **保存場所** | `window.sessionStorage` (key: `tasukiba_chat_history_v1`) |
+| **保存場所** | `window.sessionStorage` (key: **`tasukiba_chat_history_v1:{userId}` のユーザスコープキー**。2026-05-31 に固定キーから変更。共通実装 `src/lib/chat-history-storage.ts`) |
 | **保存形式** | `ChatTurn[]` の JSON: `[{ id, userQuery, result?, error? }, ...]` |
 | **件数上限** | **`MAX_HISTORY_TURNS = 50` ターン** (超過分は古い順に破棄。DevTools 経由の大量挿入 + sessionStorage 5MB 上限の二重防御) |
 | **DB 容量への影響** | **なし** (sessionStorage はクライアント側のブラウザストレージ、Supabase Free 500MB 枠を消費しない) |
 | **Voyage API への追加コスト** | **なし** (既に取得済の結果を再表示するだけ、再検索は行わない) |
 | **タブを閉じたとき** | **消去** (sessionStorage の仕様による自動消去) |
-| **ログアウト時** | **消去** (`useSession().status === 'unauthenticated'` を検知して `clearHistory()` 呼出 + state リセット) |
-| **ユーザ切替時 (severity-1 防御)** | **消去** (`viewerUserId` の遷移検知で別ユーザログイン直後に必ず clear。詳細は §4 T-CS-13) |
+| **ログアウト時** | **消去** (主防御 = キースコープ + ログイン時 purge。加えて多層防御として `useSession().status === 'unauthenticated'` 検知で `purgeAllHistory()` 呼出 + state リセット) |
+| **ユーザ切替時 (severity-1 防御)** | **構造的に分離** (キーが `:{userId}` でスコープされ、B は A のキーを参照しない。ログイン時に `purgeOtherUsersHistory()` で旧固定キー含む他ユーザ分を除去。詳細は §4 T-CS-13) |
 | **手動クリア** | チャットパネル ヘッダの 🗑️ ボタンで任意クリア可能 (`data-testid="chat-panel-clear-history"`)。turns 配列のみを空にし、**初期挨拶 (フクロウの自己紹介) は常時表示なので残る** (= 初期表示と同じ状態に戻る) |
 | **SSR safety** | `typeof window === 'undefined'` でガード、サーバ側では空配列を返す |
 | **エラーハンドリング** | `try-catch` で parse 失敗 / quota 超過 / shape 不整合を全て graceful degradation (空配列フォールバック) |
@@ -198,8 +198,8 @@
 | **T-CS-10** | **エラーレスポンスから内部情報漏洩** | スタック / DB 接続文字列 / 内部パス露出 | **try-catch wrap** で予期しない例外を catch → `recordError` で server-side 秘匿保存 → client には固定文言 "検索に失敗しました" + 500。stack / password / 内部パスが response に含まれないことをテストで担保 | route.ts:71-100, route.test.ts (機密漏れ検査 2 ケース) |
 | **T-CS-11** | **列挙・プロービング攻撃** | 内部情報マッピング | tenant 境界で物理的に閉じる。ユーザは元々アクセス可能なデータのみ取得可。削除済エンティティ名は null マスク | chat-search.service.ts:336-339 (project.deletedAt マスク) |
 | **T-CS-12** | **visibility フィルタ漏れ (severity-1)** | draft / private データ流出 | **多層化**: pgvector WHERE で `visibility='public'` 絞り + loadXxx findMany WHERE で再度 `visibility='public'` を明示。Memo は `OR [visibility='public', userId=viewerUserId]` で自分の private を含める設計を明示 | chat-search.service.ts:142-150 (Knowledge pgvector), 299-303 (loadKnowledges), 391-405 (loadMemos OR) |
-| **T-CS-13** | **同一タブでのユーザ越境 (severity-1)** | ユーザ A の sessionStorage 履歴がユーザ B のセッションで表示される | **2 層 defense-in-depth**: (a) `session.status === 'unauthenticated'` 遷移検知で clearHistory (= 通常のログアウト経路)、(b) `viewerUserId` 変化監視で旧 ID → 新 ID 遷移時に clearHistory (= NextAuth visibilitychange / Set-Cookie 経由で 'unauthenticated' を経由しないケースの追加防御)。詳細は §2.7 | chat-panel.tsx:187-195 (H-2), 197-216 (H-5 prevUserIdRef) |
-| **T-CS-14** | **sessionStorage DoS / 改ざん挿入** | DevTools で大量挿入し UI freeze、または偽 hit 挿入で別テナント URL を踏ませる | **(a) 件数上限 `MAX_HISTORY_TURNS = 50`** を load/save 両側で trim、(b) loadHistory は `id` / `userQuery` の型検証で shape 不整合を弾く、(c) **結果カードクリック先の詳細ページ側で必ず server-side 認可検証**を行う (チャット結果の hit 自体を信頼しない) | chat-panel.tsx:85-94 (MAX_HISTORY_TURNS), 100-119 (load), 123-134 (save) + 各エンティティ詳細ページの権限チェック |
+| **T-CS-13** | **同一タブでのユーザ越境 (severity-1)** | ユーザ A の sessionStorage 履歴がユーザ B のセッションで表示される | **キースコープ方式 (2026-05-31 root fix)**: 保存キーを `tasukiba_chat_history_v1:{userId}` でユーザ分離し、B は構造的に A のキーを参照しない。ログイン時 (`viewerUserId` 確定) に `purgeOtherUsersHistory()` で旧固定キー含む他ユーザ分を除去。復元前の空配列 clobber は `hydrated` ゲートで防止。**旧 effect ベースの clear (unauthenticated 検知 / viewerUserId 変化検知) は `window.location.href` フルページ遷移で発火しないため単独では不十分だった**。effect 経路は多層防御として `purgeAllHistory()` で残置。詳細は §2.7 | chat-history-storage.ts (共通), chat-panel.tsx / help-chat-input.tsx の load/persist/logout effect |
+| **T-CS-14** | **sessionStorage DoS / 改ざん挿入** | DevTools で大量挿入し UI freeze、または偽 hit 挿入で別テナント URL を踏ませる | **(a) 件数上限 `MAX_HISTORY_TURNS = 50`** を load/save 両側で trim、(b) load は `id` / `userQuery` の型検証で shape 不整合を弾く、(c) **結果カードクリック先の詳細ページ側で必ず server-side 認可検証**を行う (チャット結果の hit 自体を信頼しない) | chat-history-storage.ts (loadScopedHistory / saveScopedHistory で MAX_HISTORY_TURNS trim + isChatTurn 検証) + 各エンティティ詳細ページの権限チェック |
 
 ### 4.2 「外部への持ち出し」攻撃が本機能で構造的に防がれる理由
 

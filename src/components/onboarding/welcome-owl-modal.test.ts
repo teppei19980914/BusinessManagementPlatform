@@ -53,6 +53,19 @@ describe('WelcomeOwlAutoOpen 自動表示ガード invariant (★severity★ 最
     expect(source).toMatch(/shownFor === userId/);
   });
 
+  it('once ガードは「開いた時」ではなく「閉じた時」に書く (transient 再マウントで一瞬出て消えるのを防ぐ)', () => {
+    // dismiss 時 (onOpenChange(false)) にのみ setItem する handler を持つ。
+    expect(source).toMatch(/handleOpenChange/);
+    // setItem は「閉じる方向 (!next)」の分岐内にあること。
+    expect(source).toMatch(/if \(!next && userId\)[\s\S]*?setItem\(SHOWN_STORAGE_KEY, userId\)/);
+    // 自動表示の effect 内では setItem しない (= 開いた瞬間に guard を立てない)。
+    const effectBody = source.slice(
+      source.indexOf('useEffect(() => {'),
+      source.indexOf('  }, [status, userId, systemRole, isFirstTimeUser]);'),
+    );
+    expect(effectBody).not.toMatch(/setItem/);
+  });
+
   it('認証済 (status === "authenticated") を確認してから評価する', () => {
     expect(source).toMatch(/authenticated/);
   });

@@ -20,6 +20,7 @@ import { useLoading } from '@/components/loading-overlay';
 import { useToast } from '@/components/toast-provider';
 import type { AttachmentEntityType } from '@/lib/validators/attachment';
 import type { AttachmentDTO } from '@/services/attachment.service';
+import { resolveAttachmentHref } from '@/lib/attachment-href';
 
 type Props = {
   entityType: AttachmentEntityType;
@@ -137,7 +138,9 @@ export function SingleUrlField({
       {!editing && current && (
         <div className="flex items-start gap-2 rounded border px-2 py-1 text-sm">
           <a
-            href={current.url}
+            // fix/attachment-download-404 (2026-05-31): 防御的に共通解決を使用。
+            //   この slot は URL 専用想定だが、将来 supabase 型が紛れても相対パス 404 を起こさない。
+            href={resolveAttachmentHref(current)}
             target="_blank"
             rel="noopener noreferrer"
             // 2026-05-11: 長い displayName 対応を「末尾省略 (truncate)」→「複数行折り返し」に変更。

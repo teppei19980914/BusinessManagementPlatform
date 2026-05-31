@@ -33,6 +33,7 @@ import { generateTotpCode } from '../fixtures/totp';
 import { ensureInitialAdmin, cleanupByRunId, disconnectDb } from '../fixtures/db';
 import { createCustomerViaApi } from '../fixtures/project';
 import { snapshotStep } from '../fixtures/snapshot';
+import { dismissWelcomeOwlModalIfPresent } from '../fixtures/auth';
 
 let startedAt: string;
 
@@ -76,6 +77,9 @@ test.describe.configure({ mode: 'serial', retries: 0 });
 async function waitForProjectsReady(page: Page): Promise<void> {
   await page.waitForURL('**/projects', { timeout: 15_000 });
   await page.waitForLoadState('networkidle');
+  // fix/onboarding-welcome-flash (2026-05-31): 初回ログインの自動ウェルカムモーダルが
+  //   背景を aria-hidden で覆い後続操作を阻むため、出ていれば閉じる (共通ヘルパに集約)。
+  await dismissWelcomeOwlModalIfPresent(page);
 }
 
 test.describe('@feature:auth:admin-flow Steps 1-6', () => {
