@@ -64,6 +64,16 @@ const securityHeaders = [
       "frame-ancestors 'none'",
       "base-uri 'self'",
       "form-action 'self'",
+      // security/phase-1 (2026-05-31): Flash / 旧ブラウザ向け <object> / <embed> / <applet>
+      //   を明示的に block。default-src 'self' でカバーされるが、CSP-3 で object-src の
+      //   明示が強く推奨されているため、検証ツール (Mozilla Observatory 等) の指摘解消も兼ねる。
+      "object-src 'none'",
+      // security/phase-1 (2026-05-31): CSP 違反通知の収集先。
+      //   browser が CSP block 発生時に自動 POST する。/api/csp-report で受信し
+      //   system_error_logs に記録 (= 将来 nonce 化や CSP 強化判断のための観測点)。
+      //   report-to (新仕様) は Reporting-Endpoints ヘッダ連携が必要で実装範囲が広いため、
+      //   widely-supported な report-uri (CSP Level 2) を採用。
+      'report-uri /api/csp-report',
     ].join('; '),
   },
   {
@@ -77,6 +87,17 @@ const securityHeaders = [
     key: 'Permissions-Policy',
     value: 'camera=(), microphone=(), geolocation=()',
   },
+  // security/phase-1 (2026-05-31): Cross-Origin Isolation 系ヘッダ。
+  //   - COOP=same-origin: window.opener 経由のクロスオリジン読取・タイミング攻撃 (Spectre 系)
+  //     を遮断。同一オリジンの window のみ参照可能になり、外部 page から本サービスを
+  //     window.open() してもページ間通信できなくなる。
+  //   - CORP=same-site: 本サービスのリソース (画像/スクリプト/JSON 等) を別 origin から
+  //     img/script/fetch で読まれることを防ぐ。同一サイト (sub-domain 含む) からは可。
+  // - COEP=require-corp は意図的に除外:
+  //     Supabase Storage / 外部 OG 画像 / 添付ダウンロードが軒並み破綻するため、本 Phase
+  //     ではコスト > 効果と判断。COEP は将来必要時に画像 proxy 経由など別途設計で導入する。
+  { key: 'Cross-Origin-Opener-Policy', value: 'same-origin' },
+  { key: 'Cross-Origin-Resource-Policy', value: 'same-site' },
 ];
 
 const nextConfig: NextConfig = {

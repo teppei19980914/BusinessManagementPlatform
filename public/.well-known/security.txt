@@ -1,0 +1,9 @@
+# RFC 9116 (https://www.rfc-editor.org/rfc/rfc9116) 脆弱性報告窓口
+# たすきば Knowledge Relay — security/phase-1 (2026-05-31)
+
+Contact: https://github.com/teppei19980914/BusinessManagementPlatform/security/advisories/new
+Contact: mailto:teppei09141998@gmail.com
+Expires: 2027-05-31T00:00:00.000Z
+Preferred-Languages: ja, en
+Policy: https://github.com/teppei19980914/BusinessManagementPlatform/blob/main/SECURITY.md
+Acknowledgments: https://github.com/teppei19980914/BusinessManagementPlatform/security/advisories

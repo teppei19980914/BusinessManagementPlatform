@@ -49,7 +49,8 @@ jobs:
 
       - name: Run lychee
         id: lychee
-        uses: lycheeverse/lychee-action@v2
+        # security/phase-1 (2026-05-31): SHA pinning でサプライチェーン汚染抑止
+        uses: lycheeverse/lychee-action@8646ba30535128ac92d33dfc9133794bfdd9b411 # v2
         continue-on-error: true
         with:
           # 対象: 全 markdown ファイル (リポジトリ全体)
@@ -73,7 +74,8 @@ jobs:
 
       - name: Create or update issue on broken links (schedule only)
         if: github.event_name == 'schedule' && steps.lychee.outputs.exit_code != '0'
-        uses: peter-evans/create-issue-from-file@v6
+        # security/phase-1 (2026-05-31): SHA pinning でサプライチェーン汚染抑止
+        uses: peter-evans/create-issue-from-file@fca9117c27cdc29c6c4db3b86c48e4115a786710 # v6
         with:
           title: "Docs Link Check — broken links detected"
           content-filepath: ./lychee-report.md

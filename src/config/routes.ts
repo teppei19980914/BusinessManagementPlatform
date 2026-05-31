@@ -31,6 +31,10 @@ export const PUBLIC_PATHS = [
   '/announcements',
   '/api/auth',
   '/api/health', // 外部 cron から定期 ping されるため認証不要
+  // security/phase-1 (2026-05-31): CSP 違反通知の受信 endpoint。
+  //   next.config.ts の `report-uri /api/csp-report` から browser が anonymous で自動 POST する。
+  //   in-memory rate limit + recordError 経由で system_error_logs に記録する。
+  '/api/csp-report',
   // PR #89 (feat/account-lock で endpoint rename): 外部 cron (cron-job.org) から
   // Authorization: Bearer <CRON_SECRET> で実行される。middleware のセッション検査は
   // 通過させ、route.ts 側で CRON_SECRET 検証 + admin 認証を行う。
