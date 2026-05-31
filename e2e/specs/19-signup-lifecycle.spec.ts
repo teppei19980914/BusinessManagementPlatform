@@ -22,8 +22,8 @@
 import { test, expect, type APIResponse, type BrowserContext, type Page } from '@playwright/test';
 import { RUN_ID, withRunId } from '../fixtures/run-id';
 import { signupTenantViaUi, type SignupResult } from '../fixtures/signup';
-import { cleanupTenantByRunId, disconnectDb } from '../fixtures/db';
-import { createProjectViaApi } from '../fixtures/project';
+import { cleanupTenantByRunId, disconnectDb, getTenantUserIdByEmail } from '../fixtures/db';
+import { createProjectViaApi, addProjectMemberViaApi } from '../fixtures/project';
 
 let context: BrowserContext;
 let page: Page;
@@ -78,6 +78,13 @@ test.describe('@feature:release-acceptance signup ライフサイクル (払い�
       customerName: withRunId('LC顧客'),
     });
     projectId = created.id;
+
+    // プロジェクト作成者は自動でメンバーにならない (createProject は ProjectMember を作らない)。
+    //   プロジェクト配下の資産 (knowledge/risk/retrospective) 作成には pm_tl/member 権限が必要なため、
+    //   admin を pm_tl メンバーとして明示追加する (05-teardown と同じ established パターン)。
+    const adminUserId = await getTenantUserIdByEmail(tenant.email, tenant.slug);
+    await addProjectMemberViaApi(page, { projectId, userId: adminUserId, projectRole: 'pm_tl' });
+
     await page.goto('/projects');
     await page.waitForLoadState('networkidle');
     await expect(page.getByText(PROJECT_NAME).first()).toBeVisible({ timeout: 10_000 });

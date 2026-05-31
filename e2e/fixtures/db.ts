@@ -136,6 +136,36 @@ export async function ensureGeneralUser(
 }
 
 /**
+ * 指定テナント (slug) 内の email に一致する user.id を取得する。
+ *
+ * 用途: signupTenantViaUi で払い出した admin を、その後プロジェクトメンバー (pm_tl) に
+ *   追加するための userId 解決。プロジェクト作成者は自動メンバー化されない
+ *   (createProject は ProjectMember を作らない) ため、プロジェクト配下の資産作成
+ *   (knowledge/risk/retrospective) には明示的なメンバー追加が必要。
+ *
+ * email は tenant-scoped 一意 (ADR-0016) のため、同 email が複数テナントに存在し得る。
+ * 必ず tenantSlug で絞り、目的のテナントの user を取得する。
+ */
+export async function getTenantUserIdByEmail(
+  email: string,
+  tenantSlug: string,
+): Promise<string> {
+  const pool = getPool();
+  const res = await pool.query<{ id: string }>(
+    `SELECT u.id
+       FROM users u
+       JOIN tenants t ON t.id = u.tenant_id
+      WHERE u.email = $1 AND t.slug = $2
+      LIMIT 1`,
+    [email, tenantSlug],
+  );
+  if (res.rows.length === 0) {
+    throw new Error(`getTenantUserIdByEmail: user not found (${email} @ ${tenantSlug})`);
+  }
+  return res.rows[0].id;
+}
+
+/**
  * 層2 (BEGINNER_REQUIRES_UPGRADE) 検証用の seed ヘルパ。
  *
  * ADR-0016 Revised の 3 層判定:
