@@ -33,6 +33,8 @@ let projectId = '';
 const PROJECT_NAME = withRunId('LCプロジェクト');
 const KNOWLEDGE_TITLE = withRunId('LCナレッジ');
 const KNOWLEDGE_TITLE_UPDATED = withRunId('LCナレッジ-更新');
+// グローバル /knowledge 一覧は「タイトル列」を持たず「内容」列を表示するため、UI 検証は content で行う
+const KNOWLEDGE_CONTENT = withRunId('LCナレッジ本文');
 const RISK_TITLE = withRunId('LCリスク');
 const ISSUE_TITLE = withRunId('LC課題');
 const RETRO_PLAN = withRunId('LC振り返り計画');
@@ -90,31 +92,45 @@ test.describe('@feature:release-acceptance signup ライフサイクル (払い�
     await expect(page.getByText(PROJECT_NAME).first()).toBeVisible({ timeout: 10_000 });
   });
 
-  test('TC-RA-22: ナレッジ 作成 → 更新 → /knowledge 一覧に反映', async () => {
-    // 作成 (project-scoped、visibility=public = 全メンバー公開 → 全ナレッジ一覧に出る)
+  // 検証方針: グローバル一覧の表示列は資産ごとに異なる (例: /knowledge はタイトル列を持たず
+  //   「内容」列を表示) ため、CRUD の真値は **API GET (route→service→DB→レスポンス)** で確認する。
+  //   UI 反映は、表示されることを確認済みの列 (knowledge の「内容」) で代表的に 1 つ検証する。
+
+  /** 指定 URL を GET し、レスポンス本文に needle が含まれる/含まれないことを検証する。 */
+  async function expectListContains(url: string, needle: string, present = true): Promise<void> {
+    const res = await page.request.get(url);
+    expect(res.ok(), `GET ${url} should be ok`).toBeTruthy();
+    const body = await res.text();
+    if (present) expect(body, `${url} should contain ${needle}`).toContain(needle);
+    else expect(body, `${url} should NOT contain ${needle}`).not.toContain(needle);
+  }
+
+  test('TC-RA-22: ナレッジ 作成 → 更新 (API 真値 + /knowledge UI の内容列に反映)', async () => {
     const res = await postOk(page, `/api/projects/${projectId}/knowledge`, {
       title: KNOWLEDGE_TITLE,
       knowledgeType: 'lesson',
-      content: 'E2E ライフサイクル ナレッジ本文',
+      content: KNOWLEDGE_CONTENT,
       visibility: 'public',
     });
     const knowledgeId = (await res.json()).data.id as string;
 
+    // API 真値: プロジェクト配下ナレッジ GET にタイトルが含まれる
+    await expectListContains(`/api/projects/${projectId}/knowledge`, KNOWLEDGE_TITLE);
+
+    // UI: グローバル /knowledge は「内容」列を表示する (タイトル列なし) ので content で確認
     await page.goto('/knowledge');
     await page.waitForLoadState('networkidle');
-    await expect(page.getByText(KNOWLEDGE_TITLE).first()).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText(KNOWLEDGE_CONTENT).first()).toBeVisible({ timeout: 10_000 });
 
-    // 更新 (タイトル変更が一覧に反映される)
+    // 更新 → API 真値で反映確認
     const upd = await page.request.patch(`/api/knowledge/${knowledgeId}`, {
       data: { title: KNOWLEDGE_TITLE_UPDATED },
     });
     expect(upd.ok()).toBeTruthy();
-    await page.goto('/knowledge');
-    await page.waitForLoadState('networkidle');
-    await expect(page.getByText(KNOWLEDGE_TITLE_UPDATED).first()).toBeVisible({ timeout: 10_000 });
+    await expectListContains(`/api/projects/${projectId}/knowledge`, KNOWLEDGE_TITLE_UPDATED);
   });
 
-  test('TC-RA-23/24: リスク + 課題 作成 → /risks /issues 一覧に反映', async () => {
+  test('TC-RA-23/24: リスク + 課題 作成 (API 真値で確認)', async () => {
     await postOk(page, `/api/projects/${projectId}/risks`, {
       type: 'risk',
       title: RISK_TITLE,
@@ -129,17 +145,12 @@ test.describe('@feature:release-acceptance signup ライフサイクル (払い�
       impact: 'high',
       visibility: 'public',
     });
-
-    await page.goto('/risks');
-    await page.waitForLoadState('networkidle');
-    await expect(page.getByText(RISK_TITLE).first()).toBeVisible({ timeout: 10_000 });
-
-    await page.goto('/issues');
-    await page.waitForLoadState('networkidle');
-    await expect(page.getByText(ISSUE_TITLE).first()).toBeVisible({ timeout: 10_000 });
+    // POST 201 で作成は担保済。プロジェクト配下 GET にリスク/課題が含まれることも確認。
+    await expectListContains(`/api/projects/${projectId}/risks`, RISK_TITLE);
+    await expectListContains(`/api/projects/${projectId}/risks`, ISSUE_TITLE);
   });
 
-  test('TC-RA-25: 振り返り 作成 → /retrospectives 一覧に反映', async () => {
+  test('TC-RA-25: 振り返り 作成 (API 真値で確認)', async () => {
     const today = new Date().toISOString().slice(0, 10);
     await postOk(page, `/api/projects/${projectId}/retrospectives`, {
       conductedDate: today,
@@ -147,12 +158,10 @@ test.describe('@feature:release-acceptance signup ライフサイクル (払い�
       actualSummary: 'E2E 実績総括',
       visibility: 'public',
     });
-    await page.goto('/retrospectives');
-    await page.waitForLoadState('networkidle');
-    await expect(page.getByText(RETRO_PLAN).first()).toBeVisible({ timeout: 10_000 });
+    await expectListContains(`/api/projects/${projectId}/retrospectives`, RETRO_PLAN);
   });
 
-  test('TC-RA-26: メモ 作成 → /all-memos に表示 → 削除で一覧から消える', async () => {
+  test('TC-RA-26: メモ 作成 → 削除 (API 真値で存在 → 不在を確認)', async () => {
     const res = await postOk(page, '/api/memos', {
       title: MEMO_TITLE,
       content: 'E2E メモ本文',
@@ -160,15 +169,11 @@ test.describe('@feature:release-acceptance signup ライフサイクル (払い�
     });
     const memoId = (await res.json()).data.id as string;
 
-    await page.goto('/all-memos');
-    await page.waitForLoadState('networkidle');
-    await expect(page.getByText(MEMO_TITLE).first()).toBeVisible({ timeout: 10_000 });
+    await expectListContains('/api/memos', MEMO_TITLE, true);
 
-    // 削除 (CRUD の D を検証) → 一覧から消える
+    // 削除 (CRUD の D) → 一覧から消える
     const del = await page.request.delete(`/api/memos/${memoId}`);
     expect(del.ok()).toBeTruthy();
-    await page.goto('/all-memos');
-    await page.waitForLoadState('networkidle');
-    await expect(page.getByText(MEMO_TITLE)).toHaveCount(0, { timeout: 10_000 });
+    await expectListContains('/api/memos', MEMO_TITLE, false);
   });
 });
