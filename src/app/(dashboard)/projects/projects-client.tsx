@@ -530,8 +530,17 @@ export function ProjectsClient({
               {sortedProjects.map((project) => (
                 <TableRow key={project.id}>
                   <TableCell>
+                    {/*
+                      perf/phase-5 (2026-06-01): 一覧行 Link は prefetch=false。
+                        default prefetch=true だと表示中の全プロジェクト行に対して layout + page の
+                        RSC が裏で取得され (1 プロジェクト = 2 fetch × 表示件数)、不要な数十 KB の
+                        帯域・サーバ負荷を生む。ユーザは実際に 1〜2 件しかクリックしないため、
+                        hover/visibility 時の自動 fetch を抑止し on-demand 取得に倒す。
+                        同パターンは PR #478 (F) で全○○ 系、PR #479 (4-B) でヘッダ nav に適用済。
+                    */}
                     <Link
                       href={`/projects/${project.id}`}
+                      prefetch={false}
                       className="font-medium text-info hover:underline"
                     >
                       {project.name}
@@ -570,9 +579,11 @@ export function ProjectsClient({
           </p>
         ) : (
           initialProjects.map((project) => (
+            // perf/phase-5 (2026-06-01): モバイル card view も同じ理由で prefetch=false
             <Link
               key={project.id}
               href={`/projects/${project.id}`}
+              prefetch={false}
               role="listitem"
               className="block rounded-md border bg-card p-3 text-sm transition-colors hover:bg-muted"
             >

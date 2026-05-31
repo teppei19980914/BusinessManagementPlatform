@@ -381,7 +381,74 @@ PR #478 マージ後にシークレットウィンドウで再計測した結果
 
 ---
 
-## 8. 関連リンク
+## 8. Phase 5 (2026-06-01 最終調整) — 残課題の極小一掃
+
+PR #479 マージ後の計測結果 (シークレットウィンドウ、本番) を統合し、Phase 4-A は **/projects/[id] document 3.63s → 1.58s (-57%)**、Phase 4-B は **全○○ N+1 UUID 6 件 → 0 件 (-100%)** の劇的効果を確認。
+
+残った最後の改善余地として、**(a) /projects 一覧の project 行 Link 自動 prefetch (10 req / ~30 kB)** と **(b) 全○○ service 内の memberships + main findMany 直列実行 (1 round-trip 余分)** を Phase 5 として一掃した。「効果極小 / UX 寄与なし」項目 (mascot 2 重ロード件数 / /login 961ms 単発変動 / credentials POST 計測のみ) は本 PR スコープ外とする方針を user 合意済。
+
+### 8.1 Phase 5-A: /projects card Link prefetch=false
+
+**根本原因**: PR #478 の F (全○○ 行 Link) と PR #479 の 4-B (header nav Link) を通したが、**/projects 一覧の project name 行 Link が default prefetch=true** で残存。表示 5 プロジェクトに対し layout + page の RSC が 1 件 = 2 fetch × 5 = **10 fetch / ~30 kB** が裏で発生。
+
+**対策**: [projects-client.tsx](../../../../src/app/(dashboard)/projects/projects-client.tsx) の desktop テーブル行 + mobile card view の 2 箇所 `<Link>` に `prefetch={false}` を付与。回帰テスト ([projects-client.test.ts](../../../../src/app/(dashboard)/projects/projects-client.test.ts)) で固定。
+
+**期待効果**: /projects 表示時の累計 10 req / ~30 kB 削減
+
+### 8.2 Phase 5-B: 全○○ service の Promise.all 並列化
+
+**根本原因**: `/retrospectives` 計測で 2.28s 残存。service ([listAllRetrospectivesForViewer](../../../../src/services/retrospective.service.ts)) を確認したところ、非 admin で:
+1. `memberships = await prisma.projectMember.findMany(...)`
+2. `retros = await prisma.retrospective.findMany(...)`
+
+が **直列 await** で実行されており、両 query は完全に独立なのに 1 round-trip 余分。同パターンが `listAllRisksForViewer` / `listAllKnowledgeForViewer` にも存在。
+
+**対策**: 3 service とも `Promise.all([memberships, mainFindMany])` で並列化。admin 経路は `Promise.resolve([])` で空配列即時返却。
+
+**セキュリティ invariant 不変宣言** (3 service 共通):
+- `tenantId = viewerTenantId` フィルタ (severity-1 越境防止) 保持
+- `visibility='public'` フィルタ (draft 非表示) 保持
+- `deletedAt: null` 保持
+- `memberProjectIds` による per-link projectName マスキング (severity-1 個人情報漏洩防止 / PR #157) 保持
+
+→ 既存 service test 166 件は全件 PASS、ロジック変更なしを担保。
+
+**期待効果**: 非 admin ユーザの全○○ ページ document SSR で **-200〜400ms** (warm 時)
+
+### 8.3 Phase 5 実装範囲
+
+| ID | 内容 | デグレリスク | 実装場所 |
+|---|---|---|---|
+| **5-A** | /projects 行 Link prefetch=false (desktop + mobile) | 低 (初回クリック +200-500ms、Phase 0 と挙動一致しないだけ) | [projects-client.tsx](../../../../src/app/(dashboard)/projects/projects-client.tsx) |
+| **5-B** | 3 service の memberships + main findMany 並列化 | 中 (テナント越境 + visibility invariant 維持必須) | [retrospective.service.ts](../../../../src/services/retrospective.service.ts) / [risk.service.ts](../../../../src/services/risk.service.ts) / [knowledge.service.ts](../../../../src/services/knowledge.service.ts) |
+| **回帰テスト** | projects-client prefetch invariant 2 件 | - | projects-client.test.ts (新規) |
+
+### 8.4 累計改善表 (Phase 0 → PR #480 後の予測)
+
+| 画面 / 観点 | Phase 0 | PR #479 後 | **PR #480 後 (予測)** | 累計改善 |
+|---|---|---|---|---|
+| /projects/[id] document | 3.14s | 1.58s | 1.58s | -50% (PR #479 効果維持) |
+| **/projects 表示時の auto-prefetch** | 既定 prefetch | 10 req / ~30 kB | **0 req / 0 kB** | **-100%** ⚡ |
+| **/retrospectives document** | 3.31s | 2.28s | **1.9-2.1s** | **-37%** (見込み) |
+| /risks / /knowledge document | (同パターン) | 同程度 | **-200〜400ms** | (新規改善) |
+| /settings/tenant document | 6.26s | 3.38s | 3.38s | -46% (PR #478 維持) |
+| 課題一覧 risks/members | 9.12s/9.22s | 2.39s/1.20s | 同等 | -74%/-87% |
+| 全○○ N+1 UUID fetch | 6 件 | 0 件 | 0 件 | -100% (PR #479 維持) |
+| /api/auth/session 回数 | 4 回 | 1 回 | 1 回 | -75% (PR #478 維持) |
+
+### 8.5 本 PR スコープ外項目 (user 合意済)
+
+| 項目 | 理由 |
+|---|---|
+| mascot 2 重ロード (件数残存) | A-3 で各画像 timing は短縮済、件数のみ残る。完全解消には inline SVG / imageSizes config / 静的 pre-generate が必要で設計影響大 |
+| /login document 961ms 単発計測 | 変動可能性、複数回計測で平均化要 |
+| credentials POST 3.58s | 真因切り分け (bcrypt vs DB vs cold) の instrumentation が必要、計測単体では UX 改善せず |
+
+これらは Phase 6 以降の独立検討事項とする。
+
+---
+
+## 9. 関連リンク
 
 - 前 cycle journey: [performance-improvement-journey.md](../20260417/performance-improvement-journey.md)
 - 設計書: [cold-start-and-data-growth-analysis.md](../20260417/after/次期プログラム/cold-start-and-data-growth-analysis.md)
@@ -389,4 +456,5 @@ PR #478 マージ後にシークレットウィンドウで再計測した結果
 - cron 設定: [DEPLOYMENT.md §6.1](../../../operations/develop/DEPLOYMENT.md)
 - Phase 2 実装ブランチ: `perf/dashboard-layout-parallel-ssr` (PR #477)
 - Phase C 実装ブランチ: `perf/comprehensive-perf-2026-06-01` (PR #478)
-- Phase 4 実装ブランチ: `perf/phase-4-page-ssr-and-prefetch` (本 PR)
+- Phase 4 実装ブランチ: `perf/phase-4-page-ssr-and-prefetch` (PR #479)
+- Phase 5 実装ブランチ: `perf/phase-5-list-link-and-service-parallel` (本 PR)

@@ -224,14 +224,14 @@ export async function listAllKnowledgeForViewer(
   viewerTenantId: string,
 ): Promise<AllKnowledgeDTO[]> {
   const isAdmin = viewerSystemRole === 'admin';
-  const memberships = isAdmin
-    ? []
-    : await prisma.projectMember.findMany({
-      where: { userId: viewerUserId },
-      select: { projectId: true },
-    });
-  const memberProjectIds = new Set(memberships.map((m) => m.projectId));
 
+  // perf/phase-5 (2026-06-01): memberships と knowledges findMany は独立なので Promise.all 並列化。
+  //   セキュリティ invariant 不変:
+  //     - tenantId = viewerTenantId (severity-1 越境防止) 保持
+  //     - visibility='public' (draft 非表示) 保持
+  //     - deletedAt: null 保持
+  //     - memberProjectIds による per-link projectName マスキング (severity-1) 保持
+  //
   // 2026-04-25 (feat/account-lock-and-ui-consistency): admin であっても draft は
   // 「全○○」横断ビューには出さない (要件: 全○○ には公開範囲='public' のみ表示)。
   // admin が draft を管理削除したい場合はプロジェクト個別画面 (/projects/[id]/knowledge) から行う。
@@ -244,22 +244,33 @@ export async function listAllKnowledgeForViewer(
     tenantId: viewerTenantId,
   };
 
-  const knowledges = await prisma.knowledge.findMany({
-    where,
-    include: {
-      creator: { select: { name: true } },
-      // feat/asset-assignee-expansion (2026-05-26): 担当者氏名表示用
-      assignee: { select: { name: true } },
-      updater: { select: { name: true } },
-      knowledgeProjects: {
-        select: {
-          projectId: true,
-          project: { select: { id: true, name: true, deletedAt: true } },
+  const [memberships, knowledges] = await Promise.all([
+    isAdmin
+      ? Promise.resolve(
+          [] as Array<{ projectId: string }>,
+        )
+      : prisma.projectMember.findMany({
+          where: { userId: viewerUserId },
+          select: { projectId: true },
+        }),
+    prisma.knowledge.findMany({
+      where,
+      include: {
+        creator: { select: { name: true } },
+        // feat/asset-assignee-expansion (2026-05-26): 担当者氏名表示用
+        assignee: { select: { name: true } },
+        updater: { select: { name: true } },
+        knowledgeProjects: {
+          select: {
+            projectId: true,
+            project: { select: { id: true, name: true, deletedAt: true } },
+          },
         },
       },
-    },
-    orderBy: { createdAt: 'desc' },
-  });
+      orderBy: { createdAt: 'desc' },
+    }),
+  ]);
+  const memberProjectIds = new Set(memberships.map((m) => m.projectId));
 
   return knowledges.map((k) => {
     const primary = k.knowledgeProjects[0];
