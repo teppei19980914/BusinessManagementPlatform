@@ -158,13 +158,12 @@ export function WelcomeOwlAutoOpen() {
   useEffect(() => {
     if (status !== 'authenticated' || !userId) return;
     if (evaluatedRef.current) return;
-    evaluatedRef.current = true;
 
     // 運営者 (super_admin) は対象外 / 初回ログインでなければ表示しない。
     if (systemRole === 'super_admin') return;
     if (!isFirstTimeUser) return;
 
-    // 当セッションで既に表示済 (= 同じユーザ ID) なら再表示しない (ページ往復で再ポップ防止)。
+    // 当セッションで既に「閉じた」ユーザなら再表示しない (= 同じユーザ ID)。
     let shownFor: string | null = null;
     try {
       shownFor = window.sessionStorage.getItem(SHOWN_STORAGE_KEY);
@@ -173,17 +172,31 @@ export function WelcomeOwlAutoOpen() {
     }
     if (shownFor === userId) return;
 
-    try {
-      window.sessionStorage.setItem(SHOWN_STORAGE_KEY, userId);
-    } catch {
-      // noop
-    }
+    evaluatedRef.current = true;
     // 認証ライフサイクルと React state の一回限りの橋渡し。
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setOpen(true);
   }, [status, userId, systemRole, isFirstTimeUser]);
 
-  return <WelcomeOwlModal open={open} onOpenChange={setOpen} />;
+  // once ガードは「開いた時」ではなく「閉じた時」に書く。ログイン直後は
+  //   (auth)→(dashboard) のレイアウト切替で本コンポーネントが transient に
+  //   マウント→アンマウント→再マウントし得る。開いた時に書くと、最初のマウントで
+  //   モーダルが一瞬出た直後に再マウントで open state が失われ、再評価では
+  //   shownFor===userId に阻まれて二度と開かず「一瞬出て消える」事故になる
+  //   (#476 e2e の transient レンダー観測と同根)。dismiss 時に書けば、過渡的な
+  //   再マウントでは guard 未設定のまま開き直され、ユーザが実際に閉じて初めて抑止される。
+  const handleOpenChange = (next: boolean) => {
+    setOpen(next);
+    if (!next && userId) {
+      try {
+        window.sessionStorage.setItem(SHOWN_STORAGE_KEY, userId);
+      } catch {
+        // noop
+      }
+    }
+  };
+
+  return <WelcomeOwlModal open={open} onOpenChange={handleOpenChange} />;
 }
 
 /**

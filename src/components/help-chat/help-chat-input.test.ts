@@ -75,20 +75,43 @@ describe('HelpChatInput variant=page: 既存挙動を維持', () => {
   });
 });
 
-describe('HelpChatInput state 同期 (★severity-1★)', () => {
+describe('HelpChatInput state 同期 + ★severity-1 ユーザ越境防御★', () => {
   it('turns 数変化を onTurnsCountChange callback で親に通知', () => {
     expect(source).toMatch(/onTurnsCountChange\?\.\(turns\.length\)/);
   });
 
-  it('sessionStorage key は tasukiba_help_chat_history_v1 で固定 (ChatPanel と共有)', () => {
-    expect(source).toMatch(/['"]tasukiba_help_chat_history_v1['"]/);
+  it('★越境防御★ 履歴は共有 chat-history-storage の user-scoped ヘルパで永続化する', () => {
+    expect(source).toMatch(/from\s*'@\/lib\/chat-history-storage'/);
+    expect(source).toMatch(/HELP_CHAT_HISTORY_BASE_KEY/);
+    expect(source).toMatch(/loadScopedHistory/);
+    expect(source).toMatch(/saveScopedHistory/);
+    expect(source).toMatch(/purgeOtherUsersHistory/);
+    // 固定キーをコンポーネントに直書きしない (= スコープ化されたキーのみ使う)
+    expect(source).not.toMatch(/['"]tasukiba_help_chat_history_v1['"]/);
   });
 
-  it('ログアウト時 (unauthenticated) に sessionStorage を clear (H-2)', () => {
-    expect(source).toMatch(/isUnauthenticated[\s\S]{0,200}?clearHistory\(\)/);
+  it('★越境防御★ 固定キー lazy init を廃止し、viewerUserId 確定後に purge + scoped load する', () => {
+    expect(source).not.toMatch(/useState<HelpChatTurn\[\]>\(\(\)\s*=>\s*loadHistory\(\)\)/);
+    expect(source).toMatch(/useState<HelpChatTurn\[\]>\(\[\]\)/);
+    expect(source).toMatch(
+      /if\s*\(!viewerUserId\)\s*return;[\s\S]{0,260}?purgeOtherUsersHistory\(HELP_CHAT_HISTORY_BASE_KEY,\s*viewerUserId\)[\s\S]{0,260}?loadScopedHistory\(HELP_CHAT_HISTORY_BASE_KEY/,
+    );
   });
 
-  it('ユーザ ID 変化時に sessionStorage を clear (H-5、severity-1)', () => {
-    expect(source).toMatch(/prevUserIdRef[\s\S]{0,200}?prev !== viewerUserId[\s\S]{0,100}?clearHistory\(\)/);
+  it('★越境防御★ hydrated ゲートで復元前の空配列 clobber を防いでから save する', () => {
+    expect(source).toMatch(/const\s+\[hydrated,\s*setHydrated\]\s*=\s*useState\(false\)/);
+    expect(source).toMatch(
+      /if\s*\(!hydrated\s*\|\|\s*!viewerUserId\s*\|\|\s*isUnauthenticated\)\s*return;[\s\S]{0,140}?saveScopedHistory/,
+    );
+  });
+
+  it('ログアウト (unauthenticated) 検知で全ユーザ分を purgeAllHistory する (多層防御)', () => {
+    expect(source).toMatch(
+      /if\s*\(!isUnauthenticated\)\s*return;[\s\S]{0,200}?purgeAllHistory\(HELP_CHAT_HISTORY_BASE_KEY\)/,
+    );
+  });
+
+  it('手動クリアも user-scoped (clearScopedHistory + viewerUserId) で行う', () => {
+    expect(source).toMatch(/clearScopedHistory\(HELP_CHAT_HISTORY_BASE_KEY,\s*viewerUserId\)/);
   });
 });

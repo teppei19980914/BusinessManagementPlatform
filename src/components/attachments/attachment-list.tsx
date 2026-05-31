@@ -22,6 +22,7 @@ import { useLoading } from '@/components/loading-overlay';
 import { useToast } from '@/components/toast-provider';
 import type { AttachmentEntityType } from '@/lib/validators/attachment';
 import type { AttachmentDTO } from '@/services/attachment.service';
+import { resolveAttachmentHref } from '@/lib/attachment-href';
 // ADR-0021 (2026-05-26): 添付ファイル本体アップロード対応
 const UPLOADABLE_ENTITY_TYPES = new Set<AttachmentEntityType>([
   'project',
@@ -246,8 +247,8 @@ export function AttachmentList({
           {items.map((a) => {
             // ADR-0021 (2026-05-26): supabase 本体は /api/attachments/[id]/download に
             //   遷移して Pre-signed Download URL の 302 redirect を受ける (= 表示時に都度発行)。
-            //   url 型は外部リンク URL に直接遷移。
-            const href = a.storageProvider === 'supabase' ? `/api/attachments/${a.id}/download` : a.url;
+            //   url 型は外部リンク URL に直接遷移。href 解決は resolveAttachmentHref に一本化。
+            const href = resolveAttachmentHref(a);
             const isSupabase = a.storageProvider === 'supabase';
             const statusBadge =
               isSupabase && a.embeddingStatus === 'pending'

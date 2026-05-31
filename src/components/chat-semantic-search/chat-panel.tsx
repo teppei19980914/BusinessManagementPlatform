@@ -48,6 +48,15 @@ import type {
 } from '@/services/chat-search.service';
 import { ChatSearchResultCard } from './result-card';
 import { HelpChatInput } from '@/components/help-chat/help-chat-input';
+import {
+  CHAT_SEARCH_HISTORY_BASE_KEY,
+  HELP_CHAT_HISTORY_BASE_KEY,
+  loadScopedHistory,
+  saveScopedHistory,
+  clearScopedHistory,
+  purgeOtherUsersHistory,
+  purgeAllHistory,
+} from '@/lib/chat-history-storage';
 
 type DegradedReason = NonNullable<ChatSearchResult['degradeReason']>;
 
@@ -82,12 +91,6 @@ type ChatTurn = {
 };
 
 /**
- * sessionStorage の key。バージョン番号は schema 互換性が破れた時に増やす。
- * 旧 key のデータは parse 失敗 → 空配列フォールバックで自動的に切り捨てられる。
- */
-const HISTORY_STORAGE_KEY = 'tasukiba_chat_history_v1';
-
-/**
  * 保持する会話ターンの上限件数。
  * sessionStorage の 5MB 制限 + DOM ノード数の暴走 + DevTools 改ざんによる UI freeze 攻撃を防ぐ。
  * 1 ターンあたり result 込みで ~50KB 程度想定 (最大資産 250 件 × snippet 120 字 × 5 資産)、
@@ -95,56 +98,14 @@ const HISTORY_STORAGE_KEY = 'tasukiba_chat_history_v1';
  */
 const MAX_HISTORY_TURNS = 50;
 
-/**
- * sessionStorage から会話履歴を読む。SSR safe (window 未定義時は []。)。
- * parse 失敗 / shape 不整合 / quota 等の全異常を graceful degradation で吸収する。
- * DevTools での turns 大量挿入攻撃を防ぐため、読込時にも MAX_HISTORY_TURNS で trim する
- * (saveHistory 側だけでなく load 側でも防御 = defense-in-depth)。
- */
-function loadHistory(): ChatTurn[] {
-  if (typeof window === 'undefined') return [];
-  try {
-    const raw = window.sessionStorage.getItem(HISTORY_STORAGE_KEY);
-    if (!raw) return [];
-    const parsed: unknown = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    const valid = parsed.filter(
-      (item): item is ChatTurn =>
-        item !== null &&
-        typeof item === 'object' &&
-        typeof (item as { id?: unknown }).id === 'string' &&
-        typeof (item as { userQuery?: unknown }).userQuery === 'string',
-    );
-    // 件数上限を超えるデータは古いものから捨てる (= 攻撃者の DevTools 挿入を無効化)。
-    return valid.length > MAX_HISTORY_TURNS ? valid.slice(-MAX_HISTORY_TURNS) : valid;
-  } catch {
-    return [];
-  }
-}
-
-/**
- * sessionStorage への保存。quota exceeded 等の例外は黙って捨てる (機能継続優先)。
- * 件数上限 MAX_HISTORY_TURNS を超えていたら古いものから捨てて保存する。
- */
-function saveHistory(turns: ChatTurn[]): void {
-  if (typeof window === 'undefined') return;
-  try {
-    const trimmed =
-      turns.length > MAX_HISTORY_TURNS ? turns.slice(-MAX_HISTORY_TURNS) : turns;
-    window.sessionStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(trimmed));
-  } catch {
-    // QuotaExceededError 等。揮発するだけで動作には影響しない。
-  }
-}
-
-/** sessionStorage からの明示削除。ログアウト / 手動クリア時に呼ばれる。 */
-function clearHistory(): void {
-  if (typeof window === 'undefined') return;
-  try {
-    window.sessionStorage.removeItem(HISTORY_STORAGE_KEY);
-  } catch {
-    // noop
-  }
+/** ChatTurn の最小 shape ガード (load 時の trim/検証に使用)。 */
+function isChatTurn(item: unknown): item is ChatTurn {
+  return (
+    item !== null &&
+    typeof item === 'object' &&
+    typeof (item as { id?: unknown }).id === 'string' &&
+    typeof (item as { userQuery?: unknown }).userQuery === 'string'
+  );
 }
 
 /**
@@ -205,8 +166,14 @@ export function ChatPanel({ onClose }: { onClose: () => void }) {
 
   const [query, setQuery] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  // H-1: 会話履歴を配列で保持。lazy init で sessionStorage から復元する。
-  const [turns, setTurns] = useState<ChatTurn[]>(() => loadHistory());
+  // H-1: 会話履歴を配列で保持。★ユーザ越境防御★: 履歴はユーザ ID 確定後に
+  //   ユーザスコープキーから復元する (固定キーの lazy init を廃止)。viewerUserId が
+  //   分かるまでは空配列で待ち、確定時に load 用 effect が他ユーザ分 purge + 復元する。
+  const [turns, setTurns] = useState<ChatTurn[]>([]);
+  // 履歴を現ユーザ分で復元済かを表す。復元前の保存 (= 空配列の clobber) を防ぐゲート。
+  const [hydrated, setHydrated] = useState(false);
+  // 直近に履歴を復元したユーザ ID。A→B でこの値と viewerUserId が食い違ったら再 load。
+  const loadedUserRef = useRef<string | null>(null);
   // C-3: 結果カードクリック後の navigation 中フラグ。useTransition の isPending で
   //   「click → auto-open dialog 表示」の間ユーザに視覚フィードバックを返す。
   const [isNavigating, startNavigation] = useTransition();
@@ -225,43 +192,42 @@ export function ChatPanel({ onClose }: { onClose: () => void }) {
   const showWarning = query.length > 0 && query.length < CHAT_SEARCH_INPUT_WARN_THRESHOLD;
   const tooLong = query.length > CHAT_SEARCH_INPUT_MAX_CHARS;
 
-  // H-1: turns が変わるたびに sessionStorage に書き戻す。
-  // 別経路 (signOut callback 等) で消えた後の復活を避けるため、isUnauthenticated 中は skip。
+  // H-1 (load + ★severity-1 ユーザ越境防御 root fix, 2026-05-31):
+  //   viewerUserId が確定 (または A→B で変化) したら、まず他ユーザ分の履歴
+  //   (旧固定キー含む) を purge し、現ユーザのスコープキーから復元する。
+  //   login/logout は window.location.href のフルページ遷移で effect が発火しないため、
+  //   「キーをユーザ ID でスコープ + login 時 purge」という構造で越境を断つ
+  //   ([[feedback_client_sessionstorage_user_isolation]])。
   useEffect(() => {
-    if (isUnauthenticated) return;
-    saveHistory(turns);
-  }, [turns, isUnauthenticated]);
-
-  // H-2: ログアウト遷移を検知したら storage + state を両方クリア。
-  // Cookie 削除に依存せず client-side で履歴を確実に消す ([feedback_session_clearance_pattern] 思想)。
-  useEffect(() => {
-    if (isUnauthenticated) {
-      clearHistory();
-      // setState 呼出は意図的: auth ライフサイクルと React state を橋渡しする一回限りの遷移処理であり、
-      // isUnauthenticated 遷移後は state も [] に揃うため cascading render は発生しない。
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setTurns([]);
-    }
-  }, [isUnauthenticated]);
-
-  // H-5 (severity-1 user crossover defense, 2026-05-28):
-  // 同一タブで「ユーザ A サインアウト → ユーザ B サインイン」シナリオに対する追加防御。
-  // NextAuth v5 が visibilitychange / Set-Cookie 経由で session を差し替えた時、
-  // 'unauthenticated' を経由せずに viewerUserId だけが切り替わるケースがある。
-  // H-2 (unauthenticated 検知) では拾えないため、viewerUserId の遷移そのものを監視する。
-  // 旧 ID から新 ID への変化 (= 別ユーザログイン) を検知したら、A の履歴を確実に消す。
-  // null/undefined → 値、値 → null/undefined の遷移は H-2 / 初期化処理で扱うので対象外。
-  const prevUserIdRef = useRef<string | undefined>(viewerUserId);
-  useEffect(() => {
-    const prev = prevUserIdRef.current;
-    if (prev !== undefined && viewerUserId !== undefined && prev !== viewerUserId) {
-      clearHistory();
-      // 別ユーザの履歴を即座に画面から消すための同期 setState。一度限りの境界遷移処理。
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setTurns([]);
-    }
-    prevUserIdRef.current = viewerUserId;
+    if (!viewerUserId) return;
+    if (loadedUserRef.current === viewerUserId) return;
+    loadedUserRef.current = viewerUserId;
+    purgeOtherUsersHistory(CHAT_SEARCH_HISTORY_BASE_KEY, viewerUserId);
+    setTurns(loadScopedHistory(CHAT_SEARCH_HISTORY_BASE_KEY, viewerUserId, isChatTurn, MAX_HISTORY_TURNS));
+    setHydrated(true);
   }, [viewerUserId]);
+
+  // H-1 (persist): turns が変わるたびに現ユーザのスコープキーへ書き戻す。
+  //   復元前 (hydrated=false) は空配列の clobber を避けるため skip。
+  //   ログアウト中 (isUnauthenticated) も復活防止のため skip。
+  useEffect(() => {
+    if (!hydrated || !viewerUserId || isUnauthenticated) return;
+    saveScopedHistory(CHAT_SEARCH_HISTORY_BASE_KEY, viewerUserId, turns, MAX_HISTORY_TURNS);
+  }, [turns, hydrated, viewerUserId, isUnauthenticated]);
+
+  // H-2: ログアウト遷移を検知したら全ユーザ分の履歴を purge + state クリア。
+  //   現ユーザを特定できない (viewerUserId=undefined) ため全 baseKey を一掃する。
+  //   Cookie 削除に依存せず client-side で確実に消す ([feedback_session_clearance_pattern] 思想)。
+  //   ※ 主防御はキースコープ + login 時 purge。本 effect はフルページ遷移が起きない
+  //     SPA 内サインアウト経路向けの多層防御。
+  useEffect(() => {
+    if (!isUnauthenticated) return;
+    purgeAllHistory(CHAT_SEARCH_HISTORY_BASE_KEY);
+    loadedUserRef.current = null;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setTurns([]);
+    setHydrated(false);
+  }, [isUnauthenticated]);
 
   // 最新ターンの状態変化 (新規追加 / result 到着 / error) に追従して下端へスクロール。
   // turns.length と「最終ターンの status」を依存に含め、結果到着のタイミングでも reflow する。
@@ -356,22 +322,19 @@ export function ChatPanel({ onClose }: { onClose: () => void }) {
   // ADR-0028 PR #471: ChatPanel ヘッダの統一クリアボタンから両 mode をクリアできるよう
   //   現 mode に応じて対象履歴を切替 (UI の見た目は完全一致)。
   const handleClearHistory = useCallback(() => {
+    // ユーザスコープキーから現ユーザ分のみ削除する (越境防御と同じキー体系)。
+    if (!viewerUserId) return;
     if (mode === 'search') {
-      clearHistory();
+      clearScopedHistory(CHAT_SEARCH_HISTORY_BASE_KEY, viewerUserId);
       setTurns([]);
     } else {
-      // help mode: HelpChatInput が管理する sessionStorage を直接削除 + remount で内部 state 破棄
-      if (typeof window !== 'undefined') {
-        try {
-          window.sessionStorage.removeItem('tasukiba_help_chat_history_v1');
-        } catch {
-          // noop (quota / private browsing)
-        }
-      }
+      // help mode: HelpChatInput が管理する help チャットのスコープキーを直接削除 +
+      //   remount (helpResetKey) で内部 state を破棄。
+      clearScopedHistory(HELP_CHAT_HISTORY_BASE_KEY, viewerUserId);
       setHelpResetKey((k) => k + 1);
       setHelpTurnsCount(0);
     }
-  }, [mode]);
+  }, [mode, viewerUserId]);
 
   return (
     <aside
