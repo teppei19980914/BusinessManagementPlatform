@@ -306,11 +306,87 @@ drift 検知 cron でカバーされる範囲で集約。
 
 ---
 
-## 7. 関連リンク
+## 7. Phase 4 (2026-06-01 後半) — 体感差を埋める追加対策
+
+PR #478 マージ後にシークレットウィンドウで再計測した結果、以下の体感差が残存:
+
+| 観点 | 観測値 | 評価 |
+|---|---|---|
+| /settings/tenant | **6.26s → 3.40s (-46%)** | 大幅改善 ✅ |
+| タブAPI cold (risks/members) | **9.12s/9.22s → 2.44s/1.76s (-73%/-81%)** | 劇的改善 ✅ |
+| /api/auth/session 回数 | **4 → 1 回 (-75%)** | 改善 ✅ |
+| /retrospectives | **3.31s → 2.26s (-32%)** | 改善 ✅ |
+| /projects/[id] document | 3.14s → 3.63s | 🔴 微増 (page.tsx ではなく membership 重複が原因と判明) |
+| /login document | 591ms → 573ms | 🟡 横ばい (既にほぼ最適) |
+| 全○○ navigation | 残存 | 🔴 nav menu Link prefetch が原因と判明 |
+| mascot 2 重ロード | 残存 (1.5s → 313ms) | 🟡 timing は改善、件数は残存 |
+
+体感差を埋めるための追加 3 項目を Phase 4 として実装した。
+
+### 7.1 Phase 4-A: checkMembership + getActualProjectRole 統合
+
+**根本原因**: [page.tsx の Promise.all](../../../../src/app/(dashboard)/projects/[projectId]/page.tsx) は 4 service を並列実行していたが、`checkMembership` と `getActualProjectRole` が**それぞれ内部で `project_members` テーブルへ独立 query** を発行していた。非 admin で:
+- Track 1 (checkMembership): `project.findUnique` → `projectMember.findFirst` (sequential, 2 round-trip)
+- Track 2 (getActualProjectRole): `projectMember.findFirst` (1 round-trip、Track 1 の 2 つ目と完全重複)
+
+**対策**: [src/lib/permissions/membership.ts](../../../../src/lib/permissions/membership.ts) に `checkMembershipWithActualRole` を新設、内部で `[project, member]` を Promise.all で並列実行。全 plan / ロールで **2 query → 1 round-trip** に統合。
+
+**セキュリティ invariant 不変宣言**:
+- テナント越境チェック (severity-1) は完全保持
+- admin 短絡 (admin → projectRole='pm_tl') の挙動も同一
+- 論理削除済プロジェクトの扱い (admin 閲覧可 / 非 admin 404) も同一
+- actualProjectRole は admin 短絡の影響を受けない (実 row ベース) を維持
+- 非 admin 視点では `actualProjectRole === projectRole` (= 実 row の値) を unit test で検証 (PR #479 で 8 件追加)
+
+**期待効果**: 非 admin ユーザの project 詳細 SSR で 1 round-trip 削減 (warm ~50-150ms 短縮)。
+
+### 7.2 Phase 4-B: AppHeader Nav Link prefetch=false
+
+**根本原因**: 観測された「全振り返り遷移時の 6 つの UUID 自動 fetch」は、行 Link ではなく **ヘッダの「資産」グループ dropdown の Link が viewport 進入時に default prefetch=true で全 5 経路 (全リスク/全課題/全振り返り/全ナレッジ/全メモ) の RSC を裏で取得していた** ためと判明 ([F の修正](../../../../src/app/(dashboard)/retrospectives/all-retrospectives-table.tsx) は行 Link のみで、nav menu Link は対象外だった)。
+
+**対策**: [src/components/app-header.tsx](../../../../src/components/app-header.tsx) の `FlatNavLink` と `GroupMenu` 内 `Link` の 2 箇所に `prefetch={false}` を付与。
+
+**効果**:
+- ヘッダ表示時の自動 RSC fetch 累計 (数百 KB) が削減
+- ユーザがメニュー hover した時のクリック対象 1 件のみが on-demand 取得される
+- 初回ナビは +200-500ms 遅くなるが、自動 prefetch の累計負担消去で全体 UX 向上
+
+### 7.3 Phase 4-C: chat-fab priority 削除
+
+**観察**: Lighthouse は `chat-fab` の `mascot-owl-chat.png` を LCP element と検出していたが、**実際の LCP element は本文 (テーブル / カード等)** で、FAB は画面右下の補助要素。FAB に `priority` を付けていたため `<link rel="preload">` が document head に注入され、本文 LCP より先に Image Optimization Lambda 起動 + mascot 取得が走る = **本文 LCP を逆に遅延** させていた。
+
+**対策**: [chat-fab.tsx](../../../../src/components/chat-semantic-search/chat-fab.tsx) の `priority` を削除し `loading="eager"` に切替。「画面表示後すぐ取得、優先順位は本文より下」のセマンティクス。
+
+**A-3 mascot sizes プロップの追跡**:
+- A-3 で `sizes="40px"` 等を追加し、各画像の取得時間は短縮 (542ms+1.02s → 117ms+196ms)
+- ただし 2 リクエスト自体は残存 = Next.js Image が `width={N}` 固定の場合、`imageSizes` から 1x + 2x の 2 entry srcset を生成し、priority preload scanner が両方 prefetch する挙動
+- 完全解消には (a) inline SVG / (b) `images.imageSizes` カスタム / (c) 静的 pre-generate のいずれかが必要 → **本 PR スコープ外** (設計影響大、別 PR で検討)
+
+### 7.4 Phase 4 実装範囲
+
+| ID | 内容 | デグレリスク | 実装場所 |
+|---|---|---|---|
+| **4-A** | `checkMembershipWithActualRole` 統合 + page.tsx 適用 | 中 (テナント越境 invariant 維持必須) | [membership.ts](../../../../src/lib/permissions/membership.ts) / [projects/[projectId]/page.tsx](../../../../src/app/(dashboard)/projects/[projectId]/page.tsx) |
+| **4-B** | Nav Link prefetch=false | 低 (初回 nav が +200-500ms) | [app-header.tsx](../../../../src/components/app-header.tsx) |
+| **4-C** | chat-fab priority 削除 | 低 (FAB 表示は遅延、機能影響なし) | [chat-fab.tsx](../../../../src/components/chat-semantic-search/chat-fab.tsx) |
+| **回帰テスト** | checkMembershipWithActualRole 8 件 + chat-fab eager 確認 | - | membership.test.ts / chat-fab.test.ts |
+
+### 7.5 期待される定量効果 (Phase 4 単独、本番計測待ち)
+
+| 経路 | 改善見込み | 根拠 |
+|---|---|---|
+| /projects/[id] document (非 admin) | -50〜150ms | Phase 4-A の 1 round-trip 削減 |
+| 全○○ 系画面遷移時の累計通信 | -100〜500 KB | Phase 4-B の自動 prefetch 廃止 |
+| 全 dashboard 画面の document LCP | -100〜500ms | Phase 4-C の preload <link> 競合解消 |
+
+---
+
+## 8. 関連リンク
 
 - 前 cycle journey: [performance-improvement-journey.md](../20260417/performance-improvement-journey.md)
 - 設計書: [cold-start-and-data-growth-analysis.md](../20260417/after/次期プログラム/cold-start-and-data-growth-analysis.md)
 - 教訓集約: [KDD_PATTERNS.md §5.X+205](../../../knowledge/KDD_PATTERNS.md)
 - cron 設定: [DEPLOYMENT.md §6.1](../../../operations/develop/DEPLOYMENT.md)
 - Phase 2 実装ブランチ: `perf/dashboard-layout-parallel-ssr` (PR #477)
-- Phase C 実装ブランチ: `perf/comprehensive-perf-2026-06-01` (本 PR)
+- Phase C 実装ブランチ: `perf/comprehensive-perf-2026-06-01` (PR #478)
+- Phase 4 実装ブランチ: `perf/phase-4-page-ssr-and-prefetch` (本 PR)

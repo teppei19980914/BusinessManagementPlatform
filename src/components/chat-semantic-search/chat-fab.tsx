@@ -62,15 +62,21 @@ export function ChatSemanticSearchFab() {
             'focus:outline-none focus:ring-2 focus:ring-ring',
           )}
         >
+          {/*
+            perf/phase-4 (2026-06-01): priority を削除し loading="eager" に切替。
+              FAB は画面右下に「常時表示」されるが画面の視覚的中心ではなく LCP 候補ではない
+              (本文・テーブル等の方が大きい)。priority を付けると <link rel="preload"> が
+              document head に注入され、本文 LCP より前に mascot-owl-chat.png の取得 +
+              Image Optimization Lambda 起動が走る = 本文 LCP を逆に遅延させていた。
+              `loading="eager"` で「画面表示後すぐ取得、ただし優先順位は本文より下」とする。
+              sizes プロップは A-3 で意図したものの実効性が薄く、副作用検証が必要なため一旦削除。
+          */}
           <Image
             src={CHAT_PERSONA.avatarSrc}
             alt={CHAT_PERSONA.avatarAlt}
             width={FAB_SIZE_PX}
             height={FAB_SIZE_PX}
-            priority
-            // perf/comprehensive-perf-2026-06-01 (A-3): sizes で srcset 1 ブレークポイント固定。
-            //   FAB は fixed-width 描画なので 1 解像度で十分。priority + sizes で preload 1 リクエストに揃える。
-            sizes="64px"
+            loading="eager"
             className="h-full w-full object-cover"
           />
         </button>

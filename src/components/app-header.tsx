@@ -490,8 +490,15 @@ function AccountMenu({ user }: { user: AppHeaderUser }) {
 function FlatNavLink({ item, pathname }: { item: NavItem; pathname: string }) {
   const active = pathname.startsWith(item.href);
   return (
+    // perf/phase-4 (2026-06-01): ナビゲーション Link は prefetch={false}。
+    //   全○○ (全リスク / 全課題 / 全振り返り / 全ナレッジ / 全メモ) 系は SSR で N
+    //   プロジェクトを集計するヘビーなページ。default prefetch=true だと viewport 進入時
+    //   (= ヘッダ表示時) に裏で 5+ ページの RSC が自動取得され、累計数百 KB & 数秒の
+    //   無駄な帯域・サーバ負荷が発生する。ユーザは menu hover で 1 項目しか実際に
+    //   クリックしないため、prefetch を切り on-demand 取得に倒す。
     <Link
       href={item.href}
+      prefetch={false}
       className={cn(
         // whitespace-nowrap: ラベル中で改行されないように。breakpoint xl: と組み合わせて
         // 1366/1440px ノート PC で flat 全項目が 1 行に収まることを担保。
@@ -551,8 +558,10 @@ function GroupMenu({
                   <Menu.Item
                     key={item.href}
                     render={
+                      // perf/phase-4 (2026-06-01): 同じ理由で dropdown menu 内も prefetch=false
                       <Link
                         href={item.href}
+                        prefetch={false}
                         className={cn(
                           'block whitespace-nowrap px-4 py-2 text-sm transition-colors hover:bg-accent',
                           active ? 'bg-accent font-medium' : 'text-foreground',

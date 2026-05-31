@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { LOGIN_ROUTE } from '@/config';
 import { getProject } from '@/services/project.service';
 import { listCustomers } from '@/services/customer.service';
-import { checkMembership, getActualProjectRole } from '@/lib/permissions';
+import { checkMembershipWithActualRole } from '@/lib/permissions';
 import { recordError } from '@/services/error-log.service';
 import { getTenantTodayString } from '@/lib/tenant-time';
 import { resolveTimezone, resolveLocale } from '@/config/i18n';
@@ -37,20 +37,30 @@ export default async function ProjectDetailPage({ params }: Props) {
   //   この画面は権限・project の null チェックで分岐するため、フォールバック値で UI を
   //   描画継続する admin/users とは異なり、失敗時はインライン error 画面 + プロジェクト
   //   一覧へのリンクを表示する。
-  let membership: Awaited<ReturnType<typeof checkMembership>> | null = null;
+  //
+  // perf/phase-4 (2026-06-01): checkMembership + getActualProjectRole の重複 project_members
+  //   query を統合。旧コードは Promise.all 内で両関数を並列実行していたが、内部で同じ
+  //   project_members テーブルを別 query で叩いていたため、非 admin で 1 round-trip 余分。
+  //   {@link checkMembershipWithActualRole} に統合 (内部で project + projectMember を Promise.all)
+  //   することで全 plan / ロールで 1 round-trip に集約。
+  //   セキュリティ invariant (テナント越境チェック + admin 短絡 + 論理削除扱い + actualProjectRole
+  //   の admin 非短絡性) は完全保持。
+  let membership: Awaited<ReturnType<typeof checkMembershipWithActualRole>> | null = null;
   let project: Awaited<ReturnType<typeof getProject>> = null;
   let customers: Awaited<ReturnType<typeof listCustomers>> = [];
-  let actualRole: Awaited<ReturnType<typeof getActualProjectRole>> = null;
   let dataLoadError = false;
   try {
-    [membership, project, customers, actualRole] = await Promise.all([
-      checkMembership(projectId, session.user.id, session.user.systemRole, session.user.tenantId),
+    [membership, project, customers] = await Promise.all([
+      checkMembershipWithActualRole(
+        projectId,
+        session.user.id,
+        session.user.systemRole,
+        session.user.tenantId,
+      ),
       // 2026-05-08: super_admin はシードプロジェクト (isSampleData=true) も参照可
       getProject(projectId, session.user.tenantId, session.user.systemRole),
       // PR #111-2: 編集ダイアログの顧客セレクト用マスタ
       listCustomers(session.user.tenantId),
-      // 2026-04-24: リスク/課題/振り返り/ナレッジ 一覧の作成ボタン判定用 (admin 短絡なし)
-      getActualProjectRole(projectId, session.user.id),
     ]);
   } catch (error) {
     dataLoadError = true;
@@ -104,7 +114,11 @@ export default async function ProjectDetailPage({ params }: Props) {
     || membership.projectRole === 'member';
   // 2026-04-24: リスク/課題/振り返り/ナレッジ 一覧専用の create 可否。
   //             admin でも実際の ProjectMember でないと作成不可。
-  const canCreateOwnedList = actualRole === 'pm_tl' || actualRole === 'member';
+  // perf/phase-4 (2026-06-01): 統合 checkMembershipWithActualRole から取得した
+  //   actualProjectRole を使用 (= 旧 getActualProjectRole の戻り値と等価)。
+  const canCreateOwnedList =
+    membership.actualProjectRole === 'pm_tl'
+    || membership.actualProjectRole === 'member';
 
   // feat/gantt-initial-scroll-and-locale (2026-05-29):
   //   ガントタブ・振り返りタブが lazy load 後に必要とする tenant TZ/locale/today を server で確定。
