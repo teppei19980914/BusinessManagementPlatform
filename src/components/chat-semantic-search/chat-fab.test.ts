@@ -77,8 +77,19 @@ describe('ChatSemanticSearchFab のマスコット統合 invariant', () => {
     expect(source).toMatch(/motion-reduce:hover:scale-100/);
   });
 
-  it('priority を付与し LCP 候補としてプリロードさせる', () => {
-    expect(source).toMatch(/priority/);
+  // perf/phase-4 (2026-06-01): priority を削除。FAB は画面右下の常時表示要素だが
+  //   本文 LCP より優先順位を下げる方が document load 全体に有利 (preload <link> 競合解消)。
+  //   loading="eager" で「画面表示後すぐ取得、優先順位は本文より下」とする。
+  it('priority プロップを付与しない (本文 LCP を遅延させないため、phase-4)', () => {
+    // 単独の `priority` 識別子としては Image に渡さない (コメント中の文字列マッチは許容)。
+    // <Image ... priority ... /> 形式での出現を否定する: Image タグ内に priority が独立トークンで現れないこと。
+    const imageBlock = source.match(/<Image[\s\S]{0,600}?\/>/);
+    expect(imageBlock).not.toBeNull();
+    expect(imageBlock![0]).not.toMatch(/\bpriority\b/);
+  });
+
+  it('loading="eager" を付与して画面表示後すぐの取得を担保する', () => {
+    expect(source).toMatch(/loading="eager"/);
   });
 
   it('unoptimized を付与しない (Optimizer 経由 / KDD §5.X+177 真原因 = middleware redirect)', () => {
