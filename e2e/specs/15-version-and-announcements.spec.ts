@@ -133,8 +133,11 @@ test.describe('@feature:settings ログイン後フッタ + バージョンア�
     );
     await expect(footer.getByTestId('app-footer-security-report')).toBeVisible();
 
-    // AccountMenu を開き「バージョンアップ情報」が /changelog を指すことを確認
-    await page.getByTestId('account-menu-trigger').click();
+    // AccountMenu を開き「バージョンアップ情報」が /changelog を指すことを確認。
+    // chromium-mobile (iPhone 13 emulation, DPR=3) では auto-hide/sticky ヘッダ配下の
+    // hit-test が誤判定し「別要素が intercepts pointer events」で click が timeout する
+    // (KDD §5.X+124-126)。定石どおり { force: true } で bypass する。
+    await page.getByTestId('account-menu-trigger').click({ force: true });
     await expect(page.getByTestId('account-menu-version-info')).toHaveAttribute(
       'href',
       '/changelog',
