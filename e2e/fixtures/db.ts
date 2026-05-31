@@ -136,6 +136,58 @@ export async function ensureGeneralUser(
 }
 
 /**
+ * 指定テナント (slug) 内の email に一致する user.id を取得する。
+ *
+ * 用途: signupTenantViaUi で払い出した admin を、その後プロジェクトメンバー (pm_tl) に
+ *   追加するための userId 解決。プロジェクト作成者は自動メンバー化されない
+ *   (createProject は ProjectMember を作らない) ため、プロジェクト配下の資産作成
+ *   (knowledge/risk/retrospective) には明示的なメンバー追加が必要。
+ *
+ * email は tenant-scoped 一意 (ADR-0016) のため、同 email が複数テナントに存在し得る。
+ * 必ず tenantSlug で絞り、目的のテナントの user を取得する。
+ */
+export async function getTenantUserIdByEmail(
+  email: string,
+  tenantSlug: string,
+): Promise<string> {
+  const pool = getPool();
+  const res = await pool.query<{ id: string }>(
+    `SELECT u.id
+       FROM users u
+       JOIN tenants t ON t.id = u.tenant_id
+      WHERE u.email = $1 AND t.slug = $2
+      LIMIT 1`,
+    [email, tenantSlug],
+  );
+  if (res.rows.length === 0) {
+    throw new Error(`getTenantUserIdByEmail: user not found (${email} @ ${tenantSlug})`);
+  }
+  return res.rows[0].id;
+}
+
+/**
+ * 層2 (BEGINNER_REQUIRES_UPGRADE) 検証用の seed ヘルパ。
+ *
+ * ADR-0016 Revised の 3 層判定:
+ *   - 層2 = 「email が users に存在するが、その user は created_by_user_id ではない (= 招待 / Default 所属)」
+ *   → /signup で Beginner 不可・Expert/Pro のみ可。
+ *
+ * ensureGeneralUser は Default テナントに general user を作るため、その user は
+ * いずれの tenant の created_by_user_id にもならない = まさに層2 の状態を満たす。
+ * 本ヘルパは「層2 を作る」意図を明示するための薄いラッパ ([[feedback_reuse_existing_design_first]])。
+ *
+ * @returns 作成した user.id
+ */
+export async function seedLayer2MemberEmail(
+  email: string,
+  name: string,
+  password: string,
+): Promise<string> {
+  // Default テナント所属の general user = created_by_user_id ではない → 層2
+  return ensureGeneralUser(email, name, password);
+}
+
+/**
  * RUN_ID の形式を厳格に検証する。
  * 許可文字: 英数字 + ハイフン のみ (run-id.ts の RUN_ID 定義と一致)。
  * LIKE の wildcard (% / _) やクオート、セミコロン等が混入した時点で reject。
@@ -232,5 +284,119 @@ export async function cleanupByRunId(runId: string): Promise<void> {
     console.warn('[e2e cleanup] 無視可能なエラー:', (e as Error).message);
   } finally {
     client.release();
+  }
+}
+
+/**
+ * RUN_ID prefix を含むテナント (= signupTenantViaUi が払い出したもの) を、配下の全業務データ +
+ * 認証/課金/監査メタ + users もろとも **物理削除** する (test/release-acceptance-e2e で追加)。
+ *
+ * なぜ cleanupByRunId と別関数か:
+ *   cleanupByRunId は users/projects/customers を RUN_ID で消すが **tenants 行は消さない**。
+ *   さらに本サービスのセルフ解約 (deleteTenant) は abuse 防止のため users/tenant 行を
+ *   **論理削除のまま永続保持** する (super-admin.service.ts purgeOldDeletedTenants 参照)。
+ *   そのため signup ライフサイクル / セルフ解約 spec の後始末では、同 email が層1 (OWNED_TENANT_EXISTS)
+ *   として残り続けるのを避けるべく、テナント本体まで物理 purge する必要がある。
+ *
+ * 安全性:
+ *   - runId は assertRunIdFormat で英数ハイフン限定に検証 (LIKE wildcard 汚染防止)
+ *   - 対象テナントは「name が RUN_ID を含む」または「created_by user の email が RUN_ID を含む」もの
+ *   - FK 安全順 (子 → 親 → users → tenants) で削除。per-statement try/catch で best-effort
+ *     (CI は ephemeral Postgres 破棄で完全消去されるため、本処理は主にローカル残存防止用)
+ */
+export async function cleanupTenantByRunId(runId: string): Promise<void> {
+  assertRunIdFormat(runId);
+  const pool = getPool();
+  const pattern = `%${runId}%`;
+
+  const tenantRes = await pool.query<{ id: string }>(
+    `SELECT id FROM tenants
+       WHERE name LIKE $1
+          OR id IN (
+            SELECT t.id FROM tenants t
+              JOIN users u ON u.id = t.created_by_user_id
+             WHERE u.email LIKE $1
+          )`,
+    [pattern],
+  );
+  const tenantIds = tenantRes.rows.map((r) => r.id);
+  if (tenantIds.length === 0) return;
+
+  // 子 → 親 → users → tenants の順。tenant_id を持たない子テーブルは親スコープ subquery で絞る。
+  const statements: Array<{ label: string; sql: string }> = [
+    { label: 'mentions', sql: 'DELETE FROM mentions WHERE tenant_id = ANY($1)' },
+    { label: 'comments', sql: 'DELETE FROM comments WHERE tenant_id = ANY($1)' },
+    { label: 'notifications', sql: 'DELETE FROM notifications WHERE tenant_id = ANY($1)' },
+    { label: 'attachments', sql: 'DELETE FROM attachments WHERE tenant_id = ANY($1)' },
+    {
+      label: 'task_progress_logs',
+      sql: 'DELETE FROM task_progress_logs WHERE task_id IN (SELECT t.id FROM tasks t JOIN projects p ON p.id = t.project_id WHERE p.tenant_id = ANY($1))',
+    },
+    {
+      label: 'task_knowledges',
+      sql: 'DELETE FROM task_knowledges WHERE knowledge_id IN (SELECT id FROM knowledges WHERE tenant_id = ANY($1))',
+    },
+    {
+      label: 'knowledge_projects',
+      sql: 'DELETE FROM knowledge_projects WHERE knowledge_id IN (SELECT id FROM knowledges WHERE tenant_id = ANY($1))',
+    },
+    {
+      label: 'risk_issue_projects',
+      sql: 'DELETE FROM risk_issue_projects WHERE risk_issue_id IN (SELECT id FROM risks_issues WHERE tenant_id = ANY($1))',
+    },
+    {
+      label: 'retrospective_projects',
+      sql: 'DELETE FROM retrospective_projects WHERE retrospective_id IN (SELECT id FROM retrospectives WHERE tenant_id = ANY($1))',
+    },
+    {
+      label: 'tasks',
+      sql: 'DELETE FROM tasks WHERE project_id IN (SELECT id FROM projects WHERE tenant_id = ANY($1))',
+    },
+    {
+      label: 'estimates',
+      sql: 'DELETE FROM estimates WHERE project_id IN (SELECT id FROM projects WHERE tenant_id = ANY($1))',
+    },
+    {
+      label: 'project_members',
+      sql: 'DELETE FROM project_members WHERE project_id IN (SELECT id FROM projects WHERE tenant_id = ANY($1))',
+    },
+    { label: 'suggestion_explanations', sql: 'DELETE FROM suggestion_explanations WHERE tenant_id = ANY($1)' },
+    { label: 'risks_issues', sql: 'DELETE FROM risks_issues WHERE tenant_id = ANY($1)' },
+    { label: 'retrospectives', sql: 'DELETE FROM retrospectives WHERE tenant_id = ANY($1)' },
+    { label: 'stakeholders', sql: 'DELETE FROM stakeholders WHERE tenant_id = ANY($1)' },
+    { label: 'knowledges', sql: 'DELETE FROM knowledges WHERE tenant_id = ANY($1)' },
+    { label: 'memos', sql: 'DELETE FROM memos WHERE tenant_id = ANY($1)' },
+    { label: 'projects', sql: 'DELETE FROM projects WHERE tenant_id = ANY($1)' },
+    { label: 'customers', sql: 'DELETE FROM customers WHERE tenant_id = ANY($1)' },
+    { label: 'tenant_import_preview', sql: 'DELETE FROM tenant_import_preview WHERE tenant_id = ANY($1)' },
+    { label: 'api_call_logs', sql: 'DELETE FROM api_call_logs WHERE tenant_id = ANY($1)' },
+    { label: 'tenant_monthly_usage_history', sql: 'DELETE FROM tenant_monthly_usage_history WHERE tenant_id = ANY($1)' },
+    { label: 'billing_history', sql: 'DELETE FROM billing_history WHERE tenant_id = ANY($1)' },
+    { label: 'stripe_usage_record_queue', sql: 'DELETE FROM stripe_usage_record_queue WHERE tenant_id = ANY($1)' },
+    { label: 'tenant_consent_logs', sql: 'DELETE FROM tenant_consent_logs WHERE tenant_id = ANY($1)' },
+    { label: 'audit_logs', sql: 'DELETE FROM audit_logs WHERE tenant_id = ANY($1)' },
+    { label: 'role_change_logs', sql: 'DELETE FROM role_change_logs WHERE tenant_id = ANY($1)' },
+    {
+      label: 'sessions',
+      sql: 'DELETE FROM sessions WHERE user_id IN (SELECT id FROM users WHERE tenant_id = ANY($1))',
+    },
+    { label: 'email_verification_tokens', sql: 'DELETE FROM email_verification_tokens WHERE tenant_id = ANY($1)' },
+    { label: 'password_reset_tokens', sql: 'DELETE FROM password_reset_tokens WHERE tenant_id = ANY($1)' },
+    { label: 'recovery_codes', sql: 'DELETE FROM recovery_codes WHERE tenant_id = ANY($1)' },
+    { label: 'password_histories', sql: 'DELETE FROM password_histories WHERE tenant_id = ANY($1)' },
+    { label: 'auth_event_logs', sql: 'DELETE FROM auth_event_logs WHERE tenant_id = ANY($1)' },
+    { label: 'system_error_logs', sql: 'DELETE FROM system_error_logs WHERE tenant_id = ANY($1)' },
+    { label: 'email_send_logs', sql: 'DELETE FROM email_send_logs WHERE tenant_id = ANY($1)' },
+    { label: 'users', sql: 'DELETE FROM users WHERE tenant_id = ANY($1)' },
+    { label: 'tenants', sql: 'DELETE FROM tenants WHERE id = ANY($1)' },
+  ];
+
+  for (const { label, sql } of statements) {
+    try {
+      await pool.query(sql, [tenantIds]);
+    } catch (e) {
+      // best-effort: 列名/テーブル差異やデータ不在は無視 (CI は DB 破棄で完全消去されるため)
+      console.warn(`[e2e cleanupTenant] ${label} skip (無視可): ${(e as Error).message}`);
+    }
   }
 }

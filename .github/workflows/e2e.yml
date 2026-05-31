@@ -74,6 +74,13 @@ jobs:
       # Playwright 側 (e2e/fixtures/inbox.ts) がトークン URL を抽出して検証する。
       MAIL_PROVIDER: inbox
       INBOX_DIR: /tmp/tasukiba-e2e-inbox
+      # test/release-acceptance-e2e (2026-06): embedding (Voyage) / LLM (Anthropic) の E2E スタブ provider。
+      #   MAIL_PROVIDER=inbox と同じ「provider 切替」パターン。VOYAGE_API_KEY / ANTHROPIC_API_KEY を
+      #   設定せずに チャット意味検索 / たすきフクロウ ヘルプチャット の配線を通すための決定論的スタブ。
+      #   ★本番では絶対に設定しないこと★ (= 本番コード側で NODE_ENV=production なら env を無視する
+      #   二重ガードを入れているが、運用上も設定しない)。
+      EMBEDDING_PROVIDER: stub
+      LLM_PROVIDER: stub
       # PR #92: シナリオ Step 1 で使用する初期 admin (E2E 実行ごとに DB にシード)
       INITIAL_ADMIN_EMAIL: admin-e2e@example.com
       INITIAL_ADMIN_PASSWORD: 'E2eInitial!Pw_2026'

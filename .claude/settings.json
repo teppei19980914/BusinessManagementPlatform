@@ -43,7 +43,8 @@
       "PowerShell($c = Get-Content \"c:\\\\Users\\\\SF02512\\\\GitHub\\\\Private\\\\BusinessManagementPlatform\\\\score_out.txt\"; \"lines=$\\($c.Count\\)\"; $c | Select-String -Pattern \"score|/100|pass|fail|critical|high|✅|❌\" | Select-Object -Last 25 | ForEach-Object { $_.Line })",
       "PowerShell($c = Get-Content \"c:\\\\Users\\\\SF02512\\\\GitHub\\\\Private\\\\BusinessManagementPlatform\\\\score_out.txt\" -Raw; if \\($c.Length -gt 1500\\) { $c.Substring\\($c.Length-1500\\) } else { $c })",
       "PowerShell(Test-Path \"c:\\\\tmp\\\\score_clean.txt\"; \\(Get-Item \"c:\\\\tmp\\\\score_clean.txt\" -ErrorAction SilentlyContinue\\).Length)",
-      "PowerShell(\"PS-OK\")"
+      "PowerShell(\"PS-OK\")",
+      "PowerShell($root=\"c:\\\\Users\\\\SF02512\\\\GitHub\\\\Private\\\\BusinessManagementPlatform\")"
     ],
     "additionalDirectories": [
       "C:\\Users\\SF02512\\GitHub\\Private\\HomePage\\src\\content\\product\\ja",

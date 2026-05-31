@@ -39,6 +39,16 @@ export function getAnthropicClient(): Anthropic {
   if (cachedClient != null) {
     return cachedClient;
   }
+  // ★テスト専用★ E2E スタブ provider (test/release-acceptance-e2e / 2026-06)。
+  //   CI の E2E では ANTHROPIC_API_KEY を設定しないため、LLM_PROVIDER=stub のとき
+  //   help-chat 出力スキーマに合致する定型 JSON を返す擬似クライアントを返し、ヘルプチャット
+  //   の配線 (FAB → help タブ → 回答バブル) を鍵なしで通せるようにする。
+  //   ★安全モデル★ MAIL_PROVIDER=inbox と同じ明示 opt-in。本番は LLM_PROVIDER を設定しない。
+  //   NODE_ENV では分岐しない (E2E standalone は NODE_ENV=production で起動するため)。
+  if (isLlmStubEnabled()) {
+    cachedClient = createStubAnthropicClient();
+    return cachedClient;
+  }
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey || apiKey.trim() === '') {
     throw new AnthropicConfigError(
@@ -68,4 +78,54 @@ export function _setAnthropicClientForTest(
   client: Anthropic | null,
 ): void {
   cachedClient = client;
+}
+
+// ================================================================
+// テスト専用: E2E スタブ provider (test/release-acceptance-e2e / 2026-06)
+// ================================================================
+
+/**
+ * LLM_PROVIDER=stub のときのみ true (E2E スタブ provider)。
+ *
+ * ★安全モデル★: MAIL_PROVIDER=inbox と同じ明示 opt-in env 方式。本番デプロイは LLM_PROVIDER を
+ * 設定しない (= 既定で実 Anthropic)。NODE_ENV では分岐しない: E2E standalone サーバは production
+ * build を `NODE_ENV=production` で起動するため、NODE_ENV ガードはスタブを永久無効化する
+ * (PR #476 初回 CI で発覚)。本番では本 env を絶対に設定しないこと。
+ */
+export function isLlmStubEnabled(): boolean {
+  return process.env.LLM_PROVIDER === 'stub';
+}
+
+/**
+ * help-chat 出力スキーマ (answer/answerType/sourceFaqIds/sourceGuideStepIds/suggestSemanticSearch)
+ * に合致する定型 JSON を返す擬似 Anthropic クライアント (E2E スタブ用)。
+ *
+ * messages.create の戻り値は本物の SDK Message と同じ最小 shape (content[].text / usage) を満たす。
+ * 注: 本クライアントはヘルプチャットの配線検証専用。auto-tag / suggestion-explanation 等
+ * 別スキーマを期待する呼出元がスタブ環境で叩いた場合は各呼出元の parse が失敗するが、
+ * それらは best-effort (catch) のため致命的にはならない (E2E では検証対象外)。
+ */
+function createStubAnthropicClient(): Anthropic {
+  const cannedHelpChatJson = JSON.stringify({
+    answer: '（E2E スタブ応答）ただいまテストモードのため、定型の回答をお返ししています。',
+    answerType: 'faq',
+    sourceFaqIds: [],
+    sourceGuideStepIds: [],
+    suggestSemanticSearch: false,
+  });
+  const stub = {
+    messages: {
+      create: async () => ({
+        id: 'msg_e2e_stub',
+        type: 'message',
+        role: 'assistant',
+        model: 'claude-haiku-4-5-20251001',
+        stop_reason: 'end_turn',
+        stop_sequence: null,
+        content: [{ type: 'text', text: cannedHelpChatJson }],
+        usage: { input_tokens: 10, output_tokens: 20 },
+      }),
+    },
+  };
+  return stub as unknown as Anthropic;
 }

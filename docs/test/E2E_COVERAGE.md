@@ -28,7 +28,7 @@
 - [x] `/reset-password` — e2e/visual/auth-screens.spec.ts (視覚回帰のみ、機能は PR #E 以降)
 - [x] `/login/mfa` — e2e/specs/01-admin-and-member-setup.spec.ts (PR #92 / Step 2b + Step 5)
 - [x] `/setup-password` — e2e/specs/01-admin-and-member-setup.spec.ts (PR #92 / Step 4, general ユーザ招待経路)
-- [x] `/signup` — e2e/specs/14-signup-3tier-eligibility.spec.ts (ADR-0016 Revised / 2026-05-22 / 3 層 eligibility 判定: 層 1 自前テナント保有 → フォーム disable + 問合せ動線 / 層 3 完全新規 → Beginner 活性 / フォーム render smoke)。送信完了まで踏み込まず UI 判定挙動のみを検証 (DB 汚染回避)。サインアップ完了動作は単体テスト src/app/api/auth/signup/route.test.ts (9 件) + src/services/tenant-onboarding.service.test.ts (3 層判定 + SA-2) で担保
+- [x] `/signup` — e2e/specs/14-signup-3tier-eligibility.spec.ts (UI 判定のみ) + **e2e/specs/19-signup-lifecycle.spec.ts** (test/release-acceptance-e2e / 2026-06 / 層3 完全払い出し → inbox 検証メール → setup-password → login の完全フロー) + **e2e/specs/20-signup-eligibility-complete.spec.ts** (層2 Beginner不可→Expert完全送信成功 / 層1 完全送信ブロック)。完全送信は e2e/fixtures/signup.ts:signupTenantViaUi 経由 (RUN_ID で一意化 + cleanupTenantByRunId で物理 purge のため DB 汚染しない)
 
 ### 公開ページ (未認証アクセス可)
 - (2026-05-21 / feat/legal-pages-lp-integration): 利用規約・プライバシーポリシーは外部 LP
@@ -62,7 +62,8 @@
 - [x] `/my-tasks` — e2e/specs/04-personal-features.spec.ts (PR #94 / 画面 render)
 - [x] `/settings` — e2e/specs/01-admin-and-member-setup.spec.ts (PR #92 / パスワード変更 + MFA 有効化) + e2e/specs/04-personal-features.spec.ts (PR #94 / テーマ変更)
 - [ ] `/guide` — skip: PR I (2026-05-09 / #1) 静的 + tab 切替のみの使い方ガイド。auth リダイレクト + ロール別 initialTab は src/app/(dashboard)/guide/page.test.ts で担保。視覚回帰 + tab 切替の E2E は v1.x で検討
-- [ ] `/help` — skip: 静的 + accordion の FAQ 画面 (2026-05-29 feat/faq-revamp PR1-4 で 30+ 件に大幅拡充済)。auth リダイレクト + tenant admin セクション条件分岐は src/app/(dashboard)/help/page.test.ts、FAQ 文言と実装の drift invariant (Grace 30 日誤記再混入防止 / Phase 2 削除 / 新規 8 件 + 12 件 + 4 件の存在担保) は help-client.test.ts で担保。E2E は PR6 (FAQ AI チャット導入) で help-chat.spec.ts として追加予定 (KDD §5.X+187 ドリフト検知パターン参照)
+- [x] `/help` — FAQ accordion + drift invariant は src/app/(dashboard)/help/page.test.ts / help-client.test.ts で担保。E2E は **e2e/specs/22-onboarding.spec.ts** (welcome-owl-replay = 「はじめてのご案内をもう一度見る」でモーダル再表示) でカバー。FAQ AI チャット (たすきフクロウ) の配線は **e2e/specs/23-chat-help.spec.ts** (FAB → ヘルプタブ → 回答バブル、embedding/LLM スタブ前提)
+- [x] 初回オンボーディング (welcome-owl-modal / DashboardLayout 常駐 `WelcomeOwlAutoOpen`、#475 G2-e-3) — **e2e/specs/22-onboarding.spec.ts** (初回ログイン isFirstTimeUser=true で自動表示 + CTA chat/guide/help/close + /help の welcome-owl-replay 再表示)。独立 page.tsx は持たないため coverage-check 対象外
 
 ### admin 専用
 - [x] `/admin/users` — e2e/specs/01-admin-and-member-setup.spec.ts (PR #92 / Step 3 招待)
@@ -159,10 +160,10 @@
 - [x] `/api/projects/[projectId]/knowledge/bulk` (PATCH 一括 visibility, PR #162 → PR #165 → UI_PATTERNS §35) — e2e/specs/10-project-list-bulk-update.spec.ts
 
 ### チャット意味検索 (PR #373 仕様 / 本機能で新設)
-- [ ] `/api/chat/search` (POST) — skip: PR feat/chat-semantic-search (2026-05-23) で新設。5 資産横断意味検索の API。認証・seedDataEnabled・縮退モード・visibility フィルタは単体テスト src/services/chat-search.service.test.ts + src/app/api/chat/search/route.test.ts で担保 (10 ケース)。E2E は FAB クリック → サイドパネル展開 → 検索結果 tier 表示の経路を後続 PR で追加検討 (UI 動作は src/components/chat-semantic-search/* で別途検証想定)
+- [x] `/api/chat/search` (POST) — 認証・seedDataEnabled・縮退モード・visibility フィルタは単体テスト src/services/chat-search.service.test.ts + route.test.ts で担保 (10 ケース)。E2E 配線は **e2e/specs/23-chat-help.spec.ts** (FAB → 検索タブ → クエリ送信 → ユーザバブル表示)。※ query embedding は CI で EMBEDDING_PROVIDER=stub の決定論的疑似ベクトルを使用 (実 Voyage の関連度は 👤 人間スモークに残る、docs/test/RELEASE_ACCEPTANCE_TEST.md)
 
 ### たすきフクロウ AI ヘルプチャット (ADR-0027 / 2026-05-29 PR5 で新設)
-- [ ] `/api/help/chat` (POST) — skip: feat/faq-pr5-ai-concierge-core で新設。FAQ + 使い方ガイドを Claude Haiku に同梱する learning-free 機能。権限フィルタ (一般メンバー / PM/PL / tenant_admin で開示 FAQ を厳密に分別) は src/config/faq-content.test.ts + src/config/guide-content.test.ts で担保 (21 ケース)。E2E は PR6 (UI 実装) で help-chat.spec.ts として追加予定。本 route は monthly cap (100 回/テナント) と LLM call の統合動作のため、PR7 で E2E に組み込む
+- [x] `/api/help/chat` (POST) — 権限フィルタ (開示 4 段) は src/config/faq-content.test.ts + guide-content.test.ts で担保 (21 ケース)。E2E 配線は **e2e/specs/23-chat-help.spec.ts** (FAB → ヘルプタブ → 質問 → アシスタント回答バブル)。※ LLM は CI で LLM_PROVIDER=stub の定型 JSON 応答を使用 (実 Claude の回答品質は 👤 人間スモークに残る)。faq_embeddings は CI 未 seed のため RAG hits=0 だが LLM 経路自体は通る
 
 ### メモ
 - [x] `/api/memos` (GET/POST) — e2e/specs/04-personal-features.spec.ts (PR #94 / POST 作成 + GET は /memos と /all-memos の画面経由)
@@ -172,7 +173,7 @@
 - [ ] `/api/memos/export` — skip: T-22 Phase 22d で新設、4 列 CSV 出力。E2E は sync-import と往復編集サイクルでまとめてカバー予定 (後続 PR)
 
 ### 添付
-- [ ] `/api/attachments/*` — skip: 各親エンティティの spec 経由で間接カバー
+- [ ] `/api/attachments/*` — skip (👤 人間スモーク): ファイル添付 (upload→finalize→download→delete) は実 Supabase Storage の signed URL PUT / 容量課金 / 耐久に依存し、決定論的スタブでは本質を検証できない (storage スタブの実装コスト/本番アップロード経路への変更リスクが高く、🤖 化しても 👤 確認は減らない、test/release-acceptance-e2e 振り分け判断)。upload/finalize の認可・サイズ判定は単体テスト (route.test.ts) で担保し、実経路は docs/test/RELEASE_ACCEPTANCE_TEST.md の 👤 項目 (本番数分スモーク) で確認する
 
 ### コメント (PR #199)
 - [ ] `/api/comments` (GET/POST) — skip: MVP は単体テスト (`src/services/comment.service.test.ts` + `src/lib/validators/comment.test.ts`) でカバー、E2E は各 entity の編集 dialog spec 経由で後続 PR
@@ -209,7 +210,7 @@
 - [ ] `/api/admin/super/tenants/[id]/suspend` (POST) — skip: PR #372 (2026-05-14) super_admin 限定テナント read-only 強制移行。MANAGEMENT_TENANT_FORBIDDEN / TENANT_NOT_FOUND / TENANT_DELETED / ALREADY_SUSPENDED / INVALID_REASON + tokenVersion increment による即時セッション失効は src/services/super-admin.service.test.ts (suspendTenant 7 テスト) + src/app/api/admin/super/tenants/[id]/suspend/route.test.ts (9 テスト) で担保。middleware 遮断は src/lib/auth.config.test.ts (TENANT_SUSPENDED 6 テスト) で担保。E2E は V1.x で検討 (= サブスクリプション中断の決定論性確保が難しい)
 - [ ] `/api/admin/super/tenants/[id]/resume` (POST) — skip: PR #372 (2026-05-14) super_admin 限定テナント read-only 解除。TENANT_NOT_FOUND / TENANT_DELETED / NOT_SUSPENDED + suspendedBy 監査保持は src/services/super-admin.service.test.ts (resumeTenant 4 テスト) + src/app/api/admin/super/tenants/[id]/resume/route.test.ts (5 テスト) で担保
 - [ ] `/api/admin/super/tenants/[id]/storage-guard-reset` (POST) — skip: ADR-0020 (2026-05-25) circuit breaker open 状態 (storage-guard が 3 回連続失敗で write 拒否) の手動復旧。super_admin 認可 / CIRCUIT_NOT_OPEN (409) / TENANT_NOT_FOUND (404) / audit_log + recordError 記録は src/app/api/admin/super/tenants/[id]/storage-guard-reset/route.test.ts (5 テスト) で担保。E2E は循環ロック起点の作成が困難なため対象外
-- [ ] `/api/auth/signup` (POST) — skip: 公開セルフサインアップ。IP-based rate limit (5/hour) + honeypot (hp_url) + ルート単体テスト src/app/api/auth/signup/route.test.ts (9 件: plan 上書き削除検証 + OWNED_TENANT_EXISTS / BEGINNER_REQUIRES_UPGRADE / SLUG_CONFLICT / EMAIL_SEND_FAILED ハンドリング) + サービステスト src/services/tenant-onboarding.service.test.ts (3 層判定 + SA-2 + createdByUserId 紐付け) で担保。完全送信動作は DB 汚染回避のため E2E 対象外、UI 挙動は 14-signup-3tier-eligibility.spec.ts で部分カバー
+- [x] `/api/auth/signup` (POST) — 公開セルフサインアップ。rate limit / honeypot / 3 層判定は route.test.ts (9 件) + tenant-onboarding.service.test.ts で担保。**完全送信 E2E は e2e/specs/19-signup-lifecycle.spec.ts (層3 成功) + 20-signup-eligibility-complete.spec.ts (層2 Expert 成功 / 層1 ブロック)**。inbox provider 経由でメール検証 → setup-password → login まで通す (RUN_ID 一意化 + cleanupTenantByRunId 物理 purge で DB 汚染回避)
 - [ ] `/api/tenants/me/billing` (PATCH) — skip: P-G (2026-05-08) テナント管理者の請求先情報編集。zod バリデーション + サービステスト (tenant-self.service.test.ts) で担保
 - [ ] `/api/tenants/me/billing/stripe/setup` (POST) — skip: PR-S3 (2026-05-14) クレジットカード払い切替の Stripe Checkout Session 作成 API。認可 (admin → 通過、general → 403) + feature flag (STRIPE_ENABLED) + 既に credit_card で 409 + Stripe API エラー変換 は src/app/api/tenants/me/billing/stripe/setup/route.test.ts (10 ユニット) で担保。Stripe Test Mode 経由の E2E は v2 で検討
 - [ ] `/api/tenants/me/billing/stripe/setup/complete` (GET) — skip: PR-S3 (2026-05-14) Stripe Checkout 完了後の Subscription 作成 + paymentMethod 切替ハンドラ。session_id 検証 / オープンリダイレクト対策 / failure reason マッピング は src/app/api/tenants/me/billing/stripe/setup/complete/route.test.ts (12 ユニット) で担保
@@ -218,7 +219,7 @@
 - [ ] `/api/tenants/me/billing/stripe/verify` (POST) — skip: PR-S3 (2026-05-14) $0 SetupIntent によるカード検証 API。NO_CARD_REGISTERED 409 + valid/expired/declined 各状態の返却 は src/app/api/tenants/me/billing/stripe/verify/route.test.ts (6 ユニット) で担保
 - [ ] `/api/tenants/me/i18n` (GET / PATCH) — skip: PR-1 (2026-05-15) テナント単位 timezone / locale 設定 API (admin 限定 / general & super_admin は 403)。zod バリデーション + 認可 + 部分更新 + DB 保存 + JWT 反映フローは `src/app/api/tenants/me/i18n/route.test.ts` (8 ケース) + `src/services/tenant-self.service.test.ts` で担保済。旧 `/api/settings/i18n` (ユーザ単位) を置き換え。UI 側の反映確認は visual regression (settings 画面) で担保
 - [ ] `/api/tenants/me/storage-addon` (GET / PATCH / DELETE) — skip: Storage add-on (Phase 2 / 2026-05-08) テナント管理者のストレージプラン管理 (即時アップ / 翌月ダウン予約 / 使用量超過拒否 / Grace state)。サービステスト 22 件 (tenant-storage.service.test.ts) で担保。E2E は V1.x で検討
-- [ ] `/api/tenants/me/self-delete` (POST) — skip: 2026-05-08 テナント管理者のセルフ解約 API。テナント名一致確認 + 既存 deleteTenant() (P-A) のカスケード論理削除を再利用。FORBIDDEN / NAME_MISMATCH / ALREADY_DELETED / TENANT_NOT_FOUND の認可・確認ロジックは super-admin.service.test.ts (deleteTenant) で間接担保。E2E は V1.x で検討 (= 自爆系テストのため決定論性確保が難しい)
+- [x] `/api/tenants/me/self-delete` (POST) — テナント管理者のセルフ解約。認可・確認ロジックは super-admin.service.test.ts で担保。E2E は **e2e/specs/21-tenant-self-delete.spec.ts** (名称不一致→422 NAME_MISMATCH / 一致→成功+90日メッセージ / 解約後ログイン不可 / 同 email 再 signup が層1 OWNED_TENANT_EXISTS でブロック = abuse 防止設計の挙動)。afterAll で cleanupTenantByRunId が論理削除済テナント+users を物理 purge
 - [ ] `/api/tenants/me/export` (GET) — skip: P-C (2026-05-08) テナント管理者の全データエクスポート ZIP ダウンロード。テナントスコープ + PII 除去 + ZIP 構造 + UTF-8 BOM 付き CSV は src/services/data-export.service.test.ts (8 件) で担保
 - [ ] `/api/admin/super/tenants/[id]/export` (GET) — skip: P-C (2026-05-08) super_admin によるテナント代行エクスポート (顧客サポート用途、監査ログ記録)
 - [ ] `/api/tenants/me/import` (POST) — skip: P-D (2026-05-08) テナント管理者の P-C 形式 ZIP 一括取り込み。INVALID_ZIP / INVALID_FORMAT / IMPORT_IN_PROGRESS / BEGINNER_SEAT_LIMIT / FK 書き換え / Email merge / Task 自己参照 / polymorphic entityId は src/services/data-import.service.test.ts (11 件) で担保。E2E は V1.x で検討

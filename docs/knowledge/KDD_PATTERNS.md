@@ -19816,3 +19816,60 @@ union 型 (リテラル文字列の和) に値を追加したら:
 - 関連 source: [src/config/faq-content.ts](../../src/config/faq-content.ts) (`FAQ_VISIBLE_TO_VALUES` 単一ソース) / [scripts/check-faq-embeddings-sync.ts](../../scripts/check-faq-embeddings-sync.ts) (`VALID_VISIBLE_TO`)
 - 関連 migration: `20260606_help_chat_project_member_tier` (`requires_project_member` 列)
 - 派生症状: `coverage-summary.json` ENOENT は下流。根本は先行 step の exit 1 ([feedback_pnpm_lockfile_sync](../../C:/Users/SF02512/.claude/projects/c--Users-SF02512-GitHub-Private-BusinessManagementPlatform/memory/feedback_pnpm_lockfile_sync.md) と同じ「表面化エラー≠根本原因」構図)
+
+---
+
+## §5.X+204: E2E テスト用スタブ provider は NODE_ENV で分岐するな (standalone E2E サーバは NODE_ENV=production で起動する) + 受け入れ自動化 4 教訓
+
+### 事象
+
+PR #476 (リリース判定 受け入れテスト自動化) の初回 CI で E2E が 4 件 fail。それぞれ別の根本原因で、E2E 自動化の典型的な罠が一度に出たので集約記録する。
+
+### 教訓 1 (最重要): テスト用スタブの有効/無効を `NODE_ENV` で判定してはいけない
+
+embedding (Voyage) / LLM (Anthropic) の E2E スタブを `EMBEDDING_PROVIDER==='stub' && NODE_ENV!=='production'` で gate したところ、**スタブが永久に発火しなかった**。理由は **Playwright の E2E は `output: 'standalone'` の本番ビルドを `node .next/standalone/server.js` + `NODE_ENV=production` で起動する** ([playwright.config.ts](../../playwright.config.ts) webServer.env) から。`NODE_ENV!=='production'` ガードが、まさにスタブを使いたい E2E サーバでスタブを切ってしまう自己矛盾。
+
+サーバログの決定的証跡:
+```
+[help-chat] LLM call failed at phase=anthropic_call: AnthropicConfigError ... (degradedReason=embed_failed:llm_error)
+```
+
+**対策**: メールの `MAIL_PROVIDER=inbox` と同じ「明示 opt-in env のみ」で判定する (`process.env.EMBEDDING_PROVIDER === 'stub'`)。本番安全性は「本番デプロイは当該 env を設定しない」で担保 (NODE_ENV ではない)。`*.stub.test.ts` に「NODE_ENV=production でも env=stub なら有効」という回帰テストを追加して二度と NODE_ENV ガードを足さないよう固定する。
+
+### 教訓 2: `getByText(name)` は自動生成された関連名と部分一致して strict mode violation になる
+
+`createProjectViaApi` は customerId 未指定時に顧客を `E2E 顧客 <project名>` で自動作成する。`/projects` 一覧で `getByText(PROJECT_NAME)` は **プロジェクト名セル + 顧客名セル (部分一致)** に当たり `strict mode violation: resolved to 4 elements` で fail。**作成自体は成功しているのにロケータで落ちる**。対策: 関連エンティティ名を被らない文字列にする (`customerName` を別 RUN_ID ラベルに) + `.first()`。
+
+### 教訓 3: ログイン直後の once-guard 付き自動表示は SPA セッション遷移で競合する
+
+初回オンボーディングモーダル (`WelcomeOwlAutoOpen`) が CI で自動表示されず fail。trace 上 `/api/auth/session` は `isFirstTimeUser:true` を返しているのに開かない = ログイン redirect 直後の SPA セッション遷移中に once ガード (sessionStorage SHOWN / `evaluatedRef`) が transient レンダーで先に確定したと推定 (replay ボタン経由は正常表示 = モーダル自体は健全)。E2E 側の決定論化: **`sessionStorage.clear()` + `/projects` を素のページロードで開き直して**確立済セッションで再評価させる。実ユーザでも稀に取りこぼす可能性があるため、コンポーネント側の once ガード堅牢化は将来の follow-up 候補。
+
+### 教訓 4: 共有リソースを mutate する HTTP 層 spec は mobile project で重複実行しない
+
+`14-signup-3tier-eligibility` は beforeAll で **共有 Default テナントの `created_by_user_id` を mutate** する。chromium / chromium-mobile が並列 worker で走ると競合し、chromium-mobile のみ `owned-tenant-warning` 不表示で fail。11/12/13 (テナント分離 / super-admin) と同方針で **chromium-mobile の `testIgnore` に追加** (HTTP/認可境界は viewport 非依存 = mobile 検証価値が薄い)。
+
+### 教訓 5: serial spec は前進のたび次のブロッカーが露見する。API 契約は「実装を読んで」前提を立てる (UI/契約を推測しない)
+
+上記 4 件を直した後も、`19-signup-lifecycle` (describe.serial) が 1 ステップ通るたびに次の前提誤りが順次露見し、4 回追走した。いずれも **spec 側の API 契約の思い込み** (プロダクトバグではない):
+
+1. **プロジェクト作成者は自動メンバーにならない**: `createProject` は ProjectMember を作らない。プロジェクト配下資産 (knowledge/risk/retrospective) の作成は `requireActualProjectMember` で 403。→ 作成後に `addProjectMemberViaApi(pm_tl)` で明示追加 (05-teardown と同パターン)。
+2. **グローバル一覧の表示列は資産ごとに異なる**: `/knowledge` は**タイトル列を持たず「内容」列**を表示 (`listAllKnowledgeForViewer`)。`getByText(title)` は不一致。→ CRUD 真値は **API GET の本文 contains** で確認し、UI は表示確認済みの列でのみ検証。
+3. **グローバル `[id]` ルートは GET + DELETE(admin モデレーション) のみ**で PATCH 非対応。更新は**プロジェクト配下** `/api/projects/[id]/knowledge/[knowledgeId]` (PATCH)。
+4. **visibility='public' は superRefine で必須フィールドが増える**: risk/issue は `title` + `occurrence`、retrospective は `conductedDate`、knowledge/memo は `title`。draft なら任意。
+
+**メタ教訓**: E2E spec を書く前に対象 route の **(a) 認可 (membership/role)・(b) 許可メソッド・(c) スキーマの superRefine 必須条件・(d) 一覧 service の表示列/visibility フィルタ** を実装で確認する。serial spec はブロッカーを 1 つずつしか見せないため、推測で書くと「直す→次が出る」を CI 往復で繰り返す (本 PR で 5 往復)。ローカルで E2E DB を立てて回せば往復を圧縮できる。
+
+### 横展開チェックリスト
+
+- [ ] テスト専用の分岐 (スタブ/モック) は **専用の opt-in env** で gate し、`NODE_ENV` で分岐しない (standalone E2E は production)
+- [ ] `getByText` は一意性を確認 (関連エンティティ名の部分一致に注意) し、必要なら `.first()` / `exact` / role スコープ。一覧の表示列は資産ごとに異なるので **API GET 真値**を優先
+- [ ] ログイン直後の自動表示を E2E 検証するときは sessionStorage クリア + reload で確立済セッションを使う
+- [ ] 共有テナント等を mutate する HTTP 層 spec は mobile project から除外する
+- [ ] spec を書く前に route の認可・許可メソッド・superRefine 必須条件・一覧 service の visibility/列を実装で確認する (推測しない)
+
+### 関連
+
+- 関連 PR: PR #476 (リリース判定 受け入れテスト自動化 + embedding/LLM スタブ provider)
+- 関連 fail run: [GitHub Actions #26705943190](https://github.com/teppei19980914/BusinessManagementPlatform/actions/runs/26705943190)
+- 関連 source: [src/lib/llm/voyage-client.ts](../../src/lib/llm/voyage-client.ts) / [src/lib/llm/anthropic-client.ts](../../src/lib/llm/anthropic-client.ts) (`isEmbeddingStubEnabled` / `isLlmStubEnabled`) / [playwright.config.ts](../../playwright.config.ts) (webServer.env で NODE_ENV=production)
+- 関連手順: [docs/test/RELEASE_ACCEPTANCE_TEST.md](../test/RELEASE_ACCEPTANCE_TEST.md) (🤖 自動 / 👤 人間スモークの二層)
