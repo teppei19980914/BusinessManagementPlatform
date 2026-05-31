@@ -44,6 +44,7 @@ type Props = {
 //   開示段は各エントリの visibleTo に従い canViewerSee で出し分ける (権限に応じて表示)。
 const FIRST_STEP_FAQ_IDS: readonly string[] = [
   'getting-started-what-to-do',
+  'onboarding-welcome-replay',
   'semantic-search-vs-fulltext',
   'db-vs-file-storage-concept',
   'member-first-step',
