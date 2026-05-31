@@ -84,6 +84,14 @@ const nextConfig: NextConfig = {
   // PR #114 (2026-04-24 セキュリティ監査): X-Powered-By: Next.js ヘッダを抑止。
   // フレームワーク情報を外部に漏らさない (既知脆弱性の絞り込みに悪用される経路を閉じる)。
   poweredByHeader: false,
+  // perf/comprehensive-perf-2026-06-01 (B-5): 巨大な barrel export を tree-shake させ
+  //   client bundle を縮小する。lucide-react / @base-ui/react は各々が数百個の export を
+  //   持ち、現状は使用していないコンポーネントも初期 bundle に乗ってしまっている。
+  //   Next.js 公式の optimizePackageImports は import 文を自動で個別パスに rewrite し
+  //   未使用 export を完全に除外する。lighthouse Treemap で +30-50 KiB 削減見込み。
+  experimental: {
+    optimizePackageImports: ['lucide-react', '@base-ui/react'],
+  },
   // feat/app-version-changelog-footer (2026-05-23): バージョン情報をクライアントに公開。
   // NEXT_PUBLIC_ プレフィックスにより client bundle に埋め込まれる (server / client 両方から参照可)。
   env: {

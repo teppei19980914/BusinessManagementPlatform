@@ -68,6 +68,9 @@ export function ChatSemanticSearchFab() {
             width={FAB_SIZE_PX}
             height={FAB_SIZE_PX}
             priority
+            // perf/comprehensive-perf-2026-06-01 (A-3): sizes で srcset 1 ブレークポイント固定。
+            //   FAB は fixed-width 描画なので 1 解像度で十分。priority + sizes で preload 1 リクエストに揃える。
+            sizes="64px"
             className="h-full w-full object-cover"
           />
         </button>

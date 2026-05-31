@@ -410,6 +410,7 @@ export function CustomerDetailClient({ customer, projects }: Props) {
                   <TableCell className="font-medium">
                     <Link
                       href={`/projects/${p.id}`}
+                      prefetch={false}
                       className="text-info hover:underline"
                     >
                       {p.name}

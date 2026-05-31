@@ -704,12 +704,17 @@ export function AppHeader({ user }: AppHeaderProps) {
                   - alt は appName 文言を再利用しテキスト非表示時のアクセシビリティを担保
                 priority 指定で LCP 候補要素として優先ロードさせる。
               */}
+              {/*
+                perf/comprehensive-perf-2026-06-01 (A-3): sizes 明示で srcset 1 解像度に固定。
+                  未指定だと imageSizes default で 1x + 2x 両方が download される事例を確認。
+              */}
               <Image
                 src="/mascot-owl.png"
                 alt={tAuth('appName')}
                 width={28}
                 height={28}
                 priority
+                sizes="28px"
                 className="rounded-sm"
                 data-testid="app-header-logo"
               />

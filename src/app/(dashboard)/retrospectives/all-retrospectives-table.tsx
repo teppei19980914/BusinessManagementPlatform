@@ -164,7 +164,15 @@ export function AllRetrospectivesTable({
                   {r.projectName == null ? (
                     <span className="text-muted-foreground">{tRetro('private')}</span>
                   ) : r.canAccessProject && r.projectId ? (
-                    <Link href={`/projects/${r.projectId}`} className="text-info hover:underline">
+                    // perf/comprehensive-perf-2026-06-01 (F): 一覧の各行 Link は default prefetch=true で
+                    //   表示中行ぶんの RSC を自動取得し N+1 fetch 化していた (本番計測で 3 プロジェクト×2 fetch を観測)。
+                    //   一覧画面ではユーザが実際にクリックするのは 1〜2 件で大半は無駄 fetch のため、
+                    //   prefetch={false} で hover/visibility 時の自動 fetch を抑止する。
+                    <Link
+                      href={`/projects/${r.projectId}`}
+                      prefetch={false}
+                      className="text-info hover:underline"
+                    >
                       {r.projectName}
                     </Link>
                   ) : (

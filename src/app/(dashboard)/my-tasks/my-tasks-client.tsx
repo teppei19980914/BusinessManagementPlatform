@@ -233,6 +233,7 @@ export function MyTasksClient({ projectGroups, today, tenantTimeZone, tenantLoca
             <div key={`gantt-${pg.projectId}`} className="rounded-lg border p-2">
               <Link
                 href={`/projects/${pg.projectId}`}
+                prefetch={false}
                 className="mb-2 inline-block text-sm font-semibold text-info hover:underline"
               >
                 {pg.projectName}
@@ -270,6 +271,7 @@ export function MyTasksClient({ projectGroups, today, tenantTimeZone, tenantLoca
               </button>
               <Link
                 href={`/projects/${pg.projectId}`}
+                prefetch={false}
                 className="font-semibold text-info hover:underline"
               >
                 {pg.projectName}

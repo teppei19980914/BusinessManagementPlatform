@@ -248,10 +248,69 @@ Lighthouse で LCP element として `img.h-full.w-full.object-cover` (チャッ
 
 ---
 
-## 6. 関連リンク
+## 6. Phase C (2026-06-01) 包括対策 PR の記録
+
+PR #477 後の Phase C として、追加調査 A-G の **対策が確立済 + 効果大** の項目を **1 PR** で
+一括対応した。デグレ防止のため各実装で invariant を明示宣言し、E2E + Visual Regression +
+drift 検知 cron でカバーされる範囲で集約。
+
+### 6.1 実装範囲 (10 項目)
+
+| ID | 内容 | 効果 | リスク | 実装場所 |
+|---|---|---|---|---|
+| **B-5** | `next.config.ts` の `experimental.optimizePackageImports` 追加 | bundle 縮小 | 極低 | [next.config.ts](../../../../next.config.ts) |
+| **B-1+B-3** | `project-detail-client.tsx` のタブ 5 個を `dynamic(() => import(...), { ssr: false })` 化 (Estimates / Tasks / Gantt / Members / Stakeholders) | -325 KiB 初期 bundle | 極低 | [project-detail-client.tsx](../../../../src/app/(dashboard)/projects/[projectId]/project-detail-client.tsx) |
+| **A-3** | Image `sizes` プロプ明示 (mascot 32+48 重複ロード抑止) | mascot 1 解像度に統一 | 極低 | [login/page.tsx](../../../../src/app/(auth)/login/page.tsx) / [chat-fab.tsx](../../../../src/components/chat-semantic-search/chat-fab.tsx) / [app-header.tsx](../../../../src/components/app-header.tsx) |
+| **E** | SessionProvider に `refetchInterval={0}` + `refetchOnWindowFocus={false}` 追加 | session 4 回 fetch → 1 回 (SSR で初期化済を信用) | 中 (MFA/Theme/TZ/Locale SSR 同期 E2E でガード) | [session-provider.tsx](../../../../src/components/session-provider.tsx) |
+| **F** | リスト系 `<Link>` (retrospectives/risks/knowledge/my-tasks/customer-detail) に `prefetch={false}` | 表示行ぶんの自動 RSC fetch 抑止 | 低 | 5 ファイル |
+| **G-2** | `settings/tenant/page.tsx` の info + apiReconcile + degradedMode + cardSummary を **Promise.all 並列化** | 4 直列 → 1 並列 | 中 (請求 invariant 不変宣言) | [settings/tenant/page.tsx](../../../../src/app/(dashboard)/settings/tenant/page.tsx) |
+| **D-1** | `/api/health` warmup を 6 常用テーブル (tenants/users/projects/risks_issues/retrospectives/knowledges) で `LIMIT 0` pre-warm | Prisma plan cache 事前 populate | 低 | [api/health/route.ts](../../../../src/app/api/health/route.ts) |
+| **回帰テスト追加** | session-provider 要件テスト + health warmup 動作テスト | 将来逸脱を CI で検出 | - | session-provider.test.tsx / route.test.ts |
+
+### 6.2 スコープ外 (skip 理由)
+
+| ID | 理由 |
+|---|---|
+| **A-2-i** authEventLog INDEX | **既に実装済** ([schema.prisma:1144](../../../../prisma/schema.prisma#L1144) `idx_auth_events_email`、G2-e-1 2026-05-31 追加) |
+| **A-4** Bugsnag preflight | 本コードベースに該当なし。Netlify Deploy Preview のオーバーレイ artifact のみ、本番無影響 |
+| **B-2** Retrospectives + Knowledge lazy | react-markdown 遅延感のデグレリスク中 → 別 PR で個別検証 |
+| **B-4** Risks (リスク/課題 共用) lazy | 先に開くタブに依存する遅延発火 → 別 PR で個別検証 |
+| **Phase 3** LCP (mascot Image Optimization Lambda cold) | Lambda 経路の warmup インフラ調査が必要 → 別 PR |
+
+### 6.3 デグレ防止 invariant 宣言 (本 PR で守った契約)
+
+- **ApiCallLog SUM = 画面表示 = 請求金額**: G-2 で並列化したが集計ロジック・select 範囲・drift 検知 4 軸 (cost / count / display / audit) を一切変更していない
+- **テナント越境防止**: F の `<Link prefetch={false}>` は visibility / viewerTenantId フィルタを通過した行のみに付与、N+1 を構造から除去するわけではなく自動 prefetch を抑止するだけ
+- **セッション無効化境界**: E の SessionProvider 設定変更は middleware (tokenVersion 検証) と layout DB 照合に影響しない。明示 `useSession().update()` (テーマ変更等) は引き続き動作
+- **/api/health 認証なし設計**: D-1 は同一エンドポイント内の SQL 拡張のみ、route の認証要件は不変
+- **dashboard layout SSR 並列化** (PR #477) との独立性: 本 PR は project-detail-client / settings/tenant / health route で局所変更、layout 経路には触れない
+
+### 6.4 期待される定量効果 (本番計測待ち)
+
+| 経路 | 改善見込み | 根拠 |
+|---|---|---|
+| /projects/[id] 初期 bundle | **-325 KiB** | 5 タブ dynamic import (B-1+B-3) |
+| /settings/tenant SSR | **-3s 強** | 4 並列化 (G-2) |
+| 全 page セッション fetch | **-1.5〜2.5s** | 過剰 4 回 → 1 回 (E) |
+| グローバル一覧の自動 prefetch | **-1.5s** | 表示行数ぶんの自動 RSC fetch 削減 (F) |
+| /login mascot 重複ロード | **~500ms** | srcset 1 解像度固定 (A-3) |
+| タブ API 初回 cold | (間接効果) | burst 数自体を E + F で削減、D-1 で Plan cache pre-warm |
+
+### 6.5 検証手順 (マージ後)
+
+1. Netlify Deploy Preview でログイン → /projects → 任意プロジェクト詳細 → 各タブ切替して Loading UI が出ること
+2. シークレットウィンドウで本番 (`https://tasukiba.com`) を開き、Network panel で `/api/auth/session` が 1 回のみであることを確認
+3. /settings/tenant の表示時間が改善されていることを確認 (DevTools Network の document time)
+4. リスト系 (全○○) 画面で表示行の `<Link>` が hover 時に自動 RSC fetch していないことを確認 (Network panel)
+5. CI E2E 全 PASS + Visual Regression 差分なしを最終確認
+
+---
+
+## 7. 関連リンク
 
 - 前 cycle journey: [performance-improvement-journey.md](../20260417/performance-improvement-journey.md)
 - 設計書: [cold-start-and-data-growth-analysis.md](../20260417/after/次期プログラム/cold-start-and-data-growth-analysis.md)
 - 教訓集約: [KDD_PATTERNS.md §5.X+205](../../../knowledge/KDD_PATTERNS.md)
 - cron 設定: [DEPLOYMENT.md §6.1](../../../operations/develop/DEPLOYMENT.md)
-- 実装ブランチ: `perf/dashboard-layout-parallel-ssr`
+- Phase 2 実装ブランチ: `perf/dashboard-layout-parallel-ssr` (PR #477)
+- Phase C 実装ブランチ: `perf/comprehensive-perf-2026-06-01` (本 PR)

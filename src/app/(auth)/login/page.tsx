@@ -191,6 +191,12 @@ function LoginForm() {
               width={40}
               height={40}
               priority
+              // perf/comprehensive-perf-2026-06-01 (A-3): sizes を明示することで
+              //   Next.js Image の srcset 自動生成を 1 ブレークポイントに固定。
+              //   未指定だと imageSizes default [16, 32, 48, ...] から 1x + 2x で 2 解像度を
+              //   browser が prefetch しうる (deploy preview の login で w=32 + w=48 同時 download を観測)。
+              //   `sizes="40px"` で fixed-width 描画を宣言、最適 1 サイズだけ取得される。
+              sizes="40px"
               className="rounded-sm"
               data-testid="login-mascot-owl"
             />

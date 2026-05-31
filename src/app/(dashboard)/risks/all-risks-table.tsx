@@ -246,7 +246,12 @@ export function AllRisksTable({
                   {r.projectName == null ? (
                     <span className="text-muted-foreground">{tRisk('private')}</span>
                   ) : r.canAccessProject && r.projectId ? (
-                    <Link href={`/projects/${r.projectId}`} className="text-info hover:underline">
+                    // perf/comprehensive-perf-2026-06-01 (F): 一覧行 Link 自動 prefetch 抑止
+                    <Link
+                      href={`/projects/${r.projectId}`}
+                      prefetch={false}
+                      className="text-info hover:underline"
+                    >
                       {r.projectName}
                     </Link>
                   ) : (

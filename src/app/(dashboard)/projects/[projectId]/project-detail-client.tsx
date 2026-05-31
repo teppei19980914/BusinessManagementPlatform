@@ -23,6 +23,7 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
+import dynamic from 'next/dynamic';
 // Phase E 要件 1〜3 (2026-04-29): 共通クリッカブルカード部品
 import { ClickableCard } from '@/components/common/clickable-row';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -58,16 +59,61 @@ import { AttachmentList } from '@/components/attachments/attachment-list';
 import { SingleUrlField } from '@/components/attachments/single-url-field';
 import { DateFieldWithActions } from '@/components/ui/date-field-with-actions';
 import { useFormatters } from '@/lib/use-formatters';
-import { EstimatesClient } from './estimates/estimates-client';
-import { TasksClient } from './tasks/tasks-client';
-import { GanttClient } from './gantt/gantt-client';
+// perf/comprehensive-perf-2026-06-01 (B-1 + B-3):
+//   各タブコンポーネントは「タブ切替時に初めて表示」される。データ側は useLazyFetch で
+//   既に遅延化されているが、コンポーネント JS 自体は eager import で初期 bundle に
+//   全タブが乗っていた (Lighthouse Treemap 計測で /projects/[id] が ~880 KiB、
+//   一覧画面 ~381 KiB に対し +500 KiB)。
+//
+//   suggestions-panel.tsx で既に確立済の `dynamic(() => import(...), { ssr: false })`
+//   パターンを横展開する。
+//   - ssr: false: 内部 dashboard 画面なので SEO 不要。SSR 側で全タブ HTML を生成しない。
+//   - loading: タブ切替時の空白防止に LazyTabContent 相当のスピナーを返す
+//
+//   タブ別の効果見積もり (Tier 1-3, デグレリスク順):
+//     B-1: GanttClient (~120 KiB) + TasksClient (~80 KiB) → 極低リスク (タブ独立)
+//     B-3: EstimatesClient (~50 KiB) + MembersClient (~40 KiB) + StakeholdersClient (~35 KiB)
+//          → 極低リスク
+//   合計 ~325 KiB 初期 bundle 削減見込み。
+//
+//   非 lazy 化対象 (デグレリスク中) は別 PR で後追い:
+//     - RetrospectivesClient / ProjectKnowledgeClient (react-markdown 遅延感)
+//     - RisksClient (リスク/課題 共用、先に開くタブで遅延発火)
+import type { EstimatesClient as EstimatesClientType } from './estimates/estimates-client';
+import type { TasksClient as TasksClientType } from './tasks/tasks-client';
+import type { GanttClient as GanttClientType } from './gantt/gantt-client';
 import { RisksClient } from './risks/risks-client';
 import { RetrospectivesClient } from './retrospectives/retrospectives-client';
 import { ProjectKnowledgeClient } from './knowledge/project-knowledge-client';
-import { MembersClient } from './members-client';
+import type { MembersClient as MembersClientType } from './members-client';
 import { SuggestionsPanel } from './suggestions/suggestions-panel';
 // feat/stakeholder-management: PM/TL + admin のみ閲覧可。lazy fetch でタブ初表示時に取得。
-import { StakeholdersClient } from './stakeholders/stakeholders-client';
+import type { StakeholdersClient as StakeholdersClientType } from './stakeholders/stakeholders-client';
+
+const LAZY_TAB_LOADING = (
+  <div className="py-8 text-center text-sm text-muted-foreground">読み込み中...</div>
+);
+
+const EstimatesClient = dynamic<React.ComponentProps<typeof EstimatesClientType>>(
+  () => import('./estimates/estimates-client').then((m) => m.EstimatesClient),
+  { ssr: false, loading: () => LAZY_TAB_LOADING },
+);
+const TasksClient = dynamic<React.ComponentProps<typeof TasksClientType>>(
+  () => import('./tasks/tasks-client').then((m) => m.TasksClient),
+  { ssr: false, loading: () => LAZY_TAB_LOADING },
+);
+const GanttClient = dynamic<React.ComponentProps<typeof GanttClientType>>(
+  () => import('./gantt/gantt-client').then((m) => m.GanttClient),
+  { ssr: false, loading: () => LAZY_TAB_LOADING },
+);
+const MembersClient = dynamic<React.ComponentProps<typeof MembersClientType>>(
+  () => import('./members-client').then((m) => m.MembersClient),
+  { ssr: false, loading: () => LAZY_TAB_LOADING },
+);
+const StakeholdersClient = dynamic<React.ComponentProps<typeof StakeholdersClientType>>(
+  () => import('./stakeholders/stakeholders-client').then((m) => m.StakeholdersClient),
+  { ssr: false, loading: () => LAZY_TAB_LOADING },
+);
 import type { StakeholderDTO } from '@/services/stakeholder.service';
 // feat/markdown-textarea: Markdown 入力 + プレビュー + 既存値との差分表示
 import { MarkdownTextarea, MarkdownDisplay } from '@/components/ui/markdown-textarea';
