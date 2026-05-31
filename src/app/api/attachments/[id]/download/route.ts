@@ -46,6 +46,9 @@ export async function GET(
       storageProvider: true,
       storageObjectKey: true,
       url: true,
+      // security/phase-2 (2026-05-31): downloadFilename として Pre-signed URL の
+      //   Content-Disposition: attachment; filename="..." に差し込む
+      displayName: true,
     },
   });
   if (!attachment) {
@@ -80,8 +83,12 @@ export async function GET(
   }
 
   // supabase 型: Pre-signed Download URL を発行 (60 秒 TTL)
+  //   security/phase-2 (2026-05-31): downloadFilename を渡し Content-Disposition: attachment 強制。
+  //     SVG/HTML/危険 PDF の inline 実行 → 保管型 XSS の経路を構造的に遮断。
   try {
-    const signedUrl = await createSignedDownloadUrl(attachment.storageObjectKey, 60);
+    const signedUrl = await createSignedDownloadUrl(attachment.storageObjectKey, 60, {
+      downloadFilename: attachment.displayName ?? undefined,
+    });
     return NextResponse.redirect(signedUrl, 302);
   } catch (e) {
     await recordError({

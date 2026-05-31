@@ -12,6 +12,8 @@ import {
   PASSWORD_HISTORY_COUNT,
   PASSWORD_RESET_TOKEN_EXPIRY_MINUTES as TOKEN_EXPIRY_MINUTES,
 } from '@/config';
+// security/phase-3 (2026-05-31): HIBP 流出パスワード判定
+import { assertPasswordNotPwned, PwnedPasswordError } from '@/lib/hibp';
 
 function hashToken(token: string): string {
   return createHash('sha256').update(token).digest('hex');
@@ -107,25 +109,49 @@ export async function verifyAndIssueResetToken(
 
 /**
  * ステップ2: リセットトークンで新パスワードを設定
+ *
+ * security/phase-3 (2026-05-31): tenantSlug 引数を必須化し、token 発行時の tenant と
+ *   照合 (multi-tenant 越境攻撃対策)。さらに HIBP で流出済パスワードを拒否。
  */
 export async function resetPassword(
   token: string,
   newPassword: string,
+  tenantSlug: string,
 ): Promise<{ success: boolean; error?: string }> {
   const tokenHash = hashToken(token);
 
-  // ADR-0016 (2026-05-20): tokenHash + tenantId で検索 (= 越境防止)
-  //   ただし resetPassword は token のみが route から渡るため、ここでは tokenHash で
-  //   検索し、record.tenantId が呼出側 (= URL の tenant query) と一致するか
-  //   route 層で別途検証する設計とする。
-  //   route 層は src/app/api/auth/reset-password/route.ts で対応。
+  // ADR-0016 (2026-05-20) + security/phase-3 (2026-05-31): tokenHash + tenant.slug 二重検証で越境防止。
+  //   旧設計コメントは「route 層で別途検証する」だったが route 側に実装が無く乖離していたため、
+  //   service 層で tenant.slug を必ず照合する形に統一する。
+  //   攻撃シナリオ: A テナントの reset token を傍受した攻撃者が B テナントの URL から
+  //   reset-password を叩き、A テナントのパスワードを変更する事象を遮断する。
   const record = await prisma.passwordResetToken.findFirst({
     where: { tokenHash },
+    include: { tenant: { select: { slug: true } } },
   });
 
   if (!record) return { success: false, error: '無効なリンクです' };
+  // security/phase-3: tenant 二重検証 (引数 tenantSlug と record の tenant.slug の照合)
+  if (record.tenant?.slug !== tenantSlug) {
+    return { success: false, error: '無効なリンクです' };
+  }
   if (record.usedAt) return { success: false, error: '既に使用されたリンクです' };
   if (record.expiresAt < new Date()) return { success: false, error: '有効期限切れです' };
+
+  // security/phase-3 (2026-05-31): HIBP 流出済パスワード検出
+  //   流出済なら別パスワードを設定してもらう (ユーザの将来 take-over 防御)。
+  //   HIBP API 障害時は fail-open でこのチェックは通る (lib/hibp.ts)。
+  try {
+    await assertPasswordNotPwned(newPassword);
+  } catch (e) {
+    if (e instanceof PwnedPasswordError) {
+      return {
+        success: false,
+        error: 'このパスワードは過去のデータ漏洩で公開されています。別のパスワードを設定してください。',
+      };
+    }
+    throw e;
+  }
 
   // パスワード履歴チェック (Phase 2-10: tenantId フィルタで二重防御)
   const histories = await prisma.passwordHistory.findMany({

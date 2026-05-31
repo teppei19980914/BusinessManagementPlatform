@@ -173,10 +173,15 @@ ADR-0021 §6 の drift 検知に必要な情報源。
 
 本セットアップ完了時、以下の env が全環境で設定されていること:
 
-- [ ] `SUPABASE_STORAGE_BUCKET=attachments`
+- [ ] `NEXT_PUBLIC_SUPABASE_URL=https://<ref>.supabase.co` (= Project Settings → API → **Project URL**)
+      ⚠️ 末尾の `/rest/v1/` やスラッシュは付けない。`NEXT_PUBLIC_` のため**追加後は再デプロイ (build) 必須**。
+      未設定だと添付アップロードが即 503 (CONFIG_MISSING)。**`SUPABASE_SERVICE_ROLE_KEY` と必ず同一プロジェクト**。
 - [ ] `SUPABASE_SERVICE_ROLE_KEY=...` (= Project Settings → API → service_role)
-- [ ] `NEXT_PUBLIC_SUPABASE_URL=...` (既存)
-- [ ] `NEXT_PUBLIC_SUPABASE_ANON_KEY=...` (既存)
+- [ ] `SUPABASE_STORAGE_BUCKET=attachments` (未設定でも既定 `attachments`)
+
+> **注**: `NEXT_PUBLIC_SUPABASE_ANON_KEY` は**不要** (コード上どこからも参照されていない、2026-05-31 確認)。
+> 添付機能の必須セットは **URL + SERVICE_ROLE_KEY** の 2 つ (+ 既定を変える場合のみ BUCKET)。
+> 変数の正本一覧は [docs/design/ENVIRONMENT_VARIABLES.md §6](../../design/ENVIRONMENT_VARIABLES.md) を参照。
 
 ---
 
@@ -184,6 +189,7 @@ ADR-0021 §6 の drift 検知に必要な情報源。
 
 | 現象 | 原因候補 | 対処 |
 |---|---|---|
+| **アップロード 503 (URL 発行失敗)** | `NEXT_PUBLIC_SUPABASE_URL` または `SUPABASE_SERVICE_ROLE_KEY` が**未設定** (CONFIG_MISSING)、もしくは bucket 未作成・キー誤り (SIGN_FAILED) | まず env を確認 (本書 §6)。両方設定済なら bucket 存在 (§2) と RLS Policy (§3) を確認。`NEXT_PUBLIC_` は **build 時埋込のため値追加後は再デプロイ必須**。真因は `system_error_logs` (kind=`attachment_upload_sign_failed`) の error 文言で CONFIG_MISSING / SIGN_FAILED を判別 |
 | アップロード 403 | Pre-signed URL TTL (60s) 超過 | UI で再発行をユーザに促す。頻発時は `PRESIGNED_URL_TTL_SECONDS` を見直し |
 | アップロード 413 | アプリ層 50MB 上限超過 | 仕様通り、ユーザに分割を促す |
 | アップロード 429 | per-tenant rate limit (10/min) | 仕様通り、待機を促す |

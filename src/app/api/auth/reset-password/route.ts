@@ -35,9 +35,12 @@ const verifySchema = z.object({
   tenantSlug: z.string().min(1).max(60),
 });
 
+// security/phase-3 (2026-05-31): Step 2 でも tenantSlug を必須化し、service 層で
+//   passwordResetToken 発行時の tenant.slug と二重照合する (multi-tenant 越境攻撃対策)。
 const resetSchema = z.object({
   token: z.string().min(1),
   newPassword: passwordSchema,
+  tenantSlug: z.string().min(1).max(60),
 });
 
 export async function POST(req: NextRequest) {
@@ -83,7 +86,11 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const result = await resetPassword(parsed.data.token, parsed.data.newPassword);
+    const result = await resetPassword(
+      parsed.data.token,
+      parsed.data.newPassword,
+      parsed.data.tenantSlug,
+    );
 
     if (!result.success) {
       return NextResponse.json(

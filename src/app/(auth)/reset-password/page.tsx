@@ -73,10 +73,15 @@ function ResetPasswordForm() {
 
     setIsLoading(true);
 
+    // security/phase-3 (2026-05-31): Step 2 でも tenantSlug を送信し、service 層で二重照合させる
     const res = await fetch('/api/auth/reset-password', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token: resetToken, newPassword: resetForm.newPassword }),
+      body: JSON.stringify({
+        token: resetToken,
+        newPassword: resetForm.newPassword,
+        tenantSlug: verifyForm.tenantSlug,
+      }),
     });
 
     const json = await res.json();

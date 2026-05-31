@@ -109,15 +109,26 @@ export async function createSignedUploadUrl(objectKey: string): Promise<SignedUp
  * 添付ダウンロード UI / chat 検索結果からの open に使用。
  *
  * @param ttlSeconds 既定 60 秒 (短期、漏洩リスク低減)
+ * @param options.downloadFilename 指定すると Supabase が `Content-Disposition: attachment; filename="..."`
+ *   を強制 (= browser は inline 実行せず保存ダイアログ)。SVG/HTML/PDF 経由の保管型 XSS を遮断する
+ *   主防御として security/phase-2 (2026-05-31) で導入。未指定の場合は `download=true` のみ付与し、
+ *   filename を Supabase に決めさせる (browser は attachment 扱いで開く)。
  */
 export async function createSignedDownloadUrl(
   objectKey: string,
   ttlSeconds: number = 60,
+  options?: { downloadFilename?: string },
 ): Promise<string> {
   const client = getServiceClient();
+  // security/phase-2 (2026-05-31): `download` パラメータで Supabase が
+  //   Content-Disposition: attachment; filename="..." を URL クエリ経由で付与する。
+  //   true (boolean) なら filename 無しで attachment のみ、string なら filename も指定。
+  //   これにより SVG / HTML / 危険な PDF JS の inline 実行ベクトルを構造的に遮断。
   const { data, error } = await client.storage
     .from(SUPABASE_BUCKET_NAME)
-    .createSignedUrl(objectKey, ttlSeconds);
+    .createSignedUrl(objectKey, ttlSeconds, {
+      download: options?.downloadFilename ?? true,
+    });
   if (error || !data) {
     throw new SupabaseStorageError(
       `createSignedUrl failed: ${error?.message ?? 'no data'}`,

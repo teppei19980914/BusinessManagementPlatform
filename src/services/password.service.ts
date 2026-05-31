@@ -6,6 +6,8 @@ import { prisma } from '@/lib/db';
 import { hash, compare } from 'bcryptjs';
 import { recordAuthEvent } from './auth-event.service';
 import { BCRYPT_COST, PASSWORD_HISTORY_COUNT } from '@/config';
+// security/phase-3 (2026-05-31): HIBP 流出パスワード判定
+import { assertPasswordNotPwned, PwnedPasswordError } from '@/lib/hibp';
 
 /**
  * パスワードを変更する（ログイン中のユーザ自身）
@@ -21,6 +23,21 @@ export async function changePassword(
   // 現在のパスワード照合
   const isValid = await compare(currentPassword, user.passwordHash);
   if (!isValid) return { success: false, error: '現在のパスワードが正しくありません' };
+
+  // security/phase-3 (2026-05-31): HIBP 流出済パスワード検出
+  //   流出済の場合は別パスワードを設定してもらう (ユーザ自身のアカウント take-over 防御)。
+  //   HIBP API 障害時は fail-open (lib/hibp.ts)。
+  try {
+    await assertPasswordNotPwned(newPassword);
+  } catch (e) {
+    if (e instanceof PwnedPasswordError) {
+      return {
+        success: false,
+        error: 'このパスワードは過去のデータ漏洩で公開されています。別のパスワードを設定してください。',
+      };
+    }
+    throw e;
+  }
 
   // パスワード履歴チェック（直近5回の再利用禁止）— Phase 2-10: tenantId フィルタで二重防御
   const histories = await prisma.passwordHistory.findMany({

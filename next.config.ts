@@ -38,6 +38,18 @@ const scriptSrc = isDev
   ? "script-src 'self' 'unsafe-inline' 'unsafe-eval'"
   : "script-src 'self' 'unsafe-inline'";
 
+// security/phase-1 (2026-05-31): ファイル添付 (ADR-0021) はブラウザが Pre-signed URL で
+//   Supabase Storage (https://<ref>.supabase.co) へ **直接** PUT/GET する設計のため、
+//   connect-src に Supabase origin を許可しないと CSP で fetch が block され
+//   "violates connect-src 'self'" でアップロードが失敗する。
+//   セキュリティ優先のためワイルドカード (*.supabase.co) は使わず、env 由来の
+//   正確な 1 origin のみ許可。末尾スラッシュは path-source 化を避けるため除去。
+//   env 未設定の環境 (local Docker DB / PSAR) では Storage 自体が無いため 'self' のまま。
+const supabaseOrigin = (process.env.NEXT_PUBLIC_SUPABASE_URL ?? '').replace(/\/+$/, '');
+const connectSrc = supabaseOrigin
+  ? `connect-src 'self' ${supabaseOrigin}`
+  : "connect-src 'self'";
+
 const securityHeaders = [
   { key: 'X-Content-Type-Options', value: 'nosniff' },
   { key: 'X-Frame-Options', value: 'DENY' },
@@ -50,7 +62,7 @@ const securityHeaders = [
       "style-src 'self' 'unsafe-inline'",
       "img-src 'self' data:",
       "font-src 'self'",
-      "connect-src 'self'",
+      connectSrc,
       // ADR-0028 PR #471 (2026-05-30): frame-src を 'self' + app.netlify.com に明示。
       //   未指定だと default-src 'self' に fallback し、Netlify deploy preview / branch
       //   deploy で Netlify が自動注入する **Netlify Drawer** (= deploy 情報を表示する
