@@ -122,8 +122,9 @@ test.describe('@feature:release-acceptance signup ライフサイクル (払い�
     await page.waitForLoadState('networkidle');
     await expect(page.getByText(KNOWLEDGE_CONTENT).first()).toBeVisible({ timeout: 10_000 });
 
-    // 更新 → API 真値で反映確認
-    const upd = await page.request.patch(`/api/knowledge/${knowledgeId}`, {
+    // 更新 → API 真値で反映確認 (更新はプロジェクト配下ルートのみ。グローバル /api/knowledge/[id] は
+    //   GET + DELETE(admin モデレーション) のみで PATCH 非対応)
+    const upd = await page.request.patch(`/api/projects/${projectId}/knowledge/${knowledgeId}`, {
       data: { title: KNOWLEDGE_TITLE_UPDATED },
     });
     expect(upd.ok()).toBeTruthy();
