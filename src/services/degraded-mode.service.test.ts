@@ -2,11 +2,16 @@
  * degraded-mode.service.ts の単体テスト (Q5(3) UI 可視化 / 2026-05-14)
  *
  * 検証項目:
- *   - Beginner: currentMonthApiCallCount >= beginnerMonthlyCallLimit で active=true
- *   - Pro/Expert: currentMonthApiCostJpy >= monthlyBudgetCapJpy で active=true
- *   - Pro/Expert + monthlyBudgetCapJpy=null は無制限なので active=false
- *   - テナント不在は null
- *   - nullEmbeddings は集計結果を含める
+ *   - getDegradedModeState (詳細版 / settings 画面用):
+ *     - Beginner: currentMonthApiCallCount >= beginnerMonthlyCallLimit で active=true
+ *     - Pro/Expert: currentMonthApiCostJpy >= monthlyBudgetCapJpy で active=true
+ *     - Pro/Expert + monthlyBudgetCapJpy=null は無制限なので active=false
+ *     - テナント不在は null
+ *     - nullEmbeddings は集計結果を含める
+ *   - getDegradedModeBannerState (軽量版 / dashboard layout 用 / perf/dashboard-layout-parallel-ssr):
+ *     - 4 reason すべてで正しく active / reason を返す
+ *     - countNullEmbeddings を呼ばない (= dashboard layout で毎リクエスト走っても軽い)
+ *     - 戻り値に nullEmbeddings プロパティが含まれない
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -29,7 +34,10 @@ vi.mock('./embedding-backfill.service', () => ({
   })),
 }));
 
-import { getDegradedModeState } from './degraded-mode.service';
+import {
+  getDegradedModeState,
+  getDegradedModeBannerState,
+} from './degraded-mode.service';
 import { prisma } from '@/lib/db';
 import { countNullEmbeddings } from './embedding-backfill.service';
 
@@ -174,5 +182,138 @@ describe('getDegradedModeState', () => {
     const r = await getDegradedModeState('t');
     expect(r?.nullEmbeddings.total).toBe(12);
     expect(r?.nullEmbeddings.projects).toBe(3);
+  });
+});
+
+/**
+ * getDegradedModeBannerState (perf/dashboard-layout-parallel-ssr / 2026-06-01):
+ *   dashboard layout 経路用の軽量版。countNullEmbeddings を含まない。
+ *   既存 4 reason の判定ロジックは getDegradedModeState と共通だが、本テストでは
+ *   軽量経路で同じ結果になることと、countNullEmbeddings を呼ばないことを担保する。
+ */
+describe('getDegradedModeBannerState', () => {
+  it('Beginner LLM 上限到達で active=beginner_limit_exceeded', async () => {
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValue({
+      plan: 'beginner',
+      currentMonthApiCallCount: 50,
+      currentMonthApiCostJpy: 0,
+      currentMonthEmbeddingCallCount: 0,
+      currentMonthEmbeddingCostJpy: 0,
+      beginnerMonthlyCallLimit: 50,
+      monthlyBudgetCapJpy: null,
+      monthlyEmbeddingBudgetCapJpy: null,
+    } as never);
+
+    const r = await getDegradedModeBannerState('t');
+    expect(r?.active).toBe(true);
+    expect(r?.reason).toBe('beginner_limit_exceeded');
+  });
+
+  it('Pro LLM 予算到達で active=budget_exceeded', async () => {
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValue({
+      plan: 'pro',
+      currentMonthApiCallCount: 100,
+      currentMonthApiCostJpy: 5000,
+      currentMonthEmbeddingCallCount: 0,
+      currentMonthEmbeddingCostJpy: 0,
+      beginnerMonthlyCallLimit: 50,
+      monthlyBudgetCapJpy: 5000,
+      monthlyEmbeddingBudgetCapJpy: null,
+    } as never);
+
+    const r = await getDegradedModeBannerState('t');
+    expect(r?.active).toBe(true);
+    expect(r?.reason).toBe('budget_exceeded');
+  });
+
+  it('ADR-0030: Beginner Embedding 100 件到達で active=embedding_beginner_limit_exceeded', async () => {
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValue({
+      plan: 'beginner',
+      currentMonthApiCallCount: 0,
+      currentMonthApiCostJpy: 0,
+      currentMonthEmbeddingCallCount: 100,
+      currentMonthEmbeddingCostJpy: 0,
+      beginnerMonthlyCallLimit: 50,
+      monthlyBudgetCapJpy: null,
+      monthlyEmbeddingBudgetCapJpy: null,
+    } as never);
+
+    const r = await getDegradedModeBannerState('t');
+    expect(r?.active).toBe(true);
+    expect(r?.reason).toBe('embedding_beginner_limit_exceeded');
+  });
+
+  it('ADR-0030: Pro Embedding 予算到達で active=embedding_budget_exceeded', async () => {
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValue({
+      plan: 'pro',
+      currentMonthApiCallCount: 0,
+      currentMonthApiCostJpy: 0,
+      currentMonthEmbeddingCallCount: 600,
+      currentMonthEmbeddingCostJpy: 3000,
+      beginnerMonthlyCallLimit: 50,
+      monthlyBudgetCapJpy: null,
+      monthlyEmbeddingBudgetCapJpy: 3000,
+    } as never);
+
+    const r = await getDegradedModeBannerState('t');
+    expect(r?.active).toBe(true);
+    expect(r?.reason).toBe('embedding_budget_exceeded');
+  });
+
+  it('全条件未到達で active=false / reason=null', async () => {
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValue({
+      plan: 'beginner',
+      currentMonthApiCallCount: 10,
+      currentMonthApiCostJpy: 0,
+      currentMonthEmbeddingCallCount: 5,
+      currentMonthEmbeddingCostJpy: 0,
+      beginnerMonthlyCallLimit: 50,
+      monthlyBudgetCapJpy: null,
+      monthlyEmbeddingBudgetCapJpy: null,
+    } as never);
+
+    const r = await getDegradedModeBannerState('t');
+    expect(r?.active).toBe(false);
+    expect(r?.reason).toBeNull();
+  });
+
+  it('テナント不在で null を返す', async () => {
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValue(null);
+    const r = await getDegradedModeBannerState('not-exist');
+    expect(r).toBeNull();
+  });
+
+  it('countNullEmbeddings を呼ばない (= layout で軽量に毎リクエスト呼べる保証)', async () => {
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValue({
+      plan: 'beginner',
+      currentMonthApiCallCount: 0,
+      currentMonthApiCostJpy: 0,
+      currentMonthEmbeddingCallCount: 0,
+      currentMonthEmbeddingCostJpy: 0,
+      beginnerMonthlyCallLimit: 50,
+      monthlyBudgetCapJpy: null,
+      monthlyEmbeddingBudgetCapJpy: null,
+    } as never);
+
+    await getDegradedModeBannerState('t');
+    expect(vi.mocked(countNullEmbeddings)).not.toHaveBeenCalled();
+  });
+
+  it('戻り値に nullEmbeddings プロパティが含まれない (型レベルでも実体でも)', async () => {
+    vi.mocked(prisma.tenant.findFirst).mockResolvedValue({
+      plan: 'beginner',
+      currentMonthApiCallCount: 0,
+      currentMonthApiCostJpy: 0,
+      currentMonthEmbeddingCallCount: 0,
+      currentMonthEmbeddingCostJpy: 0,
+      beginnerMonthlyCallLimit: 50,
+      monthlyBudgetCapJpy: null,
+      monthlyEmbeddingBudgetCapJpy: null,
+    } as never);
+
+    const r = await getDegradedModeBannerState('t');
+    expect(r).not.toBeNull();
+    // ランタイムでも nullEmbeddings キーが付かないことを担保 (詳細版との差別化)
+    expect(r && 'nullEmbeddings' in r).toBe(false);
   });
 });

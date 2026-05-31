@@ -669,7 +669,7 @@ cron-job.org に登録する cron は **計 13 件** = [`src/config/cron-jobs.ts
 
 | エンドポイント | schedule (UTC) | 用途 |
 |---|---|---|
-| `/api/health` | `0 0 * * *` (日次 00:00) | Supabase wake (Free Plan の 1 週間アイドル停止対策) |
+| `/api/health` | **`*/2 * * * *` (2 分間隔 24/7)** | **Netlify Function + Prisma warmup (cold start 解消 / 2026-06-01 計測で TTFB 4.21s → 1.94s を達成) + Supabase wake (Free Plan の 1 週間アイドル停止対策)。本 cron は他の業務 cron と異なり認証不要 (= `Authorization` ヘッダ不要)。Netlify Function 起動枠 (Free 125,000/月) への影響は 21,600/月 = 17%** |
 | `/api/admin/users/lock-inactive` | `0 3 * * *` (日次 03:00) | 30 日非アクティブユーザのロック |
 | `/api/cron/daily-notifications` | `0 22 * * *` (日次 22:00) | 通知メール集約配信 |
 | `/api/cron/daily-usage-aggregation` | `0 2 * * *` (日次 02:00) | 日次利用量集計 |

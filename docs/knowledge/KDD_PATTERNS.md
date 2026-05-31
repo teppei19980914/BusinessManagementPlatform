@@ -19873,3 +19873,105 @@ embedding (Voyage) / LLM (Anthropic) の E2E スタブを `EMBEDDING_PROVIDER===
 - 関連 fail run: [GitHub Actions #26705943190](https://github.com/teppei19980914/BusinessManagementPlatform/actions/runs/26705943190)
 - 関連 source: [src/lib/llm/voyage-client.ts](../../src/lib/llm/voyage-client.ts) / [src/lib/llm/anthropic-client.ts](../../src/lib/llm/anthropic-client.ts) (`isEmbeddingStubEnabled` / `isLlmStubEnabled`) / [playwright.config.ts](../../playwright.config.ts) (webServer.env で NODE_ENV=production)
 - 関連手順: [docs/test/RELEASE_ACCEPTANCE_TEST.md](../test/RELEASE_ACCEPTANCE_TEST.md) (🤖 自動 / 👤 人間スモークの二層)
+
+---
+
+## §5.X+205: ブラウザ DevTools パフォーマンス計測と SSR 並列化の 6 教訓 (perf/dashboard-layout-parallel-ssr / 2026-06-01)
+
+### 背景
+
+静的パフォーマンスチェック (PR #474 系) 完了後、ブラウザ DevTools (Lighthouse / Network / Performance) を用いた実測フェーズで判明した 6 つの罠を集約記録する。「計測手法そのものの罠」と「SSR 設計の罠」が混在しているため、再発防止のため独立教訓として残す。
+
+### 教訓 1: ブラウザ拡張機能 (Bitwarden 等) は DevTools 計測を構造的に汚染する
+
+通常ウィンドウでの初回計測で **Bitwarden 拡張機能の content script (1.5 MiB)** が転送サイズに混入し、ペイロードを大きく見せていた。Lighthouse の Treemap で `nngceckbapebfimnlniiiahkandclblb` (Bitwarden の chrome extension ID) のチャンクが上位に並んでいて気付いた。シークレットウィンドウでも拡張機能の **明示的許可なし** の場合のみオフになる (Chrome 既定。Edge は別) ため、計測前に "extension in incognito" 設定を確認する。
+
+**横展開**: DevTools 計測は必ず以下のいずれかで実施:
+- (a) **シークレットウィンドウ + 拡張機能オフ** を `chrome://extensions/` で明示確認
+- (b) 別の clean プロファイル (`chrome://settings/manageProfile`)
+- (c) Playwright `webServer` で headless 計測
+
+> 「シークレットなら拡張オフ」を前提にすると、Bitwarden / 1Password など permission を付けた拡張は incognito でも動き続けて静かに汚染する。
+
+### 教訓 2: cron schedule の名前と実体の乖離 — `/api/health` 登録だけでは warmup として機能しない
+
+設計書 ([cold-start-and-data-growth-analysis.md §4.1 P0](../archive/performance/20260417/after/次期プログラム/cold-start-and-data-growth-analysis.md)) には「業務時間帯 7:00-20:00 JST、5 分ごと」と記載されていたが、本番 cron-job.org の実設定は **`0 9 * * *` (日次 9:00 AM のみ)** で、warmup として実質機能していなかった。9:15 AM 以降ずっと cold のまま **TTFB 4.21s** を観測。
+
+`/api/health` route 自体は存在し、cron 登録もされていたため `CRON_JOBS` metadata では「設定済」に見えていた。**スケジュール文字列まで実体と照合する**必要がある。
+
+**対策**: `*/2 * * * *` (2 分間隔 24/7) に変更。Netlify Functions の warm 保持時間 (5-15 分) より十分短く、業務時間外もカバー。Netlify Free 枠への影響は 21,600/月 = **17%** で許容範囲。
+
+**検証**: シークレットウィンドウで /projects document TTFB **4.21s → 1.94s (-54%)**。残り ~700ms は SSR 直列 DB チェーン (教訓 4)。
+
+**横展開チェック**: cron 登録時は「(a) route 存在 (b) cron 登録 (c) schedule 文字列が warmup として有効」の 3 点を実測 (timeline ベース) で検証する。
+
+### 教訓 3: cold/warm 体感差は SSR 直列 DB チェーンが増幅する
+
+cold start 自体は Netlify Functions の構造上 1-3 秒は不可避。しかしダッシュボード layout が **`requireAuthForLayout` (tokenVersion DB lookup ~150ms) → `getDegradedModeState` (tenant + countNullEmbeddings ~58ms)** を **直列 await** していたため、cold 時に各 DB round-trip がそのまま積み上がる構造だった。
+
+EXPLAIN ANALYZE で確認: `countNullEmbeddings` (5 テーブル COUNT(*) UNION + tenant_id / deleted_at / content_embedding IS NULL フィルタ) は warm 時 ~58ms だが、cold 時は Prisma adapter の SSL ネゴシエーション含めて数百 ms に膨らむ。
+
+**対策パターン** ([src/app/(dashboard)/layout.tsx](../../src/app/(dashboard)/layout.tsx)):
+
+```tsx
+// 旧: 逐次 await
+const user = await requireAuthForLayout();
+const degradedMode = await getDegradedModeState(user.tenantId);
+
+// 新: session を先取り → 残り 2 経路を Promise.all で並列化
+const session = await getCachedAuth();
+if (!session) redirect(LOGIN_ROUTE);
+const [user, degradedMode] = await Promise.all([
+  requireAuthForLayout(),
+  getDegradedModeBannerState(session.user.tenantId).catch(() => null),
+]);
+```
+
+`requireAuthForLayout` 内の `getCachedAuth` は `React.cache` で wrap されているため、layout の先頭で先に呼んでも **重複 JWT 復号は走らない** (= same-request memoization)。
+
+### 教訓 4: countNullEmbeddings は banner 判定に不要 — 経路ごとに service を分離する
+
+`getDegradedModeState` は (a) 設定画面 `/settings/tenant` の詳細表示用 (embedding 未生成件数の内訳が必要) と (b) layout banner 表示判定用 (active / reason だけで足りる) の **2 経路** で呼ばれていた。両者を同じ関数で賄うと、layout の毎リクエスト経路で **不要な 5 テーブル COUNT(*) UNION** が走り続ける dead work となる。
+
+**対策パターン** ([src/services/degraded-mode.service.ts](../../src/services/degraded-mode.service.ts)): 軽量版 `getDegradedModeBannerState` (countNullEmbeddings 含まず) と詳細版 `getDegradedModeState` を分離。詳細版は `Promise.all([banner, countNullEmbeddings])` で並列実行するため設定画面側でも速度向上。型は `DegradedModeState extends DegradedModeBannerState` で後方互換。
+
+**横展開チェック**: SSR service が複数経路から呼ばれていて、経路によって必要な集計の粒度が違うときは「経路ごとに別関数 + 共通型継承」で分離する。`(layoutOnly?: boolean)` 等の flag 引数は避ける (call site で何が走るか読みづらい)。
+
+### 教訓 5: Lighthouse の LCP element 推定 ≠ 実際の遅延箇所 (Image Optimization Lambda は別 cold)
+
+Lighthouse Diagnostics で LCP element が **`img.h-full.w-full.object-cover` (チャット FAB の mascot-owl-chat.png)** と推定された。しかし `chat-fab.tsx` には PR #452 で既に `priority` プロパティが設定済で、`<link rel="preload">` も発火していた。
+
+実際の遅延は **Netlify Image Optimization Lambda の cold start** (別 Lambda インスタンス) が真因の仮説。`/api/health` warmup は Functions だけを温める = Image Optimization Lambda は別経路で cold のまま。
+
+**横展開チェック**:
+- Lighthouse の "LCP element" は **画面上で最大の表示要素** を機械的に検出するため、cold start で遅延した要素 = LCP とは限らない
+- `priority` 既設の Image が LCP として遅い場合は **画像配信経路** (CDN / Image Optimization Lambda) の cold を疑う
+- Trace tab で **Long Tasks / Network waterfall** を timeline で見て、document 取得後にどのリソースが critical path を作っているか視覚的に切り分ける
+
+### 教訓 6: API route の cold は SSR と独立 — Function ごとに warmup 対象を決める
+
+タブ別 fetch (`/api/projects/[id]/risks` / `/members` / `/batch` 等) を観測すると、**サイズが 14.4 kB と 1.5 kB で全然違う 2 つの fetch がほぼ同時刻に 9.12s / 9.22s** を計上。ネットワーク帯域ではなくサーバ側で同時にブロックされている = **Function コールドスタート連鎖**。後続 `batch` は 1.17s = Function が温まった結果。
+
+`/api/health` warmup は document route の Function を温めるが、`/api/projects/[id]/*` 系の Function は別インスタンスで cold のまま。**warmup 経路は実際にユーザがアクセスする Function 群と一致させる**必要がある。
+
+**横展開チェック**:
+- 同サイズ違いの fetch が同タイミングで同じ wait を計上していたら cold start 連鎖を疑う
+- warmup 対象は `app/api/**` の主要 route 群を「業務ピーク経路」として網羅する (`/api/auth/session` / `/api/projects/*` 等)
+- ただし warmup ターゲットが増えすぎると Netlify invocation 枠を食うため、計測でホットパスを特定してから絞る
+
+### 横展開チェックリスト
+
+- [ ] DevTools 計測前にシークレット + 拡張オフを `chrome://extensions/` で確認
+- [ ] cron 登録は (a) route (b) 登録 (c) **schedule 文字列** の 3 点で実態確認
+- [ ] SSR layout / page の直列 await チェーンは Promise.all + React.cache で並列化
+- [ ] 複数経路で呼ばれる service は「最重い集計を含まない軽量版」と「詳細版」を分離
+- [ ] LCP 遅延は `priority` 既設でも画像配信 Lambda cold を疑う
+- [ ] API route cold 連鎖は同サイズ違い fetch の同時 wait で検出、warmup は経路一致
+
+### 関連
+
+- 関連 PR: perf/dashboard-layout-parallel-ssr (本 PR)
+- 関連 source: [src/app/(dashboard)/layout.tsx](../../src/app/(dashboard)/layout.tsx) (Promise.all 並列化) / [src/services/degraded-mode.service.ts](../../src/services/degraded-mode.service.ts) (banner / detail 分離)
+- 関連設計: [docs/archive/performance/20260417/after/次期プログラム/cold-start-and-data-growth-analysis.md](../archive/performance/20260417/after/次期プログラム/cold-start-and-data-growth-analysis.md) §4.1
+- 関連調査記録: [docs/archive/performance/20260601/investigation-and-fixes-2026-06-01.md](../archive/performance/20260601/investigation-and-fixes-2026-06-01.md) (詳細経緯・計測値・残課題)
+- 関連 cron: [docs/operations/develop/DEPLOYMENT.md](../operations/develop/DEPLOYMENT.md) §6.1 (`/api/health` `*/2 * * * *`)

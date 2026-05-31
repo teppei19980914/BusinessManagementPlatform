@@ -18,10 +18,19 @@
  *     `currentMonthEmbeddingCostJpy >= monthlyEmbeddingBudgetCapJpy`
  *     未設定 (NULL) は無制限なので縮退しない。
  *
+ * 2 関数構成 (perf/dashboard-layout-parallel-ssr / 2026-06-01):
+ *   - {@link getDegradedModeBannerState}: 全 dashboard layout で毎リクエスト呼ばれる軽量版。
+ *     countNullEmbeddings (5 テーブル COUNT(*) UNION) を含まないため
+ *     "Banner 表示判定だけが必要な layout 経路" で SSR レイテンシを削減する。
+ *   - {@link getDegradedModeState}: 設定画面 (/settings/tenant) 用の詳細版。
+ *     Banner state に embedding 未生成件数の内訳を加える。内部は Promise.all で
+ *     Banner + countNullEmbeddings を並列実行するため設定画面側でも体感速度が向上する。
+ *
  * 関連:
  *   - 設計: docs/business/TENANT_AND_BILLING.md §34.14.4
  *   - UI: src/app/(dashboard)/settings/tenant/tenant-settings-client.tsx
  *   - banner: src/components/degraded-mode-banner.tsx
+ *   - layout: src/app/(dashboard)/layout.tsx
  */
 
 import { prisma } from '@/lib/db';
@@ -31,7 +40,11 @@ import {
 } from './embedding-backfill.service';
 import { BEGINNER_EMBEDDING_MONTHLY_LIMIT } from '@/config/embedding-pricing';
 
-export interface DegradedModeState {
+/**
+ * Banner 表示判定に必要な情報のみを含む軽量 state。
+ * countNullEmbeddings 集計を含まないため dashboard layout で毎リクエスト呼んでも軽い。
+ */
+export interface DegradedModeBannerState {
   /** 現時点で API 呼出が停止しているか */
   active: boolean;
   /**
@@ -65,16 +78,26 @@ export interface DegradedModeState {
   monthlyEmbeddingBudgetCapJpy: number | null;
   /** plan 名 */
   plan: 'beginner' | 'expert' | 'pro' | string;
+}
+
+/**
+ * 設定画面 (/settings/tenant) 向けの詳細 state。
+ * Banner state に embedding 未生成件数の内訳を加える。
+ */
+export interface DegradedModeState extends DegradedModeBannerState {
   /** embedding=NULL のエンティティ件数 (内訳付き) */
   nullEmbeddings: NullEmbeddingCounts;
 }
 
 /**
- * テナントの縮退モード状態を取得する。
+ * Banner 判定のみが必要な経路 (dashboard layout) 向けの軽量取得関数。
+ *
+ * dashboard 配下の全画面で毎リクエスト呼ばれるため、countNullEmbeddings は実行しない。
+ * Banner 表示判定に必要な active / reason + 関連集計値のみを返す。
  */
-export async function getDegradedModeState(
+export async function getDegradedModeBannerState(
   tenantId: string,
-): Promise<DegradedModeState | null> {
+): Promise<DegradedModeBannerState | null> {
   const t = await prisma.tenant.findFirst({
     where: { id: tenantId, deletedAt: null },
     select: {
@@ -91,7 +114,7 @@ export async function getDegradedModeState(
   if (!t) return null;
 
   let active = false;
-  let reason: DegradedModeState['reason'] = null;
+  let reason: DegradedModeBannerState['reason'] = null;
 
   // LLM 経路の縮退判定 (既存)
   if (t.plan === 'beginner') {
@@ -124,8 +147,6 @@ export async function getDegradedModeState(
     }
   }
 
-  const nullEmbeddings = await countNullEmbeddings(tenantId);
-
   return {
     active,
     reason,
@@ -140,6 +161,22 @@ export async function getDegradedModeState(
     monthlyBudgetCapJpy: t.monthlyBudgetCapJpy,
     monthlyEmbeddingBudgetCapJpy: t.monthlyEmbeddingBudgetCapJpy,
     plan: t.plan,
-    nullEmbeddings,
   };
+}
+
+/**
+ * テナントの縮退モード状態 (詳細版) を取得する。
+ *
+ * 設定画面 (/settings/tenant) 用。Banner state + embedding 未生成件数の内訳を返す。
+ * Banner 判定と countNullEmbeddings (5 テーブル COUNT(*) UNION) を Promise.all で並列実行する。
+ */
+export async function getDegradedModeState(
+  tenantId: string,
+): Promise<DegradedModeState | null> {
+  const [banner, nullEmbeddings] = await Promise.all([
+    getDegradedModeBannerState(tenantId),
+    countNullEmbeddings(tenantId),
+  ]);
+  if (!banner) return null;
+  return { ...banner, nullEmbeddings };
 }

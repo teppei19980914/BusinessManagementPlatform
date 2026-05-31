@@ -240,3 +240,21 @@
 ---
 
 **作成**: 2026-04-17 / **範囲**: PR #25, #28, #29, #30 / **状態**: 実装完了・本番稼働中
+
+---
+
+## 続編: 2026-06-01 ブラウザ DevTools 実測フェーズ
+
+本ドキュメントは静的解析中心の改修サイクルを記録しているが、その後 **ブラウザ DevTools** (Lighthouse / Network / Performance) を用いた実測フェーズで以下の追加発見と対応が行われた:
+
+- **続編 journey**: [docs/archive/performance/20260601/investigation-and-fixes-2026-06-01.md](../20260601/investigation-and-fixes-2026-06-01.md)
+- **教訓集約**: [docs/knowledge/KDD_PATTERNS.md §5.X+205](../../../knowledge/KDD_PATTERNS.md)
+- **実装ブランチ**: `perf/dashboard-layout-parallel-ssr`
+
+主要な続編トピック:
+
+| Phase | 内容 | 効果 |
+|---|---|---|
+| Phase 1 | `/api/health` cron schedule を **日次 9AM → */2 \* \* \* \*** に変更し warmup として実体化 | document TTFB **4.21s → 1.94s (-54%)** |
+| Phase 2 | dashboard layout SSR を **Promise.all 並列化** + `getDegradedModeBannerState` 分離 (countNullEmbeddings dead work 除去) | warm 時の SSR 直列短縮 (実測待ち) |
+| 残課題 | LCP / login / project detail / tab API cold / session 過剰 fetch / global list N+1 / settings/tenant 6.26s | 続編 journey §5 で個別管理 |

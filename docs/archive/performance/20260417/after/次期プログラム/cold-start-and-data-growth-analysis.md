@@ -76,6 +76,13 @@ after 計測で観測された TTFB 悪化（+239 ms）とペイロード増加�
 | P2 | Vercel Fluid Compute / Edge Runtime 化（対応可能な箇所のみ）。Supabase 経由の Prisma は Node Runtime 必須のため**全 Edge 化は不可**、認証ミドルウェアなど限定的に Edge 化 | +50-100 ms（対象箇所のみ） | 中 | 中 |
 | P3 | Prisma Accelerate（有料）導入。コネクションプーリングを CDN エッジで行い初回 DB クエリを短縮 | +50-150 ms | 中 | 中（料金発生） |
 
+> **2026-06-01 実装メモ (perf/dashboard-layout-parallel-ssr 調査時)**:
+> - **P0 のスケジュール乖離**: 上記設計では「業務時間帯 7:00-20:00 JST、5 分ごと」と記載されていたが、本番 cron-job.org の実設定は当初「日次 9:00 AM のみ (`0 9 * * *`)」で、warmup として実質機能していなかった (cron 直後の 9:15 AM 以降 24 時間ずっと cold)。これに伴う cold start で TTFB 4.21s を観測。
+> - **採用した最新設定**: `*/2 * * * *` (2 分間隔 24/7、認証なし)。Netlify Functions の warm 保持時間 (5-15 分) より十分短く、業務時間外アクセスにも warm を維持する。Netlify Free 枠 (125k invocations/月) への影響は 21,600/月 = **17%** で許容範囲。
+> - **検証結果**: cron schedule 変更後、シークレットウィンドウで /projects document TTFB 4.21s → **1.94s (-54%)** を観測 (2026-05-31 計測)。残り ~700ms は Layout SSR 逐次 DB チェーン (PR perf/dashboard-layout-parallel-ssr で `getCachedAuth` + Promise.all 化により短縮見込み)。
+> - **P1 instrumentation.ts は保留**: Phase 2 (Layout 並列化) 適用後の実測値を見てから採否判断する。
+> - 詳細経緯: [docs/archive/performance/20260601/investigation-and-fixes-2026-06-01.md](../../../20260601/investigation-and-fixes-2026-06-01.md)
+
 ### 4.2 データ増加への耐性
 
 | 優先度 | 対策 | 効果 | 工数 | リスク |
