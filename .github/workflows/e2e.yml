@@ -151,7 +151,8 @@ jobs:
 
       - name: Comment PR
         if: always() && github.event_name == 'pull_request'
-        uses: marocchino/sticky-pull-request-comment@v3
+        # security/phase-1 (2026-05-31): SHA pinning でサプライチェーン汚染抑止 (v3.0.4)
+        uses: marocchino/sticky-pull-request-comment@0ea0beb66eb9baf113663a64ec522f60e49231c0 # v3
         with:
           header: e2e-report
           message: |

@@ -102,7 +102,9 @@ jobs:
         # 公式 action (https://github.com/davelosert/vitest-coverage-report-action)。
         # テスト失敗時 (前段 Test fail) でも可能な範囲でコメントを残したいので always()。
         if: always() && github.event_name == 'pull_request'
-        uses: davelosert/vitest-coverage-report-action@v2
+        # security/phase-1 (2026-05-31): third-party action は SHA pinning でサプライチェーン汚染を抑止。
+        # SHA は v2 タグの最新 commit (2026-05-31 検証時点)。Dependabot 自動更新対象。
+        uses: davelosert/vitest-coverage-report-action@02f3c2e641286b7fa308cd3e430783103ce6103b # v2
 
       - name: Build (next build)
         # ビルド時は実 DB 接続不要 (next build は static analysis 中心)。

@@ -136,9 +136,11 @@ describe('POST /api/auth/explicit-signout', () => {
     expect(setCookie).not.toBeNull();
     // __Secure- prefix の session token は Secure フラグが必須 (browser が prefix を強制)
     expect(setCookie).toMatch(/__Secure-authjs\.session-token=[^,]*Secure/i);
-    // HttpOnly / SameSite=Strict / Path=/ が含まれること (auth.config.ts と整合)
+    // HttpOnly / SameSite=Lax / Path=/ が含まれること (auth.config.ts と整合)
+    //   security/phase-1 (2026-05-31): SameSite を本体 session cookie ('lax') と統一。
+    //   旧値 'strict' は本体と不一致で削除指示が一部ブラウザで無視される事故予防。
     expect(setCookie).toContain('HttpOnly');
     expect(setCookie).toContain('Path=/');
-    expect(setCookie?.toLowerCase()).toContain('samesite=strict');
+    expect(setCookie?.toLowerCase()).toContain('samesite=lax');
   });
 });

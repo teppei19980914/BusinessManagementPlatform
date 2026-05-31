@@ -189,6 +189,9 @@
 ### Tenant 月次リセット (PR #2-d / T-03)
 - [ ] `/api/cron/tenant-monthly-reset` (POST) — skip: cron 認可 + 月初リセット + scheduledPlanChangeAt 適用の単体テスト (`src/services/tenant-monthly-reset.service.test.ts` 11 件 + `src/app/api/cron/tenant-monthly-reset/route.test.ts` 5 件) で担保。E2E の対象外 (外部 cron 経由のみで UI 経路なし)
 
+### セキュリティ (security/phase-1, 2026-05-31 / 本 PR で新設)
+- [ ] `/api/csp-report` (POST) — skip: CSP 違反通知は browser が `report-uri` 経由で自動 POST する内部 endpoint で E2E スコープ外。route の挙動 (正常系 / malformed JSON / csp-report ラッパなし fallback / rate limit 超過) は `src/app/api/csp-report/route.test.ts` (4 ケース) で担保
+
 ### 使用量監視 (PR #7 / T-03)
 - [ ] `/api/cron/daily-usage-aggregation` (POST) — skip: cron 認可 + 集計 + 異常検知 + 予算アラート + admin メール通知の単体テスト (`src/services/usage-monitoring.service.test.ts` 12 件) で担保。E2E の対象外 (外部 cron 経由のみで UI 経路なし)
 - [ ] `/api/cron/stripe-usage-flush` (POST) — skip: PR-S6 (2026-05-14) Stripe Usage Record queue flush cron (日次、05:00 UTC)。旧 Vercel Hobby 時代の cron 最小間隔「1 日 1 回」に合わせて日次運用を確立 (Netlify + 外部 cron 構成 ADR-0023 では 1 分間隔まで設定可だが日次を継続)。Stripe Usage Record の timestamp パラメタで実呼出時刻を送るため翌日送信でも月末請求の正確性は維持。cron 認可 + queue 処理 (成功/失敗/DLQ/subscriptionItemId 不整合) は src/services/stripe-usage-flush.service.test.ts (8 件) + src/app/api/cron/stripe-usage-flush/route.test.ts (5 件) で担保。Stripe Test Mode との結合テストは v2 で検討

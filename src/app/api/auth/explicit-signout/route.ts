@@ -119,10 +119,16 @@ export async function POST() {
 
   // 【P0】 session token cookie 削除 (Max-Age=0)。両環境名を網羅して salt 判定ズレ事故 (KDD §5.X+66 補遺) を回避
   //        CSRF cookie は意図的に削除しない (KDD §5.X+138 / login flow CSRF race 対策)
+  //
+  // security/phase-1 (2026-05-31): sameSite を本体 session cookie (auth.config.ts:63 = 'lax') と統一。
+  //   旧実装 'strict' は Set-Cookie 仕様上、本体 cookie 属性と一致しない削除指示が一部ブラウザで
+  //   無視されるリスクがあり (削除されず残留する事故)、本体に揃えて 'lax' にする。
+  //   Stripe Checkout 経由の top-level GET callback で「ログアウト後でも cookie が残留している」
+  //   現象を未然に防止 (= 再ログイン経路の信頼性確保)。
   for (const name of AUTH_COOKIE_NAMES_TO_CLEAR) {
     response.cookies.set(name, '', {
       httpOnly: true,
-      sameSite: 'strict',
+      sameSite: 'lax',
       path: '/',
       // `__Secure-` / `__Host-` prefix は secure=true が必須 (browser が prefix を強制)
       secure: name.startsWith('__Secure-') || name.startsWith('__Host-'),
