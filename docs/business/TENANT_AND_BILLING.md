@@ -36,6 +36,17 @@
 ```
 
 billing invariant ([[feedback_billing_invariant]]) の維持: 上記合計 = 表示 = 月末請求書 = ApiCallLog SUM (税抜)。DB / Storage 超過は月中 peak ベースの想定値で、月末 cron で ApiCallLog INSERT して確定する。
+
+### 課金運用閾値 (照合・通知)
+
+請求の整合性監視・通知に関する運用閾値を以下に明記する (実装: [src/config/billing.ts](../../src/config/billing.ts))。
+
+| 閾値 | 値 | 用途 | 実装 |
+|---|---|---|---|
+| **Stripe ↔ DB 金額照合の許容差分** | **±1 円** (`AMOUNT_RECONCILE_TOLERANCE_JPY = 1`) | Stripe Invoice の subtotal / tax / total と DB 値を突合する際、差分が ±1 円以内なら一致とみなす (Stripe Tax / 為替丸めで生じる端数のズレを吸収)。超過した場合は drift として super_admin に alert | [billing.ts:73](../../src/config/billing.ts) / [stripe-reconcile.service.ts:311](../../src/services/stripe-reconcile.service.ts) / [billing-integrity.service.ts:105](../../src/services/billing-integrity.service.ts) |
+| **請求メール送信失敗の alert 閾値** | **1 件** (`EMAIL_FAILURE_ALERT_THRESHOLD = 1`) | 請求関連メール送信失敗が本値以上で super_admin に alert を発火 (= 受信後即時。督促・再送の判断は人間に委ねる) | [billing.ts:67](../../src/config/billing.ts) |
+
+> 税率 `TAX_RATE = 0.10` / 銀行振込支払期日 `INVOICE_PAYMENT_DUE_DAY = 25` (翌月) / 期日超過 alert `OVERDUE_ALERT_THRESHOLD_DAYS = 5` も同 config に定義済 (本ファイル他セクション・各課金仕様書を参照、ここでは二重記載しない)。
 | 課金対象 | 全 LLM/Embedding 呼出 | **`BILLABLE_FEATURE_UNITS` のみ** (project-upsert / suggestion-explanation / auto-tag-extract) |
 | 無料化された機能 | — | **資産入力 (Knowledge/RiskIssue/Retrospective/Memo) + チャット検索 + CSV インポート + 月初 backfill cron** |
 
@@ -45,9 +56,10 @@ billing invariant ([[feedback_billing_invariant]]) の維持: 上記合計 = 表
 |---|---|---|
 | 課金モデル | 月額固定 (Standard ¥0 / Plus ¥500 / Pro ¥1,500 / Enterprise ¥5,000) | **階段関数型従量課金** |
 | 無料枠 | 20MB (Standard) | **50MB / tenant** (SI 単位) |
-| 超過単価 | プラン上限超過は 7 日 Grace 後 write 拒否 | **¥50 / GB tier** (1MB 未満切上 + 1GB tier 切上) |
+| 超過単価 | プラン上限超過は 7 日 Grace 後 write 拒否 | **¥50 / GB tier** (1MB 未満切上 + 1GB tier 切上、**上限なしの青天井従量**) |
 | 計測時点 | 現在の使用量 | **月中 peak** (= 月末削除→月初再投入の抜け道防止) |
-| ハードキャップ | 各プラン上限 (20MB/220MB/1.02GB/5.02GB) | **50GB SI 一律** (= 他テナント保護の技術的安全弁) |
+| 累積上限 | 各プラン上限 (20MB/220MB/1.02GB/5.02GB) | **なし** (2026-05-31 / ADR-0030 で 50GB 累積ハードキャップ撤廃)。50GB は監視アラート閾値 (L3)、write は止めない |
+| 1 操作上限 | — | **DB ペイロード 5MB / write リクエスト** (`DB_WRITE_PAYLOAD_MAX_BYTES`、瞬間負荷ガード) |
 | 計測網羅性 | 16 テーブル SQL ハードコード (新規テーブル追加時の漏れリスク) | **動的解決** (`information_schema` 由来) + CI ガード |
 | 計測対象テーブル数 | 16 | **36 テーブル** (= 旧実装の 20+ テーブルが課金漏れだった) |
 
@@ -55,22 +67,23 @@ billing invariant ([[feedback_billing_invariant]]) の維持: 上記合計 = 表
 - 0-50MB → **¥0**
 - 51MB-1,050MB → **¥50** (= tier 1)
 - 1,051MB-2,050MB → **¥100** (= tier 2)
-- 50GB (ハードキャップ到達) → **¥2,500** (= tier 50)
+- 50GB → **¥2,500** (= tier 50、L3 監視アラート閾値。write は止めない)
+- 100GB → **¥5,000** (= tier 100、上限なしで青天井に継続)
 
-詳細根拠 (実コスト構造の再検証、Supabase 原価、4 層防御、circuit breaker 等) は [ADR-0019](../adr/0019-billable-feature-units-and-free-tier-expansion.md) + [ADR-0020](../adr/0020-db-capacity-usage-based-billing.md) 参照。
+詳細根拠 (実コスト構造の再検証、Supabase 原価、4 層 Level、fail-open 等) は [ADR-0019](../adr/0019-billable-feature-units-and-free-tier-expansion.md) + [ADR-0020](../adr/0020-db-capacity-usage-based-billing.md) + [ADR-0030](../adr/0030-embedding-monthly-budget-cap.md) (累積ハードキャップ撤廃) 参照。詳細仕様は [DB_CAPACITY_BILLING.md](./DB_CAPACITY_BILLING.md)。
 
 ### ファイルストレージ課金 (ADR-0021 / 2026-05-26)
 
-ファイル添付本体 (Supabase Storage 保存) を月中 peak ベースで階段関数型に従量課金する。設計パターンは ADR-0020 を踏襲し、計算式 / 4 層防御 / 退会時即時請求 / drift 検知 / circuit breaker / billing invariant をすべて流用。
+ファイル添付本体 (Supabase Storage 保存) を月中 peak ベースで階段関数型に従量課金する。設計パターンは ADR-0020 を踏襲し、計算式 / 4 層 Level / 退会時即時請求 / drift 検知 / fail-open / billing invariant をすべて流用。
 
 | 項目 | 値 |
 |---|---|
 | 課金モデル | **階段関数型従量課金** (= ADR-0020 と同設計) |
 | 無料枠 | **100MB / tenant** (SI 単位、PDF 10MB を 10 件無料イメージ) |
-| 超過単価 | **¥10 / GB tier** (1MB 未満切上 + 1GB tier 切上、Supabase 原価 ¥3.20/GB の +193% マージン) |
+| 超過単価 | **¥10 / GB tier** (1MB 未満切上 + 1GB tier 切上、Supabase 原価 ¥3.20/GB の +193% マージン、**上限なしの青天井従量**) |
 | 計測時点 | **月中 peak** (= 月末削除→月初再投入の抜け道防止) |
-| ハードキャップ | **50GB / tenant** (= 月額最大 ¥500、説明性確保) |
-| ファイル上限 | **50MB / 1 ファイル** (= Supabase Free 同等、業務 PDF/Excel/画像 を十分カバー) |
+| 累積上限 | **なし** (2026-05-31 / ADR-0030 で 50GB 累積ハードキャップ撤廃)。50GB は監視アラート閾値 (L3)、アップロードは止めない |
+| ファイル上限 | **50MB / 1 ファイル** (= Supabase Free 同等、業務 PDF/Excel/画像 を十分カバー。瞬間負荷ガードとして存続) |
 | 危険拡張子 | **blacklist** (.exe / .sh / .bat / .ps1 / .vbs / .apk / .ipa / .rar / .zipx 等) |
 | Egress | **当面無料** (= Supabase Pro 250GB/月 含有で十分) |
 
@@ -78,7 +91,8 @@ billing invariant ([[feedback_billing_invariant]]) の維持: 上記合計 = 表
 - 0-100MB → **¥0**
 - 101MB-1,100MB → **¥10** (= tier 1)
 - 1,101MB-2,100MB → **¥20** (= tier 2)
-- 50GB (ハードキャップ到達) → **¥500** (= tier 50)
+- 50GB → **¥500** (= tier 50、L3 監視アラート閾値。アップロードは止めない)
+- 100GB → **¥1,000** (= tier 100、上限なしで青天井に継続)
 
 #### Attachment Embedding (= 無料 API)
 
@@ -201,6 +215,14 @@ v1.x では **UI と Stripe 連携** を実装する。テナント管理者設�
 
 ## Part 2: ユーザから見える挙動 (SPECIFICATION.md §26.6 + §26.7 から転記)
 
+> **⚠️ DEPRECATED 注記 (§26.6 / §26.7)**: 本 Part は設計初期の per-token モデル時代の文言 (「月間 100,000 トークン上限」「日次 LLM 呼び出しキャップ Free 30 / Pro 200」「Free / Pro の 2 プラン」「Beginner 月間 100 回」等) を時系列保全のため残置しています。**最新の確定モデルは本ファイル冒頭の「ADR-0019 + ADR-0020 + ADR-0021 + ADR-0022」セクションおよび Part 5 (§34.14)** です。具体的には:
+> - プラン構成は **Beginner / Expert / Pro の 3 プラン** (Free / Pro の 2 プランではない)
+> - 課金は **per-API-call の 4 階層分類** (LLM / Embedding / Storage Overage / Backfill-free)、月間トークン上限の概念は撤廃済
+> - Beginner 上限は **LLM (project-upsert 等) 月 50 件 + Embedding 月 100 件 (ADR-0030)** であって「月間 100 回」ではない
+> - LLM 単価は Expert ¥10 / Pro ¥15、Embedding 単価は全プラン共通 ¥5 (Beginner は ¥0、ADR-0029)
+>
+> 実装は冒頭セクション + Part 5 + ADR-0019/0020/0021/0022/0029/0030 を参照すること。
+
 **観測ダッシュボード (v1.x、時期未定)**: admin 専用画面 `/admin/observability/llm` で、LLM 利用統計 (日別コスト・ユーザ別使用量・エラー率) を可視化する。これは [RELEASE_ROADMAP.md](../administrator/RELEASE_ROADMAP.md) Phase 3c の `/admin/observability` の一部として実装される。
 
 ### 26.6 マルチテナント運用におけるユーザから見える挙動
@@ -225,7 +247,7 @@ v1.x では **UI と Stripe 連携** を実装する。テナント管理者設�
 
 §26.6 で示したテナント運用フローを、**3 プラン構成 + 従量課金 (per-API-call)** で具体化する。これは「使った分だけ払う」という公平性とお得感を両立させる課金モデルである。詳細な要件は [REQUIREMENTS.md §13.7](./REQUIREMENTS.md)、技術設計は [DESIGN.md §34.14](./DESIGN.md) を参照。
 
-**Beginner プラン (無料)** は最大 5 席まで、Claude Haiku、月間 100 回までの API 呼び出しが可能。試験運用と小〜中規模プロジェクトでの初期利用を想定する。月間 100 回の上限に達した時点で **縮退モード**（§34.14.4 / NF-13.14）に切り替わり、月初に自動リセットされる。縮退モード中はエンティティの作成・更新は継続でき、AI 裏方処理（自動タグ抽出・embedding 生成）のみ一時停止する。月初バッチで補完生成され翌月には完全回復する。
+**Beginner プラン (無料)** は最大 5 席まで、Claude Haiku、**LLM (プロジェクト作成/更新) 月 50 件 + Embedding (資産入力・チャット検索等) 月 100 件 (ADR-0030)** の試用上限内で利用できる (旧記述の「月間 100 回」は per-API-call モデル確定前の文言で、現行は LLM / Embedding を別カウントする)。試験運用と小〜中規模プロジェクトでの初期利用を想定する。各上限に達した時点で **縮退モード**（§34.14.4 / NF-13.14）に切り替わり、月初に自動リセットされる。縮退モード中はエンティティの作成・更新は継続でき、AI 裏方処理（自動タグ抽出・embedding 生成）のみ一時停止する。月初バッチで補完生成され翌月には完全回復する。
 
 **Expert プラン** は席数に上限なし、Claude Haiku、**プロジェクト作成/更新 1 回あたり ¥10** の従量課金 (ADR-0019 / 2026-05-24 改定: ¥5 → ¥10、課金対象を縮小したことに合わせて単価を補填調整)。資産入力・チャット検索は無料・無制限。月間使用量に上限はなく、使った分だけ請求される。中〜大規模チームで日常的に提案機能を活用するユーザを想定する。
 
@@ -233,15 +255,22 @@ v1.x では **UI と Stripe 連携** を実装する。テナント管理者設�
 
 **API 呼び出しの「1 回」は ユーザに見える機能単位** で定義する。新規プロジェクト作成時の自動タグ抽出 + 初回提案生成 = 1 回、提案画面の再表示 (キャッシュ無効後) = 1 回、リスク起票時の類似 issue サジェスト = 1 回、というカウント方法となる。内部的に複数の LLM / Embedding 呼び出しが走っても、ユーザから見える操作単位で 1 回として課金する。embedding 生成 (バックグラウンド処理) は課金対象外。これにより、ユーザは「自分のクリック数 ≒ 課金額」と直感的に予測できる。
 
-**チャット意味検索の課金** (2026-05-23 / [CHAT_SEMANTIC_SEARCH.md](../specification/CHAT_SEMANTIC_SEARCH.md)): 全プラン共通で **1 検索 = 1 API 呼び出し** として計上する。`ApiCallLog.featureUnit = 'chat-semantic-search'` で識別。Beginner は月100回枠を書込操作と共有 (= チャット連投で書込余力が減る経済圧力)、Expert ¥5 / Pro ¥15 で書込と同単価。これは「読込操作だが Voyage への外部 API 呼出が必須発生する」性質ゆえ、書込/読込問わず「外部 AI 呼出 = 課金 1 回」という統一的計上方針による。失敗時 (rate_limited / budget_exceeded) はカウンタ進まず課金されない。詳細プラン挙動・縮退モード・コスト試算は [CHAT_SEMANTIC_SEARCH.md §3](../specification/CHAT_SEMANTIC_SEARCH.md) を参照。
+**チャット意味検索の課金** (2026-05-23 / ADR-0022 で Embedding 課金化 / ADR-0029 で ¥5 改定 / [CHAT_SEMANTIC_SEARCH.md](../specification/CHAT_SEMANTIC_SEARCH.md)): 全プラン共通で **1 検索 = 1 API 呼び出し** として計上する。`ApiCallLog.featureUnit = 'chat-semantic-search'` で識別され、課金分類上は **EMBEDDING_BILLABLE** に属する (= Voyage embedding を呼ぶため)。単価は **Embedding 共通単価**: **Beginner ¥0 / Expert ¥5 / Pro ¥5** (ADR-0029、`resolveEmbeddingCostJpy`、[src/config/embedding-pricing.ts:49](../../src/config/embedding-pricing.ts))。
+>
+> **旧記述の是正**: 「Beginner は月100回枠を書込操作と共有」「Expert ¥5 / Pro ¥15」は ADR-0022 以前の per-LLM-call 時代の文言。ADR-0022 (2026-06-01) 以降は:
+> - チャット検索は Embedding 系のため **Beginner の LLM 月 50 件上限を消費しない** (代わりに Embedding 月 100 件試用上限 [ADR-0030] の対象、[src/lib/llm/metered.ts:300](../../src/lib/llm/metered.ts))
+> - Pro も ¥5 (¥15 ではない)。Embedding は plan 間で品質差がない (同一 Voyage モデル) ため全プラン均一単価 ([src/config/embedding-pricing.ts:49](../../src/config/embedding-pricing.ts))
+> - 予算上限は LLM 用 `monthlyBudgetCap` ではなく **Embedding 専用 `monthlyEmbeddingBudgetCap`** で判定 (ADR-0030、[metered.ts:359](../../src/lib/llm/metered.ts))
+>
+> これは「読込操作だが Voyage への外部 API 呼出が必須発生する」性質ゆえ、書込/読込問わず「外部 AI 呼出 = 課金 1 回」という統一的計上方針による。失敗時 (rate_limited / embedding_budget_exceeded / embedding_beginner_limit_exceeded) はカウンタ進まず課金されない。詳細プラン挙動・縮退モード・コスト試算は [CHAT_SEMANTIC_SEARCH.md §3](../specification/CHAT_SEMANTIC_SEARCH.md) を参照。
 
-**プラン変更フロー**: テナント管理者は自テナントの「システム管理者設定画面」からプラン変更を行える。Beginner → Expert / Pro へのアップグレードは決済情報登録 (Stripe) と同時に即時有効化される。**Expert ↔ Pro の切替 (上下双方向) は即時反映** され、当月の使用分は切替前後それぞれの単価 (Haiku ¥5 / Sonnet ¥15、2026-05-15 改定後) で月次請求書に内訳表示される (per-call 課金は呼出時点の plan で確定するため、月途中切替でも整合性が保たれる)。**Expert / Pro → Beginner へのダウングレードは完全禁止** (P-B / 2026-05-08): 上位プランから Beginner には戻せない仕様で、API は `BEGINNER_DOWNGRADE_FORBIDDEN` を返し UI でも該当ラジオボタン選択時にエラー表示する。Beginner 退避が必要な場合はテナント解約フローを使う。
+**プラン変更フロー**: テナント管理者は自テナントの「システム管理者設定画面」からプラン変更を行える。Beginner → Expert / Pro へのアップグレードは決済情報登録 (Stripe) と同時に即時有効化される。**Expert ↔ Pro の切替 (上下双方向) は即時反映** され、当月の使用分は切替前後それぞれの LLM 単価 (Expert/Haiku ¥10 / Pro/Sonnet ¥15、ADR-0019 / 2026-05-24 改定後) で月次請求書に内訳表示される (per-call 課金は呼出時点の plan で確定するため、月途中切替でも整合性が保たれる)。**Expert / Pro → Beginner へのダウングレードは完全禁止** (P-B / 2026-05-08): 上位プランから Beginner には戻せない仕様で、API は `BEGINNER_DOWNGRADE_FORBIDDEN` を返し UI でも該当ラジオボタン選択時にエラー表示する。Beginner 退避が必要な場合はテナント解約フローを使う。
 
 **月次予算上限の自己設定**: テナント管理者は自テナントの月次予算上限を **自分で設定** できる (例: 「月最大 ¥10,000 まで」)。設定額に達した時点で Beginner 同様の **縮退モード**（§34.14.4 / NF-13.14）に自動切替され、想定外の請求額発生を防ぐ。これは法人ユーザの導入障壁を大きく下げる役割を果たす。
 
 **リアルタイム使用量ダッシュボード**: テナント管理者は自テナントの設定画面から、リアルタイムの使用状況ダッシュボードを閲覧できる。第一階層に当月のサマリー (例: 「今月の使用状況: 320 回 / ¥3,200 (予算 ¥10,000 の 32%)」)、第二階層にプラン情報と席数、第三階層に日次の使用推移グラフ (棒グラフによる可視化)、第四階層に機能別の内訳 (新規プロジェクト時の提案・提案画面再表示・リスク起票時の関連検索などの分類別集計) が表示される。これにより、ユーザは月末を待たずに当月の請求予測を把握でき、また突発的な使用量増加 (異常パターン) を自分で発見できる窓口となる。
 
-**v1 (6月1日) での見え方**: v1 リリース時点では、ユーザに見える UI 上にプラン情報や課金関連の表示は **公開されない**。すべての既存ユーザは default-tenant の Beginner プラン扱いで運用され、月間 100 回の上限に達した場合のみ縮退モードのメッセージが表示される。テナント管理者設定画面、プラン変更ボタン、Stripe 連携、リアルタイムダッシュボードは v1.x で段階的に公開される。
+**v1 (6月1日) での見え方**: v1 リリース時点では、ユーザに見える UI 上にプラン情報や課金関連の表示は **公開されない**。すべての既存ユーザは default-tenant の Beginner プラン扱いで運用され、Beginner 試用上限 (LLM 月 50 件 / Embedding 月 100 件、ADR-0030) に達した場合のみ縮退モードのメッセージが表示される。テナント管理者設定画面、プラン変更ボタン、Stripe 連携、リアルタイムダッシュボードは v1.x で段階的に公開される。
 
 ### 26.8 関連ドキュメント
 
@@ -484,7 +513,21 @@ model Tenant {
 | 既存データの閲覧・検索 | ✅ 通常通り（LLM 不使用） | — |
 | プラン変更・解約・予算上限変更 | ✅ 通常通り | 縮退モード解除の唯一の能動手段 |
 
-`withMeteredLLM` ([src/lib/llm/metered.ts](../../src/lib/llm/metered.ts)) は **`{ ok: false, reason: 'degraded' }`** を返す。呼び出し側はこれを受け取って、entity を NULL embedding で保存する経路に分岐する。
+`withMeteredLLM` ([src/lib/llm/metered.ts](../../src/lib/llm/metered.ts)) は **`{ ok: false, reason: <縮退理由> }`** を返す。`reason: 'degraded'` という値は **存在しない** (旧設計文言)。実際の縮退 reason は以下の判別ユニオン ([metered.ts:159-173](../../src/lib/llm/metered.ts)):
+>
+> | reason | 発火条件 | 対象階層 |
+> |---|---|---|
+> | `rate_limited` | 短期 rate limit (1 ユーザ 10 回/分・60 回/時) 超過 | 全 featureUnit |
+> | `tenant_inactive` | Tenant 削除済 / 不在 | 全 featureUnit |
+> | `plan_invalid` | plan 値が不正 | 全 featureUnit |
+> | `beginner_limit_exceeded` | Beginner LLM 月 50 件上限超過 (`beginnerMonthlyCallLimit`) | LLM_BILLABLE のみ |
+> | `budget_exceeded` | `monthlyBudgetCapJpy` 予測超過 | LLM_BILLABLE のみ |
+> | `embedding_beginner_limit_exceeded` | Beginner Embedding 月 100 件試用上限超過 (ADR-0030) | EMBEDDING_BILLABLE のみ |
+> | `embedding_budget_exceeded` | `monthlyEmbeddingBudgetCapJpy` 予測超過 (ADR-0030) | EMBEDDING_BILLABLE のみ |
+> | `fair_use_limit_exceeded` | Beginner Embedding 月 10,000 calls safety net 超過 (ADR-0022) | Beginner × EMBEDDING_BILLABLE のみ |
+> | `llm_error` | 実 LLM/Embedding 呼出が例外を投げた (失敗時は非課金) | 全 featureUnit |
+>
+> 呼び出し側は `ok: false` を受け取って、entity を NULL embedding で保存する経路に分岐する (= 縮退時も書込は継続)。
 
 ##### B. 提案エンジンでの NULL embedding 候補の扱い (重み再配分 5:5)
 

@@ -1,8 +1,111 @@
-# 主要画面仕様 (Specification)
+# 画面仕様 (Specification) — 全画面網羅 (実装ミラー)
 
-本ドキュメントは、本サービスの全主要画面の機能仕様を集約する (SPECIFICATION.md §11 + §16〜§24 の関連追記を統合)。画面別権限マトリクスは [PERMISSION_MATRIX.md](./PERMISSION_MATRIX.md)、共通 UI 制御ルールは [UI_RULES.md](./UI_RULES.md) を参照。
+本ドキュメントは、本サービスの **全画面** (dashboard 40 + auth 5) の機能仕様を集約した **実装ミラー** である。開発者がこの 1 ファイルで全画面の目的・操作・UI 要素・権限・関連 route/service を把握できることをゴールとする。画面別権限マトリクスは [PERMISSION_MATRIX.md](./PERMISSION_MATRIX.md)、共通 UI 制御ルールは [UI_RULES.md](./UI_RULES.md) を参照。
+
+> **スコープ (2026-05-31 拡張)**: 従来は「主要 12 画面」(§11.1〜§11.12) のみを記載していたが、本改訂で `src/app/(dashboard)/**/page.tsx` と `src/app/(auth)/**/page.tsx` の全実装を inverse coverage で網羅した。詳細な入力項目・状態×ロールのボタン制御マトリクスは主要 12 画面 (§11) を、それ以外の画面 (super_admin / admin / 設定 / ヘルプ等) は **§0 全画面インベントリ** を参照すること。
 
 > 🆕 **ADR-0019 (2026-05-24) 価格改定**: 課金対象は `BILLABLE_FEATURE_UNITS` (project-upsert / suggestion-explanation / auto-tag-extract) のみ。資産入力 (Knowledge / RiskIssue / Retrospective / Memo) / チャット検索 / CSV インポートは全プラン無料化。Expert ¥10/call、Pro ¥15/call、Beginner プロジェクト作成/更新 月 50 回まで無料。本仕様内の単価・上限の最新値は [ADR-0019](../adr/0019-billable-feature-units-and-free-tier-expansion.md) を優先参照。
+
+---
+
+## §0. 全画面インベントリ (実装ミラー)
+
+`src/app` のルート構成を真値とした全画面一覧。**カテゴリ別件数**:
+
+| カテゴリ | 画面数 | 代表ルート |
+|---|---:|---|
+| 認証 (auth, 未ログイン) | 5 | `/login` `/login/mfa` `/signup` `/reset-password` `/setup-password` |
+| ダッシュボード入口 | 1 | `/` (→ `/projects` へ redirect) |
+| プロジェクト系 | 9 | `/projects` ほか detail 配下タブ |
+| プロジェクト横断 (資産) | 6 | `/risks` `/issues` `/knowledge` `/retrospectives` `/memos` `/all-memos` |
+| 個人 | 2 | `/my-tasks` `/memos` |
+| 顧客管理 (admin) | 2 | `/customers` `/customers/[id]` |
+| 運用管理 (admin) | 3 | `/admin/users` `/admin/audit-logs` `/admin/role-changes` |
+| 設定 | 3 | `/settings` `/settings/tenant` `/settings/tenant/billing` |
+| データ移行 (admin) | 1 | `/settings/tenant/external-import` |
+| ヘルプ・ガイド | 2 | `/help` `/guide` |
+| 運営者専用 (super_admin) | 12 | `/admin/super` 配下 |
+| **合計 (dashboard 40 + auth 5)** | **45** | (うち project 配下 2 件 = legacy redirect) |
+
+### §0.1 認証画面 (auth route group — 未ログインアクセス可)
+
+| 画面 | ルート | 目的 / 主な操作 | 権限 |
+|---|---|---|---|
+| ログイン | `/login` | 組織 ID (Tenant.slug) + メール + パスワードで認証。CWE-601 対策の callbackUrl sanitize。localStorage のテナント履歴 (LRU 5 件 / 90 日 expire) を候補表示。セットアップガイドリンク併設 | 全員 (未認証可) |
+| MFA 検証 | `/login/mfa` | パスワード認証後の TOTP 6 桁検証。MFA 未有効 or 既検証なら callbackUrl へ自動 redirect。検証成功で JWT update → dashboard | password 認証済セッション保持者 |
+| サインアップ | `/signup` | 公開セルフサインアップ。テナント情報 + 請求先 (個人/法人切替) + 初期 admin を 1 フォーム入力。honeypot + IP rate limit。送信後は検証メール経由でパスワード設定 | 全員 (未認証可) |
+| パスワード再設定 | `/reset-password` | 2 ステップ (verify → reset)。組織 slug + メールで本人確認 → reset token → 新パスワード設定。メールリンク経由の `?tenant=` 初期値取得 (ADR-0016) | 全員 (未認証可) |
+| 初期パスワード設定 | `/setup-password` | 招待/検証メールリンクからの初回パスワード設定。super_admin のみ MFA 登録 (QR + TOTP) が必須、admin/general は即時有効化。完了後リカバリーコード表示 | 検証トークン保持者 |
+
+### §0.2 プロジェクト系
+
+| 画面 | ルート | 目的 / 主な操作 | 権限 | 詳細 |
+|---|---|---|---|---|
+| ダッシュボード入口 | `/` | `/projects` へ即時 redirect (実体なし) | 認証済 | — |
+| プロジェクト一覧 | `/projects` | 全参加プロジェクトの一覧・検索・新規作成 | 全ロール (作成は admin/PM/TL) | §11.1 |
+| プロジェクト詳細 | `/projects/[id]` | 概要 + タブハブ (WBS/ガント/リスク/課題/振り返り/見積/メンバー/参考)。各タブは client 遅延取得。`?tab=` `?suggestions=1` で deep link。非メンバー + 非 admin は `notFound()` | ProjectMember or admin | §11.2 |
+| WBS / タスク | `/projects/[id]/tasks` | タスク階層管理・一括編集・複製・WBS export/import (sync) | ProjectMember | §11.4 |
+| ガントチャート | `/projects/[id]/gantt` | スケジュール時系列可視化 (表示専用)。今日列を初期スクロール位置に | ProjectMember | §11.5 |
+| リスク一覧 (タブ) | `/projects/[id]/risks` | プロジェクト配下リスク CRUD (type=risk) | ProjectMember | §11.7 |
+| 課題一覧 (タブ) | `/projects/[id]/issues` | プロジェクト配下課題 CRUD (type=issue)。RisksClient を typeFilter='issue' で再利用 | ProjectMember | §11.7 |
+| 振り返り (タブ) | `/projects/[id]/retrospectives` | プロジェクト振り返り作成・確定・ナレッジ化 | ProjectMember | §11.9 |
+| 見積もり | `/projects/[id]/estimates` | 見積項目管理。**member/viewer は `notFound()` (404)**、API も 403 (PR #416) | admin / PM/TL のみ | §11.3 |
+| (互換) ナレッジ | `/projects/[id]/knowledge` | **legacy redirect** → `/knowledge` (旧通知 deep link 互換、実体 UI なし) | — | — |
+| (互換) ステークホルダ | `/projects/[id]/stakeholders` | **legacy redirect** → `/projects/[id]?tab=stakeholders` (旧通知 deep link 互換)。実体は詳細画面のタブ | — | — |
+
+### §0.3 プロジェクト横断 (資産) 画面
+
+5 画面 (リスク/課題/ナレッジ/振り返り/メモ) は統一レイアウト規約 (§20.4 / UI_PATTERNS §34) に準拠。詳細ダイアログは read-only。
+
+| 画面 | ルート | 目的 | 権限 |
+|---|---|---|---|
+| 全リスク | `/risks` | テナント内 type=risk を横断表示。admin はモデレーション削除可 | 全ロール (閲覧は可視性準拠) |
+| 全課題 | `/issues` | type=issue を横断表示 (AllRisksTable を typeFilter='issue' 再利用) | 全ロール |
+| 全ナレッジ | `/knowledge` | visibility=public ナレッジを横断表示。N:M でプロジェクト紐付け | 全ロール |
+| 全振り返り | `/retrospectives` | 横断振り返り表示。非メンバーには linkedProjects 名を null マスク | 全ロール |
+| 全メモ | `/all-memos` | 全ユーザの public メモを横断表示 (read-only)。admin は他人 public のみ削除可、private は不可 | 全ロール |
+
+### §0.4 個人・顧客・運用管理画面
+
+| 画面 | ルート | 目的 | 権限 | 詳細 |
+|---|---|---|---|---|
+| マイタスク | `/my-tasks` | 自担当タスクの横断確認・進捗更新 | 全ロール (自分担当) | §11.6 |
+| メモ (個人) | `/memos` | 自分のメモ (private/public) の CRUD。アカウントメニューから導線 | 認証済ユーザ | §21 |
+| 顧客一覧 | `/customers` | 顧客 (Customer) マスタ一覧・新規・カスケード削除 | admin | §11.11b |
+| 顧客詳細 | `/customers/[id]` | 顧客情報編集 + 紐付 active プロジェクト一覧 + カスケード削除 | admin | §11.11b |
+| ユーザ管理 | `/admin/users` | システムロール / 利用状態 / ロック解除。自己ロール変更禁止、super_admin 選択肢非表示。DB 取得失敗時は空配列 + 警告バナーで描画継続 | admin + super_admin | §11.11 |
+| 監査ログ | `/admin/audit-logs` | テナント内 AuditLog 直近 100 件をソート可能テーブルで表示 | admin + super_admin | — |
+| 権限変更履歴 | `/admin/role-changes` | システム/プロジェクトロール変更の監査・CSV 出力 | admin + super_admin | §11.12 |
+
+### §0.5 設定・データ移行・ヘルプ
+
+| 画面 | ルート | 目的 / 主な UI | 権限 | 詳細 |
+|---|---|---|---|---|
+| ユーザ個別設定 | `/settings` | アカウント情報 + MFA + 画面テーマ (10 種) + 言語/TZ。DB 取得失敗時はフォールバック描画 | 認証済ユーザ | §22.A / §23 / §24 |
+| テナント設定 | `/settings/tenant` | プラン変更 (Expert↔Pro 即時 / Beginner ダウングレード禁止) + 月次予算上限 + 当月使用量 + DB/ファイルストレージ従量課金 + Stripe カード情報 + 縮退モード状態 | admin のみ (super_admin/general は redirect) | §0.6 |
+| 請求履歴 (テナント) | `/settings/tenant/billing` | 自テナント直近 6 ヶ月の BillingHistory + 当月請求予定 + 支払期日 (監査 C-G6 解消) | admin のみ | — |
+| 外部データ移行 | `/settings/tenant/external-import` | 4 ステップウィザード: ① ファイル/エンティティ選択 + (RiskIssue の) デフォルトプロジェクト → ② カラムマッピング (CSV 列 → サービスフィールド) → ③ dry-run プレビュー (件数 + エラー + コスト見積) → ④ 取込結果 | admin のみ (general/super は redirect) | §0.6 |
+| ヘルプ・FAQ | `/help` | 一般 FAQ (accordion) + テナント管理者向け生成 AI/課金説明 (admin/super_admin のみ表示)。たすきフクロウ AI ヘルプチャット | 認証済ユーザ | — |
+| 使い方ガイド | `/guide` | サインアップ直後の全体像 + ロール別やること + 用語。systemRole + ProjectMember.projectRole からユーザに合うセクションのみ表示 | 認証済ユーザ | — |
+
+### §0.6 運営者専用画面 (super_admin / `/admin/super` 配下)
+
+> **これらはすべて運営者専用 (super_admin)**。親 `layout.tsx` の super_admin guard + 一部は middleware Basic Auth で多層防御。顧客テナントの admin/general からは一切到達不可。Default テナント (= 運営者自身) は請求対象外として各画面で別枠表示される。
+
+| 画面 | ルート | 目的 / 主な UI 要素 | 関連 service |
+|---|---|---|---|
+| 運営ダッシュボード | `/admin/super` | 全テナント横断サマリ (テナント数/ユーザ数/当月 API 呼出/合計課金) + Voyage 無料枠 / Anthropic 使用量 / Beginner 状況 / Netlify credits / DB 容量 / メール送信 / 休眠テナント / ストレージ TOP10 / DB・ファイルストレージ従量課金 alert。Suspense ストリーミング + 全テナント再集計ボタン。異常検知時は診断画面への赤バナー | super-admin / db-capacity / email-send-log / netlify-metrics / diagnostics |
+| テナント一覧 | `/admin/super/tenants` | 顧客テナント一覧 (tenantSeq 昇順、ApiCallLog SUM 真値表示 + drift バッジ) + 新規払い出し導線。Default テナントは別セクション | super-admin / api-usage-recalc |
+| 新規テナント払い出し | `/admin/super/tenants/new` | 顧客テナント発行 (請求先 + 初期 admin)。STRIPE_ENABLED で credit_card option を動的 disable | (TenantCreateForm) |
+| テナント詳細 | `/admin/super/tenants/[id]` | entity 数 + 当月使用量 + 休眠日数 + 個別再集計 + 停止/削除ボタン。遷移時に当該テナントを即時再集計 | super-admin / tenant-storage / api-usage-recalc |
+| テナント診断 | `/admin/super/tenants/[id]/diagnostics` | counter vs ApiCallLog SUM 整合性 + drift 修復ボタン + 直近 30 日日別 API + counter 書換 audit + 月次履歴整合性 | tenant-diagnostics |
+| 使用量サマリ | `/admin/super/usage` | 全テナント横断使用量カード + プラン別分布 + CSV ダウンロード (当月=現在値/過去月=履歴) + 過去 6 ヶ月履歴テーブル | super-admin |
+| 請求ダッシュボード | `/admin/super/billing` | 当月サマリ (請求総額/入金済/入金待ち/失敗) + 支払方法別内訳 + 過去 6 ヶ月推移 (月次詳細リンク) | billing-dashboard |
+| 月次請求詳細 | `/admin/super/billing/[yearMonth]` | 指定月のテナント別 BillingHistory 一覧 + status/paymentMethod フィルタ + credit_card 行に Stripe Dashboard ディープリンク + 入金確認ボタン | billing-dashboard |
+| 診断ダッシュボード | `/admin/super/diagnostics` | システム全体健全性を 1 画面集約: API drift / cron 健全性 / 縮退モード / メール失敗 / alert 空打ち。各セクションに修復導線 | diagnostics |
+| cron 実行履歴 | `/admin/super/cron-history` | 直近 24h サマリ + 全 cron 動作概要 + 実行履歴 100 件 (status バッジ + duration + stale running 警告で Netlify 10s timeout 検知) | cron-history |
+| メール送付失敗 | `/admin/super/email-failures` | 直近 24h の success=false な EmailSendLog 一覧 (type 別集計、recipient はハッシュ化/ドメイン部のみ)。`?hours=` `?limit=` 制御 | email-send-log |
+| Stripe DLQ | `/admin/super/stripe-dlq` | Webhook DLQ/未処理 + Usage Record DLQ/未送信の一覧 + 再投入ボタン (retryCount リセット) | stripe-dlq |
 
 ---
 
@@ -666,6 +769,8 @@
 ### 画面目的
 ユーザのシステムロールと利用状態の管理。
 
+> **★アクセス権 (feat/crud-permission-redesign 2026-05-20)★**: 本画面・監査ログ・権限変更履歴の到達判定は `isAdminOrAbove` (= admin **+ super_admin**) に統一済。旧実装の `=== 'admin'` 厳密比較で super_admin が UI に到達できなかった UI/API ズレを解消 (API 側 `requireAdmin` と整合)。以下「実行可能ロール」欄の「システム管理者」は super_admin を含む。
+
 > **★2026-05-20 PR #416 で変更★ 自己ロール変更禁止 + super_admin オプション非表示**
 > - 編集ダイアログで **自分自身のロール変更フィールドは disabled** (admin が自分の admin 権限を剥奪する事故防止)
 > - システムロール選択肢から **`super_admin` を非表示** (super_admin は seed / 運用手順でのみ付与する内部ロールで、UI からは付与不可)
@@ -958,9 +1063,10 @@ adopt 操作 (採用ボタン) も同じく PM/TL + admin のみ。
 
 ### 20.2 変更後
 
-- **マイタスク**をナビから撤去し、画面右上のユーザ名プルダウンメニュー内に移動
-- プルダウン内の並び: **マイタスク** → 設定 → ログアウト
+- **マイタスク**をナビから撤去し、画面右上のユーザ名プルダウンメニュー (AccountMenu) 内に移動
+- プルダウン内の並び (現行 `app-header.tsx` の `AccountMenu`): **マイタスク** → メモ → 設定 → (区切り) → ガイド → ヘルプ → **バージョンアップ情報** (→ `/changelog`) → サービス紹介ページ → Discord → (区切り) → ログアウト
 - 意図: マイタスクはユーザ個人専用画面のため、共有ナビではなくアカウント文脈に寄せる
+- **バージョンアップ情報** (ADR-0031 / 2026-05-31): 旧フッタ + 旧 `/settings/about` にあった「バージョン / 更新履歴」導線をここに移設。ログイン後のみ到達できる AccountMenu 内に置き、未ログイン画面では露出させない。リンク先はアプリ内 `/changelog`
 
 ### 20.3 顧客管理の先頭配置 (PR #111-2 後追い)
 
@@ -1032,6 +1138,20 @@ PR #127 でナビを **3 分類** にグループ化し、**画面幅でレイ�
 - `GroupMenu` コンポーネント: xl 未満用、Base UI `Menu.Root/Trigger/Portal/Positioner/Popup/Item` で構築
 - `hidden xl:flex` / `xl:hidden` のレスポンシブクラスで切替
 - 全 nav リンクに `whitespace-nowrap` を付与しラベルの 1 行表示を担保
+
+### 20.5 共通フッタ (AppFooter / 認証状態で出し分け — ADR-0031 / 2026-05-31)
+
+全画面共通フッタ (`src/components/app-footer.tsx`、Server Component) は `isAuthenticated` prop で 2 層に出し分ける。認証状態は root layout が `auth()` で解決して渡す (MFA 未検証は `false` 扱いで共通情報のみ表示)。すべてのリンクは外部 LP (tasukiba-user ページ) の各アンカーへ集約し、サービス内に二重に持たない (LP を単一真値とする)。
+
+| 層 | 表示条件 | リンク | 遷移先 |
+|---|---|---|---|
+| **共通情報** | ログイン前後で常時表示 | 製品ページ / 利用規約 / プライバシーポリシー / 運営者情報 / 特定商取引法に基づく表記 | すべて外部 LP の各アンカー (`#terms` / `#privacy` / `#operator-info` / `#tokushoho`)。`target="_blank"` |
+| **ログイン後限定** | `isAuthenticated` のときのみ追加表示 | お知らせ / セキュリティ報告 | お知らせ = アプリ内 `/announcements` (next/link) / セキュリティ報告 = LP `#security` (`target="_blank"`) |
+
+- **廃止 (ADR-0031)**: copyright (© 年 たすきば運営) / 最終更新日 / 「サービス情報」(`/settings/about` リンク)。
+- **移設**: バージョン / 更新履歴 → ヘッダ右上 AccountMenu「バージョンアップ情報」(→ `/changelog`、ログイン後のみ。§20.2 参照)。
+- `/settings/about` ページは移設により役割を失ったため削除済。
+- 配色 / `mt-auto` 配置 / auto-hide 対象外などの実装詳細は [docs/design/UI_PATTERNS.md §38.7](../design/UI_PATTERNS.md) を参照。
 
 ---
 

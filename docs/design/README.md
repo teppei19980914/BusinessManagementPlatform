@@ -15,6 +15,15 @@
 | [SUGGESTION_ENGINE.md](./SUGGESTION_ENGINE.md) | 核心機能 (提案エンジン v1 + v2) の技術設計全体 | DESIGN.md §23, §34 |
 | [STRIPE_TECHNICAL_DESIGN.md](./STRIPE_TECHNICAL_DESIGN.md) | Stripe Metered Billing 連携の詳細技術設計 (= 「how」レベル、各 PR の実装時に参照する判断保留不要の粒度) | 新規 (2026-05-14) |
 | [MASCOT.md](./MASCOT.md) | 公式マスコット「たすきフクロウ」の選定根拠・象徴・デザイン規範・使い方 | 新規 (2026-05-27) |
+| [CRON_JOBS.md](./CRON_JOBS.md) | 外部 cron (cron-job.org) のジョブ一覧・スケジュール・閾値・死活監視 (真実源 = `src/config/cron-jobs.ts`) | 新規 |
+| [ENVIRONMENT_VARIABLES.md](./ENVIRONMENT_VARIABLES.md) | 全環境変数の一覧・説明・Netlify context 別の設定状況 (as-built) | 新規 |
+| [STRIPE_ENV_MAPPING.md](./STRIPE_ENV_MAPPING.md) | Stripe Price / Meter ID と環境変数のマッピング (as-built 対応表) | 新規 |
+| [STRIPE_EMBEDDING_PRICE_SETTINGS.md](./STRIPE_EMBEDDING_PRICE_SETTINGS.md) | Embedding 単価 (¥1→¥5, ADR-0029) の Stripe Price 設定記録 | 新規 |
+| [SERVICES.md](./SERVICES.md) | service 層カタログ (実装ミラー)。`src/services/**` 78 ファイルを責務別に一覧化し、各 service の主要 export・課金有無・テナント分離引数を表化 | 新規 |
+| [KEY_FLOWS.md](./KEY_FLOWS.md) | **連結フロー資料**。標準リクエストライフサイクル (画面→route→service→DB→toast) + 課金 money-flow / 非同期 embedding / オンボーディング / cascade delete 等の代表フロー (mermaid 図) | 新規 |
+| [CONFIGURATION.md](./CONFIGURATION.md) | `src/config/**` 全チューナブル定数の単一リファレンス (価格/上限/レート制限/閾値 + source file:line + 変更時の影響) | 新規 |
+| [STATE_REFERENCE.md](./STATE_REFERENCE.md) | 状態/ステータスフィールド横断リファレンス (project status / embedding_status / stripe / Beginner expiry / circuit breaker 等の値・遷移、mermaid 状態図) | 新規 |
+| [OBSERVABILITY.md](./OBSERVABILITY.md) | 監視・記録・アラート設計 (監査/エラー/cron 実行ログ、cron 死活監視・課金 drift 検知・診断・アラート cron) | 新規 |
 
 
 ## archive 移動済 (履歴参照)
@@ -31,4 +40,4 @@
 - ビジネスロジック: [../business/TENANT_AND_BILLING.md](../business/TENANT_AND_BILLING.md)
 - 技術設計: [SUGGESTION_ENGINE.md](./SUGGESTION_ENGINE.md)
 - 脅威モデル: [../security/SUGGESTION_ENGINE_THREAT_MODEL.md](../security/SUGGESTION_ENGINE_THREAT_MODEL.md)
-- 実装計画: [../roadmap/SUGGESTION_ENGINE_PLAN.md](../roadmap/SUGGESTION_ENGINE_PLAN.md)
+- 実装計画 (実装完了済・archive): [../archive/roadmap/SUGGESTION_ENGINE_PLAN.md](../archive/roadmap/SUGGESTION_ENGINE_PLAN.md)

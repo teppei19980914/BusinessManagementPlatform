@@ -11,7 +11,8 @@
 | [PHASE2_THREAT_MODEL.md](./PHASE2_THREAT_MODEL.md) | Phase 2 機能の脅威モデル |
 | [TENANT_ISOLATION_PHASE2_TODO.md](./TENANT_ISOLATION_PHASE2_TODO.md) | テナント越境バグ Phase 2 残課題 (severity-1) |
 | [SECURITY-TASKS.md](./SECURITY-TASKS.md) | セキュリティタスク (F-01 等、後続対応リスト) |
-| [FOLLOW_UP_AFTER_PR416.md](./FOLLOW_UP_AFTER_PR416.md) | **PR #416 (CRUD 設計刷新) クローズ後のフォロー案件 12 件** — 2026-05-20 追加 |
+
+> ※ FOLLOW_UP_AFTER_PR416.md は 2026-05-31 に [`../archive/2026-06-01-pre-ops-reorg/`](../archive/2026-06-01-pre-ops-reorg/FOLLOW_UP_AFTER_PR416.md) へ移動 (PR #416 クローズ時の一過性フォロー、severity-1/2 対応済)。
 
 ### 2026-05-20 時点のサマリ (PR #416 マージ後)
 
@@ -22,7 +23,7 @@
 - **Low: 4 件** — 余力時の改善項目
 
 PR #416 では UI=API 認可一致原則の徹底・PM/TL 自律権限導入・自己ロール変更禁止を実装し、
-事前に検出されていた CRUD 周りの severity-1 級リスクは全てクローズ済。詳細は [FOLLOW_UP_AFTER_PR416.md](./FOLLOW_UP_AFTER_PR416.md) を参照。
+事前に検出されていた CRUD 周りの severity-1 級リスクは全てクローズ済。詳細は [FOLLOW_UP_AFTER_PR416.md](../archive/2026-06-01-pre-ops-reorg/FOLLOW_UP_AFTER_PR416.md) を参照。
 
 ## 自動生成ファイル
 
@@ -70,7 +71,7 @@ xdg-open docs/security/security-report.html
 | 6 | Trivy | CVE / IaC 設定不備 / secrets (Aqua) | Aqua DB (ジョブ起動時に同期、SARIF で GitHub Security tab に投稿) |
 | 7 | Security Score Gate | プロジェクト固有の設計パターン回帰検査 (callbackUrl 検証 / SameSite / Rate-limit / CSP 等) | `scripts/security-check.ts` 内のハードコード正規表現 + pnpm audit live |
 
-詳細は [docs/developer-guide/REFERENCE.md §5.48 / §5.X+9](../developer-guide/REFERENCE.md) 参照。
+詳細は [docs/operations/develop/REFERENCE.md §5.48 / §5.X+9](../operations/develop/REFERENCE.md) 参照。
 
 ### 自動更新の仕組み (Dependabot)
 

@@ -126,6 +126,6 @@ PR ごとに以下を埋めて記録 (PR コメント or 本ファイルに追�
 
 ## 関連ドキュメント
 
-- [docs/DESIGN.md](./DESIGN.md) §28 / §29 / §31 — テーマシステム設計
-- [docs/DEVELOPER_GUIDE.md](./DEVELOPER_GUIDE.md) §2 — テーマカラーの追加・変更手順
+- [docs/design/UI_PATTERNS.md](../design/UI_PATTERNS.md) — テーマシステム設計
+- [docs/developer-guide/HOW_TO_ADD_FEATURES.md](../operations/develop/HOW_TO_ADD_FEATURES.md) — テーマカラーの追加・変更手順
 - [src/config/theme-definitions.ts](../../src/config/theme-definitions.ts) — テーマ色トークン値の唯一の真実

@@ -71,20 +71,17 @@ type StoragePrecheck = {
   estimatedAddedBytes: number;
   estimatedPostImportBytes: number;
   freeQuotaBytes: number;
-  hardCapBytes: number;
   level:
     | 'none'
     | 'beginner-block'
     | 'l1-warning'
-    | 'l2-warning'
-    | 'l3-block';
+    | 'l2-warning';
   isBlocker: boolean;
   code:
     | 'OK'
     | 'BEGINNER_FREE_QUOTA_EXCEEDED'
     | 'L1_WARNING'
-    | 'L2_WARNING'
-    | 'L3_HARD_CAP_EXCEEDED';
+    | 'L2_WARNING';
   message: string;
   expectedOverageJpy: number;
 };
@@ -237,7 +234,7 @@ export function EntitySyncImportDialog({
     preview != null
     && preview.canExecute
     && !(removeMode === 'delete' && blockedRemovals.length > 0)
-    // 4 巡目フルスキャン (2026-05-28): Beginner 50MB block / L3 50GB block の事前判定
+    // Beginner 50MB 無料枠 block の事前判定 (2026-05-31: L3 50GB 累積ハードキャップは撤去 ADR-0030)
     && !(preview.storagePrecheck?.isBlocker === true);
 
   return (
@@ -458,7 +455,7 @@ function RadioOption({
  * 4 巡目フルスキャン (2026-05-28): DB 容量事前判定パネル。
  *
  * 表示パターン:
- *   - **beginner-block / l3-block** → 赤色エラー (apply 拒否予告)
+ *   - **beginner-block** → 赤色エラー (apply 拒否予告。2026-05-31: l3-block は撤去 ADR-0030)
  *   - **l1-warning / l2-warning** → 黄色警告 (取込可、従量課金発生)
  *
  * メッセージとレベルは API 側 `precheckImportStorage()` から確定済み。

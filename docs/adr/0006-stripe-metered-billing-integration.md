@@ -4,7 +4,7 @@
 - **Date**: 2026-05-14
 - **Deciders**: super_admin (運営)
 
-> 🆕 **ADR-0019 (2026-05-24) 価格改定**: 本 ADR で確定した Stripe Metered Billing 統合は **継続有効** だが、Price 単価 (Expert ¥5 → ¥10、Pro ¥15 据置) と課金対象 (BILLABLE_FEATURE_UNITS のみ) は ADR-0019 で再定義済。実装変更点 (新 Haiku Price 発行 + ENV 切替 + Subscription Item migrate) は [STRIPE_SETUP.md](../operations/STRIPE_SETUP.md) §2.1 参照。
+> 🆕 **ADR-0019 (2026-05-24) 価格改定**: 本 ADR で確定した Stripe Metered Billing 統合は **継続有効** だが、Price 単価 (Expert ¥5 → ¥10、Pro ¥15 据置) と課金対象 (BILLABLE_FEATURE_UNITS のみ) は ADR-0019 で再定義済。実装変更点 (新 Haiku Price 発行 + ENV 切替 + Subscription Item migrate) は [STRIPE_SETUP.md](../operations/setup/STRIPE_SETUP.md) §2.1 参照。
 
 ---
 
@@ -166,8 +166,8 @@
 - 既存ドキュメント:
   - [PAYMENT_TERMS.md](../business/PAYMENT_TERMS.md): 支払い条件と滞納時の取り扱い (本 ADR の決定で §1.1 と §0.2 を更新予定)
   - [TENANT_AND_BILLING.md §34.14.8](../business/TENANT_AND_BILLING.md): v1.x ロードマップでの言及 (本 ADR が実装方針を確定)
-  - [PAYMENT_DELINQUENCY_SOP.md](../operations/PAYMENT_DELINQUENCY_SOP.md): 滞納 SOP (本 ADR で §0 入金確認に Webhook 自動検知を追加予定)
-  - [BILLING_MONTHLY_OPERATIONS.md](../operations/BILLING_MONTHLY_OPERATIONS.md): 月次請求業務 (本 ADR で credit_card テナントのフローを追加予定)
+  - [PAYMENT_DELINQUENCY_SOP.md](../operations/operate/PAYMENT_DELINQUENCY_SOP.md): 滞納 SOP (本 ADR で §0 入金確認に Webhook 自動検知を追加予定)
+  - [BILLING_MONTHLY_OPERATIONS.md](../operations/operate/BILLING_MONTHLY_OPERATIONS.md): 月次請求業務 (本 ADR で credit_card テナントのフローを追加予定)
 - 外部参考資料:
   - [Stripe Docs: Metered Billing](https://docs.stripe.com/products-prices/pricing-models#usage-based-pricing)
   - [Stripe Docs: Subscription with Usage Records](https://docs.stripe.com/api/usage_records/create)

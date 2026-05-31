@@ -37,4 +37,4 @@
 - 上位プランから Beginner プランへのダウングレードは不可 (個別対応はお問い合わせください)
 - 多言語対応 (en-US) は足場のみ。本格対応は v1.x 以降
 
-詳細: [docs/operations/RELEASE_NOTES_v1.md](docs/operations/RELEASE_NOTES_v1.md)
+詳細: [docs/archive/2026-06-01-pre-ops-reorg/RELEASE_NOTES_v1.md](docs/archive/2026-06-01-pre-ops-reorg/RELEASE_NOTES_v1.md)

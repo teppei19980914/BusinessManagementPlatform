@@ -366,12 +366,12 @@ function DefaultTenantSection({
           subValue="(請求対象外、ApiCallLog 集計値)"
           tooltip="ApiCallLog 集計値。Default テナントは請求対象外のため実際の請求は発生しません (PR-V8.1)"
         />
-        {/* chore/storage-addon-backend-removal (2026-05-26): ADR-0020 50GB ハードキャップを上限として表示 */}
+        {/* 2026-05-31 (ADR-0030): 累積ハードキャップ撤去。50GB は L3 監視アラート閾値として進捗表示に使用 */}
         <SummaryCard
           label="Storage 使用量"
           value={formatBytes(defaultTenant.storageBytesUsed)}
-          subValue={`${usagePercent}% (50GB ハードキャップ)`}
-          tooltip="添付ファイル等の合算サイズ。ADR-0020 で 50GB ハードキャップ、超過は従量課金"
+          subValue={`${usagePercent}% (50GB / L3 監視アラート閾値)`}
+          tooltip="添付ファイル等の合算サイズ。50GB は L3 監視アラート閾値 (2026-05-31: 累積ハードキャップは撤去 ADR-0030)。Expert/Pro は上限なし従量課金"
         />
       </div>
     </section>

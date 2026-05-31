@@ -6,7 +6,7 @@
 > 関連:
 > - [README.md](./README.md) — プロジェクト概要
 > - [docs/README.md](./docs/README.md) — ドキュメント索引 (役割別)
-> - [docs/developer-guide/](./docs/developer-guide/) — 改修・追加・削除の実務手順
+> - [docs/operations/develop/](./docs/operations/develop/) — 改修・追加・削除の実務手順
 > - [docs/design/](./docs/design/) — 設計書 (ARCHITECTURE / DATA_MODEL / API_DESIGN / SECURITY / INFRASTRUCTURE 等に分割)
 > - [docs/operations/](./docs/operations/) — 運用・デプロイ手順
 
@@ -26,7 +26,7 @@
 
 ## 1. コミット前チェックリスト
 
-すべてのコミット前に以下を必ず確認してください ([docs/developer-guide/TEST_LINT_BUILD.md](./docs/developer-guide/TEST_LINT_BUILD.md) 参照)。
+すべてのコミット前に以下を必ず確認してください ([docs/operations/develop/TEST_LINT_BUILD.md](./docs/operations/develop/TEST_LINT_BUILD.md) 参照)。
 
 ```bash
 pnpm lint        # 静的解析エラーゼロ
@@ -40,7 +40,7 @@ pnpm build       # ビルド成功 (型エラー検出含む)
 
 - [ ] **設計原則に違反していないか**: 業務的意味を持つ値を `src/config/` 経由でなくハードコードしていないか ([docs/design/ARCHITECTURE.md](./docs/design/ARCHITECTURE.md) のハードコード禁止セクション参照)
 - [ ] **テストコードを追加・更新したか**: 機能追加時はテスト必須
-- [ ] **ドキュメントを更新したか**: 仕様変更時は [docs/specification/](./docs/specification/) / [docs/design/](./docs/design/) / [docs/operations/](./docs/operations/) / [docs/developer-guide/](./docs/developer-guide/) の該当ファイル
+- [ ] **ドキュメントを更新したか**: 仕様変更時は [docs/specification/](./docs/specification/) / [docs/design/](./docs/design/) / [docs/operations/](./docs/operations/) / [docs/operations/develop/](./docs/operations/develop/) の該当ファイル
 - [ ] **横展開漏れがないか**: 同じパターンが他ファイルに残っていないか `grep` で確認
 - [ ] **機密情報を含めていないか**: `.env` 値 / API キー / パスワード / トークンを直書きしていない
 - [ ] **危険な動的コード実行 API を使っていないか**: ブロックフック (`.claude/hooks/block-dangerous-edit.sh`) で検知される系統 (具体的なリストは同フックを参照)
@@ -94,7 +94,7 @@ Co-Authored-By: ... (AI ペアプロ時のみ)
 ```
 プロジェクト一覧画面に状態フィルタを追加 (PR #82)
 ログイン失敗ロック回数を 5 → 3 に変更 (セキュリティ強化)
-docs/developer-guide/HOW_TO_ADD_FEATURES.md を更新 (i18n 移行手順を追記)
+docs/operations/develop/HOW_TO_ADD_FEATURES.md を更新 (i18n 移行手順を追記)
 ```
 
 悪い例:
@@ -157,7 +157,7 @@ WIP                     # コミット対象が曖昧
 1. **CI が全 pass**: `.github/workflows/ci.yml` (lint / test / build) すべて成功
 2. **セキュリティスキャン pass**: `.github/workflows/security.yml` (gitleaks / pnpm audit / CodeQL)
 3. **コードレビュー** (チームに 2 人以上いる場合は別メンバーの承認 1 件以上)
-4. **DB スキーマ変更を含む場合**: マージ前に Supabase で migration を手動実行 ([docs/operations/DB_MIGRATION_PROCEDURE.md](./docs/operations/DB_MIGRATION_PROCEDURE.md))
+4. **DB スキーマ変更を含む場合**: マージ前に Supabase で migration を手動実行 ([docs/operations/develop/DB_MIGRATION_PROCEDURE.md](./docs/operations/develop/DB_MIGRATION_PROCEDURE.md))
 5. **視覚回帰**: UI 変更を含む場合は Netlify Deploy Preview で目視確認 (`https://deploy-preview-NNN--tasukiba.netlify.app`)
 
 ### 4.4 マージ方式
@@ -168,7 +168,7 @@ WIP                     # コミット対象が曖昧
 
 #### ★最重要★ Squash merge 時の `[skip ci]` / `[skip netlify]` キーワード扱い (= 本番 deploy 事故防止)
 
-> **背景**: 2026-05-22 に PR #425 / #426 のマージで Netlify Production deploy が 3 連続 skip され、**sticky header / signup 3 層判定 (severity-1)** が約 1 日本番未反映となる事故が発生。原因はローカル commit message に書かれた `[skip netlify]` が squash merge で main commit に持ち越され、Netlify が main の push commit を skip した。詳細: [KDD §5.X+114](./docs/knowledge/KDD_PATTERNS.md) / [DEPLOYMENT.md §3.5](./docs/operations/DEPLOYMENT.md)
+> **背景**: 2026-05-22 に PR #425 / #426 のマージで Netlify Production deploy が 3 連続 skip され、**sticky header / signup 3 層判定 (severity-1)** が約 1 日本番未反映となる事故が発生。原因はローカル commit message に書かれた `[skip netlify]` が squash merge で main commit に持ち越され、Netlify が main の push commit を skip した。詳細: [KDD §5.X+114](./docs/knowledge/KDD_PATTERNS.md) / [DEPLOYMENT.md §3.5](./docs/operations/develop/DEPLOYMENT.md)
 
 ##### 開発者ルール
 
@@ -301,7 +301,7 @@ memory: `feedback_no_hardcoding`。
 - [ ] [docs/specification/](./docs/specification/) — 画面仕様 / 権限マトリクス / UI 制御ルール
 - [ ] [docs/design/](./docs/design/) — アーキテクチャ / データモデル / API / セキュリティ / インフラ / UI パターン / 提案エンジン
 - [ ] [docs/operations/](./docs/operations/) — デプロイ / DB マイグレーション / 障害対応 / Cron / 環境変数
-- [ ] [docs/developer-guide/](./docs/developer-guide/) — 機能追加 / テスト lint build / コミット & デプロイ
+- [ ] [docs/operations/develop/](./docs/operations/develop/) — 機能追加 / テスト lint build / コミット & デプロイ
 - [ ] [docs/test/](./docs/test/) — テスト戦略 / E2E カバレッジ / 教訓
 - [ ] [docs/security/](./docs/security/) — 脅威モデル / セキュリティタスク
 - [ ] [docs/adr/](./docs/adr/) — 後戻りコストが高い設計判断を伴う場合は新規 ADR 追加
@@ -336,13 +336,13 @@ memory: `feedback_no_hardcoding`。
 
 | 困りごと | 参照先 |
 |---|---|
-| 開発環境を立ち上げたい | [ONBOARDING.md](./ONBOARDING.md)(クイックスタート)または [docs/operations/SETUP_LOCAL.md](./docs/operations/SETUP_LOCAL.md)(詳細手順・トラブルシューティング) |
-| 新機能を追加したい | [docs/developer-guide/HOW_TO_ADD_FEATURES.md](./docs/developer-guide/HOW_TO_ADD_FEATURES.md) |
-| テーマを追加したい | [docs/developer-guide/HOW_TO_ADD_FEATURES.md](./docs/developer-guide/HOW_TO_ADD_FEATURES.md) |
-| DB スキーマを変更したい | [docs/developer-guide/HOW_TO_ADD_FEATURES.md](./docs/developer-guide/HOW_TO_ADD_FEATURES.md) / [docs/operations/DB_MIGRATION_PROCEDURE.md](./docs/operations/DB_MIGRATION_PROCEDURE.md) |
+| 開発環境を立ち上げたい | [ONBOARDING.md](./ONBOARDING.md)(クイックスタート)または [docs/operations/develop/SETUP_LOCAL.md](./docs/operations/develop/SETUP_LOCAL.md)(詳細手順・トラブルシューティング) |
+| 新機能を追加したい | [docs/operations/develop/HOW_TO_ADD_FEATURES.md](./docs/operations/develop/HOW_TO_ADD_FEATURES.md) |
+| テーマを追加したい | [docs/operations/develop/HOW_TO_ADD_FEATURES.md](./docs/operations/develop/HOW_TO_ADD_FEATURES.md) |
+| DB スキーマを変更したい | [docs/operations/develop/HOW_TO_ADD_FEATURES.md](./docs/operations/develop/HOW_TO_ADD_FEATURES.md) / [docs/operations/develop/DB_MIGRATION_PROCEDURE.md](./docs/operations/develop/DB_MIGRATION_PROCEDURE.md) |
 | 設計の意図を知りたい | [docs/design/](./docs/design/) (ARCHITECTURE / DATA_MODEL / API_DESIGN / SECURITY / INFRASTRUCTURE / SUGGESTION_ENGINE / UI_PATTERNS に分割) |
-| デプロイ失敗時の対応 | [docs/operations/DEPLOYMENT.md](./docs/operations/DEPLOYMENT.md) / [docs/operations/INCIDENT_RESPONSE.md](./docs/operations/INCIDENT_RESPONSE.md) |
-| **新バージョンをリリースしたい (CHANGELOG / お知らせ / version bump 等)** | **[docs/operations/RELEASE_PROCEDURE.md](./docs/operations/RELEASE_PROCEDURE.md)** |
+| デプロイ失敗時の対応 | [docs/operations/develop/DEPLOYMENT.md](./docs/operations/develop/DEPLOYMENT.md) / [docs/operations/operate/INCIDENT_RESPONSE.md](./docs/operations/operate/INCIDENT_RESPONSE.md) |
+| **新バージョンをリリースしたい (CHANGELOG / お知らせ / version bump 等)** | **[docs/operations/develop/RELEASE_PROCEDURE.md](./docs/operations/develop/RELEASE_PROCEDURE.md)** |
 | 過去の議論の経緯 | `git log` / GitHub 過去 PR |
 | 過去の罠・教訓 | [docs/knowledge/](./docs/knowledge/) / [docs/test/E2E_LESSONS.md](./docs/test/E2E_LESSONS.md) |
 

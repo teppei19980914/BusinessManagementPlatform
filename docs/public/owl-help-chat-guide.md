@@ -353,6 +353,6 @@ A. Discord で報告してください。FAQ の元データが古かった可�
 - 設計判断 (現行): [ADR-0028 (RAG 移行)](../adr/0028-help-chat-rag-migration.md)
 - 設計判断 (旧、撤回済): [ADR-0027 (FAQ AI Concierge)](../adr/0027-help-ai-concierge.md)
 - 画面仕様: [HELP_CHAT.md](../specification/HELP_CHAT.md)
-- 開発者ガイド: [FAQ_AND_OWL_CHAT_GUIDE.md](../developer-guide/FAQ_AND_OWL_CHAT_GUIDE.md)
+- 開発者ガイド: [FAQ_AND_OWL_CHAT_GUIDE.md](../operations/develop/FAQ_AND_OWL_CHAT_GUIDE.md)
 - 過去資産の意味検索 (別機能): [chat-semantic-search-guide.md](./chat-semantic-search-guide.md)
 - 利用規約・プライバシーポリシー: [公式 LP](https://teppei19980914.github.io/HomePage/ja/product/tasukiba-user/#terms)

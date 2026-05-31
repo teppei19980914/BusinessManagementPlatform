@@ -1,9 +1,25 @@
 # ADR-0020: DB 容量従量課金 — 月中 peak ベース階段関数型料金 (2026-05-25)
 
-- **Status**: Accepted (2026-05-25)
+- **Status**: Accepted (2026-05-25) / **Amended 2026-05-31** (ADR-0030 により累積 50GB ハードキャップ撤廃 → L3 は監視アラート閾値化、circuit-breaker は fail-open 化)
 - **Date**: 2026-05-25
 - **Deciders**: teppei
 - **Supersedes**: 旧 4 段階 Storage アドオン仕様 ([src/config/storage-addon.ts](../../src/config/storage-addon.ts) PR-3 / 2026-05-15)
+- **Amended-by**: [ADR-0030](./0030-embedding-monthly-budget-cap.md) §「2026-05-31 改定: DB/Storage 累積ハードキャップの撤廃」
+
+---
+
+> ## 2026-05-31 改定 (ADR-0030 によりハードキャップ撤廃)
+>
+> 本 ADR の初版 (2026-05-25) は「累積 **50GB 到達で write 拒否** するハードキャップ」と「計測失敗時に write を拒否する **circuit-breaker (fail-close)**」を採用していたが、**2026-05-31 に [ADR-0030](./0030-embedding-monthly-budget-cap.md) の「データはたすきばの命」原則に基づき以下を撤廃した**:
+>
+> - **累積 50GB ハードキャップ (write 拒否) = 撤廃**。L1(1GB)/L2(10GB)/L3(50GB) は **監視アラート閾値のみ** となり、write は止めない。L3 到達は super_admin への「Supabase Compute 増強を検討」合図。
+> - **circuit-breaker (fail-close) = 撤廃 → fail-open**。計測失敗時も write を通し、日次 cron `updateAllStorageBytesUsed` が peak を補正する。
+> - **noisy-neighbor 対策** = 累積 write block ではなく **Supabase Compute 増強の運用** で吸収 (判断材料 = cache hit ratio、将来 super_admin 画面追加予定)。
+> - **1 操作ペイロード上限 = DB 5MB を新設** (`DB_WRITE_PAYLOAD_MAX_BYTES`、UTF-8 byte 基準、Netlify Functions 6MB の手前で `requireStorageQuotaForWrite` が検証)。瞬間負荷を抑える唯一のアプリ層ガード。
+> - Expert/Pro の超過課金は **¥50/GB の青天井従量** (旧「最大 ¥2,500」上限は撤廃)。
+> - **Beginner 無料枠ガード (DB 50MB) の write block は不変** ([ADR-0025](./0025-beginner-write-guard.md))。overage 課金なし・DELETE 許可も不変。
+>
+> 以下、本文中の `(旧仕様〜2026-05-30)` 表記は撤廃済の初版仕様、それ以外は現行仕様を示す。実装の真値は [src/config/db-capacity-pricing.ts](../../src/config/db-capacity-pricing.ts) / [src/services/storage-guard.service.ts](../../src/services/storage-guard.service.ts)。
 
 ---
 
@@ -71,21 +87,30 @@ cost_jpy = gb_tier × 50
 | 0-50MB | 0 | 0 | **¥0** |
 | 51MB ~ 1,050MB | 1-1,000MB | 1 | **¥50** |
 | 1,051MB ~ 2,050MB | 1,001-2,000MB | 2 | **¥100** |
-| ... 線形 | | | |
-| 50GB (= ハードキャップ) | 49,950MB | 50 | **¥2,500** |
+| ... 線形 (青天井従量) | | | |
+| 50GB | 49,950MB | 50 | **¥2,500** |
+| 100GB | 99,950MB | 100 | **¥5,000** |
 
 実装: [src/config/db-capacity-pricing.ts](../../src/config/db-capacity-pricing.ts) `calculateOverageJpy()`
 
-### 3. 4 層防御 (R3「他テナントへの影響は絶対不許容」原則の技術実装)
+> **2026-05-31 改定**: 旧仕様 (〜2026-05-30) では 50GB が**累積ハードキャップ (write 拒否)** で、課金も実質「最大 ¥2,500」だった。現行は **¥50/GB の青天井従量** であり上限なし (50GB=¥2,500 / 100GB=¥5,000 と線形に増える)。Beginner プランのみ無料枠超過で write block (overage 課金なし、[ADR-0025](./0025-beginner-write-guard.md))。
 
-| Level | 閾値 | アクション | 想定月額 |
+### 3. 監視アラート 4 層 (2026-05-31 改定: 累積ハードキャップ撤廃により write block ではなく alert)
+
+| Level | 閾値 | アクション (現行 / 2026-05-31〜) | 想定月額 |
 |---|---|---|---|
 | **L1** | 1GB | テナント設定画面 banner 表示 (能動通知なし) | ¥50 |
 | **L2** | 10GB | super_admin 通知 (recordError warn) + ダッシュボード | ¥500 |
-| **L3** | 50GB | **write 拒否 (ハードキャップ)** (read/export 可) | ¥2,500 |
+| **L3** | 50GB | **super_admin への監視アラート閾値** (write は止めない / Compute 増強検討の合図) | ¥2,500 |
 | **L4** | instance-wide: Compute 推奨容量の 80% | super_admin に Compute upgrade alert | — |
 
-**L3 = 50GB の技術根拠**: Supabase Pro 標準 Compute = Micro (1GB RAM)。embedding index 含めて単一テナント 50GB は他テナントの cache hit ratio を確実に破壊する ([Neon noisy neighbor](https://neon.com/blog/noisy-neighbor-multitenant))。コスト抑制目的ではなく、**他テナント保護の技術的安全弁**。
+> **L3 の挙動変更 (2026-05-31)**: 旧仕様 (〜2026-05-30) では L3=50GB で **write 拒否 (累積ハードキャップ)** だったが、[ADR-0030](./0030-embedding-monthly-budget-cap.md)「データはたすきばの命」原則に基づき**累積による write block は撤廃**。現行 L3 は「このテナントが 50GB に到達、Supabase Compute 増強を検討」を super_admin に知らせる**監視アラート閾値**として機能する (read/write 共に止めない)。
+
+**noisy-neighbor 対策の方針 (2026-05-31〜)**: Supabase Pro 標準 Compute = Micro (1GB RAM) のため、単一テナントの巨大化は他テナントの cache hit ratio を劣化させ得る ([Neon noisy neighbor](https://neon.com/blog/noisy-neighbor-multitenant))。これに対しては **L3 で write を止めるのではなく、L4 instance-wide alert + Supabase Compute 増強という運用**で吸収する (判断材料 = cache hit ratio、将来 super_admin 画面追加予定)。蓄積資産 (= ユーザのナレッジ) を容量 block で損なわないことを最優先する。
+
+### 3.1 1 操作ペイロード上限 (2026-05-31 新設 / 瞬間負荷ガード)
+
+累積ハードキャップ撤廃に伴い、「1 操作あたりの瞬間サーバ負荷」を抑える唯一のアプリ層ガードとして **`DB_WRITE_PAYLOAD_MAX_BYTES = 5MB` (UTF-8 byte 基準)** を新設した。Netlify Functions (= AWS Lambda) のリクエストペイロード硬上限 6MB の手前に置き、プラットフォームが不透明な 413 を返す前にアプリがクリーンなエラーを返せるようにする。検証は [src/lib/api-helpers.ts](../../src/lib/api-helpers.ts) `requireStorageQuotaForWrite` で実施。`String.length` (UTF-16 code unit) ではなく `Buffer.byteLength(body, 'utf8')` で比較する (日本語 3 byte/字 で約 3 倍ずれるため)。
 
 L4 instance-wide 閾値 (env `DB_INSTANCE_ALERT_THRESHOLD_BYTES` で上書き可):
 | Compute | RAM | 推奨 DB | Alert (80%) |
@@ -132,13 +157,23 @@ DB 容量請求も `ApiCallLog` を真値とする。`featureUnit='db-capacity-o
 - **動的解決**: `information_schema.columns` を query して `column_name='tenant_id'` のテーブルを全列挙、UNION ALL で `pg_column_size` 集計
 - **CI ガード**: `scripts/verify-tenant-storage-coverage.ts` が schema.prisma の `@@map` 一覧と DB の tenant_id 持ちテーブルを照合、差異なら CI fail
 
-### 6. fail-close + Circuit Breaker (R3)
+### 6. 計測失敗時の挙動 — fail-open (2026-05-31 改定 / 旧 fail-close + Circuit Breaker は撤廃)
 
-storage-guard の `pg_column_size` 計測が DB connection error 等で失敗した場合:
-- **fail-open は禁止** (= 攻撃者が意図的に DB 高負荷を作って制限解除を狙える)
-- **fail-close**: 計測失敗時は 403 で write 拒否
-- **circuit breaker**: 3 回連続失敗で `storage_guard_circuit_opened_at` set → super_admin に緊急 alert
-- 成功時に counter リセット
+> **改定 (2026-05-31, ADR-0030)**: 累積 50GB ハードキャップが無くなり「計測できないから write を拒否する」根拠が消えたため、旧 fail-close + circuit-breaker は**撤廃**し **fail-open** へ移行した。
+
+storage-guard の `pg_column_size` 計測が DB connection error 等で失敗した場合 (現行):
+- **fail-open**: 計測失敗時も **write を止めず、peak 更新を skip して記録のみ残す** (`recordError` warn)。本関数はユーザ書込が別 tx で既にコミットされた後に呼ばれる前提のため、計測 tx 失敗はコミット済データに影響しない。
+- 真値は日次 cron `updateAllStorageBytesUsed` が再計測して補正する (課金は月内 MAX peak なので取りこぼさない)。
+- 実装: [src/services/storage-guard.service.ts](../../src/services/storage-guard.service.ts) `assertStorageLimitInTx` の catch 節。
+
+#### (旧仕様〜2026-05-30) fail-close + Circuit Breaker — **撤廃済**
+
+> 以下は撤廃済の初版仕様。`StorageGuardCircuitOpenError` / `STORAGE_GUARD_CIRCUIT_BREAKER_THRESHOLD` を「現行」として参照しないこと。
+
+- ~~**fail-open は禁止** (= 攻撃者が意図的に DB 高負荷を作って制限解除を狙える)~~
+- ~~**fail-close**: 計測失敗時は 403 で write 拒否~~
+- ~~**circuit breaker**: 3 回連続失敗で `storage_guard_circuit_opened_at` set → super_admin に緊急 alert~~
+- ~~成功時に counter リセット~~
 
 ### 7. 並列性制御 (R8/R9)
 - **月初 cron 排他**: PostgreSQL Advisory Lock (`pg_advisory_xact_lock(hashtext('tenant_billing_' || tenantId))`)
@@ -162,7 +197,9 @@ storage-guard の `pg_column_size` 計測が DB connection error 等で失敗し
 
 ### 11. インポート時の事前判定 (R20、2026-05-28 4 巡目フルスキャンで追記)
 
-CSV / ZIP インポートで「取込後に L3 ハードキャップ超過 → 全件ロールバック」「Beginner で 50MB 無料枠を予測なく超過 → 想定外課金」の UX 破綻を防ぐため、**インポート系 API は preview / apply の両フェーズで事前判定する**:
+CSV / ZIP インポートで「Beginner で 50MB 無料枠を予測なく超過 → 想定外課金」の UX 破綻を防ぐため、**インポート系 API は preview / apply の両フェーズで事前判定する**:
+
+> **2026-05-31 改定**: 旧仕様 (〜2026-05-30) では「取込後に L3 50GB ハードキャップ超過 → 全件ロールバック」も事前判定の動機だったが、L3 ハードキャップ撤廃 ([ADR-0030](./0030-embedding-monthly-budget-cap.md)) により Expert/Pro の取込ブロックは撤廃。現行の事前判定は **Beginner 無料枠 (50MB) 超過の事前ブロックと L1/L2 警告表示**のみが目的。
 
 #### 11.1 事前判定の対象経路
 
@@ -180,9 +217,11 @@ CSV / ZIP インポートで「取込後に L3 ハードキャップ超過 → �
 | 50MB - 1GB | **取込ブロック** ⛔ | OK (¥0 ~ ¥50/月) |
 | 1GB - 10GB (L1) | **取込ブロック** ⛔ | **L1 警告** ⚠ (取込可、¥50 ~ ¥500/月) |
 | 10GB - 50GB (L2) | **取込ブロック** ⛔ | **L2 警告** ⚠ (取込可、¥500 ~ ¥2,500/月) |
-| ≥ 50GB (L3) | **取込ブロック** ⛔ | **取込ブロック** ⛔ |
+| ≥ 50GB (L3) | **取込ブロック** ⛔ | **取込可** (L3 監視アラート発火、青天井従量) |
 
-**設計判断**: Beginner プランは「90 日完全無料」訴求 (ADR-0019 / ADR-0022) との整合性のため、**50MB 無料枠を超える取込は事前にブロック** する。明示的にアップグレードしない限り課金が発生しないことを保証し、「無料試用と思って取り込んだら ¥50 請求された」事故を防ぐ。
+> **2026-05-31 改定 ([ADR-0030](./0030-embedding-monthly-budget-cap.md))**: Expert/Pro の「≥ 50GB で取込ブロック」(旧仕様〜2026-05-30) は撤廃。L3=50GB は super_admin への監視アラート閾値となり、取込は止めない (青天井従量で課金)。Beginner の取込ブロックは [ADR-0025](./0025-beginner-write-guard.md) として不変。
+
+**設計判断**: Beginner プランは「90 日完全無料」訴求 (ADR-0019 / ADR-0022) との整合性のため、**50MB 無料枠を超える取込は事前にブロック** する。明示的にアップグレードしない限り課金が発生しないことを保証し、「無料試用と思って取り込んだら ¥50 請求された」事故を防ぐ。これは [ADR-0025](./0025-beginner-write-guard.md) として全 write 経路に拡張済で、L3 ハードキャップ撤廃 (2026-05-31) 後も**唯一存続する容量 write block**。
 
 #### 11.3 行サイズ見積もり
 
@@ -200,21 +239,24 @@ CSV / ZIP インポートで「取込後に L3 ハードキャップ超過 → �
 
 #### 11.4 post-check の必須化 (severity-1 修正)
 
-sync-import 5 経路 は本 PR (2026-05-28) 以前 **`assertStorageLimitInTx` が呼ばれておらず L3 50GB ハードキャップが完全バイパス** されていた (R3 「他テナント保護絶対不許容」原則違反)。本 PR で全 5 経路の route layer に apply 後の post-check を追加:
+sync-import 5 経路 は 2026-05-28 以前 **`assertStorageLimitInTx` が呼ばれておらず容量計測 + Beginner ガードが完全バイパス** されていた。本 PR で全 5 経路の route layer に apply 後の post-check を追加:
 
 ```ts
+// 2026-05-31 改定後の現行コード (ADR-0030: L3 ハードキャップ撤廃)
 try {
   await prisma.$transaction(
     async (tx) => assertStorageLimitInTx(tx, user.tenantId),
     { timeout: 10_000 },
   );
 } catch (e) {
-  const mapped = mapStorageGuardErrorToResponse(e);
-  if (mapped) return NextResponse.json(mapped.body, { status: mapped.status });
+  // 現行は Beginner 無料枠超過のみが throw 対象。mapBeginnerWriteGuardErrorToResponse で 403。
+  const beginner = mapBeginnerWriteGuardErrorToResponse(e);
+  if (beginner) return NextResponse.json(beginner.body, { status: beginner.status });
+  throw e;
 }
 ```
 
-注: precheck で事前ブロックしているため到達確率は低いが、複数取込並列 / 他経路の同時書込み等のレースで超過する可能性に備えた最終境界。
+> **2026-05-31 改定**: 旧仕様 (〜2026-05-30) の post-check は L3 50GB 累積ハードキャップの最終境界も兼ね、`mapStorageGuardErrorToResponse` で `STORAGE_LIMIT_EXCEEDED` を 403 マッピングしていた。[ADR-0030](./0030-embedding-monthly-budget-cap.md) のハードキャップ撤廃に伴い、`StorageLimitExceededError` / `mapStorageGuardErrorToResponse` は実装から撤去済。現行 post-check は (a) peak/level の計測更新と (b) Beginner 無料枠 post-check のみを担い、計測失敗時は fail-open (§6)。Beginner エラーは `mapBeginnerWriteGuardErrorToResponse` でマッピングする。
 
 ### 10. 旧コード除去 (R19) — **2026-05-26 実施完了**
 
@@ -260,7 +302,7 @@ try {
 
 ### 12.4 セットアップ手順
 
-詳細は [docs/operations/STRIPE_SETUP.md §2.5](../operations/STRIPE_SETUP.md) (DB 容量従量課金 + Subscription Item 紐付け項) を参照。
+詳細は [docs/operations/STRIPE_SETUP.md §2.5](../operations/setup/STRIPE_SETUP.md) (DB 容量従量課金 + Subscription Item 紐付け項) を参照。
 
 ---
 
@@ -297,7 +339,7 @@ try {
 - **R3 (他テナント保護) と R5 (退会時請求) 横断対応のため、本 ADR は ADR-0019 の monthly cron 構造も変更する**
 - **launch 直後の drift 計測実データを 3 ヶ月で再評価**: 50% / 100% 閾値の妥当性
 - **Compute upgrade 判断**: L4 alert が頻発するなら Small/Medium への upgrade を super_admin 判断
-- **R13 救済プロセス**: ハードキャップ到達ユーザは「データを削除してください」エラーのみで launch、v1.x で個別契約フロー検討
+- **(旧仕様〜2026-05-30) R13 救済プロセス**: ~~ハードキャップ到達ユーザは「データを削除してください」エラーのみで launch、v1.x で個別契約フロー検討~~ — **2026-05-31 ([ADR-0030](./0030-embedding-monthly-budget-cap.md)) で累積ハードキャップ自体を撤廃したため、本救済プロセスは不要になった**。Expert/Pro は青天井従量で write を止めず、noisy-neighbor は Compute 増強で運用吸収する。
 
 ---
 
@@ -313,7 +355,8 @@ try {
 - **不採用理由**: 「使った分だけ」コンセプトに不整合、UI 複雑化
 
 ### Alt-4: ハードキャップなし (純粋従量)
-- **不採用理由**: マルチテナント noisy neighbor リスク。ユーザご合意通り 50GB hard cap
+- **(初版 2026-05-25) 不採用理由**: マルチテナント noisy neighbor リスク。ユーザ合意通り 50GB hard cap
+- **2026-05-31 改定 ([ADR-0030](./0030-embedding-monthly-budget-cap.md))**: **本案を採用**。「データはたすきばの命」原則により累積 write block でユーザ資産を損なうべきでないと判断し、純粋従量 (青天井) へ移行。noisy neighbor は L3 監視アラート + Supabase Compute 増強の運用で吸収する (write は止めない)。1 操作 5MB ペイロード上限で瞬間負荷のみ抑制。
 
 ### Alt-5: 別 model (`DbCapacityBilling`) を新設
 - **不採用理由**: ApiCallLog 真値経路の一本化原則と矛盾。`featureUnit='db-capacity-overage'` で識別可能
@@ -331,7 +374,8 @@ try {
 | Drift critical 閾値 | 100% | launch 後 3 ヶ月 |
 | Instance alert (Micro) | 4GB | launch 後 3 ヶ月 |
 | 月中 peak vs 日次平均 (不公平苦情ある場合) | 月中 peak | launch 後 6 ヶ月 |
-| R13 救済プロセス (ハードキャップ到達ユーザ) | エラーメッセージのみ | v1.x で個別契約フロー検討 |
+| ~~R13 救済プロセス (ハードキャップ到達ユーザ)~~ | ~~エラーメッセージのみ~~ | **撤廃 (2026-05-31, ADR-0030: 累積ハードキャップ自体を撤廃)** |
+| noisy-neighbor (cache hit ratio 劣化) の Compute 増強判断 | L3 監視アラート + 手動判断 | super_admin 画面追加を将来検討 |
 
 ---
 

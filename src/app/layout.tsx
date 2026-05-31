@@ -93,6 +93,15 @@ export default async function RootLayout({
     themeFromCookie ?? session?.user?.themePreference,
   );
 
+  // feat/footer-auth-aware-links (2026-05-31):
+  //   フッタの「ログイン後限定情報」(お知らせ / セキュリティ報告) を出し分けるための
+  //   完全認証済フラグ。session.user が存在し、かつ MFA 検証が未完了 (mfaEnabled かつ
+  //   mfaVerified=false) でないことを条件にする。MFA 検証前の中間状態 (= /login/mfa) は
+  //   (auth) layout が user=null 扱いにするのと同じ思想で、共通情報のみ表示する。
+  const isAuthenticated =
+    !!session?.user
+    && !(session.user.mfaEnabled === true && session.user.mfaVerified !== true);
+
   // PR #77: next-intl 統合。現状 locale='ja' 固定だが将来の多言語化に備えて
   // getLocale() / getMessages() を経由してサーバ側で解決する。
   const locale = await getLocale();
@@ -138,7 +147,7 @@ export default async function RootLayout({
               body の `flex min-h-full flex-col` と AppFooter の `mt-auto` で
               画面下に押し下げる (children に flex-1 を強制せず最小差分で実現)。
           */}
-          <AppFooter />
+          <AppFooter isAuthenticated={isAuthenticated} />
         </NextIntlClientProvider>
       </body>
     </html>

@@ -33,7 +33,7 @@ PR1-4 (feat/faq-pr1-urgent-billing-fix → PR4) で `/help` の FAQ を 30+ 件 
 
 ユーザの要件として整理された方向性:
 - 「**たすきフクロウ**」(既存 `chat-semantic-search` のマスコット) と自然言語で会話できる UI を提供。
-- 既存 FAQ + 使い方ガイドを AI の知識源とし、**FAQ を充実させるほどフクロウの回答精度が直線的に向上** する設計 ([[project_faq_drives_ai_accuracy]] / docs/developer-guide/FAQ_AND_OWL_CHAT_GUIDE.md)。
+- 既存 FAQ + 使い方ガイドを AI の知識源とし、**FAQ を充実させるほどフクロウの回答精度が直線的に向上** する設計 ([[project_faq_drives_ai_accuracy]] / docs/operations/develop/FAQ_AND_OWL_CHAT_GUIDE.md)。
 - フクロウは「情報流出を防ぐ鍵」のキャラクタとして、ユーザのロールに応じて開示できる情報を厳密に分別する ([[project_mascot_owl]] / ユーザ指示で確定したコンセプト)。
 
 ## Decision (採用した決定)
@@ -134,7 +134,7 @@ PR1-4 (feat/faq-pr1-urgent-billing-fix → PR4) で `/help` の FAQ を 30+ 件 
 
 - 実装 (PR5): `src/config/faq-content.ts` / `src/config/guide-content.ts` / `src/config/billing-feature-units.ts` (LEARNING_FREE 追加) / `src/app/api/help/chat/route.ts` / `prisma/migrations/20260603_add_tenant_help_chat_count/`
 - 実装 (PR6): `src/components/help-chat/help-chat-input.tsx` / `src/app/(dashboard)/help/help-client.tsx` / `src/app/(dashboard)/guide/guide-client.tsx`
-- 開発者ガイド: [docs/developer-guide/FAQ_AND_OWL_CHAT_GUIDE.md](../developer-guide/FAQ_AND_OWL_CHAT_GUIDE.md)
+- 開発者ガイド: [docs/developer-guide/FAQ_AND_OWL_CHAT_GUIDE.md](../operations/develop/FAQ_AND_OWL_CHAT_GUIDE.md)
 - 仕様書: [docs/specification/HELP_CHAT.md](../specification/HELP_CHAT.md)
 - 関連 ADR:
   - [ADR-0019](./0019-billable-feature-units-and-free-tier-expansion.md) (BILLABLE_FEATURE_UNITS の定義、本 ADR で LEARNING_FREE を追加)

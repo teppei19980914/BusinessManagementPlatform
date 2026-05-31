@@ -6,19 +6,45 @@
 
 ## §8. 権限制御設計
 
-## 8. 権限制御設計
-
 ### 8.1 権限チェックの実装箇所
 
 ```
 Request
-  → Middleware（認証チェック: セッション有効性の確認）
-    → Route Handler（リクエストの受け取り、バリデーション）
-      → Service Layer（権限チェック + ビジネスロジック）
-        → Prisma（データアクセス）
+  → Middleware（認証 + Basic Auth + レート制限 + read-only/suspended write ガード）
+    → Route Handler（リクエストの受け取り、バリデーション、Stripe disabled guard 等）
+      → Service Layer（ロール/テナント認可 + ビジネスロジック）
+        → Prisma（データアクセス、where に tenantId 明示）
 ```
 
-**原則**: 権限チェックは Service 層で統一実施する。Middleware は認証（ログイン済みか否か）のみを担当する。
+**原則**: 業務的なロール認可・テナント分離は Service 層で統一実施する。ただし **Middleware は単なる認証チェックだけではない** —
+`src/middleware.ts` + `src/lib/auth.config.ts` の `authorized` callback が以下の横断ガードを Edge runtime で担う:
+
+| 担当 | 実装箇所 | 概要 |
+|---|---|---|
+| 認証ゲート | `auth.config.ts:88-91` | 未ログインは `LOGIN_PATH` へ redirect。`PUBLIC_PATHS` は通過 |
+| MFA 未検証ガード | `auth.config.ts:96-105` | `mfaEnabled && !mfaVerified` で保護領域へ来たら `/login/mfa` へ誘導 |
+| Basic Auth | `middleware.ts:75-83` | `/admin/super/*` + `/api/admin/super/*` にネットワークレベル Basic Auth (クレ協チェックリスト 1.1 対応)。`ADMIN_SUPER_BASIC_AUTH_USER/_PASS` 両 set で有効化 |
+| login レート制限 | `middleware.ts:86-95` | `/api/auth/callback/credentials` POST に IP 単位 rate limit (詳細は §9.7.1) |
+| suspended write ブロック | `auth.config.ts:137-153` | `tenantSuspendedAt` が non-null の間、write メソッド (POST/PATCH/PUT/DELETE) を `403 TENANT_SUSPENDED` で遮断 |
+| Beginner read-only ガード | `auth.config.ts:159-191` | Beginner プランで試用期間 90 日 (テナント TZ カレンダー日) 経過後、write メソッドを `403 BEGINNER_EXPIRED_READ_ONLY` で遮断 |
+
+#### 8.1.1 middleware matcher — public 静的アセットの認証ガード除外 (★severity-1 修正済)
+
+Edge middleware は `config.matcher` の正規表現 (`src/middleware.ts:142`) に一致したパスでのみ実行され、`auth()` wrapper の認証ガードもこの matcher 範囲に限定される。matcher は以下を **認証チェックから除外** している:
+
+| 除外対象 | 理由 |
+|---|---|
+| `_next/static` / `_next/image` / `favicon.ico` | Next.js のビルド成果物・画像最適化エンドポイント |
+| `[^?]+\.(png\|jpg\|jpeg\|svg\|webp\|gif\|ico\|txt\|xml\|woff2?\|ttf\|eot)$` | **`?` を含まない (= API ではない) パスで拡張子が静的アセット拡張子のもの全て**。`public/` 配下の現在/将来のファイル (マスコット PNG / OG 画像 / `robots.txt` / `sitemap.xml` / フォント等) を一括で素通りさせる |
+| `api/auth/mfa/verify` / `api/tenants/me/i18n` / `api/auth/explicit-signout` | これら 3 ルートは自前で `await auth()` 認証チェックを行い、かつ JWT 再署名 / cookie 削除の Set-Cookie を返すため、middleware の auto-refresh による Set-Cookie 上書きを避ける目的で除外 (§9.4.4.1) |
+
+> **★severity-1 経緯 (PR #451 / fix/login-mascot-and-layout-fix / 2026-05-29)**: マスコット導入 (PR #451) で追加された `public/` 配下の静的ファイル (`/mascot-owl.png`, `/og-image.png`, `/robots.txt` 等) が middleware の認証ガードに巻き込まれ、未認証ユーザに対し `/login` へ **302 redirect** されていた。結果としてマスコット画像の broken-image 表示、SNS シェア時の OG プレビュー消失、`robots.txt` の noindex 制御不全 (招待制中の SEO リスク) が発生。旧 matcher は `favicon.ico` のみ列挙していたため新規ファイルが追記漏れだった。
+>
+> **設計判断**: 個別ファイル列挙ではなく **拡張子ベースの一括除外** に変更し、追記漏れリスクを根絶した。`public/` 配下は Next.js の設計上「全公開リソース」であり、middleware で除外しても情報漏洩リスクは無い (むしろ認証 redirect の方が異常動作)。詳細: `src/middleware.ts:125-142` / KDD §5.X+177。
+
+read-only / suspended ガードはいずれも `READ_ONLY_BYPASS_PATHS` (`/api/tenants/me`, `/api/tenants/me/self-delete`) を例外とし、
+顧客側からのプラン変更・セルフ解約 (= 脱出経路) は維持する (`auth.config.ts:126-130`)。
+Middleware は Edge runtime で DB を引けないため、判定は JWT claim (`tenantPlan` / `tenantCreatedAt` / `tenantBeginnerEverUpgraded` / `tenantSuspendedAt` / `timezone`) のみで行う純関数。
 
 ### 8.2 権限判定ロジック
 
@@ -120,7 +146,7 @@ function checkPermission(
   組み合わせて認可判定する判別ユニオン拡張パターン
 - `comment.service.ts#softDeleteCommentsForEntity` が cascade 用の共通ヘルパ (新規 entity 追加時の再利用先)
 
-### 8.3.4 コメント @mention 機能の認可詳細 (PR feat/comment-mentions / 2026-05-01)
+### 8.3.3 コメント @mention 機能の認可詳細 (PR feat/comment-mentions / 2026-05-01)
 
 | entityType | 許容 mention kind |
 |---|---|
@@ -153,7 +179,7 @@ function checkPermission(
 - `expandMention` は kind ごとの DB クエリで動的展開、グループメンションは保存時点で確定せず配信時に解決
 - `generateMentionNotifications` は dedupeKey UNIQUE 制約で同一 (commentId, userId) の 2 重通知を DB レベルで弾く
 
-### 8.3.3 通知 (Notification) 機能の認可詳細 (PR feat/notifications-mvp / 2026-05-01)
+### 8.3.4 通知 (Notification) 機能の認可詳細 (PR feat/notifications-mvp / 2026-05-01)
 
 | 操作 | 認可 |
 |---|---|
@@ -182,7 +208,7 @@ CREATE INDEX idx_tasks_planned_end_due ON tasks (planned_end_date)
     AND assignee_id IS NOT NULL AND status<>'completed';
 ```
 
-### 8.3.2 メモ (Memo) の独立方針
+### 8.3.5 メモ (Memo) の独立方針
 
 - プロジェクト非紐付け、完全に個人資産
 - CRUD は常に **自分のメモのみ** 可能 (role 判定は不要)
@@ -323,14 +349,12 @@ PR #416 で新たに `$transaction` 化した service 経路一覧。
 - ADR-0014: CRUD 設計刷新 (本 §8.4 全体の意思決定背景)
 - ADR-0015: cascade 削除冪等設計 (§8.4.7 transaction 化と `deleteProjectCascade` の方針)
 - KDD §5.X+85〜+88: PR #416 開発中に発見された罠と教訓
-- FOLLOW_UP_AFTER_PR416.md: PR #416 マージ後の残課題 / 後続対応一覧
+- [FOLLOW_UP_AFTER_PR416.md](../archive/2026-06-01-pre-ops-reorg/FOLLOW_UP_AFTER_PR416.md): PR #416 マージ後の残課題 / 後続対応一覧
 
 ---
 
 
 ## §9. セキュリティ設計
-
-## 9. セキュリティ設計
 
 ### 9.1 セキュリティ設計方針
 
@@ -418,7 +442,8 @@ PR #416 で新たに `$transaction` 化した service 経路一覧。
 
 - **認証プロバイダ**: NextAuth.js Credentials Provider（**組織 ID + メール + パスワード** — ADR-0016 / 2026-05-20）
 - **パスワードハッシュ**: bcrypt（cost factor: 12）
-- **セッション戦略**: サーバサイド DB セッション（JWT ではなく DB ストア）
+- **セッション戦略**: **JWT 戦略**（NextAuth `session.strategy: 'jwt'` — `src/lib/auth.config.ts:30`）。サーバ側にセッションストアを持たず、JWT を HttpOnly セッション cookie で保持する。§9.4.4 と統一。
+  - 補足: `sessions` テーブルは schema に存在するが、現行の認証は JWT 戦略で動作しており DB セッションアダプタは使用していない。失効は §9.4.4 の `tokenVersion` + DB 照合方式で実現する。
 
 > **ADR-0016 (2026-05-20) 多テナント対応**: `User.email` を **tenant-scoped 一意** (`@@unique([tenantId, email])`) に変更。
 >   同一個人が複数テナントに同じ email で所属可能になった (Slack / Notion / GitHub Org 系の標準設計)。
@@ -489,7 +514,26 @@ PR #416 で新たに `$transaction` 化した service 経路一覧。
 | セッションローテーション | 認証成功時に再生成 | セッション固定攻撃の防止 |
 | 同時セッション | 制限なし（初期）。本格運用時に最大 3 デバイスに制限検討 | 初期は実装コストを削減 |
 | Cookie 属性 | HttpOnly, Secure, SameSite=Lax, Path=/ | 盗聴・XSS・CSRF の緩和 |
-| 権限変更時の無効化 | `NEXTAUTH_SECRET` ローテーションで全 JWT 無効化 (強制再ログイン)、個別ユーザは isActive フラグ即時反映 | 権限昇格の即時反映 |
+| 個別ユーザの即時失効 | **`users.tokenVersion` を increment** し、各リクエスト入口の `getAuthenticatedUser` で JWT claim と DB 最新値を照合 (`auth.config.ts:207-210` で JWT に格納、`:268-270` で session に伝播)。admin が increment した瞬間に既存 JWT は全て 401 になる (強制ログアウト)。ログアウトも cookie 削除に依存せず tokenVersion increment + layout DB 照合で実質失効させる (`/api/auth/explicit-signout`、KDD §5.X+72) | 権限昇格/失効の即時反映。Netlify で Set-Cookie が脱落しても DB 側で確実に無効化 |
+| 無効化ユーザの遮断 | isActive フラグを DB 照合で即時反映 | 退職者/無効化アカウントの継続アクセス防止 |
+
+##### 9.4.4.1 セッション中の JWT claim 更新 — 再署名方式 (NextAuth `update()` 不使用)
+
+セッション継続中に JWT claim を更新する必要がある操作 (MFA 検証成功 / タイムゾーン・ロケール変更) では、クライアント側の `useSession().update()` を **使わず**、API route handler が `src/lib/auth-jwt-helper.ts#reissueAuthJwtOnResponse` で **JWT を直接再署名して Set-Cookie する** 方式を採用する。
+
+**背景 (Netlify Set-Cookie 脱落の罠)**: NextAuth v5 0-beta.31 + `@netlify/plugin-nextjs` では `POST /api/auth/session` (= `update()` の内部経路) の Set-Cookie レスポンスがブラウザに反映されない事象を確認 (MFA 検証ループに陥る、KDD §5.X+66)。middleware / SSR / client `useSession` の全経路で透過的に新値を読ませるには、cookie 分離より JWT 自体の更新が副作用が少ない。
+
+**設計上の要点**:
+
+| 項目 | 内容 |
+|---|---|
+| 更新可能 claim | `mfaVerified` / `timezone` / `locale` のみ (`JwtReissuePatch` 型ガード)。`tenantId` / `id` 等の改竄不可項目は patch を受け付けない |
+| cookie 名の解決 | `NODE_ENV` ではなく **request の cookies から実在名を auto-detect** (`__Secure-authjs.session-token` / `authjs.session-token`)。Netlify Functions runtime の NODE_ENV 差で salt mismatch → decode 失敗する罠 (PR #398) の対策。検出名を decode/encode の salt と Set-Cookie name の双方に一貫使用 |
+| cookie 属性 | `httpOnly:true` / `sameSite:'strict'` (CWE-1275 対策) / `secure` は `__Secure-` prefix 付きの時のみ true。`auth.config.ts` の `cookies.sessionToken.options` と整合 |
+| 失敗時の扱い | theme cookie のような silent fallback は **しない**。MFA/TZ/Locale は middleware/SSR が JWT を直接読むため、更新失敗の黙殺は「クライアントは成功と認識・実態は旧 JWT」の致命ループを生む (PR #396 後本番で実観測)。`{ok:false, reason}` を返し、呼出側は必ず check して失敗時 5xx で通知する |
+| middleware 除外 | 上記ルート (`api/auth/mfa/verify` / `api/tenants/me/i18n` / `api/auth/explicit-signout`) は matcher 除外済 (§8.1.1)。middleware の auth() wrapper による auto-refresh が旧 JWT 値で Set-Cookie を上書きし、再署名/削除を打ち消す事象の対策 |
+
+詳細: `src/lib/auth-jwt-helper.ts` / KDD §5.X+66・+68。MFA 検証フローでの適用は §9.17.3 を参照。
 
 #### 9.4.5 認証イベントログ
 
@@ -546,9 +590,13 @@ PR #416 で新たに `$transaction` 化した service 経路一覧。
   |
   v
 [Layer 4] Data Access: テナント分離
-  - 全クエリに project_id 条件を自動付与（Prisma Middleware）
-  - 論理削除フィルタの自動適用
+  - service 層が where に tenantId / 論理削除条件を **明示記述**（Prisma Middleware/$use は不使用）
+  - 各 service 関数が viewerTenantId を必須引数で受け where.tenantId を強制（§9.5.3）
 ```
+
+> **注意**: 旧版に記載のあった「全クエリに project_id を自動付与する Prisma Middleware (`$use`)」は **実在しない**。
+> `src/lib/db.ts` は PrismaClient を pg adapter で生成するだけで `$use` フックを持たない (全 21 行)。
+> テナント分離・論理削除フィルタは service 層が where 句に明示記述する方式である (§9.5.3 / ARCHITECTURE §3.3)。
 
 #### 9.5.2 IDOR（Insecure Direct Object Reference）防止パターン
 
@@ -575,28 +623,61 @@ async function getTask(taskId: string, userId: string) {
 }
 ```
 
-#### 9.5.3 Prisma Middleware によるテナント分離
+#### 9.5.3 service 層によるテナント分離 (実装の実態)
+
+> **重要な訂正**: 旧版は「`lib/db.ts` の `prisma.$use(...)` が全クエリに tenantId / 論理削除フィルタを
+> 自動付与する」と記載していたが、**この `$use` コードは実在しない**。`src/lib/db.ts` は PrismaClient を
+> pg adapter で生成するだけ (全 21 行、`$use` フックなし)。実装はすべて service 層での明示記述である。
+
+##### テナント分離の実装方式
+
+各 service 関数は **`viewerTenantId` (またはセッションの `tenantId`) を必須引数で受け取り**、Prisma クエリの
+`where` 句に `tenantId` フィルタを必ず含める。専用ヘルパは `src/lib/permissions/tenant.ts`:
 
 ```typescript
-// lib/db.ts - 全クエリに対する自動フィルタ
-prisma.$use(async (params, next) => {
-  // 論理削除フィルタ: 読み取り系に自動付与
-  if (['findMany', 'findFirst', 'findUnique'].includes(params.action)) {
-    if (!params.args.where) params.args.where = {};
-    if (params.args.where.deletedAt === undefined) {
-      params.args.where.deletedAt = null;
-    }
-  }
+// src/lib/permissions/tenant.ts
+// クエリレベルで where に展開してテナント境界を強制する
+export function tenantScope(tenantId: string): { tenantId: string } {
+  return { tenantId };
+}
 
-  // 論理削除: delete を update に変換
-  if (params.action === 'delete') {
-    params.action = 'update';
-    params.args.data = { deletedAt: new Date() };
-  }
-
-  return next(params);
-});
+// 取得結果に対する二重防御 (DEFAULT 設定漏れの保険)。不一致なら TenantBoundaryError → 403
+export function requireSameTenant(userTenantId: string, entity: TenantOwned | null | undefined): void {
+  if (entity == null) return;
+  if (userTenantId !== entity.tenantId) throw new TenantBoundaryError(userTenantId, entity.tenantId);
+}
 ```
+
+```typescript
+// service 層での典型パターン (クエリ + 結果の二重防御)
+const projects = await prisma.project.findMany({
+  where: { ...tenantScope(viewerTenantId), deletedAt: null, status: 'in_progress' },
+});
+requireAllSameTenant(viewerTenantId, projects);
+```
+
+書き込み (`create`) でも `data` に `tenantId` を明示記述する。tenant_id カラムは DB DEFAULT を撤去済 (ADR-0024)
+のため、明示し忘れると Prisma が NOT NULL 違反でエラー化する三層防御 (§26.2 参照)。論理削除フィルタ (`deletedAt: null`)
+も同様に各 service が where に明示する (自動付与する仕組みはない)。
+
+##### DB の RLS は実効的に無効 — service 層が唯一の防御線
+
+実 DB (Supabase introspection / 2026-05-31) の事実:
+
+- **大半のテーブルは RLS が enabled だが、Policy が 0 件**。RLS は有効でもポリシーが無いテーブルへは
+  特権ロール (Prisma が接続する DB ロール) が **そのまま素通り** するため、**実効的に RLS は無効**。
+- 一部テーブルは **RLS 自体が OFF**: `billing_history`, `cron_execution_logs`, `faq_embeddings`,
+  `guide_embeddings`, `stripe_usage_record_queue`, `stripe_webhook_events`, `tenant_consent_logs`。
+- forced=false のため、Prisma の接続ロールは RLS を考慮せずクエリを実行する。
+
+**結論**: **テナント分離の唯一の防御線はアプリケーション (service) 層の `where.tenantId` 強制である**。
+DB レイヤ (RLS) は本サービスではテナント分離の防御として機能していないため、service 層のフィルタ漏れが
+そのままテナント越境 (severity-1 個人情報漏洩) に直結する。新規 service 関数追加時は必ず `viewerTenantId`
+を引数に取り `where.tenantId` を強制すること (§26 / ADR-0024 / ADR-0005)。
+
+> 例外: Supabase **Storage** の `storage.objects` には RLS Policy 5 件が適用されており (§9.8.6)、
+> ファイル添付のストレージ層に限り DB レベルのテナント prefix 強制が二重防御として機能する。
+> これは PostgreSQL の業務テーブル群とは別管理である。
 
 ### 9.6 入力バリデーション・サニタイゼーション
 
@@ -634,19 +715,26 @@ prisma.$use(async (params, next) => {
 
 #### 9.7.1 エンドポイント別レート制限
 
-| エンドポイントカテゴリ | 制限 | ウィンドウ | 理由 |
+| エンドポイントカテゴリ | 制限 | ウィンドウ | 理由 / 実装 |
 |---|---|---|---|
-| POST /api/auth/signin | 5 回 | 10 分 | ブルートフォース防止 |
-| POST /api/auth/* | 10 回 | 10 分 | 認証系全般 |
-| POST /api/** (書き込み系) | 30 回 | 1 分 | スパム防止 |
-| GET /api/** (読み取り系) | 120 回 | 1 分 | 通常利用の範囲 |
-| GET /api/**/export | 5 回 | 10 分 | CSV エクスポート等の重い処理 |
-| **POST /api/attachments/upload** (per-tenant) | **10 回** | **1 分** | **ADR-0021 §10.2.1: Pre-signed URL 発行レート (= 大量 URL 漏洩 + 50GB ハードキャップ突破試行 防止)** |
-| **DELETE /api/attachments/:id** (per-tenant) | **100 回** | **1 分** | **ADR-0021 §10.2.1: Supabase API rate limit + storage_objects ロック保護** |
+| **POST /api/auth/callback/credentials** (login, per-IP) | **20 回** | **5 分** | credential stuffing 対策の IP 単位制限 (`src/middleware.ts:86-95`)。`DISABLE_LOGIN_RATE_LIMIT='true'` で E2E バイパス可。被害者単位のアカウントロック (§9.4.3: 10 分以内 5 回失敗) と組み合わせた多層防御 |
+| 公開認証系エンドポイント (per-IP)<br>`reset-password` / `setup-password` / `lock-status` 等 | **10 回** | **5 分** | `src/lib/rate-limit.ts#applyRateLimit` の保守的デフォルト (CWE-307 対策)。各 route 先頭で `applyRateLimit(req, { key })` を呼ぶ |
+| **POST /api/attachments/upload** (per-tenant) | **10 回** | **1 分** | ADR-0021 §10.2.1: Pre-signed URL 発行レート |
+| **DELETE /api/attachments/:id** (per-tenant) | **100 回** | **1 分** | ADR-0021 §10.2.1: Supabase API rate limit + ロック保護 |
+| POST /api/** (書き込み系) | 30 回 | 1 分 | スパム防止 (将来方針。汎用 write には未一括適用) |
+| GET /api/** (読み取り系) | 120 回 | 1 分 | 通常利用の範囲 (将来方針) |
+| GET /api/**/export | 5 回 | 10 分 | CSV エクスポート等の重い処理 (将来方針) |
+
+> **注意**: 旧版の「POST /api/auth/signin = 5 回/10 分」は **レート制限ではなくアカウントロック条件** (§9.4.3) であり、
+> 表記を実装に合わせて訂正した。in-memory (Map ベース) の sliding window 実装であり、Netlify Functions の
+> instance 分散により完全な分散制限ではない (= 攻撃コストを上げる多層防御の 1 層)。Upstash Redis 等への
+> 切替は将来候補 (§9.7.2)。
 
 #### 9.7.2 実装方針
 
-初期フェーズ（5〜10名）ではレート制限の実装優先度を下げる。ただし、認証エンドポイント（POST /api/auth/signin）のみ、アカウントロックポリシー（9.4.3）で実質的なブルートフォース防止を実現する。
+初期フェーズ（5〜10名）でも、login (`/api/auth/callback/credentials`) と公開認証系エンドポイントには
+in-memory レート制限を実装済 (上表)。汎用の書き込み/読み取り系 API への一括レート制限は将来方針。
+アカウントロックポリシー（§9.4.3: 10 分以内 5 回失敗）と組み合わせて実質的なブルートフォース防止を実現する。
 
 本格運用時は in-memory（Map ベース）の sliding window 方式で実装する。Redis は無料枠に含まれないため、初期フェーズでは導入しない。
 
@@ -658,7 +746,7 @@ prisma.$use(async (params, next) => {
 |---|---|---|
 | パスワード | DB (users.password_hash) | bcrypt (cost 12)。平文保存・ログ出力禁止 |
 | パスワード履歴 | DB (password_histories) | bcrypt ハッシュで保存。比較のみに使用 |
-| セッション | DB (sessions) | HttpOnly Cookie 経由のみアクセス。DB 側で期限管理 |
+| セッション (JWT) | HttpOnly セッション cookie | JWT 戦略 (§9.4.1)。サーバ側ストア無し、cookie は HttpOnly で JS からアクセス不可。失効は tokenVersion + DB 照合 (§9.4.4) |
 | DB 接続文字列 | 環境変数 (DATABASE_URL) | .env, .gitignore 除外。本番は Secrets Manager |
 | NextAuth Secret | 環境変数 (NEXTAUTH_SECRET) | 32 文字以上のランダム文字列。本番は Secrets Manager |
 
@@ -694,7 +782,7 @@ function toUserDTO(user: User): UserDTO {
 | セッション ID | 先頭 8 文字のみ表示 |
 | リクエストボディ | password フィールドを [REDACTED] に置換 |
 
-### 9.8.5 エラー情報の機密化方針 (2026-04-24 / PR #115)
+### 9.8.4 エラー情報の機密化方針 (2026-04-24 / PR #115)
 
 #### 原則
 
@@ -738,10 +826,13 @@ Console にも画面にも出さず、必ず DB (system_error_logs) に保存す
 
 ---
 
-### 9.8.4 セキュリティ監査 (2026-04-24 / PR #114)
+### 9.8.5 セキュリティ監査 (2026-04-24 / PR #114)
 
 ブラウザ開発者ツールの Network / Console タブから機密情報・クレデンシャル情報が漏洩しないことを確認するため、
 全 API ルート / service / config / DTO を網羅監査した。以下に検出事項とミティゲーションを記録する。
+
+> **下表は監査時点 (2026-04-24) の履歴記録**。H-1 の `/api/cron/cleanup-accounts` は **PR #115 で endpoint 自体を削除済**
+> (現在ソースに存在しない)。cron 運用は現在 cron-job.org のダッシュボード管理 (ADR-0023)。当時の検出と是正の経緯として残す。
 
 | 重大度 | ID | 箇所 | 問題 | 対策 |
 |---|---|---|---|---|
@@ -782,7 +873,7 @@ Console にも画面にも出さず、必ず DB (system_error_logs) に保存す
 | 攻撃ベクトル | リスク | 対策 |
 |---|---|---|
 | **大容量ファイル DoS** | サーバ memory/disk 圧迫、Function timeout | (1) Pre-signed URL 直接アップロード (= サーバ通さない) / (2) 50MB/ファイル サーバ側検証 (`FILE_STORAGE_MAX_FILE_SIZE_BYTES`) |
-| **大量ファイルアップロード DoS** | テナント全体で 50GB 超 / 他テナント cache 圧迫 | (1) 50GB ハードキャップ即時拒否 (`assertFileStorageLimitInTx`) / (2) Pre-signed URL 発行レート制限 (10 req/min/tenant) |
+| **大量ファイルアップロード DoS** | 単発の巨大ファイルで Function timeout / memory 圧迫 | (1) 1 ファイル 50MB 上限 (`FILE_STORAGE_MAX_FILE_SIZE_BYTES`、upload/finalize route で検証) / (2) Pre-signed URL 発行レート制限 (10 req/min/tenant)。**累積 50GB ハードキャップは撤廃済 (ADR-0030「データはたすきばの命」)**: ファイルは Supabase Storage (オブジェクトストレージ) で Postgres RAM 非依存のため noisy-neighbor 無関係。L1/L2/L3 (1GB/10GB/50GB) は super_admin への監視アラート閾値であり、アップロードは止めない |
 | **悪意ある実行ファイル** | サーバ・他ユーザへのマルウェア配布 | 危険拡張子 blacklist (.exe / .bat / .sh / .cmd / .scr / .com / .ps1 / .vbs / .apk / .ipa / .rar / .zipx) で拒否、upload + finalize の **2 段階チェック** (defense-in-depth) |
 | **path traversal** | バケット越境、他テナントオブジェクト読取 | ファイル名 sanitize (`sanitizeFileName`: OS 禁止文字 + `..` + 先頭ドット除去 + 200 文字制限) + bucket path に tenant prefix 強制 (`tenants/{tenantId}/{entityType}/{entityId}/{uuid}-{name}`) |
 | **Storage 計測失敗** | drift で課金漏れ + 暴走検知不能 | drift 検知 daily cron (50%/100% で warning/critical alert)、anomaly 検知 (+5GB/day で super_admin 通知) |
@@ -792,7 +883,7 @@ Console にも画面にも出さず、必ず DB (system_error_logs) に保存す
 
 #### RLS Policy (= 2 重防御の DB レイヤ)
 
-`storage.objects` に以下 5 件の Policy を適用 (= docs/operations/SUPABASE_STORAGE_SETUP.md §3):
+`storage.objects` に以下 5 件の Policy を適用 (= docs/operations/setup/SUPABASE_STORAGE_SETUP.md §3):
 1. `service_role_full_access_attachments`: service_role は全アクセス可 (cron / 集計 / Pre-signed URL 発行用)
 2. `deny_direct_select_attachments`: anon / authenticated の直接 SELECT 禁止 (Pre-signed URL 強制)
 3. `deny_direct_insert_attachments`: anon / authenticated の直接 INSERT 禁止
@@ -801,13 +892,17 @@ Console にも画面にも出さず、必ず DB (system_error_logs) に保存す
 
 これにより仮に Pre-signed URL や anon_key が漏洩しても、**テナント越境はデータベースレベルで拒否** される多層防御。
 
-#### ハードキャップ到達時の挙動
+#### 容量 Level 到達時の挙動 (2026-05-31 改定 / ADR-0030)
 
-50GB 到達テナントの状態:
-- 新規 Pre-signed URL 発行 → 403 `STORAGE_FILE_HARD_CAP_EXCEEDED`
+**累積 50GB ハードキャップ (アップロード拒否) は撤廃済**。「データはたすきばの命」原則 (ADR-0030) に基づき、累積容量による write block は廃止し、L1/L2/L3 は **super_admin への監視アラート閾値** に役割変更した。50GB 到達テナントの状態:
+- 新規 Pre-signed URL 発行 → **継続可** (アップロードは止めない)。L3 (50GB) 到達で super_admin に監視アラート (Supabase Compute 増強検討の合図)
 - 既存ファイルの read / download → 継続可
 - 既存ファイルの delete → 継続可 (= 削減手段の提供)
 - 他テナント → 完全に独立して動作
+- 1 ファイル 50MB 上限 (`FILE_STORAGE_MAX_FILE_SIZE_BYTES`) は瞬間負荷ガードとして存続
+- 例外: **Beginner プランのみ** 無料枠 (Storage 100MB) 超過でアップロード拒否 (`BeginnerWriteGuardExceededError`、§9.8 末尾 / ADR-0025)
+
+> 撤去済の識別子 (ADR-0030): `FileStorageLimitExceededError` / `STORAGE_FILE_HARD_CAP_EXCEEDED` / `mapFileStorageGuardErrorToResponse`。DB 側も同様に `StorageLimitExceededError` / `StorageGuardCircuitOpenError` / `STORAGE_LIMIT_EXCEEDED` / `mapStorageGuardErrorToResponse` を撤去。circuit-breaker (計測失敗時の fail-close write 拒否) は **fail-open** 化 (計測失敗でも write 継続、日次 cron `updateAllStorageBytesUsed` が補正)。
 
 ---
 
@@ -1311,6 +1406,13 @@ async function operationTraceMiddleware(request: NextRequest) {
 | SAST | Semgrep / CodeQL | PR 作成時 |
 | シークレットスキャン | gitleaks | pre-commit hook + CI |
 
+#### 9.19.5 脆弱性報告窓口 (受付経路) (ADR-0031 / 2026-05-31)
+
+外部からの脆弱性報告 (responsible disclosure) は **外部 LP の `#security` セクションに集約**する (単一真値)。
+
+- **報告窓口**: LP `#security` (`src/config/legal-versions.ts` の `SECURITY_REPORT_URL` = `${LEGAL_DOC_BASE_URL}#security`)。実体は GitHub Security Advisory (`src/config/operator.ts` の `SECURITY_ADVISORY_URL`) への導線で、ユーザ向けには説明文付きの LP セクションを見せる。email でも受付可 (`SECURITY_CONTACT_EMAIL`)。
+- **アプリ内導線**: 全画面共通フッタの「セキュリティ報告」リンクから到達できるが、**ログイン後 (完全認証済) のときだけ表示**する (`src/components/app-footer.tsx` の `isAuthenticated` 出し分け)。未ログインのログイン / MFA 画面では運用情報・報告経路を前面に出さない方針。
+
 ### 9.20 個人情報保持・未使用アカウント管理
 
 #### 9.20.1 基本運用方針
@@ -1499,7 +1601,7 @@ tenantId: input.tenantId ?? DEFAULT_TENANT_ID,
 
 - [ADR-0024: tenant_id カラムから DB DEFAULT を撤去](../adr/0024-explicit-tenant-id-no-db-default.md)
 - [docs/knowledge/KDD_PATTERNS.md §5.X+169](../knowledge/KDD_PATTERNS.md) — `tenant_id DB DEFAULT silent fallthrough` 罠
-- [docs/operations/INCIDENT_RESPONSE.md §2026-05-28](../operations/INCIDENT_RESPONSE.md)
+- [docs/operations/INCIDENT_RESPONSE.md §2026-05-28](../operations/operate/INCIDENT_RESPONSE.md)
 - e2e: `e2e/specs/11-tenant-isolation.spec.ts` (severity-1 regression セクション)
 
 ---

@@ -9,7 +9,7 @@
  * これにより:
  *   - L1 通知 (1GB): 高使用量テナントの早期把握
  *   - L2 通知 (10GB): super_admin alert (= 個別ヒアリング判断)
- *   - L3 通知 (50GB): write 拒否中テナント (= ハードキャップ到達)
+ *   - L3 通知 (50GB): 50GB 到達テナント (= Supabase Compute 増強検討の合図。2026-05-31: write は止めない ADR-0030)
  *   - drift > 50% warning / > 100% critical: 計測漏れ or 運営直接 SQL の疑い
  *
  * 関連:
@@ -48,7 +48,7 @@ const LEVEL_LABELS: Record<DbCapacityWarningLevel, { label: string; color: strin
   none: { label: '正常', color: 'text-gray-600' },
   l1: { label: 'L1 警告 (1GB)', color: 'text-blue-700 bg-blue-50' },
   l2: { label: 'L2 警告 (10GB)', color: 'text-yellow-700 bg-yellow-50' },
-  l3: { label: 'L3 緊急 (50GB 到達/write 拒否)', color: 'text-red-700 bg-red-50' },
+  l3: { label: 'L3 (50GB 到達/Compute 増強検討)', color: 'text-red-700 bg-red-50' },
 };
 
 export async function DbCapacityAlertsCard() {
@@ -113,7 +113,9 @@ export async function DbCapacityAlertsCard() {
         ? 'text-yellow-700 bg-yellow-50'
         : 'text-green-700 bg-green-50';
 
-  // 3. circuit breaker open 中テナント数 (= write 拒否中)
+  // 3. circuit breaker open 中テナント数
+  //    ⚠ 2026-05-31 (ADR-0030): circuit-breaker は撤去 (fail-open 化) のため openedAt は二度と立たず、
+  //      本カウントは常に 0 (= banner 非表示)。schema 列削除と同 PR で本表示も撤去予定。
   const circuitOpenCount = alertTenants.filter(
     (t) => t.storageGuardCircuitOpenedAt != null,
   ).length;

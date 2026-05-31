@@ -192,8 +192,8 @@ export const authConfig: NextAuthConfig = {
 
         // chore/storage-addon-backend-removal (2026-05-26):
         //   旧 Storage add-on 4 段階プラン (Standard/Plus/Pro/Enterprise) の Grace period 7 日経過判定は撤去。
-        //   ADR-0020 で DB 容量は完全従量課金 + 50GB ハードキャップに変更されており、middleware で write を
-        //   塞ぐのではなく、データ削減 or 課金で対応する設計に変わったため。
+        //   ADR-0020 で DB 容量は従量課金化、さらに 2026-05-31 (ADR-0030) で累積ハードキャップも撤去され、
+        //   middleware で write を塞ぐのではなく従量課金 + 運用 (Compute 増強) で対応する設計に変わったため。
       }
 
       return true;

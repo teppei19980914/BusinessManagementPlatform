@@ -1,9 +1,9 @@
 # DB 容量従量課金 仕様書 (Business Logic + Operational Spec)
 
 > **対象読者**: テナント管理者 / システム管理者 / 開発者 / 経理担当者
-> **根拠 ADR**: [ADR-0020](../adr/0020-db-capacity-usage-based-billing.md)
+> **根拠 ADR**: [ADR-0020](../adr/0020-db-capacity-usage-based-billing.md) / [ADR-0030](../adr/0030-embedding-monthly-budget-cap.md) (2026-05-31 累積ハードキャップ撤廃)
 > **実装 PR**: PR #443 (2026-05-25)
-> **最終更新**: 2026-05-25
+> **最終更新**: 2026-05-31
 
 ---
 
@@ -13,8 +13,9 @@
 |---|---|
 | **何を課金するか** | テナントが PostgreSQL に保有する全データ (プロジェクト / 資産 / **ユーザ** / Knowledge / RiskIssue / Retrospective / Memo / 添付ファイルメタデータ / 監査ログ etc. = **36 テーブル横断**) |
 | **無料枠** | **50MB / tenant** (SI 単位 = 50,000,000 bytes) |
-| **超過単価** | **1GB tier ごとに ¥50** (1MB 未満は繰上、1GB = 1000MB、税抜) |
-| **ハードキャップ** | **50GB / tenant** (技術安全のため、超過時 write 拒否) |
+| **超過単価** | **1GB tier ごとに ¥50** (1MB 未満は繰上、1GB = 1000MB、税抜) — **上限なしの青天井従量** (旧「最大 ¥2,500」は 2026-05-31 撤廃) |
+| **累積上限** | **なし** (2026-05-31 / ADR-0030「データはたすきばの命」で 50GB 累積ハードキャップ = write 拒否を撤廃)。L1/L2/L3 は監視アラート閾値のみで write は止めない |
+| **1 操作あたり上限** | **DB ペイロード 5MB / 1 write リクエスト** (`DB_WRITE_PAYLOAD_MAX_BYTES`、UTF-8 バイト、瞬間負荷ガード) |
 | **計測時点** | **月中 peak** (= 月内の最大値、月末削除→月初再投入の抜け道防止) |
 | **計測頻度** | write 経由で即時 + daily cron で全テナント再計算 |
 | **請求実行** | 月初 1 日 00:00 UTC の cron で前月分を確定 / 月途中退会は退会時に即時 |
@@ -36,8 +37,11 @@ DB 容量超過分は **1GB tier 単位** で ¥50 ずつ加算される階段�
 1,051MB ~ 2,050MB          ¥100 (tier 2)
 2,051MB ~ 3,050MB          ¥150 (tier 3)
 ...
-49,051MB ~ 50,000MB        ¥2,500 (tier 50 / ハードキャップ)
+49,051MB ~ 50,000MB        ¥2,500 (tier 50)
+...                        (上限なし。50GB を超えても課金は青天井に継続)
 ```
+
+> **2026-05-31 改定 (ADR-0030)**: 旧仕様には「50GB = tier 50 = 月額最大 ¥2,500 のハードキャップ」が存在したが、「データはたすきばの命」原則に基づき **累積上限を撤廃**。50GB 超過後も write を止めず、`calculateOverageJpy` は階段関数のまま上限なく加算する。50GB は監視アラート閾値 (L3) としてのみ機能する (§2.4 / §4)。
 
 ### 1.2 計算式
 
@@ -62,7 +66,8 @@ cost_jpy    = gb_tier × ¥50                             // tier × ¥50
 | 2,050MB | 2,000MB | 2 | **¥100** | tier 2 上限 |
 | 5GB | 4,950MB | 5 | **¥250** | tier 5 |
 | 10GB | 9,950MB | 10 | **¥500** | tier 10 |
-| 50GB (ハードキャップ) | 49,950MB | 50 | **¥2,500** | tier 50 (= 最大) |
+| 50GB | 49,950MB | 50 | **¥2,500** | tier 50 (= L3 監視アラート閾値。write は止めない) |
+| 100GB | 99,950MB | 100 | **¥5,000** | tier 100 (= 上限なし。青天井で加算継続) |
 
 ### 1.4 単位定義 (SI)
 
@@ -71,7 +76,8 @@ cost_jpy    = gb_tier × ¥50                             // tier × ¥50
 | 1MB | 10⁶ bytes = 1,000,000 bytes |
 | 1GB | 10⁹ bytes = 1,000MB = 1,000,000,000 bytes |
 | 50MB (無料枠) | 50,000,000 bytes |
-| 50GB (ハードキャップ) | 50,000,000,000 bytes |
+| 50GB (L3 監視アラート閾値) | 50,000,000,000 bytes |
+| 5MB (1 操作ペイロード上限) | 5,000,000 bytes (`DB_WRITE_PAYLOAD_MAX_BYTES`) |
 
 > Supabase 公式料金体系 (`$0.125/GB-month`) と整合させるため SI 単位を採用 (binary GiB ではない)。
 
@@ -161,18 +167,28 @@ peak:      100MB    →   500MB   →  500MB   →   500MB  ← この値で月�
 
 **理由**: 月末直前に大量データを export+削除して、月初に再 import するパターン (= Supabase 原価は GB-Hours で発生しているが、たすきば側は ¥0 になる) を防止するため。
 
-### 2.4 ハードキャップ (= 技術的な上限)
+### 2.4 監視アラート閾値と 1 操作ペイロード上限 (2026-05-31 改定 / ADR-0030)
 
-ハードキャップ **50GB** は **コスト上限ではなく、他テナント保護の技術的安全弁**:
+> **【旧仕様 〜2026-05-30】** かつては累積 **50GB ハードキャップ** が存在し、到達時に POST/PATCH/DELETE を `403 STORAGE_LIMIT_EXCEEDED` で write 拒否していた (他テナント保護の技術的安全弁)。**この累積 write block は ADR-0030「データはたすきばの命」で撤廃された。** 以下は現行仕様。
 
-- Supabase Pro 標準 Compute = Micro (1GB RAM)
-- 単一テナントが 50GB を超えると embedding index が RAM を圧迫 → 他テナントの cache hit ratio 破壊
-- 50GB 到達時は write 拒否、read / export は継続可能
+#### 現行: L1/L2/L3 は監視アラート閾値 (write は止めない)
 
-到達時の挙動:
-- POST/PATCH/DELETE で `403 STORAGE_LIMIT_EXCEEDED` を返す
-- メッセージ: 「データ容量が上限 50GB に達しました。データを削除してから再度お試しください。データの読み取り・エクスポートは引き続き可能です。」
-- 救済: テナント管理者が古いデータを削除 → 自動復帰
+50GB を含む L1/L2/L3 はいずれも **write を止めない監視アラート閾値** であり、課金や利用を制限しない:
+
+- **L1 (1GB)**: テナント管理者画面に使用量を表示
+- **L2 (10GB)**: super_admin に通知 (recordError + ダッシュボード)
+- **L3 (50GB)**: super_admin への監視アラート閾値 = 「このテナントが 50GB に到達。Supabase Compute 増強を検討」の合図。**write は継続可能、課金も青天井で継続する**
+- **L4 (instance-wide)**: Compute 推奨容量の 80% で super_admin alert
+
+実装: [src/config/db-capacity-pricing.ts](../../src/config/db-capacity-pricing.ts) `classifyDbCapacityLevel()` / `DB_CAPACITY_L3_HARD_CAP_BYTES` (定数名に HARD_CAP が残るのは import 影響回避のため。実体は監視閾値)。
+
+#### noisy-neighbor 対策の方針転換
+
+単一テナントの肥大化による cache hit ratio 劣化 (noisy-neighbor) は、累積 write block ではなく **運用 (Supabase Compute 増強)** で吸収する。L4 instance-wide alert を Compute 増強判断のトリガーとする。
+
+#### 1 操作あたりペイロード上限 (瞬間負荷ガード)
+
+累積上限を撤廃した代わりに、唯一のアプリ層 write ガードとして **1 write リクエストあたり 5MB** (`DB_WRITE_PAYLOAD_MAX_BYTES = 5,000,000` UTF-8 バイト) を設ける。これは累積容量ではなく「1 操作あたりの瞬間サーバ負荷」を抑える目的で、Netlify Functions のペイロード硬上限 6MB の手前で clean なエラーを返すためのもの。実装: [src/lib/api-helpers.ts](../../src/lib/api-helpers.ts) `requireStorageQuotaForWrite`。
 
 ---
 
@@ -273,19 +289,21 @@ Timeline:
 
 ---
 
-## 4. 4 層防御 (Level システム)
+## 4. 4 層 Level システム (監視アラート、2026-05-31 改定で全 Level が write 非ブロック)
 
-テナントの月中 peak に応じて 4 段階の警告/制限が発火:
+テナントの月中 peak に応じて 4 段階の **監視アラート** が発火する。**2026-05-31 (ADR-0030) で全 Level が「通知のみ・write 非ブロック」になった** (旧 L3 の write 拒否は撤廃):
 
 | Level | 閾値 | 動作 | 通知 |
 |---|---|---|---|
 | **none** | 0 ~ 1GB | 通常運用 | — |
-| **L1** | 1GB ~ 10GB | 通常運用 (請求は発生) | テナント管理者画面に警告 banner |
+| **L1** | 1GB ~ 10GB | 通常運用 (請求は発生) | テナント管理者画面に使用量表示 |
 | **L2** | 10GB ~ 50GB | 通常運用 (高額請求警告) | super_admin に通知 (recordError warn) |
-| **L3** | 50GB 以上 (ハードキャップ) | **write 拒否** | super_admin に緊急通知 + テナントに 403 エラー |
+| **L3** | 50GB 以上 | **通常運用 (write 継続・課金は青天井で継続)** | super_admin に監視アラート (= Compute 増強検討の合図) |
 | **L4** | (instance-wide) Compute 推奨容量の 80% | super_admin に Compute upgrade 検討 alert | recordError + ダッシュボード banner |
 
 実装: [src/config/db-capacity-pricing.ts](../../src/config/db-capacity-pricing.ts) `classifyDbCapacityLevel()`
+
+> **計測失敗時の挙動 — fail-open (2026-05-31 改定)**: 上記 Level 判定は storage-guard の `pg_column_size` 計測結果に依存する。**旧仕様では計測が 3 連続失敗すると circuit breaker が open し write を一律拒否する fail-close 設計だったが、累積ハードキャップ撤廃 (ADR-0030) に伴い circuit breaker も撤去された。** 現行は **fail-open**: 計測失敗時も write を止めず (= ユーザのデータ書込は既に別 tx でコミット済)、peak 更新を skip して `recordError` で記録するのみ。真値は日次 cron `updateAllStorageBytesUsed` が再計測して補正する (課金は月内 MAX なので取りこぼさない)。実装: [storage-guard.service.ts](../../src/services/storage-guard.service.ts) `assertStorageLimitInTx` の catch 節。
 
 ### 4.1 通知ルール (R12)
 
@@ -314,8 +332,8 @@ Timeline:
 │ 250 MB                300 MB                  ¥50           │
 │ 最新: 2026-06-14 09:00  到達: 2026-06-10 14:30   月末 cron で確定 │
 │                                                              │
-│ [─────────────────────░░░░░░░░░░░░░░] (0.6%)               │
-│ 0                          50GB ハードキャップ              │
+│ 使用量グラフ (上限なし。50GB は監視アラート閾値の目安線)    │
+│ 0           ┆ 50GB (アラート目安)         → 青天井で従量課金 │
 │                                                              │
 │ ▶ 料金体系を表示                                            │
 └─────────────────────────────────────────────────────────────┘
@@ -335,7 +353,7 @@ Timeline:
 │ drift 検知           tenant peak SUM    pg_database_size    │
 │ 12.3% (正常)         3.5 GB             3.9 GB              │
 │                                                              │
-│ ⚠️ 1 件 のテナントが circuit breaker open 中 (要復旧)        │
+│ (circuit breaker は撤去済 / 2026-05-31。L3 到達は監視アラート) │
 │                                                              │
 │ 警告レベルテナント (3 件)                                   │
 │ ┌─────────┬──────────┬───────────┬─────────────────────┐   │
@@ -393,12 +411,15 @@ drift_ratio ≥ 100%: critical (recordError error、計測漏れの疑い)
 - 退会時 current-month-on-withdrawal scope の重複 INSERT 不可
 - Stripe Meter event identifier も同 requestId 基準で 24h 重複防止
 
-### 7.3 fail-close (R3)
+### 7.3 計測失敗時の fail-open (2026-05-31 改定 / ADR-0030)
 
-storage-guard の `pg_column_size` 計測が失敗した場合:
-- **fail-close**: write を 403 で拒否 (= 攻撃者が意図的に DB を高負荷化して制限解除を狙う経路を物理的に閉じる)
-- **circuit breaker**: 3 回連続失敗で `storageGuardCircuitOpenedAt` セット、以降の write を完全拒否
-- 復旧: super_admin が原因調査後、`POST /api/admin/super/tenants/[id]/storage-guard-reset` で手動 close
+> **【旧仕様 〜2026-05-30】** storage-guard の計測失敗時は **fail-close** (write を 403 で拒否) + **circuit breaker** (3 連続失敗で `storageGuardCircuitOpenedAt` セット → write 完全拒否、super_admin の `POST /api/admin/super/tenants/[id]/storage-guard-reset` で手動復旧) だった。累積ハードキャップ撤廃 (ADR-0030) に伴い「計測できないから write 拒否」の根拠が消えたため、circuit breaker は撤去された。
+
+現行は **fail-open**:
+- 計測失敗時も write を止めない (= ユーザの書込は既にコミット済で本計測 tx の失敗は影響しない)
+- peak 更新を skip し `recordError` (severity=warn) で記録のみ残す
+- 真値は日次 cron `updateAllStorageBytesUsed` が再計測して補正 (課金は月内 MAX のため取りこぼさない)
+- `StorageGuardCircuitOpenError` / `storage-guard-reset` route / `STORAGE_GUARD_CIRCUIT_BREAKER_THRESHOLD` は撤去済
 
 ### 7.4 並列性制御
 
@@ -427,7 +448,7 @@ storage-guard の `pg_column_size` 計測が失敗した場合:
 |---|---|---|
 | 課金モデル | 月額固定 (Standard ¥0 / Plus ¥500 / Pro ¥1,500 / Enterprise ¥5,000) | **階段関数型従量課金** |
 | 無料枠 | 20MB (Standard) | **50MB / tenant** (SI 単位) |
-| 超過時挙動 | プラン上限超過は 7 日 Grace 後 write 拒否 | **超過分を従量課金、50GB hard cap** |
+| 超過時挙動 | プラン上限超過は 7 日 Grace 後 write 拒否 | **超過分を青天井従量課金 (累積上限なし、2026-05-31)。50GB は監視アラート閾値** |
 | 計測時点 | 現在の使用量 | **月中 peak** (= 抜け道防止) |
 | 計測網羅性 | 16 テーブル SQL ハードコード (新規テーブル追加時の漏れリスク) | **動的解決** (`information_schema` 由来) + CI ガード |
 | 計測対象テーブル数 | 16 | **36 テーブル** (= 旧実装の 20+ テーブルが課金漏れだった) |
@@ -440,7 +461,7 @@ storage-guard の `pg_column_size` 計測が失敗した場合:
 - **ADR-0020** [docs/adr/0020-db-capacity-usage-based-billing.md](../adr/0020-db-capacity-usage-based-billing.md): 設計判断の根拠 / 検討された代替案 / リスク評価
 - **ADR-0019** [docs/adr/0019-billable-feature-units-and-free-tier-expansion.md](../adr/0019-billable-feature-units-and-free-tier-expansion.md): API 課金 (`BILLABLE_FEATURE_UNITS`) と同設計原則
 - **TENANT_AND_BILLING.md** [docs/business/TENANT_AND_BILLING.md](./TENANT_AND_BILLING.md): テナント運用と課金モデル全般
-- **STRIPE_SETUP.md** [docs/operations/STRIPE_SETUP.md](../operations/STRIPE_SETUP.md): Stripe Dashboard セットアップ手順
+- **STRIPE_SETUP.md** [docs/operations/STRIPE_SETUP.md](../operations/setup/STRIPE_SETUP.md): Stripe Dashboard セットアップ手順
 - **STRIPE_BILLING.md** [docs/business/STRIPE_BILLING.md](./STRIPE_BILLING.md): Stripe Metered Billing 全般
 - **ENV_VARS.md** [docs/operations/ENV_VARS.md](../operations/ENV_VARS.md): 関連環境変数 (STRIPE_PRICE_DB_CAPACITY_OVERAGE 他)
 - **KDD_PATTERNS.md** [docs/knowledge/KDD_PATTERNS.md](../knowledge/KDD_PATTERNS.md): §5.X+130-137 (PR #443 実装時の発見と教訓 14 件)
@@ -458,8 +479,8 @@ A. v1 では添付は metadata のみ (= ファイル本体は外部 storage バ
 ### Q3. 月中に大量データを投入してすぐ削除した場合、課金されますか?
 A. **はい**。月中 peak ベース請求のため、削除後でも当月の peak は記録され、月末請求に計上されます。これは月末削除→月初再投入の抜け道防止のための仕様。
 
-### Q4. 50GB ハードキャップを超えそうな場合、どうすればいいですか?
-A. ハードキャップ到達前にデータの整理 (古い Knowledge / Memo の削除、過去プロジェクトのアーカイブ) を推奨。ハードキャップは技術的安全上の制約 (他テナント保護) のため引き上げ不可。50GB 超のデータ運用が必要な場合は別途お問い合わせください (v1.x で個別 Compute 契約フローを検討予定)。
+### Q4. データ容量が 50GB を超えそうな場合、どうなりますか?
+A. **書き込みは止まりません** (2026-05-31 / ADR-0030「データはたすきばの命」で累積ハードキャップを撤廃)。50GB は監視アラート閾値で、超過後も従量課金 (¥50/GB tier) が青天井で継続します。運営側は L3/L4 アラートを受けて Supabase Compute 増強で性能を吸収します。請求額を抑えたい場合は不要データの整理を推奨しますが、技術的な write 制限はありません。なお 1 回の書込リクエストあたり 5MB (`DB_WRITE_PAYLOAD_MAX_BYTES`) の瞬間負荷上限は引き続き有効です。
 
 ### Q5. 想定請求額と実際の請求額がズレることはありますか?
 A. 設計上発生しません。`ApiCallLog.costJpy` を真値として全経路で参照する **billing invariant** を実装しているため、ダッシュボード表示・請求書・Stripe Meter で値は完全一致します ([feedback_billing_invariant.md](../../memory/) と整合)。

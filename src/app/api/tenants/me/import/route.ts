@@ -115,10 +115,8 @@ export async function POST(req: NextRequest) {
               //   (= 他経路 sync-import 5 / attachments-upload / attachments-finalize と整合)
               : result.error === 'BEGINNER_QUOTA_EXCEEDED'
                 ? 403
-                // ADR-0020: 50GB ハードキャップ超過も他経路と整合させ 403 で統一 (旧 400 から変更)
-                : result.error === 'STORAGE_LIMIT_EXCEEDED'
-                  ? 403
-                  : 400;
+                // 2026-05-31: 50GB 累積ハードキャップ (STORAGE_LIMIT_EXCEEDED) 分岐は撤去 (ADR-0030)
+                : 400;
     return NextResponse.json(
       { ok: false, error: { code: result.error, message: result.message } },
       { status },

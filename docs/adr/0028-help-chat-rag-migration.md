@@ -83,7 +83,7 @@ FAQ や使い方ガイドの追加・更新・削除を行った場合、対応�
 1. **CI 構造ガード**: `scripts/check-faq-embeddings-sync.ts` を新設し、`faq-content.ts` / `guide-content.ts` の構造健全性を機械検証 (DB 不要)。PR CI で実行され構造異常があれば fail
 2. **CI drift ガード (optional)**: DATABASE_URL が設定されていれば DB と config の hash 突合
 3. **★Netlify build hook 自動実行 (2026-05-30 追加、KDD §5.X+196)★**: `package.json:build:netlify` の最後に `tsx scripts/generate-faq-embeddings.ts` を fail-safe で組込。**deploy 時に自動で embedding 生成**、開発者は手動実行不要
-4. **手動 SOP (緊急時のみ)**: build hook 失敗時の fallback として `docs/developer-guide/FAQ_AND_OWL_CHAT_GUIDE.md §7.0.4` に明示
+4. **手動 SOP (緊急時のみ)**: build hook 失敗時の fallback として `docs/operations/develop/FAQ_AND_OWL_CHAT_GUIDE.md §7.0.4` に明示
 5. **KDD documentation**: §5.X+193 (drift 検知 4 層) + §5.X+196 (build hook 自動化) として記録、横展開可能なナレッジに昇格
 
 > 2026-05-30 PR #471 では当初「手動 SOP のみ」で運用しようとしたが、ユーザ環境で「SOP の存在を知らない」「.env.local の本番接続書換手順が不明瞭」等の脆弱性が顕在化したため、**build hook 自動化** に方針転換 (= [[feedback_human_handoff]]「人間が忘れる前提で設計する」原則に整合)。冪等性により FAQ 変更なし deploy は Voyage 呼出ゼロ ¥0、年運用コスト試算 1.34M tokens / 200M 無料枠 = 0.7% で完全無料。
@@ -160,7 +160,7 @@ messages: [
 - 流用元実装: [src/lib/llm/voyage-client.ts](../../src/lib/llm/voyage-client.ts) / [src/services/embedding.service.ts](../../src/services/embedding.service.ts) / [src/services/chat-search.service.ts](../../src/services/chat-search.service.ts)
 - 新規実装: src/services/help-search.service.ts / scripts/generate-faq-embeddings.ts / scripts/check-faq-embeddings-sync.ts
 - 改修対象: src/app/api/help/chat/route.ts / src/components/chat-semantic-search/chat-panel.tsx (mode タブ統合) / prisma/schema.prisma
-- ライフサイクル SOP: [FAQ_AND_OWL_CHAT_GUIDE.md §7](../developer-guide/FAQ_AND_OWL_CHAT_GUIDE.md) (FAQ 追加/更新/削除手順)
+- ライフサイクル SOP: [FAQ_AND_OWL_CHAT_GUIDE.md §7](../operations/develop/FAQ_AND_OWL_CHAT_GUIDE.md) (FAQ 追加/更新/削除手順)
 - 関連 ADR: [ADR-0019](./0019-billable-feature-units-and-free-tier-expansion.md) (BILLABLE_FEATURE_UNITS) / [ADR-0022](./0022-embedding-usage-based-billing.md) (Embedding 課金) / [ADR-0026](./0026-embedding-async-generation.md) (embedding 非同期化、本 ADR の知見が応用可能)
 - 関連 KDD: §5.X+191 (Prompt caching、RAG 版に更新) / §5.X+192 (本 ADR を生んだ設計判断ミス事例) / §5.X+193 (FAQ embedding 同期 drift 検知パターン)
 - 関連 memory: [[feedback_reuse_existing_design_first]] (既存設計流用最優先) / [[feedback_ui_completion_is_default_scope]] (機能 + UI までがスコープ) / [[project_faq_drives_ai_accuracy]] (FAQ 拡充が AI 精度向上に直結)

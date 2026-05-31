@@ -199,8 +199,8 @@ describe('precheckImportStorage', () => {
     });
   });
 
-  describe('L3 50GB ハードキャップ (全プラン共通)', () => {
-    it('Expert で取込後 50GB 到達 → l3-block でブロック', async () => {
+  describe('累積ハードキャップ撤去後 (Expert/Pro は 50GB+ でもブロックしない) — ADR-0030', () => {
+    it('Expert で取込後 50GB+ 到達 → ブロックせず l2-warning (累積上限撤去)', async () => {
       vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce({
         storageBytesUsed: BigInt(48 * SI_GB_BYTES),
       } as never);
@@ -209,12 +209,11 @@ describe('precheckImportStorage', () => {
         plan: 'expert',
         estimatedAddedBytes: 3 * SI_GB_BYTES,
       });
-      expect(r.level).toBe('l3-block');
-      expect(r.isBlocker).toBe(true);
-      expect(r.code).toBe('L3_HARD_CAP_EXCEEDED');
+      expect(r.isBlocker).toBe(false);
+      expect(r.level).toBe('l2-warning');
     });
 
-    it('Pro で取込後 50GB 到達 → l3-block でブロック (Beginner 判定より優先)', async () => {
+    it('Pro で取込後 50GB 到達 → ブロックせず l2-warning (累積上限撤去)', async () => {
       vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce({
         storageBytesUsed: BigInt(DB_CAPACITY_L3_HARD_CAP_BYTES),
       } as never);
@@ -223,8 +222,8 @@ describe('precheckImportStorage', () => {
         plan: 'pro',
         estimatedAddedBytes: 0,
       });
-      expect(r.level).toBe('l3-block');
-      expect(r.isBlocker).toBe(true);
+      expect(r.isBlocker).toBe(false);
+      expect(r.level).toBe('l2-warning');
     });
   });
 

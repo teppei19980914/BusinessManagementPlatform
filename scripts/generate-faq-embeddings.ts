@@ -10,7 +10,7 @@
  * ★ たすきば存続の生命線 ★ ([[feedback_ui_completion_is_default_scope]] の
  *   ヘルプチャット運用は本 script が DB を最新化していることが前提)
  *   FAQ/Guide を `src/config/*` で更新したら **必ず deploy 後** 本 script を
- *   実行すること。詳細 SOP は docs/operations/DEPLOYMENT.md / developer-guide §7。
+ *   実行すること。詳細 SOP は docs/operations/develop/DEPLOYMENT.md / develop §7。
  *
  * 同期判定:
  *   - composeFaqContentText / composeGuideContentText で生成したテキストの
@@ -43,7 +43,7 @@
  *   - src/services/help-search.service.ts (compose / computeContentHash の真値)
  *   - scripts/check-faq-embeddings-sync.ts (本 script の "DB 状態は config と一致" を
  *     CI で検証する側。本 script 実行漏れの検出)
- *   - docs/operations/DEPLOYMENT.md §FAQ/Guide 更新時の手順
+ *   - docs/operations/develop/DEPLOYMENT.md §FAQ/Guide 更新時の手順
  */
 
 import 'dotenv/config';
@@ -115,7 +115,7 @@ function explainPrismaError(err: unknown): string {
         '       本番接続文字列に **一時的に書き換えてから** 再実行してください。',
         '       書き換え後、必ず .env.local を元に戻す事 (ローカル開発に影響しないため)。',
         '',
-        '   参考: docs/operations/DEPLOYMENT.md §4.4 ─ FAQ embedding 生成 SOP',
+        '   参考: docs/operations/develop/DEPLOYMENT.md §4.4 ─ FAQ embedding 生成 SOP',
       ].join('\n');
     }
     return [

@@ -1,9 +1,24 @@
 # ADR-0021: ファイル添付ストレージ従量課金 — Supabase Storage 連携 (2026-05-26)
 
-- **Status**: Accepted (2026-05-26)
+- **Status**: Accepted (2026-05-26) / **Amended 2026-05-31** (ADR-0030 により累積 50GB ハードキャップ撤廃 → L3 は監視アラート閾値化、circuit-breaker は撤廃)
 - **Date**: 2026-05-26
 - **Deciders**: teppei
 - **Based on**: [ADR-0020](./0020-db-capacity-usage-based-billing.md) (DB 容量従量課金) の設計パターンを流用
+- **Amended-by**: [ADR-0030](./0030-embedding-monthly-budget-cap.md) §「2026-05-31 改定: DB/Storage 累積ハードキャップの撤廃」
+
+---
+
+> ## 2026-05-31 改定 (ADR-0030 によりハードキャップ撤廃)
+>
+> 本 ADR の初版 (2026-05-26) は ADR-0020 のパターンを流用し「累積 **50GB 到達でアップロード拒否** するハードキャップ」と「Supabase API 計測連続失敗時に write を拒否する **circuit-breaker**」を採用していたが、**2026-05-31 に [ADR-0030](./0030-embedding-monthly-budget-cap.md)「データはたすきばの命」原則に基づき以下を撤廃した**:
+>
+> - **累積 50GB ハードキャップ (アップロード拒否) = 撤廃**。L1(1GB)/L2(10GB)/L3(50GB) は **監視アラート閾値のみ** となり、アップロードは止めない。
+> - **circuit-breaker = 撤廃**。ファイルは Supabase Storage (オブジェクトストレージ) で Postgres RAM 非依存のため noisy-neighbor とも無関係。計測失敗は daily cron が補正。
+> - Expert/Pro の超過課金は **¥10/GB の青天井従量** (旧「最大 ¥500」上限は撤廃)。
+> - **1 ファイル上限 50MB/件 (`FILE_STORAGE_MAX_FILE_SIZE_BYTES`) は瞬間負荷ガードとして存続** (= upload/finalize route で検証、撤廃しない)。
+> - **Beginner 無料枠ガード (File Storage 100MB) の upload block は不変** ([ADR-0025](./0025-beginner-write-guard.md))。overage 課金なし・DELETE 許可も不変。
+>
+> 以下、本文中の `(旧仕様〜2026-05-30)` 表記は撤廃済の初版仕様、それ以外は現行仕様を示す。実装の真値は [src/config/file-storage-pricing.ts](../../src/config/file-storage-pricing.ts) / [src/services/storage-guard.service.ts](../../src/services/storage-guard.service.ts)。
 
 ---
 
@@ -25,7 +40,7 @@
 
 ### 設計の前提
 
-- **基盤**: [ADR-0020](./0020-db-capacity-usage-based-billing.md) のパターンを忠実に踏襲 (= 「月中 peak / 階段関数型 / 退会時即時請求 / drift 検知 / circuit breaker / billing invariant」を流用)
+- **基盤**: [ADR-0020](./0020-db-capacity-usage-based-billing.md) のパターンを忠実に踏襲 (= 「月中 peak / 階段関数型 / 退会時即時請求 / drift 検知 / billing invariant」を流用)。※ 初版で流用した circuit-breaker と累積 50GB ハードキャップは 2026-05-31 に ADR-0020 と共に撤廃 (ADR-0030)。
 - **経済性**: Supabase Storage は DB Disk と別 SKU で **約 1/6 の原価** ($0.0213/GB-月 vs $0.125/GB-月)
 - **業界水準**: AWS S3 $0.023 / GCS $0.020 / Cloudflare R2 $0.015 と比較し、Supabase Storage は競争力あり
 
@@ -57,8 +72,8 @@
 | **端数処理** | 1MB 切上 → 1GB tier 切上 | DB 容量と同方式 |
 | **単位** | **SI 単位** (1MB=10⁶ bytes, 1GB=10⁹ bytes) | DB 容量と整合、LP 表記と整合 |
 | **計測時点** | **月中 peak** (= max bytes during month) | 月末削除→月初再投入の抜け道防止 (= ADR-0020 と同設計) |
-| **ハードキャップ** | **50GB / tenant** | DB 容量と同閾値、ユーザ最大月額 ¥500 / 説明性 |
-| **ファイル上限** | **50MB / 1 ファイル** | Supabase Free 同等、業務文書 (PDF/Excel/画像) は十分カバー |
+| ~~**ハードキャップ**~~ | ~~**50GB / tenant**~~ → **撤廃 (2026-05-31, ADR-0030)** | 旧「アップロード拒否の累積上限」。現在 50GB は **監視アラート閾値 (L3)**、アップロードは止めず青天井従量 |
+| **ファイル上限 (存続)** | **50MB / 1 ファイル** | Supabase Free 同等、業務文書 (PDF/Excel/画像) は十分カバー。瞬間負荷ガードとして撤廃せず存続 |
 | **Egress** | **当面無料** | Supabase Pro 250GB/月 含有で十分、業務ツール用途で超過想定なし |
 
 ### 2. 4 つの設計判断 (ユーザ確認済)
@@ -131,16 +146,21 @@ cost_jpy    = gb_tier × ¥10                              // tier × ¥10
 | 1,101MB | 1,001MB | 2 | **¥20** |
 | 5GB | 4,900MB | 5 | **¥50** |
 | 10GB | 9,900MB | 10 | **¥100** |
-| 50GB (ハードキャップ) | 49,900MB | 50 | **¥500** |
+| 50GB | 49,900MB | 50 | **¥500** |
+| 100GB | 99,900MB | 100 | **¥1,000** (青天井従量、上限なし) |
 
-### 5. 4 層防御 (= ADR-0020 と同パターン)
+> **2026-05-31 改定**: 旧仕様 (〜2026-05-30) では 50GB が**アップロード拒否の累積ハードキャップ**で実質「最大 ¥500」だった。現行は **¥10/GB の青天井従量**で上限なし ([ADR-0030](./0030-embedding-monthly-budget-cap.md))。
 
-| Level | 閾値 | アクション | 想定月額 |
+### 5. 監視アラート 4 層 (2026-05-31 改定: 累積ハードキャップ撤廃により upload block ではなく alert)
+
+| Level | 閾値 | アクション (現行 / 2026-05-31〜) | 想定月額 |
 |---|---|---|---|
 | **none** | 0 ~ 1GB | 通常運用 | ¥0 ~ ¥10 |
 | **L1** | 1GB ~ 10GB | テナント設定画面に警告表示 | ¥10 ~ ¥100 |
 | **L2** | 10GB ~ 50GB | super_admin に recordError warn | ¥100 ~ ¥500 |
-| **L3** | 50GB ハードキャップ | **アップロード拒否** (= read/download 継続可) | ¥500 |
+| **L3** | 50GB ~ | **super_admin への監視アラート閾値** (アップロードは止めない、青天井従量) | ¥500 ~ |
+
+> **L3 の挙動変更 (2026-05-31)**: 旧仕様 (〜2026-05-30) では L3=50GB で **アップロード拒否 (累積ハードキャップ)** だったが、[ADR-0030](./0030-embedding-monthly-budget-cap.md) に基づき撤廃。現行 L3 は super_admin への監視アラート閾値のみ (read/download/upload すべて止めない)。ファイルは Supabase Storage (オブジェクトストレージ) で Postgres RAM 非依存のため、DB 容量のような noisy-neighbor 懸念もない。1 ファイル上限 50MB は瞬間負荷ガードとして存続。Beginner プランのみ無料枠 100MB 超過で upload block ([ADR-0025](./0025-beginner-write-guard.md))。
 
 ### 6. 横断対応 (= ADR-0020 から流用)
 
@@ -311,7 +331,9 @@ attachments 論理削除 (= storageProvider='supabase' で Storage オブジェ�
 
 ---
 
-## 10. セキュリティ・ハードキャップ・他テナント保護 (ユーザ追加要件)
+## 10. セキュリティ・他テナント保護 (ユーザ追加要件)
+
+> **2026-05-31 注記**: 本節は初版で「ハードキャップ」を中核の防御層に据えていたが、累積 50GB ハードキャップは [ADR-0030](./0030-embedding-monthly-budget-cap.md) で撤廃済。現行の防御は (1) 1 ファイル 50MB 上限、(2) Pre-signed URL レート制限、(3) 危険拡張子 blacklist、(4) ファイル名 sanitize / RLS、(5) 1 日 5GB 超増加の異常検知 alert、(6) Beginner 無料枠ガード ([ADR-0025](./0025-beginner-write-guard.md)) で構成する。以下「ハードキャップ」記述は当時の文脈。
 
 **根本原則**: **単一テナントの不正利用が他テナント・サーバ全体に波及してはならない**。
 ADR-0020 R3 「他テナントへの影響は絶対不許容」を全攻撃ベクトルで担保する。
@@ -321,10 +343,10 @@ ADR-0020 R3 「他テナントへの影響は絶対不許容」を全攻撃ベ�
 | 攻撃ベクトル | リスク | 対策層 |
 |---|---|---|
 | **大容量ファイル DoS** | サーバ memory/disk 圧迫、Function timeout | (1) Pre-signed URL 直接アップロード (= サーバ通さない) / (2) 50MB/ファイル サーバ側検証 / (3) Supabase 側 500MB 上限 |
-| **大量ファイルアップロード DoS** | テナント全体で 50GB 超 / 他テナント cache 圧迫 | (1) 50GB ハードキャップ即時拒否 / (2) Pre-signed URL 発行レート制限 (= 10 req/min/tenant) |
+| **大量ファイルアップロード DoS** | サーバ負荷 / 想定外課金 | (1) 1 ファイル 50MB 上限 / (2) Pre-signed URL 発行レート制限 (= 10 req/min/tenant) / (3) 1 日 5GB 超増加で異常検知 alert (§10.2.4)。**※ 累積 50GB ハードキャップは 2026-05-31 撤廃 (ADR-0030)。ファイルは Supabase Storage で Postgres RAM 非依存のため他テナント cache 圧迫の懸念がない** |
 | **悪意ある MIME (実行ファイル)** | サーバ・他ユーザへのマルウェア配布 | 危険拡張子 blacklist (.exe / .bat / .sh / .cmd / .com / .scr / .ps1 / .vbs) で拒否 |
 | **path traversal** | バケット越境、他テナントオブジェクト読取 | ファイル名 sanitize + バケット path に tenant prefix 強制 |
-| **Storage 計測失敗** | drift で課金漏れ + 暴走検知不能 | circuit breaker (= 3 回失敗で write 拒否)、drift 検知 daily cron |
+| **Storage 計測失敗** | drift で課金漏れ + 暴走検知不能 | drift 検知 daily cron で補正 (= 真値は月内 MAX peak で取りこぼさない)。**※ 旧 circuit breaker (3 回失敗で write 拒否) は 2026-05-31 撤廃 (ADR-0030)、計測失敗は fail-open** |
 | **embedding job 暴走** | Voyage API rate limit 抵触、200M 無料枠食い潰し | per-tenant job 並列上限 (= 5 件まで)、Voyage 月次 token 消費 watchdog |
 | **Pre-signed URL 漏洩** | 第三者が tenant データ書込 / 越境 | URL 有効期限 60 秒 + tenant_id 検証 + ファイル名予約 (= ハッシュ含む) |
 | **delete API 連打** | Supabase API rate limit、storage_objects ロック | per-tenant rate limit (= 100/min)、batch delete API 推奨 |
@@ -336,10 +358,11 @@ ADR-0020 R3 「他テナントへの影響は絶対不許容」を全攻撃ベ�
 [POST /api/attachments/upload](#) で以下を全部チェック後に URL 発行:
 
 ```ts
+// 2026-05-31 改定後 (ADR-0030): 3 は Beginner 無料枠判定のみ。累積 50GB 残量チェックは撤廃。
 1. 認証: session.user 必須、role 確認
 2. テナント越境: entityId が user.tenantId 配下か確認
-3. ハードキャップ: precheckFileStorageLimit() で 50GB 残量チェック
-4. ファイルサイズ: requested filesize <= 50MB (= サーバ側強制)
+3. Beginner 無料枠: precheckFileStorageLimit() で Beginner プランの 100MB 残量チェック (Expert/Pro は青天井のため pass)
+4. ファイルサイズ: requested filesize <= 50MB (= サーバ側強制、瞬間負荷ガードとして存続)
 5. 危険 MIME: ext が DANGEROUS_EXTENSIONS にないこと
 6. ファイル名: sanitize (path traversal 文字除去、長さ制限 200 文字)
 7. レート制限: per-tenant Pre-signed URL 発行 10 req/min
@@ -351,9 +374,10 @@ ADR-0020 R3 「他テナントへの影響は絶対不許容」を全攻撃ベ�
 `POST /api/attachments/finalize` で実物のサイズを Supabase API で確認:
 
 ```ts
+// 2026-05-31 改定後 (ADR-0030): 3 は Beginner 無料枠 post-check のみ。累積 50GB チェックは撤廃。
 1. Storage オブジェクト存在確認 (= Pre-signed URL は使ったが実際アップ完了か)
 2. 実サイズが requested 内 (= 50MB 超なら即時削除 + reject)
-3. ハードキャップ post-check (= 50GB 超えていたら即時削除 + 403)
+3. Beginner post-check (= Beginner が 100MB 超なら即時削除 + 403。Expert/Pro は青天井で pass、計測 + peak/level 更新のみ)
 4. RLS 検証 (= ownership 再確認)
 5. attachments DB row 作成 + embedding job キュー投入
 ```
@@ -378,9 +402,13 @@ const MAX_GLOBAL_EMBEDDING_CONCURRENT = 50;
 // = ADR-0020 の drift 検知 (集計漏れ検知) とは別の「使用パターン異常」検知
 ```
 
-#### 10.2.5 Storage 操作 circuit breaker (Layer 5)
+#### 10.2.5 Storage 計測失敗時の挙動 (Layer 5) — 2026-05-31 改定: fail-open
 
-`storage-bucket-usage.service` の Supabase API 呼出が連続失敗した場合 (= ADR-0020 ハードキャップ判定不能時と同様)、circuit を open し write 全拒否 + super_admin alert。
+> **改定 (2026-05-31, ADR-0030)**: 累積 50GB ハードキャップ撤廃に伴い「計測できないから write を拒否する」根拠が消えたため、旧 circuit breaker (連続失敗で write 全拒否) は**撤廃**。現行は **fail-open** で、`storage-bucket-usage.service` の Supabase API 呼出が失敗してもアップロードは止めず、`recordError` で記録のみ残す。真値は drift 検知 daily cron が再計測して補正する (課金は月内 MAX peak のため取りこぼさない)。
+
+#### (旧仕様〜2026-05-30) Storage 操作 circuit breaker — **撤廃済**
+
+> ~~`storage-bucket-usage.service` の Supabase API 呼出が連続失敗した場合 (= ADR-0020 ハードキャップ判定不能時と同様)、circuit を open し write 全拒否 + super_admin alert。~~ — 撤廃済 (ADR-0030)。`StorageGuardCircuitOpenError` を「現行」として参照しないこと。
 
 ### 10.3 危険拡張子 blacklist
 
@@ -441,14 +469,18 @@ USING (
 
 これで仮に Pre-signed URL や ANON KEY が漏洩しても、テナント越境は **データベースレベルで拒否** される。
 
-### 10.7 ハードキャップ到達時の挙動
+### 10.7 容量 50GB 到達時の挙動 (2026-05-31 改定: ハードキャップ撤廃)
+
+> **改定 (2026-05-31, ADR-0030)**: 旧仕様 (〜2026-05-30) では 50GB 到達で新規 Pre-signed URL 発行が `403 'STORAGE_FILE_HARD_CAP_EXCEEDED'` で拒否されたが、累積ハードキャップ撤廃により**アップロードは止めない**。`FileStorageLimitExceededError` / `mapFileStorageGuardErrorToResponse` / `STORAGE_FILE_HARD_CAP_EXCEEDED` は実装から撤去済 (これらを「現行」として参照しないこと)。
 
 ```
-50GB 到達テナントの状態:
-  ├─ 新規 Pre-signed URL 発行 → 403 'STORAGE_FILE_HARD_CAP_EXCEEDED'
+現行 (2026-05-31〜) — Expert/Pro が 50GB に到達したテナントの状態:
+  ├─ 新規 Pre-signed URL 発行 → 継続可 (青天井従量、L3 監視アラートを super_admin に発火)
   ├─ 既存ファイルの read / download → 継続可
-  ├─ 既存ファイルの delete → 継続可 (= 削減手段の提供)
-  └─ 他テナント → 完全に独立して動作 (= 他テナント影響ゼロ)
+  ├─ 既存ファイルの delete → 継続可
+  └─ 他テナント → 完全に独立 (= Supabase Storage は Postgres RAM 非依存)
+
+Beginner プランは無料枠 100MB 超過でアップロード拒否 (403 'BEGINNER_STORAGE_QUOTA_EXCEEDED'、ADR-0025、不変)。
 ```
 
 ### 10.8 サーバ全体停止防止
@@ -492,7 +524,7 @@ USING (
 
 ### 11.4 セットアップ手順
 
-詳細は [docs/operations/STRIPE_SETUP.md §2.6](../operations/STRIPE_SETUP.md) (ファイルストレージ従量課金 + Subscription Item 紐付け項) を参照。
+詳細は [docs/operations/STRIPE_SETUP.md §2.6](../operations/setup/STRIPE_SETUP.md) (ファイルストレージ従量課金 + Subscription Item 紐付け項) を参照。
 
 ---
 
@@ -503,14 +535,14 @@ USING (
 - **大幅な値下げ感**: 旧 4 段階 Storage Plan (Plus ¥500 / Pro ¥1,500 / Enterprise ¥5,000) と比べ、ヘビーユーザでも月 ¥100 程度
 - **ADR-0020 と統一感**: 開発者・運用者・利用者にとって学習コスト最小
 - **採用ハードル削減**: 100MB 無料枠で典型ユーザはほぼ無料
-- **本格利用にも対応**: 50GB 上限で実質無制限、上限到達は月 ¥500 のみ
+- **本格利用にも対応 (2026-05-31〜)**: 累積上限なしの青天井従量 (¥10/GB) で、大量資産の蓄積を容量 block で阻害しない (「データはたすきばの命」、ADR-0030)
 - **計測 invariant 保証**: ApiCallLog SUM = Stripe Meter quantity の完全一致 (= R6 案 A)
 - **業界水準価格**: Cloudflare R2 / S3 の 3-4 倍 = 一般的な SaaS 上乗せ率
 
 ### Negative / Trade-off
 
 - **月中 peak ベース** のため、一時的大量アップロード → 削除 で実コスト以上に請求される可能性 ([ADR-0020 §6.3 と同型問題](./0020-db-capacity-usage-based-billing.md))
-- **ハードキャップ 50GB** はメディア配信サービスとしての利用を阻害 (= 想定外の用途)
+- **(旧仕様〜2026-05-30) ハードキャップ 50GB によるメディア配信用途の阻害** — 累積ハードキャップ自体を 2026-05-31 (ADR-0030) で撤廃したため解消。ただし青天井従量のため、想定外用途で大容量化すると課金が青天井に増える点はユーザ自身の monitoring に委ねる (1 ファイル 50MB 上限 + 1 日 5GB 超増加の異常検知 alert は存続)
 - **削除即時 Storage 削除** は誤操作リスク → UI で削除前確認必須
 
 ### Risk / 留意事項
@@ -548,7 +580,8 @@ USING (
 
 - [ADR-0020](./0020-db-capacity-usage-based-billing.md): DB 容量従量課金 (本 ADR のパターン元)
 - [ADR-0019](./0019-billable-feature-units-and-free-tier-expansion.md): 課金 featureUnit の中央定義原則
-- **[ADR-0025](./0025-beginner-write-guard.md)**: Beginner プラン write ブロック (= File Storage 100MB 超過時にアップロード拒否、overage 課金 skip)
+- **[ADR-0025](./0025-beginner-write-guard.md)**: Beginner プラン write ブロック (= File Storage 100MB 超過時にアップロード拒否、overage 課金 skip)。累積 50GB ハードキャップ撤廃 (2026-05-31) 後も唯一存続する容量 upload block
+- **[ADR-0030](./0030-embedding-monthly-budget-cap.md)**: Embedding 月次予算上限。§「2026-05-31 改定: DB/Storage 累積ハードキャップの撤廃」で本 ADR の 50GB ハードキャップ・circuit-breaker 撤廃を決定
 - 詳細仕様: [docs/business/FILE_STORAGE_BILLING.md](../business/FILE_STORAGE_BILLING.md)
 - 利用者ガイド: [docs/public/file-storage-billing-guide.md](../public/file-storage-billing-guide.md)
 - 関連 memory: [feedback_billing_invariant.md](../../memory/), [feedback_drift_detection_design.md](../../memory/), [feedback_3layer_sync_filter.md](../../memory/)

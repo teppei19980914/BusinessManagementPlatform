@@ -6,6 +6,303 @@
 
 ---
 
+## 目次 (TOC)
+
+> 本 TOC は可読性のための追記。エントリ本文は §5.X+N 形式で検索可能（例: `§5.X+202`）。anchor が外れても各行の §番号テキストで本文検索できる。テーマ別に分類しているが、本文は時系列順 (§5.1〜§5.62 → §5.X〜§5.X+202) に並ぶ。
+
+### 認証・セッション・ログイン
+- [§5.2 認可ルールを変える](#52-認可ルールを変える)
+- [§5.X ログイン失敗メッセージを失敗カテゴリごとに UI 分岐](#5x-ログイン失敗系メッセージは失敗カテゴリごとに-ui-を分岐させる-pr-fixlogin-failure--2026-05-03)
+- [§5.X+31 「ログインできない」の真因は別経路 / 防御的 server component](#5x31-ログインできないの真因は別経路にあることが多い--切り分け手順と防御的-server-component-pr-fixadmin-users-defensive-render--2026-05-15)
+- [§5.X+32 invalid_password 記録だが本人正入力 + パスワードマネージャ使用パターン](#5x32-invalid_password-と記録されているが本人は正しい入力--パスワードマネージャ使用のパターン--authorize-例外で-auth_event_logs-に何も残らないケースが多い-pr-fixauth-diagnostics-defensive--2026-05-15)
+- [§5.X+46 JWT 失効カウンタの自/他操作分離](#5x46-jwt-失効カウンタを-自分の操作で-increment-すると同セッションが即死--自他操作で分ける設計原則-pr-350-で確立)
+- [§5.X+66 NextAuth v5 + Netlify で useSession().update() の Set-Cookie 不達](#5x66-nextauth-v5--netlifyplugin-nextjs-では-usesessionupdate-の-set-cookie-がブラウザに反映されない--vercel--netlify-移行で-mfaテーマi18n-が同時に壊れた-pr-395--pr-396-で実体験--2026-05-18)
+- [§5.X+67 update() 削除 PR は E2E の session await も同時削除](#5x67-usesessionupdate-を削除する-pr-は-e2e-が-post-apiauthsession-を-await-している箇所も同時に削除しないとタイムアウトで-ci-が落ちる--codeql-の-user-controlled-bypass-は条件分岐内の-sensitive-action-呼出しを単一出口に集約することで構造的に解消できる-pr-396-で実体験--2026-05-18)
+- [§5.X+68 DB更新成功 + cookie 再署名 silent fail = 200 OK の無限ループ](#5x68-db-更新成功--cookie-再署名サイレント失敗--200-ok-の組合せは無限ループを生む--helper-の戻り値型を-boolean-から判別-union-に格上げして呼出側に強制-check-させる-pr-397-で実体験--2026-05-18)
+- [§5.X+69 /api/auth/* カスタム route は middleware matcher 除外](#5x69-apiauth-配下にカスタム-route-を置くと-nextauth-middleware-の-auto-refresh-が我々の-set-cookie-を上書きする--middleware-matcher-で当該-path-を除外する-pr-400-で実体験--2026-05-18)
+- [§5.X+71 Set-Cookie 再署名 route は全 protected path で middleware matcher 除外](#5x71-set-cookie-で-jwt-を再署名するカスタム-route-は-apiauth-配下でなくとも-middleware-matcher-から除外する--nextauth-auth-wrapper-は-protected-な全-path-で-session-refresh-を打ち我々の-set-cookie-を上書きする-pr-401-で実体験--2026-05-18)
+- [§5.X+84 signOut の Set-Cookie 脱落 / tokenVersion increment で実質削除](#5x84-nextauth-v5--netlify-の-set-cookie-脱落は-signout-にも及ぶ--cookie-削除に依存せず-tokenversion-increment--layout-層-db-照合で実質削除を達成explicit-signout-route-も-middleware-matcher-除外必須-2026-05-20--pr-fixsession-clearance)
+- [§5.X+89 User.email を global UNIQUE のままだと再利用/複数所属で 500](#5x89-useremail-を-global-unique-のまま運用すると-tenant-削除直後の-email-再利用--同個人の複数-tenant-所属で-unique-違反-500-になる--uniquetenantid-email-に組み替えpre-auth-フローは全て-tenantslug-必須化する-2026-05-20--pr-featmulti-tenant-user-membership)
+- [§5.X+90 multi-tenant + import API で Beginner 試用 abuse 成立](#5x90-multi-tenant-化--データ-import-api-がある-saas-で-beginner-90日試用-を提供すると-import-経由の半永久-abuse-が成立する--既登録-email-は-beginner-払い出し不可化--ui-で事前ヒント-phase-10--adr-0016-強化)
+- [§5.X+94 ログイン履歴 localStorage は型/形状/期限を読込時全件検証](#5x94-localstorage-で過去ログイン履歴を保持する場合保存値の型形状期限を読込時に全件検証して-xss-由来の改竄を破棄する-2026-05-25--pr-420-ログイン-ux-改修)
+- [§5.X+96 「ログイン」含むボタン追加で getByRole substring が strict 違反](#5x96-ログイン画面に-ログイン-を含む文言のボタンを追加すると既存-e2e-の-getbyrolebutton--name-ログイン--substring-match-が-strict-mode-違反になる--ボタン文言から-ログイン-を除く--fixture-を--exact-true--化する-2026-05-25--pr-420-ci-失敗修正)
+- [§5.X+168 chat 履歴 sessionStorage 3 点セット必須](#5x168-severity-1-client-side-履歴の-sessionstorage-永続化は-ログアウト-clear--ユーザ-id-変化検知--件数上限-の-3-点セットが必須-featchat-history-and-accordion-2nd-round-fullscan-で-t-cs-1314-検出)
+- [§5.X+185 Stripe Checkout 戻り時の session 失効を pending flag で救済](#5x185-severity-high-ux-矛盾-stripe-checkout-戻り時の-session-失効でカード入力完了--ログイン画面--認証エラーレスポンスをそのまま-return-せずテナント設定画面に-pending-flag-で戻す-2026-05-30--pr-469-follow-up--featcredit-card-ui-guard)
+
+### テナント分離・権限・可視性
+- [§5.14 readOnly edit dialog の子 fetch が認可漏洩 (403)](#514-readonly-な-edit-dialog-から-fetch-する子コンポーネントは認可漏洩-403-console-エラー-を起こす-fixattachment-list-non-member-403)
+- [§5.19 横断ビューの可視性レイヤ整理](#519-横断ビュー-全リスク--全課題--全振り返り--全ナレッジ-における可視性レイヤの整理-fixcross-list-non-member-columns)
+- [§5.51 公開範囲 (visibility) と認可マトリクス統合](#551-公開範囲-visibility-と認可マトリクスの統合-pr-fixvisibility-auth-matrix-2026-05-01)
+- [§5.61 /api/attachments の visibility-aware 認可](#561-apiattachments-の-visibility-aware-認可--memo-にコメント機能を追加-pr-213-2026-05-01)
+- [§5.X+13 マルチテナント越境バグの恒久対策](#5x13-マルチテナント越境バグの恒久対策パターン--過去指示が反映されない根本原因と再発防止-pr-featissues-from-feedback-2026-05-09)
+- [§5.X+14 テナント越境バグ全網羅監査と Phase 1/2](#5x14-テナント越境バグ全網羅監査と-phase-1-修正--phase-2-残課題-pr-featissues-from-feedback-2026-05-09-hotfix)
+- [§5.X+18 severity-1 セキュリティ仕様の 3 層防御テスト戦略](#5x18-severity-1-セキュリティ仕様の-3-層防御テスト戦略-pr-feattenant-isolation-comprehensive-tests-で確立)
+- [§5.X+23 super_admin Default テナント集計除外 vs 表示](#5x23-super_admin-ダッシュボードで-default-テナント-運営者自身-を-集計除外-しても-画面非表示にはしない--集計-と-表示-の境界を明確に分ける-pr-x--2026-05-11)
+- [§5.X+85 UI=API 一致でハンドラ削除 → 405 を E2E 期待値に追加](#5x85-uiapi-一致原則で-api-ハンドラを削除すると-405-が返るようになりテナント越境-e2e-の期待値配列に-405-を追加する必要がある-2026-05-20--pr-416-e2e-fail)
+- [§5.X+153 「他人参照不可」可視性 + 編集権限の組合せは service 層で拒否](#5x153-severity-1-情報漏洩リスク-他人参照不可可視性--編集権限の組合せは-service-層で明示的に拒否しないとapi-直叩きで可視性矛盾の編集権限が付与される-pr-448)
+- [§5.X+154 個別/bulk update の認可乖離で silent skip](#5x154-severity-2-ui-と認可の乖離-個別-update-と-bulk-update-で認可ロジックが乖離するとui-から選択可能だが-silent-skip-される行が発生する-pr-448)
+- [§5.X+155 assigneeId validator に service 層 tenantId 検証必須](#5x155-severity-1-テナント越境攻撃-担当者-assigneeid-フィールドの-validator-は-uuid-形式しかチェックしないためservice-層で-tenantid-検証を必須にする-pr-448-post-pr-3-巡目検証で発覚)
+- [§5.X+157 User soft-delete を assignee 検証で考慮](#5x157-severity-2-user-の-soft-delete-を-assignee-検証で考慮しないと退職者が担当者に指定可能になる罠-pr-448-post-pr-4-巡目検証で発覚)
+- [§5.X+169 @default(dbgenerated tenantId) の silent Default 混入](#5x169-severity-1-個人情報漏洩リスク-prisma-schema-の-defaultdbgenerated-tenantid-は-コード側-tenantid-渡し忘れ-を-silent-に-default-テナント混入-させる罠-adr-0024--fixtenant-id-default-removal-で発覚)
+- [§5.X+184 Server 403 ガードに対応する Client UI disable 二段ガード](#5x184-severity-high-ux-矛盾-server-side-403-ガードに対応する-client-side-ui-option-disable-がなく選択できるのに保存すると-403-が発生--feature-flag-は-api-と-ui-の両側に二段ガードで反映-2026-05-30--pr-469-follow-up--featcredit-card-ui-guard)
+
+### 課金・Stripe・請求堅牢性
+- [§5.X+3 LLM 機能に緊急停止フラグを最初から](#5x3-llm-機能の本番投入には緊急停止フラグを最初から仕込む-pr-8--t-03-リリース準備--2026-05-03)
+- [§5.X+24 集計除外フィルタは集計/snapshot/履歴の 3 段全部](#5x24-集計除外フィルタは-集計スナップショット履歴クエリの-3-段全部-に揃えないと月次-csv-請求書根拠-に-default-が混入する-2026-05-11-監査で検出)
+- [§5.X+47 課金根拠データは画面遷移時再集計 + 手動再集計ボタン](#5x47-ダッシュボード課金根拠データは日次-cron-キャッシュ依存を避け画面遷移時に再集計--手動再集計ボタン-を必ず併設する-2026-05-14-で確立)
+- [§5.X+50 Bulk LLM は withMeteredLLM を 1 度ラップ + 分割呼出](#5x50-bulk-な-llm-api-呼出を実装するときは-withmeteredllm-を-1-度だけラップ--callback-内で-voyageembed-を分割呼出--apicalllog--画面表示の-api-呼出回数を統一する-pr-357--2026-05-14-で確立)
+- [§5.X+51 visibility='draft' なら embedding 生成しない](#5x51-公開範囲visibility-概念のあるエンティティではvisibilitydraft-なら-embedding-生成しないがコスト最適化の鉄則--提案エンジンに乗らないデータに課金しない-pr-357--2026-05-14-で確立)
+- [§5.X+60 「1 業務操作 = 1 ApiCallLog」がエンティティ作成で抜けやすい](#5x60-1-業務操作--1-apicalllogルールが新規エンティティ作成で抜けやすい--プロジェクト作成で-2-件発生し-beginner-上限が実質半分で枯渇-2026-05-15)
+- [§5.X+62 提案候補化に追加条件があるなら embedding 判定も絞る](#5x62-提案候補化に-state-等の追加条件があるエンティティでは作成更新時の-embedding-生成判定もその条件で絞る-riskissue-stateresolved--2026-05-15)
+- [§5.X+63 全空文字でも LLM を呼ぶ罠 (Anthropic 課金)](#5x63-作成時の入力が全空文字でも-llm-を呼んでしまう罠-project-全空-text--anthropic-課金--2026-05-15)
+- [§5.X+78 画面表示の真値ベース化 (counter → ApiCallLog SUM)](#5x78-画面表示の真値ベース化-counter--apicalllog-sum-は-e2e-fixture-の-seed-整合性を破壊する--fixture-も同時に整合させる-2026-05-19--pr-412)
+- [§5.X+79 月次 snapshot は ApiCallLog SUM ベースに統一](#5x79-月次-snapshot-を-currentmonthapicallcount-counter-ベースで保存すると過去月の請求書根拠が永久に-drift-で固定される--apicalllog-sum-ベースに統一-2026-05-19--pr-412)
+- [§5.X+81 (2件目) 請求金額計算ロジックのバグは保存値 vs 再計算値突合](#5x81-請求金額計算ロジック自体のバグは保存値-vs-再計算値突合でしか検知できない-2026-05-19--pr-412--pr-v84)
+- [§5.X+99 Netlify Deploy Preview で Stripe Checkout 戻り先が本番 URL](#5x99-netlify-deploy-preview-で-stripe-checkout-完了後の戻り先が本番-url-に飛ぶ--nextauth_url-を-build-wrapper-で-deploy-context-に同期--sanitizereturnto-で-env-url-も許可オリジンに追加-2026-05-21--pr-425-stripe-staging-uat)
+- [§5.X+100 Stripe 払い設定切替の client state 同期漏れ = 請求漏れ](#5x100-severity-1-stripe-払い設定切替-ui-で-client-state-同期漏れ--旧-server-ガード残置がcredit_card-払いなのにカード未登録放置--請求漏れリスク直結-2026-05-22--pr-425-stripe-ui-改修)
+- [§5.X+101 Netlify Deploy Preview 本番 URL リダイレクト真の根本解決](#5x101-severity-1-netlify-deploy-preview-の本番-url-リダイレクト問題--kdd-5x99-段階-a-対策の認識誤りと真の根本解決-nextauth_url-の-context-分離--trusthost-フォールバック-2026-05-22--pr-425-stripe-uat)
+- [§5.X+103 Stripe Checkout を sameSite='strict' cookie が壊す](#5x103-severity-1-請求堅牢性-stripe-checkout-コールバックを-samesitestrict-cookie-が壊す--paymentmethod-切替の-1-ステップ強制遷移化-2026-05-22--pr-425)
+- [§5.X+104 Stripe 自動請求の堅牢性 多層防御ロードマップ](#5x104-stripe-自動請求の堅牢性-多層防御--現状の実装状況と段階改修ロードマップ-2026-05-22--pr-425-横断調査)
+- [§5.X+105 Subscription cancel 直後の sub_id 残置で二重 Subscription](#5x105-severity-1-請求堅牢性-stripe-subscription-cancel-直後のdb-sub_id-残置が銀行振込戻し--カード払い再切替の二重-subscription-エラーを引き起こす--webhook-待ちを止めて呼出側で即時クリアする-2026-05-22--pr-425-tc-7-検証中)
+- [§5.X+106 idempotencyKey に paymentMethodId を含めないとカード再登録が壊れる](#5x106-severity-1-請求堅牢性-stripe-idempotencykey-を固定-tenantid-のみで構成するとカード再登録フローが永久に壊れる--paymentmethodid-を含めて試行ごとに区別する-2026-05-22--pr-425-tc-7-再検証中)
+- [§5.X+107 複数 active Subscription 並存で二重課金リスク](#5x107-severity-1-請求堅牢性-stripe-customer-に複数-active-subscriptionが並存して二重課金リスク--setup-直前に全-active-を強制-cancel-して-db-drift-を自動修復する-2026-05-22--pr-425-tc-1-反復検証中)
+- [§5.X+108 Customer.default_payment_method ≠ Subscription 側の不一致](#5x108-severity-1-一貫性-stripe-customerinvoice_settingsdefault_payment_method--subscriptiondefault_payment_method--画面のカード--請求カード一貫性のため-subscription-側を優先取得する-2026-05-22--pr-425-tc-3-検証中)
+- [§5.X+109 Customer Portal でデフォルト変更しても既存 Sub の引落カードは不変](#5x109-severity-1-一貫性-stripe-customer-portal-でデフォルト変更しても既存-subscription-の引落カードは変わらない仕様への根本対策--カード変更動線を-portal-から-stripe-checkout-直-update-に統一-2026-05-22--pr-425-tc-3-反復検証中)
+- [§5.X+113 ADR 採択後の dead code が UI/API plan 矛盾を 2 週間放置](#5x113-severity-1-仕様整合性-adr-採択後の-dead-code-残置が-ui-自動切替-と-api-plan-強制上書き-を同時並行させui-で-expert-を選んでも-beginner-で-processed-される矛盾を-2-週間放置-2026-05-22--adr-0016-revised)
+- [§5.X+127 課金 featureUnit 縮小 (ADR-0019) で fixture が ¥0 破綻](#5x127-severity-1-請求不整合-課金-featureunit-縮小-adr-0019-で-e2e-fixture-が無料-featureunit-を使っており-super_admin-ダッシュボード集計が-0-表示で破綻--fixture-を-billable_feature_units-に揃える-2026-05-25--pr-441)
+- [§5.X+132 requestId billingScope は composite key で完全 unique](#5x132-severity-1-二重課金リスク-requestid-の-billingscope-識別が-suffix-の有無のみで衝突可能--composite-key-化で完全-unique-保証-2026-05-25--pr-443)
+- [§5.X+148 3 レイヤ請求モデルの SKU 追加は 4 経路同時 fix](#5x148-3-レイヤ請求モデルの-sku-追加は-migration--snapshot--表示--csv-の-4-経路-同時-fix-が必須-pr-446)
+- [§5.X+189 LEARNING_FREE 等の非課金 LLM 経路は ALLOWLIST_EXACT へ](#5x189-learning_free-等の意図的に-withmeteredllm-を経由しないllm-経路は-check-llm-billing-bypass-の-allowlist_exact-に追加必須-pr-471-ci-fail--adr-0027)
+- [§5.X+201 LEARNING_FREE は UI counter に表示されない仕様 (要注記)](#5x201-severity-low-ux-期待値ズレ-learning_free-featureunit-は-ui-counter-に表示されない仕様--ui-上で必ず注記する-pr-471--2026-05-30)
+
+### 容量・ストレージ課金ガード
+- [§5.X+27 ストレージ上限を LLM プランから切離し共通ベース + add-on 軸](#5x27-ストレージ上限を-llm-プランから切り離し-20mb-共通ベース--add-on-独立軸に統一--横展開可能な-guard-サービス化-pr-3--2026-05-15)
+- [§5.X+29 個別 CRUD のストレージ Pre-check は API route 層に集約](#5x29-個別-crud-経路のストレージ-pre-check-は-api-route-層に集約する-pr-5--2026-05-15)
+- [§5.X+130 storage-guard が一般 CRUD で peak 永久 0 の隠れ穴を daily cron で補完](#5x130-severity-1-課金漏れ-adr-0020-で-storage-guard-が-import-系のみ呼ばれ一般-crud-では-peak-永久-0-のままになる隠れ穴を-2-回目フルスキャンで発見--daily-cron-で-peak-max-同期する補完層を追加-2026-05-25--pr-443)
+- [§5.X+131 ADR-0020 $queryRawUnsafe を Prisma.sql/Prisma.raw に refactor](#5x131-severity-1-セキュリティ-adr-0020-動的-sql-の-queryrawunsafe-が-sast-スキャナで-critical-3-件検出--prismasql--prismaraw-経路に-refactor-してスコア-7898-2026-05-25--pr-443)
+- [§5.X+133 circuit breaker open の手動復旧 API 欠如 (死罠)](#5x133-severity-2-運用死罠-adr-0020-circuit-breaker-open-状態の手動復旧-api-が無くopen-したテナントが永久-write-拒否される死罠--super_admin-endpoint-追加-2026-05-25--pr-443)
+- [§5.X+134 ADR-0020 4 回目検証で migration/N+1/認可/agent 誤検出](#5x134-severity-2-4-回目検証で-4-件発見-adr-0020-で-migration-初期化漏れ--n1--管理テナント認可漏れ--agent-誤検出-2026-05-25--pr-443)
+- [§5.X+135 ADR-0020 5 回目検証で実バグ 0 確認](#5x135-severity-info-5-回目検証で実バグ-0-を確認-adr-0020-pr-443-の-chain-effect--wiring--precision-を網羅検証新規発見なし-2026-05-25--pr-443)
+- [§5.X+136 deferred 項目をユーザ判断で本 PR に取込](#5x136-severity-info-ユーザ判断で-deferred-項目を本-pr-に取込-r12--r12-admin-ui--drift-batch--統合テスト--r19-部分削除-2026-05-25--pr-443)
+- [§5.X+137 ADR-0020 6 回目検証で直近追加分 3 件発見](#5x137-severity-2-6-回目検証で直近追加分の-3-件発見-memory-inefficiency--dynamic-import--defense-in-depth-2026-05-25--pr-443)
+- [§5.X+158 旧 DB column 撤去は 6 レイヤ同時撤去](#5x158-severity-high-旧機能の-db-column-撤去は-schema--service--ui--jwt-claim--関連-script--ドキュメントの-6-レイヤ同時撤去が必須-pr-450-storage_addon-全廃)
+- [§5.X+161 旧 DB column 撤去は 7 layers (6+e2e/fixtures)](#5x161-severity-high-旧機能の-db-column-撤去は7-layers--6-layers--e2efixtures-pr-451-で発覚5x158-の続報)
+- [§5.X+163 Prisma XOR は excess property check が効かず tsc すり抜け](#5x163-severity-1-本番-runtime-障害リスク-prisma-xorupdateinput-uncheckedupdateinput-は-excess-property-check-が効かず-tsc-で検出されない-pr-451-post-pr-フルスキャン検証で発見)
+
+### 提案エンジン・embedding・チャット / FAQ・AIヘルプ
+- [§5.13 Issue/Retrospective 提案ロジックを tag-aware 統一](#513-過去-issue--retrospective-の提案ロジックを-knowledge-と同等の-tag-aware-に統一-fixsuggestion-tag-parity)
+- [§5.20 提案リストから自プロジェクト紐付け済を DB 除外](#520-提案リストから自プロジェクト紐付け済を-db-除外-で外す-pr-160--fixsuggestion-exclude-self-project)
+- [§5.38 空白区切り OR キーワード検索の共通ヘルパ](#538-空白区切り-or-キーワード検索の共通ヘルパ-phase-c-要件-19-で確立)
+- [§5.62 提案エンジン v2 の設計議論と意思決定ログ](#562-提案エンジン-v2-の設計議論と意思決定ログ-t-03-設計フェーズ-2026-05-01)
+- [§5.X+52 form 連動 preview API は debounce + AbortController + 共通 hook](#5x52-form-入力連動の-preview-api-は-debounce--abortcontroller--共通-hook-で実装する-pr-361--2026-05-14)
+- [§5.X+180 Tier UI Top 5 + 折りたたみ統一 (姉妹機能で先行検証)](#5x180-ux-向上-tier-ui-の-top-5--中程度の関連-折りたたみ統一--姉妹機能-chat-panel-で先行検証済みパターンを本丸-suggestions-panel-に展開共有定数で-dry-維持-2026-05-29--featsuggestion-tier-ux-improvement)
+- [§5.X+182 姉妹 UI 横展開時に i18n placeholder {count} セマンティクスをコピー忘れ](#5x182-severity-high-ux-一貫性バグ-姉妹-ui-コンポーネントへのパターン横展開時i18n-placeholder-の-count-セマンティクスをコピーし忘れた--フルスキャン検証-2-巡目で同じラベルなのに片方は全件数もう片方は折りたたみ件数を検出-2026-05-29--pr-465-follow-up)
+- [§5.X+186 after() で重い LLM をクリティカルパス外へ](#5x186-nextjs-after-で重い-llm-呼出を-response-クリティカルパスから外す-pr-9--adr-0026)
+- [§5.X+187 FAQ 文言と実装の drift 検知](#5x187-faq-文言と実装の-drift-検知パターン-featfaq-revamp-pr1)
+- [§5.X+188 FAQ AI チャット ハルシネーション対策 5 点](#5x188-faq-ai-チャット-ハルシネーション対策-5-点セット-featfaq-revamp-pr5-7--adr-0027)
+- [§5.X+191 Anthropic SDK の system に cache_control 付け忘れ](#5x191-anthropic-sdk-で-system-プロンプトに-cache_control-を付け忘れる罠-pr-471--full-context-faq-コスト爆発防止)
+- [§5.X+192 既存資産流用を検討せず full-context を選んだ設計判断ミス](#5x192-severity-high-設計判断ミス-既存資産流用を検討せず短期最適化で-full-context-を選んだ罠--ユーザの長期構想を見落とすと撤回コストが大きい-pr-471--adr-0027--adr-0028)
+- [§5.X+193 FAQ embedding 同期 drift 検知の 4 層防御](#5x193-severity-1-静かな品質劣化-faq-embedding-同期-drift-検知の-4-層防御パターン--deploy-後の-generate-スクリプト実行漏れを構造的に潰す-adr-0028-rag-移行)
+- [§5.X+194 外部 LLM API 暴走防止の 7 層パターン](#5x194-severity-medium-外部-llm-系-api-の暴走防止は認証--ip-rate-limit--月次-hard-cap--race-condition-guard--入力-validation--出力-size-cap--応答値-validation-の-7-層パターン-pr-471-フルスキャン検証--adr-0028)
+- [§5.X+196 FAQ embedding 生成は Netlify build hook で自動化](#5x196-severity-medium-運用負債-faq-embedding-生成は手動-sop-ではなく-netlify-build-hook-で自動化する-pr-471--2026-05-30-5x193-続報)
+
+### CI・品質ゲート・セキュリティスキャン
+- [§5.47 PR ワークフロー security-check 統合 + score 90+ 維持](#547-pr-作成ワークフローへの-security-check-統合と-score-90-維持戦略-pr-197-で確立)
+- [§5.48 セキュリティスコア初回ブリングアップ (30→94) + CI Gate 化](#548-セキュリティスコア初回ブリングアップ-30--94-と-ci-gate-化-pr-198-で確立)
+- [§5.X+7 ブランチカバレッジ閾値 (70%) 維持戦略](#5x7-ブランチカバレッジ閾値-70-維持戦略-pr-289-hotfix--2026-05-09)
+- [§5.X+15 tsc --noEmit と build は別物、コミット前 build 必須](#5x15-pnpm-tsc---noemit-と-pnpm-build-nextjs-typescript-は別物--コミット前-build-実行が必須-pr-297-hotfix)
+- [§5.X+16 CodeQL 認可 dispatch 偽陽性は switch 文で構造解消](#5x16-codeql-の-user-controlled-な認可-dispatch-偽陽性は-switch-文-で構造的に解消する-pr-302-で-3-段階の試行錯誤を経て確立)
+- [§5.X+45 schema に User 列追加で PII/EXPORT 分類更新 (L-6 CI ガード)](#5x45-schema-に-user-列を追加した-pr-は-必ず-user_pii_fields-か-user_export_fields-の分類を更新する--l-6-ci-ガードが想定通り機能した例-pr-350-で確認)
+- [§5.X+49 新 route/page は E2E_COVERAGE.md 追記 (coverage-check)](#5x49-新規-routets--pagetsx-を追加した-pr-は-必ず-docstest_coveragemd-にエントリを追記--ci-の-e2ecoverage-check-が-exit-1-で落とす-2026-05-14-pr-355-で実体験)
+- [§5.X+53 Supabase Data API は public 全テーブル anon grant 済](#5x53-supabase-data-api-は-デフォルトで-public-全テーブルが-anon-に-grant-済み--prisma-直結のみのプロジェクトでも放置すれば全件漏洩-2026-05-14-で確立)
+- [§5.X+58 push 前セルフチェックに e2e:coverage-check 必須](#5x58-pr-push-前のセルフチェックリストに-pnpm-e2ecoverage-check-を含めないと-ci-でしか発覚しない--メモリ--feedback-ノートに記録するだけでは不十分-pr-372-で実体験--2026-05-14)
+- [§5.X+86 security-check の SQL injection ガードはコメント内も検出](#5x86-security-checkts-の-sql-injection-ガードはコメント内のキーワードも文字列マッチで-critical-検出する--prisma-の-unsafe-系-api-名はコード本体だけでなくコメントからも除去する-2026-05-20--pr-416)
+- [§5.X+87 再帰 sanitize の動的 key 書込で CodeQL prototype pollution HIGH](#5x87-再帰-sanitize-関数で-objectentries-の-key-を信頼して書き込むと-codeql-が-remote-property-injection-prototype-pollution-を-high-検出する--objectcreatenull--特殊キー除外で二重防御する-2026-05-20--pr-416)
+- [§5.X+88 Remote property injection は JSON.stringify replacer で sanitize](#5x88-codeql-の-remote-property-injection-は-objectdefineproperty-でも依然-high-検出する--動的キー書き込みを使わず-jsonstringifyobj-replacer-で-sanitize-する-2026-05-20--pr-416)
+- [§5.X+110 bash pipe で exit code 誤判定 + coverage-check 漏れ](#5x110-severity-2-品質ゲート-bash-pipe-で-exit-code-を誤判定--ci-が-fail-するのにローカルでは-pass-と錯覚する罠--新規-api-route-で-e2ecoverage-check-漏れ-2026-05-22--pr-425-ci-fail-検出)
+- [§5.X+111 契約変更 + invariants test exemption 漏れの同時 CI fail](#5x111-severity-2-品質ゲート-実装側の契約変更-idempotencykey-スキーマ拡張-と-invariants-test-の-exemption-漏れ-新規-service-ファイル追加-の-2-件同時-ci-fail-2026-05-22--pr-425-2-回目-ci-fail)
+- [§5.X+115 新規 CVE 公開日に green PR が突然 red + OSV/pnpm-audit ズレ](#5x115-severity-2-ci-突発-fail-新規-cve-が公開された日に過去-green-だった-pr-が突然-red-になる罠--osv-scanner-と-pnpm-audit-の判定基準ズレ-2026-05-23--pr-430)
+- [§5.X+117 CodeQL の regex validate 済を stored XSS 誤検出 + TOCTOU](#5x117-severity-2-ci-突発-fail-codeql-が-regex-で-boundary-validate-された文字列-を-stored-xss-と誤検出する罠--statsync--readfilesync-の-toctou-警告-2026-05-23--pr-433)
+- [§5.X+120 公開ページ layout の await auth() 直呼で banned pattern fail](#5x120-severity-2-ci-fail-公開ページ-layout-の-await-auth-直接呼出が-check-banned-auth-patterns-で-fail--requireauthforlayout-は-redirect-するため転用不可--optionalauthforlayout-を新設-2026-05-24--pr-439)
+- [§5.X+122 eslint react-hooks 7.x refs-during-render + testid 衝突](#5x122-severity-2-ci-fail-eslint-plugin-react-hooks-7x-の-refs-during-render-rule--testid-衝突-ローカル-lint-で見落として-ci-で-10-件-error--3-重-testid-衝突を-audit-で発見-2026-05-24--pr-439)
+- [§5.X+140 package.json 編集後 pnpm install 忘れで frozen-lockfile 7 ジョブ fail](#5x140-severity-high-ci-ゲート全滅--packagejson-編集後に-pnpm-install-を忘れて-pnpm-lockyaml-が乖離ci-の---frozen-lockfile-で-7-ジョブ同時-fail-2026-05-26--pr-445)
+- [§5.X+142 check-llm-billing-bypass は JSDoc 内 voyageEmbed() も誤検知](#5x142-severity-medium-scriptscheck-llm-billing-bypassts-は-jsdoc-コメント内の-voyageembed-表記も誤検知するadr-0019-アンチパターン記述時は別表記を使う-2026-05-26--pr-445)
+- [§5.X+143 リテラル NULL バイトで git が binary 判定し review 不能](#5x143-severity-high-ソースコード内のリテラル-null-バイト-0x00-を埋めると-git-が-source-を-binary-判定し-review-が機能しない-2026-05-26--pr-445-フルスキャン検証で発覚)
+- [§5.X+152 migration SQL の table 名 typo が以降の deploy を全 block](#5x152-severity-high-prisma-migration-directory-の-sql-内-table-名-typo-は-failed-migration-entry-を残し以降の-deploy-を全-block-する-pr-448-post-pr-フルスキャン検証で発覚)
+- [§5.X+176 main の test 234 型エラーは PR 範囲外として無視可](#5x176-main-の-test-234-個-type-エラーは-pr-範囲外として無視可能ただし新規-test-は型エラーゼロを徹底-adr-0025-pr-461-で確認)
+- [§5.X+178 test の tsc strict エラーは helper に as を閉じ込める](#5x178-severity-medium-型負債蓄積-test-ファイルの-tsc-strict-エラーを-as-any-で潰すと-eslint-typescript-eslintno-explicit-any-で爆発する--helper-に-as-を閉じ込めることで両立する-pr-fixtest-tsc-strict-cleanup--2026-05-29)
+- [§5.X+190 Prisma/Anthropic SDK route は runtime='nodejs' 明示](#5x190-prisma--anthropic-sdk-を使う新規-api-route-には-export-const-runtime--nodejs-を必ず明示-pr-471-netlify-edge-function-crash)
+- [§5.X+198 recordError は DB のみ、catch に console.warn 併出し必須](#5x198-severity-1-デバッグ不能化-recorderror-は-db-の-systemerrorlog-にのみ書込み-function-logs-に出ない--真因確定が必要な-catch-には-consolewarn-併出し必須-pr-471--2026-05-30)
+
+### E2E・Playwright・visual regression
+- [§5.15 表示条件緩和で mobile overlap → E2E click intercept](#515-ui-要素の表示条件を緩和したら-mobile-viewport-で-overlap-して-e2e-click-が-intercept-される-fixquick-ux-pr-143-hotfix)
+- [§5.X+5 MFA 強制緩和で E2E アサーション + visual baseline 両更新](#5x5-認可仕様-mfa-強制対象-を緩和したら-e2e-アサーションと-visual-baseline-両方を更新する-pr-283-hotfix--2026-05-09)
+- [§5.X+22 新 page/route で E2E_COVERAGE.md / UI 移管で visual baseline 再生成](#5x22-新規-pagetsx--routets-を追加したら-必ず-docstest_coveragemd-更新ui-移管-pr-は-visual-baseline-再生成必須--旧ルート削除と併せた一括対応のチェックリスト-pr-327--pr-1-tenant-i18n--2026-05-11)
+- [§5.X+35 multi-project Playwright で同 spec 並列が DB 同名行量産](#5x35-multi-project-playwright-で-同-spec-が複数-project-で並列実行-されると-fixture-が-db-に同名行を量産する罠--name-に-callsuffix-を必ず付与cleanup-は-fk-順を厳守redirect-during-goto-は-waituntil-commit-pr-337-e2e-fix--2026-05-12)
+- [§5.X+39 rate limit/lockout/CAPTCHA は E2E 並列実行と衝突、disable 経路用意](#5x39-セキュリティ強化-rate-limit--lockout--captcha-を追加するときは-e2e-並列実行が同一-ip-で大量認証する-性質と必ず衝突する--環境変数で-disable-経路を最初から用意する-pr-345--2026-05-13)
+- [§5.X+40 waitForURL は終端到達形にする (negation は race)](#5x40-playwright-waitforurl-の条件式は-終端到達-を表す形にする--中間状態-を表す-negation-は-redirect-chain-途中で抜けて-race-を起こす-pr-345-で確立)
+- [§5.X+73 UI 変更で visual baseline 更新忘れ](#5x73-ui-変更時に視覚回帰-baseline-更新を忘れて-ci-fail-2026-05-19)
+- [§5.X+74 E2E fixture cleanup の FK 制約違反 flake](#5x74-e2e-fixture-cleanup-の-foreign-key-制約違反による-flake-2026-05-19)
+- [§5.X+76 dynamic segment の slug 名衝突で WebServer 起動失敗](#5x76-nextjs-dynamic-segment-の-slug-名衝突で-webserver-が起動失敗--e2e-全停止-2026-05-19--pr-411)
+- [§5.X+97 ログイン UI 変更で baseline outdated → [gen-visual] で再生成](#5x97-ログイン画面の-ui-を変更したら-visual-regression-test-の-baseline-画像が-outdated-になる--gen-visual-タグ付き-commit-で-baseline-自動再生成-workflow-を発火する-2026-05-25--pr-420-ci-失敗修正)
+- [§5.X+98 baseline 自動 push が同時 push で fast-forward 拒否 → 手動配置 fallback](#5x98-e2e-visual-baselineyml-workflow-の-baseline-自動-push-が他者の同時-push-で-fast-forward-拒否される--artifact-から-png-を取得して手動配置する-fallback-経路を確保する-2026-05-25--pr-420)
+- [§5.X+116 全ページ常時表示 UI (FAB) 追加で dashboard 系 mobile baseline 一斉 fail](#5x116-severity-2-visual-regression-全ページに常時表示するグローバル-ui-要素-fab-を追加するとdashboard-系の-chromium-mobile-visual-baseline-が一斉に-fail-する罠-2026-05-23--pr-432)
+- [§5.X+118 filename→slug 抽出 regex が E2E でしか発覚 + 単体が I/O 素通り](#5x118-severity-2-spec実装乖離-filename--slug-抽出-regex-で-ハイフン区切り全体を-slug-にしたい-のに-日付の後ろだけ-になり-e2e-でしか発覚しないバグ--単体テストが-io-層を素通りした罠-2026-05-23--pr-433)
+- [§5.X+121 [gen-visual] 後の UI 変更で baseline stale → 12 件 fail](#5x121-severity-2-e2e-fail-gen-visual-後に-ui-変更コミットを追加すると-visual-baseline-が-stale-化--fullpage-screenshot-が-12-件一斉に-fail--chromium-mobile-の-dialog-操作も連鎖-timeout-2026-05-24--pr-439)
+- [§5.X+123 auto-hide ヘッダの translate-y/will-change が mobile dialog click dead](#5x123-severity-1-ux-dead-auto-hide-ヘッダの-translate-y-0--will-change-transform-が常時-stacking-context-を生成--chromium-mobile-で-dialog-内-click-が完全-dead--同-pr-の-accountmenu-redesign-で-e2e-spec-の-trigger-特定が崩壊-2026-05-24--pr-439)
+- [§5.X+124 chromium-mobile DPR=3 で hit-test 誤判定 → { force: true }](#5x124-severity-2-ci-突発-fail-chromium-mobile-iphone-13-emulation-dpr3-で-dialog-内-button-の-playwright-hit-test-が誤判定し別要素が-intercept-報告される事象--force-true-で-bypass--kdd-5x121123-の前回分析の最終訂正-2026-05-24--pr-439)
+- [§5.X+125 hit-test 誤判定の系統的影響 → 全 dialog click を { force: true }](#5x125-severity-2-ci-連鎖-fail-5x124-hit-test-誤判定が-dialog-内-click-全般に系統的影響することを実証--モグラ叩きを避けるため全-dialog-内-click-を一括-force-true-化-2026-05-24--pr-439)
+- [§5.X+126 事象範囲を chromium-mobile + transform 配下 click 全般に拡大](#5x126-severity-2-ci-連鎖-fail-5x125-の-dialog-内-click-限定の事象範囲推定が誤りでappheader-内-click--date-picker-quick-action-も対象--事象範囲を-chromium-mobile--stickyfixedtransform-配下-click-全般-に拡大-2026-05-24--pr-439)
+- [§5.X+128 inline login が explicit-signout CSRF race で flake → loginAsGeneral](#5x128-severity-2-ci-連鎖-fail-e2e-spec-16-column-sort-の-inline-login-が-nextauth-explicit-signout-経由-csrf-cookie-clear-race-で-flake--loginasgeneral-ヘルパに揃え--retries-0-削除-2026-05-25--pr-441)
+- [§5.X+129 inline login CSRF race を 3 visual spec へ横展開](#5x129-severity-2-inline-login-csrf-race-を-3-visual-spec-まで横展開--chromium-mobile-spec-02-dropdown-click-flake-は既存問題と再確認-2026-05-25--pr-441-follow-up)
+- [§5.X+138 explicit-signout から CSRF cookie 削除を除去し MissingCSRF race 構造解消](#5x138-severity-2-e2e-連鎖-fail-根本原因-fix-explicit-signout-から-csrf-cookie-削除を除去--login-flow-missingcsrf-race-を構造的解消-2026-05-25--pr-443)
+- [§5.X+139 dropdown menuitem click microtask race を 2 段 explicit wait で解消](#5x139-severity-2-既存-flake-根本原因-fix-chromium-mobile-spec-02-dropdown-menuitem-click-の-microtask-race-を-menuitem-visible-待機--menu-close-確認-の-2-段-explicit-wait-で構造的解消-2026-05-25--pr-444)
+- [§5.X+144 共通コンポーネント UI 追加で全 dashboard baseline 連鎖 fail](#5x144-共通コンポーネントへの-ui-追加でそれを内包する全-dashboard-visual-baseline-が連鎖-fail-する-transitive-closure-trap--pr-446-で発覚)
+- [§5.X+159 AppHeader モバイル縮退で getByText.first() が hidden 拾い fail](#5x159-severity-2-e2e-flake-appheader-をモバイル縮退-sminline-すると-getbytextfirst-が-hidden-要素を拾い-chromium-mobile-で-fail-する-pr-451-マスコット導入)
+- [§5.X+162 機能撤去で UI ラベル簡素化 → getByText 固定マッチ spec も更新](#5x162-severity-2-e2e-機能撤去-pr-で-ui-ラベルを簡素化したらその文言を-getbytext-で固定マッチしている-e2e-spec-も同時に更新する-pr-451-で発覚5x161-と同-pr-で連続発覚)
+- [§5.X+202 getByText substring match が見出し/タイルラベル共通文字列で strict 違反](#5x202-severity-medium-ci-のみ赤ローカル-test-pass-で気付けない-playwright-getbytext-は-substring-match-なので見出しと内部タイルラベルが共通文字列を含むと-strict-mode-違反で-fail-する-pr-473--2026-05-31)
+
+### マイグレーション・Prisma・データモデル
+- [§5.12 DB nullable 列の Zod schema は .nullable().optional() 必須](#512-db-nullable-列の-zod-schema-は-nullableoptional-必須-pr-138-後-hotfix)
+- [§5.28 Prisma migration UPDATE 文は列存在を grep](#528-prisma-migration-の-update-文を書くときは-init-migration-で列存在を-grep-する-pr-178-e2e-p3018-hotfix)
+- [§5.30 master-data.ts enum 値変更の横展開チェックリスト](#530-master-datats-の-enum-値を変更するときの横展開チェックリスト-pr--hotfix-で確立)
+- [§5.40 派生カラムをサービス層で永続化](#540-派生カラムをサービス層で永続化するパターン-phase-d-要件-11-で確立)
+- [§5.42 migration を含む PR は本番手動適用必須](#542-migration-を含む-pr-は本番手動適用が必須--pr-description-にチェックリスト必須-phase-d-hotfix-で確立)
+- [§5.X+1 schema.prisma 変更は本番 DB に自動反映されない](#5x1-schemaprisma-の変更は本番-db-に自動反映されない-pr-fixmissing-migrations--2026-05-03)
+- [§5.X+6 新テーブル追加で cascade 削除パス全洗い出し必須](#5x6-新テーブル追加時は-cascade-削除パスの全洗い出しが必須-p-3--2026-05-08--本番障害--2026-05-09)
+- [§5.X+8 1:N → M:N asset 紐付けモデル変更](#5x8-1n--mn-への-asset-紐付けモデル変更パターン-pr-featasset-multi-project-linking--2026-05-09)
+- [§5.X+38 サービス層で新ラベル literal は型 union 側にも追加](#5x38-サービス層で新しいラベル値-enum-like-literal-を増やしたら-型-union-側にも必ず追加--pnpm-test-は通るが-pnpm-build-tsc-で初めて検出される-pr-341--2026-05-12)
+- [§5.X+41 .gitignore された generated/ がブランチ切替で別生成物混入](#5x41-gitignore-された-prisma-generated-ディレクトリは-ブランチ切替で同期されず別ブランチの生成物が現ブランチに混入する罠-pr-348-で遭遇)
+- [§5.X+55 is_sample_data 移動 migration は親 FK エンティティ移動漏れ注意](#5x55-is_sample_data-エンティティを管理テナントに移動するmigration-は-親-fk-エンティティの移動漏れに注意--project-だけ移し-customer-は残った例-2026-05-14)
+- [§5.X+75 prisma generate 忘れで tsc fail + 新 enum 反映漏れ](#5x75-prisma-schema-変更後の-prisma-generate-忘れで-ci-tsc-が落ちる--新-enum-値の-mailparamstype-反映漏れ-2026-05-19--pr-411)
+- [§5.X+77 prisma migrate deploy を build script に入れると CI で P1001](#5x77-prisma-migrate-deploy-を-packagejson-の-build-script-に組み込むと-ci-dummy-database_url-で-p1001-失敗--ci-と-netlify-で-build-script-を分離する-2026-05-19--pr-412)
+- [§5.X+80 生 SQL INSERT は NOT NULL カラムを schema で確認](#5x80-fixture-で生-sql-insert-する際は-not-null-カラムを-schemaprisma-で確認する-prisma-client-なら型で防がれるが生-sql-は実行時-fail-2026-05-19--pr-412)
+- [§5.X+82 Supabase Direct connection は IPv6 のみ → Session pooler を DIRECT_URL に](#5x82-supabase-direct-connection-dbsupabaseco5432-は-ipv6-のみ--netlify-build-runner-からの-prisma-migrate-deploy-が-p1001-で失敗--session-pooler-5432-を-direct_url-に設定する-2026-05-20--pr-412-deploy-後)
+- [§5.X+83 migrate deploy 失敗の finished_at=NULL 残骸で永久 fail](#5x83-prisma-migrate-deploy-失敗時の-_prisma_migrationsfinished_atnull-残骸が次回-deploy-で未完了と再解釈され永久に同じエラーで失敗し続ける-2026-05-20--pr-413-deploy-後)
+- [§5.X+91 階層エンティティ重複判定は parent を含めたキーで](#5x91-wbs-のような階層エンティティで-同階層名称重複-を-level--name-で判定すると別-wp-配下の同名-act-を誤ブロックする--parent-parentrowindex--parenttaskid-を含めたキーで判定する-2026-05-25--pr-420-a1a2)
+- [§5.X+92 PgBouncer で $transaction 不可 → idempotent recalc](#5x92-pgbouncer-制約で-transaction-が使えない環境では-bulk-insert-後の集計再計算を-呼出順序に依存しない-idempotent-な-recalc-で組み立てる--task-duplicateservicets-の-wp-集計漏れ修正-2026-05-25--pr-420)
+- [§5.X+93 advisory lock 不可 → dry-run snapshot updatedAt の OCC](#5x93-pgbouncer-制約で-advisory-lock-も使えない環境では-dry-run-snapshot-の最大-updatedat-を-client--header-経由で-apply-に持ち回す-occ-で並行編集を検出する-2026-05-25--pr-420-c2)
+- [§5.X+95 DB UNIQUE 追加時は全 INSERT/UPDATE 経路で事前検知 → 400](#5x95-db-unique-制約を追加するときは-app-層の既存全-insertupdate-経路-を網羅し全経路で事前検知--400-に変換するさもないと-p2002--500-で-ux-が壊れる-2026-05-25--pr-420-c3)
+- [§5.X+145 背景 cron の double-pickup race は atomic claim で防御](#5x145-背景処理-cron-の-double-pickup-race--findmanyprocess-の間に-atomic-claim-が無いと同一-row-を-2-つの-cron-実行が処理する-pr-446-post-pr-full-scan-で検出)
+- [§5.X+146 多段 transaction 失敗時 cleanup は全エラー対象](#5x146-多段-transaction-storage-put--db-row-作成-の失敗時-cleanup-は全エラーを対象にする--特定例外のみだと-orphan-残留する-pr-446)
+- [§5.X+147 Pre-signed URL concurrent finalize 重複 row は partial unique index](#5x147-同-pre-signed-url-の-concurrent-finalize-で重複-attachment-row-が作られる-race--partial-unique-index-で防御-pr-446)
+- [§5.X+150 テナント物理削除時の外部ストレージ cascade 漏れ (GDPR)](#5x150-テナント物理削除時の外部ストレージ-cascade-漏れ--gdpr-忘れられる権利-違反--bucket-容量リーク-pr-446)
+- [§5.X+156 新 schema field は data-export/import 両方に column 追加](#5x156-severity-1-round-trip-欠陥-新規-schema-field-を追加したら-data-export--data-import-両方に必ず-column-を追加する-pr-448-post-pr-3-巡目検証で発覚)
+- [§5.X+171 CSV split 後行パースで quoted multi-line cell が silent 欠落](#5x171-severity-high-silent-data-loss-csv-全文を-splitrn-してから-1-行ずつパースすると-quoted-multi-line-cell-が分断されtextarea-セルの-2-行目以降が-silent-に欠落する-fixcsv-import-multiline-text-data-loss--2026-05-28)
+- [§5.X+172 コメント宣言の制限値が実装/test で未担保 (csvRows>500)](#5x172-severity-high-dos--設計と実装の乖離-コメントで宣言した制限値が-実装と-test-で担保されていない-罠--sync-import-の-csvrowslength--500-が-5-route-中-0-route-で実装されていなかった-docscsv-import-guide-for-tenant-admin-3-巡目フルスキャン--2026-05-28)
+- [§5.X+200 Prisma select の存在しないフィールドは runtime で throw](#5x200-severity-1-本番-runtime-障害-prisma-select--存在しないフィールド-true--は-tsc--lint-で検出されず本番-runtime-で初めて-throw-する罠-pr-471--2026-05-30--commit-251bf7fb-で混入6-ヶ月以上未検知)
+
+### マージコンフリクト・並行PR・KDDメタ運用
+- [§5.27 機能 deferral パターン (UI のみ削除、DB/API 温存)](#527-機能-deferral-パターン-ui-のみ削除dbapiservice-は温存-pr-177--項目-10)
+- [§5.32 複数 entity 横展開の段階的汎用化](#532-複数-entity-横展開時の段階的汎用化パターン-t-22-で確立)
+- [§5.50 Stop hook の重処理 / prompt 型を skill 化](#550-stop-hook-の重処理--prompt-型を-skill-化して開発速度を回復-2026-05-01)
+- [§5.X+17 同一ファイルを並行更新する PR の merge conflict 対策](#5x17-同一ファイルを-複数開発中-pr-が並行更新する場合の-merge-conflict-対策-pr-306-で確立)
+- [§5.X+19 dependabot.yml の schedule.day は weekly 限定](#5x19-dependabotyml-の-scheduleday-は-weekly-限定-pr-310-で遭遇)
+- [§5.X+21 .last-knowledge-check-sha の track 状態 conflict 解消](#5x21-claudelast-knowledge-check-sha-は-gitignore-済だが-track-状態-で毎回-conflict-を起こす--git-rm---cached--gitattributes-mergeours-で恒久解消-pr-326--2026-05-11)
+- [§5.X+30 長期 PR と main の KDD 末尾コンフリクトは両方残す](#5x30-長期-pr-と-main-の並行更新で-kdd-ファイル末尾コンフリクトが発生する--両方残してマージするのが正解-pr-334--2026-05-12)
+- [§5.X+33 service conflict: 片側 refactor / 片側コメント追加](#5x33-service-コード-conflict-片側は-refactorもう片側はコメント追加型--コメント意図が既に定数化されていれば-refactor-を採用しhistorical-context-として吸収する-pr-337--2026-05-12)
+- [§5.X+34 merge 後 conflict zone 外の旧シグネチャ呼出を grep verify](#5x34-merge-後の-conflict-zone-外-に同-refactor-関数の旧シグネチャ呼び出しが残存する罠--grep-で全-call-site-を-verify-する-pr-337--2026-05-12)
+- [§5.X+36 infra PR と feature PR の同一 route 衝突は副作用を順序連鎖](#5x36-infrastructure-pr-と-feature-pr-が同一-route-ファイルを別観点で修正していて衝突する--両方の副作用を順序連鎖-pre-check--service-呼出--trycatch-させて解消-pr-339--2026-05-12)
+- [§5.X+37 test 末尾 describe ブロック衝突は両側を独立に閉じる](#5x37-test-ファイルの末尾-describe-ブロック衝突は-describe-の閉じ括弧-が-conflict-marker-と一緒にマーカー外に押し出される--解消時は両側-describe-を独立に閉じる必要がある-pr-341--2026-05-12)
+- [§5.X+54 KDD 末尾で section 番号が両ブランチ衝突 (§5.X+30 サブ)](#5x54-kdd-末尾コンフリクトで-section-番号が両ブランチで衝突するケース--5x30-のサブパターン-pr-362--2026-05-14)
+- [§5.X+57 仕様確定 docs PR 先行マージせず実装後追いで JSDoc コンフリクト](#5x57-仕様確定-docs-pr-を先行マージせず実装-pr-を後追いすると-同一ファイルで-jsdoc-コンフリクト-が発生する--pr-367--pr-368-で実体験-2026-05-14)
+- [§5.X+59 並列 docs PR が README テーブル末尾追加でコンフリクト](#5x59-並列-docs-pr-が同じ-readme-テーブルの末尾に行を追加すると後発-pr-で確実にコンフリクト--5x30--5x54-の再発-pr-373--pr-374-で実体験--2026-05-14)
+- [§5.X+65 複数 PR 並行で同一ファイル変更は事前 rebase 計画必須](#5x65-複数-pr-並行進行時に同一ファイルを変更する場合は事前の-rebase-計画が必須--docsbusinessreadmemd-で-pr-391392-が衝突-2026-05-17)
+- [§5.X+111 (品質ゲート) 契約変更 + invariants exemption 漏れ 同時 fail](#5x111-severity-2-品質ゲート-実装側の契約変更-idempotencykey-スキーマ拡張-と-invariants-test-の-exemption-漏れ-新規-service-ファイル追加-の-2-件同時-ci-fail-2026-05-22--pr-425-2-回目-ci-fail)
+- [§5.X+167 インフラ移行の docs cleanup は 2 段階 PR + 4 ステージ判断](#5x167-severity-medium-docs-drift--整合性-インフラ移行に伴うドキュメント全面-cleanup-は-2-段階-pr--4-ステージ判断-で進めると整合性が保てる-pr-454455--adr-0023-vercelnetlify-personal-移行)
+- [§5.X+173 外部 LP URL の 2 箇所 literal 並列は config 集約](#5x173-severity-medium-drift-リスク-外部-lp-の-url-は-コード-1-箇所--spec-1-箇所-の-2-篇所-literal-並列ハードコードは-drift-の温床--srcconfigcommunityts-に集約して-import-一本化する-featlogin-setup-guide-link--2026-05-28-2-巡目フルスキャンで発覚)
+
+### インフラ・デプロイ・cron・ドメイン移行
+- [§5.X+2 Supabase DIRECT_URL は Session Pooler を使う](#5x2-supabase-の-direct_url-は-direct-connection-ではなく-session-pooler-を使う-pr-fixmissing-migrations-続編--2026-05-03)
+- [§5.X+9 ローカル必須チェック整理 (セキュリティ/パフォーマンスを CI へ)](#5x9-ローカル必須チェックの整理--セキュリティパフォーマンスを-ci--都度対応に分離-2026-05-09)
+- [§5.X+10 GitHub Actions 脆弱アクション回避、公式 install スクリプト化](#5x10-github-actions-の脆弱なアクションを避け公式-install-スクリプトで-ci-化する-pr-296-hotfix--2026-05-09)
+- [§5.X+11 api.github.com 未認証で共有 IP rate limit に当たる](#5x11-github-actions-から-apigithubcom-を未認証で叩くと共有-ip-の-60-reqhour-制限に当たる-pr-296-hotfix-続編--2026-05-09)
+- [§5.X+12 「常に最新」設計は upstream breaking change を直撃](#5x12-常に最新を取得する設計は-upstream-の-breaking-change-を直撃する--メジャーバージョン跨ぎ-cli-を本番起動時に検出する仕組みが必要-pr-296-hotfix-第三弾--2026-05-09)
+- [§5.X+25 timezone/locale はユーザ単位でなくテナント単位](#5x25-timezone--locale-はユーザ単位ではなくテナント単位で持つ--同一テナント内で日付計算が揺らがない設計-pr-1--2026-05-15)
+- [§5.X+28 日付計算をテナント TZ カレンダー日ベースに移行](#5x28-日付計算ロジックをテナント-tz-カレンダー日ベースに移行--utc-経過時間--24h-は要件から不一致-pr-4--2026-05-15)
+- [§5.X+70 外部 cron 移行で PUBLIC_PATHS 同期 + Stripe no-op ガード](#5x70-外部-cron-移行で-middleware-の-public_paths-同期--stripe-disabled-時の-no-op-ガードを忘れると本番-cron-が-302500-で全滅する-vercelnetlify-移行で実体験--2026-05-18)
+- [§5.X+72 cron-job.org 外部監視依存をやめ、アプリ内 cron 実行履歴](#5x72-cron-joborg-の外部監視に依存すると本番障害の発見が遅れる--アプリ内に-cron-実行履歴テーブルを持ち-super_admin-から可視化する-pr-featcron-execution-log-で実装--2026-05-18)
+- [§5.X+114 [skip netlify] 配置場所を commit message と思い込み Deploy 走る](#5x114-credits-浪費-skip-netlify-の配置場所を-commit-message-と思い込み-deploy-preview-が走り続けた-2026-05-22--pr-425-整理)
+- [§5.X+151 cron 新設は cron-jobs.ts 登録漏れで watchdog 死角化](#5x151-cron-新設は-cron-jobsts-への登録漏れで-watchdog-の死角化する-pr-446)
+- [§5.X+179 独自ドメイン (tasukiba.com) 移行 4 レイヤ更新](#5x179-独自ドメイン-tasukibacom-移行--cloudflare-registrar--netlify-カスタムドメイン--4-レイヤ更新-urlenv外部サービスdns-の段階手順とフルスキャン教訓-2026-05-29--pr-464)
+- [§5.X+181 cron 運用 3 罠 (409=lock 防御 / 未登録 cron / metadata 同時追加)](#5x181-cron-運用-3-つの罠-cron-409-は失敗ではなく-advisory-lock-防御--未登録の-cron-は本番必須機能の可能性大--新規-cron-追加時は-cron_jobs-metadata-も同時追加必須-2026-05-29--featsuggestion-tier-ux-improvement--pr-464-follow-up)
+- [§5.X+195 Netlify Drawer の iframe は CSP frame-src 未定義で block](#5x195-severity-medium-dx開発体験-netlify-deploy-preview-の-netlify-drawer-は-appnetlifycom-を-iframe-化するため-csp-frame-src-未定義だと-block-される-pr-471--2026-05-30)
+- [§5.X+197 cron-job.org と CRON_JOBS metadata の drift は実態同期で潰す](#5x197-severity-medium-cron-joborg-設定と-cron_jobs-metadata-の-drift-は実態同期で潰す--重複登録は-advisory-lock-で防御されるが運用整理推奨-pr-471--2026-05-30)
+- [§5.X+199 metadataBase 未設定で OG/Twitter 絶対 URL が localhost フォールバック](#5x199-severity-low-seosns-影響-nextjs-metadatametadatabase-未設定で-og-image--twitter-card-の絶対-url-が-httplocalhost3000-フォールバック-pr-471--2026-05-30)
+
+### UI・UX・コンポーネント
+- [§5.1 バリデーション値 (文字数上限等) を変える](#51-バリデーション値-文字数上限等-を変える)
+- [§5.3 状態遷移ルールを変える](#53-状態遷移ルールを変える)
+- [§5.4 UI レイアウトを変える](#54-ui-レイアウトを変える)
+- [§5.5 色を変える](#55-色を変える)
+- [§5.6 編集ダイアログの state 初期化ルール](#56-編集ダイアログの-state-初期化ルール-pr-88-で統一)
+- [§5.7 ダイアログサイズ・スクロール規約](#57-ダイアログサイズスクロール規約-pr-112-で統一)
+- [§5.8 Select と SearchableSelect の使い分け](#58-select-と-searchableselect-の使い分け-pr-126-で追加)
+- [§5.9 レスポンシブ実装パターン](#59-レスポンシブ実装パターン-pr-128-で整理)
+- [§5.10 フォーム送信前の事前バリデーション](#510-フォーム送信前の事前バリデーション-エラー情報最小化方針-fixproject-create-customer-validation-で整理)
+- [§5.10.1 Base UI Combobox で {value,label} を items に渡す罠](#5101-base-ui-combobox-で--value-label--オブジェクトを-items-に渡す際の罠-fixproject-create-customer-validation-で発覚)
+- [§5.10.1.5 <Label> と <Input> の htmlFor/id ペア必須](#51015-label-と-input-の-htmlforid-ペア必須-a11y--e2e-の両立fixproject-create-customer-validation-補足)
+- [§5.10.2 タグ入力区切りは全角読点「、」も受容](#5102-タグ入力区切り-全角読点-も受容する-fixproject-create-customer-validation)
+- [§5.11 編集ダイアログの save 後 close 順序とリスト列表示漏れ](#511-編集ダイアログの-save-後-close-順序とリスト列の表示漏れ-feataccount-lock-and-ui-consistency-item-67)
+- [§5.11.1 User モデルだけ updatedBy カラムを持たない設計](#5111-user-モデルだけは-updatedby-カラムを持たない設計-vercel-build-失敗で再発見-pr-138-hotfix)
+- [§5.16 ダイアログ全画面トグル (useDialogFullscreen)](#516-ダイアログ全画面トグル-90vw--90vh--usedialogfullscreen-featdialog-fullscreen-toggle)
+- [§5.17 複数行 Markdown 入力 + プレビュー + 差分表示](#517-複数行テキストの-markdown-入力--プレビュー--既存値との差分表示-featmarkdown-textarea)
+- [§5.18 WBS 上書きインポート (Sync by ID)](#518-wbs-上書きインポート-sync-by-id-実装パターン-featwbs-overwrite-import)
+- [§5.21 「○○一覧」フィルター必須型一括更新パターン](#521-一覧-project-level-で-フィルター必須-型の一括更新を実装するパターン-pr-161-で誤って-cross-list-に実装--pr-165-で-project-list-に移し替え)
+- [§5.22 bulk update 共通 Toolbar 化 + 3 entity 展開](#522-一覧-bulk-update-の-共通-toolbar-化--3-entity-展開-pr-162-で誤って-cross-list-に実装--pr-165-で-project-list--personal-list-に移し替え)
+- [§5.23 「全○○=参照のみ / ○○一覧=CRUD」設計違反の原状回復](#523-全--参照のみ--一覧--crud-設計ルール違反からの原状回復-pr-165--refactorbulk-update-to-project-list)
+- [§5.24 TabsList のレスポンシブ集約パターン](#524-tabslist-のレスポンシブ集約パターン-pr-167--featasset-tab-responsive-mobile)
+- [§5.25 添付対応 entity の一覧表示横展開チェック](#525-添付対応-entity-の一覧表示横展開チェック-pr-168--fixwbs-attachment-display)
+- [§5.26 同一機能画面間で共通部品を必ず流用する規約](#526-同一機能を持つ画面間で-共通部品を必ず流用する-規約-pr-171--featdate-field-clear-rename)
+- [§5.29 PR-η 永続ロック未実装バグの発見](#529-pr--永続ロック未実装バグの発見-項目-16-調査結果)
+- [§5.31 枠数固定要件のアクション充足チェック](#531-枠数固定要件のアクション充足チェック-t-19-で確立)
+- [§5.33 API route の server-side i18n + vitest 共通モック](#533-api-route-の-server-side-i18n--vitest-共通モック-t-17-group-2-で確立)
+- [§5.34 アクション型 Select の選択後表示](#534-アクション型-select-の選択後表示-selectvalue-children-render-関数--value-phase-a-で確立)
+- [§5.35 dialog 内 component の nested form 回避](#535-dialog-内-component-の-nested-form-回避-phase-b-要件-4-で確立)
+- [§5.36 dialog の readOnly 分岐パターン](#536-dialog-の-readonly-分岐パターン-一覧行クリックで詳細閲覧--作成者のみ編集phase-b-要件-5-で確立)
+- [§5.37 一括編集はフィルター任意、多層防御は per-row 認可](#537-一括編集はフィルター任意--多層防御は-per-row-認可で代替する-phase-c-要件-18-で確立521522523-を上書き)
+- [§5.39 ガントチャートの曜日・祝日色分け](#539-ガントチャートの曜日祝日色分けパターン-phase-c-要件-1617-で確立)
+- [§5.41 「○○一覧」共通 UI 部品の抽出規約](#541-一覧共通-ui-部品の抽出規約-phase-e-要件-13-で確立)
+- [§5.43 ガントチャートの independent tab 化 + responsive プルダウン](#543-ガントチャートの-independent-tab-化--responsive-プルダウン-2026-04-30-で確立)
+- [§5.44 リクエスト成功/失敗の Toast 通知パターン](#544-リクエスト成功失敗の-toast-通知パターン-2026-04-30-で確立)
+- [§5.45 既存スキーマカラムを UI のみで活かす任意入力フィールド](#545-既存スキーマカラムを-ui-のみで活かす任意入力フィールドの追加パターン-2026-04-30-で確立)
+- [§5.52 バッチ API の lenient validation 設計](#552-バッチ-api-の-lenient-validation-設計-pr-fixattachments-batch-400-2026-05-01)
+- [§5.53 一覧テーブルの sticky thead 横展開](#553-一覧テーブルの-sticky-thead-横展開パターン-pr-featsticky-table-headers-2026-05-01)
+- [§5.55 sticky thead と readOnly 添付の hotfix](#555-sticky-thead-と-readonly-添付セクションの-hotfix-pr-fixsticky-and-readonly-links-2026-05-01)
+- [§5.57 一覧画面 UX クリーンアップ + テキストフィルタの否定条件](#557-一覧画面-ux-クリーンアップ--テキストフィルタの否定条件-pr-fixlist-export-and-filter-2026-05-01)
+- [§5.58 一覧画面のカラムソート機能 横展開](#558-一覧画面のカラムソート機能-横展開-pr-featsortable-columns-2026-05-01)
+- [§5.X+102 一覧画面の検索ボタン不発 + ソート client-side 化](#5x102-ux-severity-1-一覧画面の検索ボタン不発--ソート-client-side-化問題の横断調査--projects-即時修正--残-13-画面の段階改修ロードマップ-2026-05-22--pr-425)
+- [§5.X+112 検索・ソート・スティッキーヘッダ横展開 (入力即フィルタ + URL 永続化)](#5x112-ux-severity-1-一覧画面の検索ソートスティッキーヘッダ横展開--入力即フィルタ--url-永続化--sticky-dashboardheader-2026-05-22--pr-425--kdd-5x102-phase-1-3-取り込み)
+- [§5.X+119 truncate の overflow:hidden が dropdown クリップ → createPortal で救済](#5x119-severity-1-ux-dead-tailwind-truncate-の-overflowhidden-が絶対配置-dropdown-を完全クリップ--全-13-一覧画面のソート機能が-dead-化createportal-で-body-直下に逃がして救済-2026-05-24--pr-fixsortable-header-dropdown-portal)
+- [§5.X+160 sharp .png({quality:N}) が palette PNG で Next.js Image 弾く](#5x160-severity-2-nextjs-image-sharp-の-pngquality-n-n100-は-palette-png-を出力し-nextjs-image-optimizer-が-content-type-null-扱いで弾く-pr-451-マスコット導入)
+- [§5.X+165 複合キャンバス PNG が fit:'contain' で FAB に黒丸](#5x165-severity-2-ui-視覚事故-複合キャンバス-source-png-は派生生成で-fitcontain-だと-fab-に黒丸の中に小さなアイコン状態を引き起こす罠-pr-452-マスコット-icon-全面占有)
+- [§5.X+166 FAB の priority preload 浪費 + iOS home indicator 重なり](#5x166-severity-medium-fab-設計の-2-つの罠-panel-internal-image-に-priority-を付けると-preload-浪費ios-home-indicator-と-fab-が重なる-pr-452-3rd-round-フルスキャンで発見)
+- [§5.X+177 middleware matcher が public/ 静的ファイルを除外せず 302](#5x177-severity-1-本番-ui-全壊--seoog-リスク-middleware-matcher-が-public-配下の静的ファイルを-exclusion-列挙しておらずmascot-owlpng--og-imagepng--robotstxt-等が-302-redirect-される潜在バグ-pr-451-で混入pr-462-で発見修正)
+- [§5.X+183 ガントチャート初期スクロール = 今日左端 + locale/TZ 統一](#5x183-ux-向上-ガントチャート初期スクロール--今日左端--日付表示の-tenant-localetz-統一-2026-05-29--featgantt-initial-scroll-and-locale)
+
+### コミュニケーション (コメント・通知・メンション)
+- [§5.49 ポリモーフィックコメント機能の確立](#549-ポリモーフィックコメント機能の確立-pr-199)
+- [§5.54 アプリ内通知機能 (in-app notifications) の MVP 実装](#554-アプリ内通知機能-in-app-notifications-の-mvp-実装-pr-featnotifications-mvp-2026-05-01)
+- [§5.56 コメントの @mention 機能](#556-コメントの-mention-機能-pr-featcomment-mentions-2026-05-01)
+- [§5.59 通知 deep link 全○○ auto-open + entity 別メンション認可](#559-通知-deep-link-を全-auto-open--entity-別メンション認可の細粒化-pr-featnotification-edit-dialog-2026-05-01)
+- [§5.60 通知 deep link 完成 + コメント認可 mention/plain 分離](#560-通知-deep-link-完成--コメント認可の-mentionplain-分離--編集削除ボタン投稿者限定-pr-featnotification-deep-link-completion-2026-05-01)
+
+### 依存関係・脆弱性
+- [§5.X+4 推移的依存の脆弱性は pnpm.overrides で force-upgrade](#5x4-推移的依存-transitive-dependency-の脆弱性は-pnpmoverrides-で-force-upgrade-する-pr-283-hotfix--2026-05-09)
+- [§5.X+20 eslint-config-next minor 上げで react-hooks rule 新規 enforce](#5x20-eslint-config-next-minor-上げで-react-hooksset-state-in-effect--react-hooksrefs-が新規-enforce--既存-useeffectuseref-を-hooks-71-互換に書き換える-pr-323-dependabot-対応--2026-05-11)
+- [§5.X+24 (1件目) dependabot 複数 PR が pnpm-lock.yaml で相互コンフリクト](#5x24-dependabot-複数-pr-が-pnpm-lockyaml-で相互コンフリクトする--auto-rebase-待ち-と-pr-数抑制-で運用-pr-317--2026-05-15)
+- [§5.X+26 Beginner プランは「値の変動がない管理項目」を UI から消す](#5x26-beginner-プランは値の変動がない管理項目を-ui-から消す--表示の意図不在を防ぐ-pr-2--2026-05-15)
+- [§5.X+42 単一 middleware に複数 security 関心を統合する責務分離](#5x42-単一-middleware-に複数の-security-関心-rate-limit--csp-nonce--etc-を統合する時各関心の-責務分離--return-タイミング-で衝突を避ける-pr-345--pr-349-で確立)
+- [§5.X+43 Next.js 16 CSP nonce 自動付与は production で不全](#5x43-nextjs-16-の-csp-nonce-自動付与は-production-で完全動作せずstrict-dynamic-を使うと-hydration-が全壊する--graceful-degradation-で-nonce--unsafe-inline-併存にする-pr-349-で確立)
+- [§5.X+44 graceful degradation が機能しない時は完全 rollback する勇気](#5x44-graceful-degradation-が-csp-仕様の罠で機能しない時は-2-段階修正で粘らずに-完全-rollback-する勇気を持つ-pr-349-follow-up-で確立)
+- [§5.X+56 業務仕様と実装が乖離したら仕様書を真実とみなす](#5x56-業務仕様書と実装で挙動が乖離していたら-仕様書を真実とみなして実装を寄せる--expertpro-ダウングレード即時化-2026-05-14)
+- [§5.X+141 xlsx@sheetjs は fix なし High CVE → exceljs に swap](#5x141-severity-high-xlsxsheetjs-v0203-は-fix-なし-high-cve-2-件exceljs-に-swap--pnpmoverrides-で-transitive-uuid1111-を-fix-2026-05-26--pr-445)
+- [§5.X+149 外部ファイル parser に渡す buffer は size guard 必須](#5x149-外部ファイル-parser-に渡す-buffer-は-size-guard-が必須--pdf-parse--exceljs--mammoth-はバイナリ全体を-memory-load-する-pr-446)
+- [§5.X+164 post-PR OSV-Scanner で新規 CVE 継続発覚 (tmp@0.2.5)](#5x164-severity-2-ci-fail-post-pr-の-osv-scanner-で新規-cve-が継続発覚する想定運用--tmp025-ghsa-ph9p-34f9-6g65-pr-451-round-2-で検出)
+- [§5.X+170 DB DEFAULT 撤去 PR は e2e/fixtures/ raw SQL も同時 fix](#5x170-severity-1-ci-全滅-db-default-撤去-pr-は-e2efixtures-の-raw-sql-も同時-fix-必須--本番コードだけ直すと-e2e-が初期-admin-作成失敗で全滅-fixtenant-id-default-removal-の-2-回目検証で発覚)
+
+---
+
 ## 5. 既存機能の改修手順
 
 ### 5.1 バリデーション値 (文字数上限等) を変える
@@ -8714,7 +9011,7 @@ WBS 画面で ACT 作成・編集時に「担当者の日次工数オーバー�
 ### 関連
 
 - 適用 migration: [prisma/migrations/20260518_revoke_data_api_grants_and_enable_rls/](../../prisma/migrations/20260518_revoke_data_api_grants_and_enable_rls/migration.sql)
-- 運用 runbook: [docs/operations/SECURITY_OPS.md §13.5](../operations/SECURITY_OPS.md) (Supabase Security Advisor 定期確認)
+- 運用 runbook: [docs/operations/SECURITY_OPS.md §13.5](../operations/operate/SECURITY_OPS.md) (Supabase Security Advisor 定期確認)
 - Supabase 公式: https://supabase.com/docs/guides/database/postgres/row-level-security
 - Supabase Default Privileges 仕様: https://supabase.com/docs/guides/database/postgres/roles-superuser
 - 関連 KDD: §5.42 (migration を含む PR の本番手動適用ルール)
@@ -8737,7 +9034,7 @@ WBS 画面で ACT 作成・編集時に「担当者の日次工数オーバー�
    - main の `5.X+50` / `5.X+51` / `5.X+52` をそのまま採用 (歴史的経緯を保持)
    - HEAD の `5.X+50` を **`5.X+53` にリナンバリング** (main の最大番号 + 1)
 2. **クロスリファレンスを同時更新**:
-   - 他ドキュメントから `§5.X+50` を参照していたら新番号に置換 (本 PR では [docs/operations/SECURITY_OPS.md §13.5](../operations/SECURITY_OPS.md))
+   - 他ドキュメントから `§5.X+50` を参照していたら新番号に置換 (本 PR では [docs/operations/SECURITY_OPS.md §13.5](../operations/operate/SECURITY_OPS.md))
    - MEMORY.md / auto-memory に古い番号が残っていないかも grep で確認
 3. **本サブパターン自体を新セクション (`5.X+54`) として記録** — 次の衝突で同じ判断を再生できるよう
 
@@ -8869,7 +9166,7 @@ grep -rn "systemRole !== 'admin'\|systemRole === 'admin'" src/app/api/<entity>/
 - 先行 migration: [prisma/migrations/20260513_seed_to_management_tenant/migration.sql](../../prisma/migrations/20260513_seed_to_management_tenant/migration.sql) (Customer 移行漏れの起点)
 - 認可ヘルパ: [src/lib/permissions/role.ts](../../src/lib/permissions/role.ts) `isAdminOrAbove`
 - nav 拡張: [src/components/dashboard-header.tsx](../../src/components/dashboard-header.tsx) `visibleToSuperAdmin` flag
-- seed 維持ガイド: [docs/developer-guide/SEED_DATA_MAINTENANCE.md §1-2 / §1-3](../developer-guide/SEED_DATA_MAINTENANCE.md)
+- seed 維持ガイド: [docs/developer-guide/SEED_DATA_MAINTENANCE.md §1-2 / §1-3](../operations/develop/SEED_DATA_MAINTENANCE.md)
 
 ## 5.X+56 業務仕様書と実装で挙動が乖離していたら **仕様書を真実とみなして実装を寄せる** ─ Expert↔Pro ダウングレード即時化 (2026-05-14)
 
@@ -8920,7 +9217,7 @@ if (isUpgrade(currentPlan, nextPlan)) { 即時 } else { 翌月予約 }
 2. [tenant-self.service.test.ts](../../src/services/tenant-self.service.test.ts): 「Pro→Expert ダウングレード: 翌月予約」を「即時反映」に書き換え
 3. [plan-change-flow.e2e.test.ts](../../src/services/plan-change-flow.e2e.test.ts): 月跨ぎシナリオの「M3 cron で予約適用」を「M2 中即時 + cron での適用は 0 件」に書き換え + Pro→Expert 即時反映の単発テスト追加
 4. [tenant-settings-client.tsx](../../src/app/(dashboard)/settings/tenant/tenant-settings-client.tsx): 確認 dialog の「月末から適用」文言を「即時反映 + Pro 限定機能が即座に使えなくなる」文言に修正
-5. [V1_FINAL_TASKS.md §150](../roadmap/V1_FINAL_TASKS.md) / [TENANT_AND_BILLING.md §F-13.11 / §NF-13.15 / §357](../business/TENANT_AND_BILLING.md): 「翌月適用」記述を全消去し「Beginner downgrade は完全禁止、Expert↔Pro は即時」に統一
+5. [V1_FINAL_TASKS.md §150](../archive/roadmap/V1_FINAL_TASKS.md) / [TENANT_AND_BILLING.md §F-13.11 / §NF-13.15 / §357](../business/TENANT_AND_BILLING.md): 「翌月適用」記述を全消去し「Beginner downgrade は完全禁止、Expert↔Pro は即時」に統一
 6. 旧予約フィールド (`scheduledPlanChangeAt` / `scheduledNextPlan`) を新規にセットするコードパスを撤去。月初 cron 側 + `cancelScheduledPlanChange` は **legacy DB レコード対策** として残置
 
 ### 関連
@@ -9811,7 +10108,7 @@ export async function autoSuspendDelinquentTenants(): Promise<AutoSuspendResult>
    - [ ] route 側で `isCronAuthorized()` (`Authorization: Bearer <CRON_SECRET>` 定数時間比較) を呼んでいるか
    - [ ] cron-job.org / 移行先 cron 管理画面で test run して **200 OK** を確認したか
    - [ ] 外部からの POST/GET method を route の `export` と一致させたか
-   - [ ] 詳細手順は [`docs/operations/DEPLOYMENT.md §6`](../operations/DEPLOYMENT.md) を参照
+   - [ ] 詳細手順は [`docs/operations/DEPLOYMENT.md §6`](../operations/develop/DEPLOYMENT.md) を参照
 
 2. **環境依存 env を要求する service を cron から呼ぶ際の Checklist**
    - [ ] その env が未設定の環境 (= dev / 機能 disabled 状態) でも throw しないか
@@ -10654,7 +10951,7 @@ datasource: {
    - `DIRECT_URL` を Session pooler URL で**新規追加**
 3. Trigger deploy → 成功
 
-**docs 追記**: [DEPLOYMENT.md §2.0](../operations/DEPLOYMENT.md) で本パターンを明文化。
+**docs 追記**: [DEPLOYMENT.md §2.0](../operations/develop/DEPLOYMENT.md) で本パターンを明文化。
 
 ### 横展開
 
@@ -11177,13 +11474,13 @@ GROUP BY email
 HAVING COUNT(DISTINCT tenant_id) > 1;
 ```
 
-詳細な検証手順は [docs/operations/MULTI_TENANT_USER_MIGRATION_VERIFICATION.md](../operations/MULTI_TENANT_USER_MIGRATION_VERIFICATION.md) 参照。
+詳細な検証手順は [docs/operations/MULTI_TENANT_USER_MIGRATION_VERIFICATION.md](../archive/2026-06-01-pre-ops-reorg/MULTI_TENANT_USER_MIGRATION_VERIFICATION.md) 参照。
 
 ### 関連 KDD / PR
 
 - PR feat/multi-tenant-user-membership (本 PR): 原因コミット + ADR-0016
 - ADR-0016: [docs/adr/0016-multi-tenant-user-membership.md](../adr/0016-multi-tenant-user-membership.md) (設計判断記録)
-- 検証手順: [docs/operations/MULTI_TENANT_USER_MIGRATION_VERIFICATION.md](../operations/MULTI_TENANT_USER_MIGRATION_VERIFICATION.md)
+- 検証手順: [docs/operations/MULTI_TENANT_USER_MIGRATION_VERIFICATION.md](../archive/2026-06-01-pre-ops-reorg/MULTI_TENANT_USER_MIGRATION_VERIFICATION.md)
 - KDD §5.X+72 (前提): セッション解除パターン (tokenVersion increment 設計)
 
 ## 5.X+90 **multi-tenant 化 + データ import API がある SaaS で「Beginner 90日試用」を提供すると import 経由の半永久 abuse が成立する ─ 既登録 email は Beginner 払い出し不可化 + UI で事前ヒント (Phase 10 / ADR-0016 強化)**
@@ -13267,7 +13564,7 @@ PR #428 のレビュー中、ユーザから「本番 (tasukiba.netlify.app) で
 | 同様に squash UI で **body 部分の `[skip *]` も削除** (PR description プレビューに残っている分) | reviewer / maintainer | "Confirm squash and merge" 画面で body 全文を編集 |
 | 自動回帰: `src/components/dashboard-header.test.tsx` で sticky の生存検証 | 開発者 | CI 自動実行 |
 
-具体的な reviewer 手順は [`CONTRIBUTING.md`](../../CONTRIBUTING.md) §4.4 / [`DEPLOYMENT.md`](../operations/DEPLOYMENT.md) §3.5 を参照。
+具体的な reviewer 手順は [`CONTRIBUTING.md`](../../CONTRIBUTING.md) §4.4 / [`DEPLOYMENT.md`](../operations/develop/DEPLOYMENT.md) §3.5 を参照。
 
 #### 復旧手順 (本 PR #428 で実施)
 
@@ -13321,8 +13618,8 @@ PR の Deploy Preview を明示的に skip したい場合:
   - Netlify: <https://docs.netlify.com/site-deploys/manage-deploys/> ("Skip a deploy" セクション)
   - GitHub Actions: <https://docs.github.com/en/actions/managing-workflow-runs-and-deployments/managing-workflow-runs/skipping-workflow-runs>
 - 修正範囲:
-  - [`docs/operations/DEPLOYMENT.md`](../operations/DEPLOYMENT.md) §3.5 抑制策 3 (PR タイトル vs commit message の使い分け + squash merge UI での削除手順) / §3.6 まとめ表 / §8.2
-  - [`docs/developer-guide/DEVELOPMENT_FLOW.md`](../developer-guide/DEVELOPMENT_FLOW.md) §5.4 典型パターン表に「flag が効かない時の対処」追加
+  - [`docs/operations/DEPLOYMENT.md`](../operations/develop/DEPLOYMENT.md) §3.5 抑制策 3 (PR タイトル vs commit message の使い分け + squash merge UI での削除手順) / §3.6 まとめ表 / §8.2
+  - [`docs/developer-guide/DEVELOPMENT_FLOW.md`](../operations/develop/DEVELOPMENT_FLOW.md) §5.4 典型パターン表に「flag が効かない時の対処」追加
   - [`CONTRIBUTING.md`](../../CONTRIBUTING.md) §4.4 マージ方式に「squash merge 時の `[skip *]` キーワード削除」運用ルール追加
   - [`src/components/dashboard-header.test.tsx`](../../src/components/dashboard-header.test.tsx) 新規 — sticky 実装の回帰検証 (= 本番未反映の再発防止)
 - 関連 PR: #425 (= Netlify skip 罠を踏んだ実 PR / sticky 実装含む) / #426 (= 同じ罠で signup 修正が本番未反映) / 本 PR #428 (= doc 整合化 + GitHub Actions skip 罠 + Netlify squash merge 罠 を発覚・修復)
@@ -17503,7 +17800,7 @@ curl -IL https://tasukiba.com/ 2>&1 | grep callback-url
 ### 関連
 
 - 関連 KDD: [§5.X+99](#5x99) (Stripe Deploy Preview リダイレクト罠) / [§5.X+101](#5x101) (NEXTAUTH_URL context override 真の根本解決) / [§5.X+108](#5x108) (Set-Cookie 脱落) / [§5.X+177](#5x177) (middleware matcher の public asset 除外)
-- 関連 docs: [docs/operations/ENV_VARS.md §1.3](../operations/ENV_VARS.md) (NEXTAUTH_URL context 分離) / [docs/operations/DEPLOYMENT.md §2](../operations/DEPLOYMENT.md) (deploy context 別 env 設定) / [docs/operations/STRIPE_SETUP.md §4](../operations/STRIPE_SETUP.md) (Webhook URL 設定) / [docs/operations/CRON.md](../operations/CRON.md) (cron URL 設定)
+- 関連 docs: [docs/operations/ENV_VARS.md §1.3](../operations/ENV_VARS.md) (NEXTAUTH_URL context 分離) / [docs/operations/DEPLOYMENT.md §2](../operations/develop/DEPLOYMENT.md) (deploy context 別 env 設定) / [docs/operations/STRIPE_SETUP.md §4](../operations/setup/STRIPE_SETUP.md) (Webhook URL 設定) / [docs/operations/CRON.md](../operations/operate/CRON.md) (cron URL 設定)
 - 関連 ADR: [ADR-0023](../adr/0023-netlify-starter-migration.md) (Netlify 移行決定、本 KDD で `tasukiba.com` 注記を追加)
 - 関連 feedback memory: [[feedback_repeated_verification_request]] (フルスキャン 2 観点で 0 件確認 = 設計品質の証拠) / [[feedback_branch_verification]] (main 同期確認) / [[feedback_design_comment_vs_impl_drift]] (コメント vs 実装の整合確認、本 PR では JSDoc も同時更新)
 - 関連 PR: PR #464 (`chore(domain): 本番 URL を tasukiba.com 独自ドメインに切替`)
@@ -17716,7 +18013,7 @@ ESLint / TypeScript では 1-4 の整合性を機械的にチェックできな�
 ### 関連
 
 - 関連 KDD: [§5.X+72](#5x72) (cron-execution-log 設計) / [§5.X+86](#5x86) (advisory lock 関連) / [§5.X+179](#5x179) (本セッションの前段、ドメイン移行)
-- 関連 docs: [docs/operations/CRON.md](../operations/CRON.md) / [docs/operations/STRIPE_SETUP.md](../operations/STRIPE_SETUP.md)
+- 関連 docs: [docs/operations/CRON.md](../operations/operate/CRON.md) / [docs/operations/STRIPE_SETUP.md](../operations/setup/STRIPE_SETUP.md)
 - 関連 feedback memory: [[feedback_verify_source_before_listing]] (新規確立、本セッション罠 3 起因) / [[feedback_cron_watchdog_pattern]] (cron 監視 2 段構え) / [[feedback_design_comment_vs_impl_drift]] (コメント vs 実装の乖離)
 - 関連 PR: `feat/suggestion-tier-ux-improvement` (本 PR、CRON_JOBS Record に `billing-monthly-aggregation` 追加 + KDD §5.X+179/+180/+181)
 
@@ -17996,7 +18293,7 @@ source-pattern テストで以下 5 つの invariant を固定 ([src/app/(dashbo
 - 関連 PR: PR #469 (本 follow-up commit 含む)
 - 関連 KDD: §5.X+182 (姉妹 UI 横展開時の prop 整合性チェック、同根原因)
 - 関連 feedback memory: [[feedback_sibling_ui_pattern_horizontal_rollout]] (隣接コンポーネントの整合性 4 観点 verify)
-- 関連 docs: [docs/operations/STRIPE_SETUP.md](../operations/STRIPE_SETUP.md) §11 (Live mode 切替時の env 注意事項追記)
+- 関連 docs: [docs/operations/STRIPE_SETUP.md](../operations/setup/STRIPE_SETUP.md) §11 (Live mode 切替時の env 注意事項追記)
 - 関連 source: [src/app/(dashboard)/settings/tenant/tenant-settings-client.tsx](../../src/app/(dashboard)/settings/tenant/tenant-settings-client.tsx) (BillingContactSection) / [src/app/(dashboard)/admin/super/tenants/new/tenant-create-form.tsx](../../src/app/(dashboard)/admin/super/tenants/new/tenant-create-form.tsx)
 
 
@@ -18268,7 +18565,7 @@ system prompt で権限制限を伝えても、AI は確率的に許可外の id
 - 関連 feedback memory: [[feedback_unjust_billing_risk_cron]] / [[project_faq_drives_ai_accuracy]] / [[project_mascot_owl]]
 - 関連 source: [src/app/api/help/chat/route.ts](../../src/app/api/help/chat/route.ts) / [src/config/faq-content.ts](../../src/config/faq-content.ts) / [src/config/guide-content.ts](../../src/config/guide-content.ts)
 - 関連 test: [src/config/faq-content.test.ts](../../src/config/faq-content.test.ts) (権限フィルタ 14 ケース) / [src/config/guide-content.test.ts](../../src/config/guide-content.test.ts) (横展開 7 ケース)
-- 開発者ガイド: [FAQ_AND_OWL_CHAT_GUIDE.md](../developer-guide/FAQ_AND_OWL_CHAT_GUIDE.md) §6
+- 開発者ガイド: [FAQ_AND_OWL_CHAT_GUIDE.md](../operations/develop/FAQ_AND_OWL_CHAT_GUIDE.md) §6
 - 仕様書: [HELP_CHAT.md](../specification/HELP_CHAT.md) §5
 
 ## §5.X+189 LEARNING_FREE 等の「意図的に withMeteredLLM を経由しない」LLM 経路は check-llm-billing-bypass の ALLOWLIST_EXACT に追加必須 (PR #471 CI fail / ADR-0027)
@@ -18328,7 +18625,7 @@ const ALLOWLIST_EXACT = new Set<string>([
 - 関連 PR: PR #471 (本 CI fail / 修正の事例) / PR5 `251bf7fb` (LEARNING_FREE_FEATURE_UNITS の新設) / PR9 `2f2a5692` (rate limit 追加)
 - 関連 source: [scripts/check-llm-billing-bypass.ts](../../scripts/check-llm-billing-bypass.ts) (本ガード本体) / [src/app/api/help/chat/route.ts](../../src/app/api/help/chat/route.ts) (ALLOWLIST に追加した route) / [src/config/billing-feature-units.ts](../../src/config/billing-feature-units.ts) (`LEARNING_FREE_FEATURE_UNITS`)
 - 関連 feedback memory: [[feedback_billing_4layer_classification]] (cron 経由の不当請求リスクと整合する設計判断) / [[feedback_unjust_billing_risk_cron]]
-- 開発者ガイド: [FAQ_AND_OWL_CHAT_GUIDE.md](../developer-guide/FAQ_AND_OWL_CHAT_GUIDE.md) §1.3 課金分類
+- 開発者ガイド: [FAQ_AND_OWL_CHAT_GUIDE.md](../operations/develop/FAQ_AND_OWL_CHAT_GUIDE.md) §1.3 課金分類
 - KDD 関連: §5.X+188 (FAQ AI ハルシネーション対策、本 §189 と同 PR 由来)
 
 ## §5.X+190 Prisma / Anthropic SDK を使う新規 API route には `export const runtime = 'nodejs'` を必ず明示 (PR #471 Netlify Edge Function crash)
@@ -18387,7 +18684,7 @@ export async function POST(req: NextRequest) { ... }
 - 関連 commit: 修正コミット (本 §190 と同 PR で追加)
 - 関連 source: [src/app/api/help/chat/route.ts](../../src/app/api/help/chat/route.ts) (本修正対象) / [src/app/api/health/route.ts:22-23](../../src/app/api/health/route.ts) (参考実装) / [src/app/api/memos/sync-import/route.ts:30](../../src/app/api/memos/sync-import/route.ts) (参考実装)
 - 関連 ADR: [ADR-0027](../adr/0027-help-ai-concierge.md) (本 route の設計)
-- 関連 docs: [docs/operations/DEPLOYMENT.md](../operations/DEPLOYMENT.md) (Netlify deploy 関連)
+- 関連 docs: [docs/operations/DEPLOYMENT.md](../operations/develop/DEPLOYMENT.md) (Netlify deploy 関連)
 - KDD 関連: §5.X+189 (本 §190 と同 PR 由来、check-llm-billing-bypass ALLOWLIST 追加)
 
 ## §5.X+191 Anthropic SDK で system プロンプトに `cache_control` を付け忘れる罠 (PR #471 / full-context FAQ コスト爆発防止)
@@ -18458,7 +18755,7 @@ PR #471 の help-chat 実装で本罠を踏んだ。レビュー時に「FAQ が
 - 関連 PR: PR #471 (本罠の検出と修正)
 - 関連 source: [src/app/api/help/chat/route.ts:252-262](../../src/app/api/help/chat/route.ts) (修正対象) / [src/services/auto-tag.service.ts:251-256](../../src/services/auto-tag.service.ts) (参考実装) / [src/services/suggestion-explanation.service.ts:248-253](../../src/services/suggestion-explanation.service.ts) (参考実装)
 - 関連 ADR: [ADR-0027 §1.2](../adr/0027-help-ai-concierge.md) (full-context 方式の採用、RAG 不採用)
-- 関連 docs: [FAQ_AND_OWL_CHAT_GUIDE.md §5.5](../developer-guide/FAQ_AND_OWL_CHAT_GUIDE.md) (Prompt Caching のコスト構造解説)
+- 関連 docs: [FAQ_AND_OWL_CHAT_GUIDE.md §5.5](../operations/develop/FAQ_AND_OWL_CHAT_GUIDE.md) (Prompt Caching のコスト構造解説)
 - 公式リファレンス: Anthropic API Docs - Prompt Caching (https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching)
 - KDD 関連: §5.X+188 (FAQ AI ハルシネーション対策、本 §191 と同 PR 由来) / §5.X+189 (check-llm-billing-bypass ALLOWLIST) / §5.X+190 (runtime='nodejs' 明示)
 
@@ -18628,7 +18925,7 @@ config と DB の SHA-256 同期が崩れる瞬間 (= deploy 直後で generate 
 
 - 関連 PR: PR #471 (ADR-0028 RAG 移行で本パターン確立)
 - 関連 ADR: [ADR-0028](../adr/0028-help-chat-rag-migration.md)
-- 関連 docs: [developer-guide §7](../developer-guide/FAQ_AND_OWL_CHAT_GUIDE.md) (FAQ ライフサイクル SOP) / [DEPLOYMENT.md](../operations/DEPLOYMENT.md) (deploy 時 SOP)
+- 関連 docs: [developer-guide §7](../operations/develop/FAQ_AND_OWL_CHAT_GUIDE.md) (FAQ ライフサイクル SOP) / [DEPLOYMENT.md](../operations/develop/DEPLOYMENT.md) (deploy 時 SOP)
 - 関連 source: [scripts/generate-faq-embeddings.ts](../../scripts/generate-faq-embeddings.ts) / [scripts/check-faq-embeddings-sync.ts](../../scripts/check-faq-embeddings-sync.ts) / [src/services/help-search.service.ts](../../src/services/help-search.service.ts)
 - 関連 memory: [feedback_drift_detection_design.md](../../C:/Users/SF02512/.claude/projects/c--Users-SF02512-GitHub-Private-BusinessManagementPlatform/memory/feedback_drift_detection_design.md) (drift 検知 4 点セットの一般化)
 - KDD 関連: §5.X+187 (FAQ 文言 drift 検知、同根「config と他層の同期」) / §5.X+172 (コメント vs 実装 drift) / §5.X+192 (ADR-0028 移行の判断ミス)
@@ -18910,7 +19207,7 @@ ADR-0028 RAG 移行で `scripts/generate-faq-embeddings.ts` を新設し、devel
 
 - 関連 PR: PR #471 (本 KDD の発端)
 - 関連 source: [package.json:build:netlify](../../package.json) / [scripts/generate-faq-embeddings.ts](../../scripts/generate-faq-embeddings.ts) / [scripts/check-faq-embeddings-sync.ts](../../scripts/check-faq-embeddings-sync.ts)
-- 関連 docs: [DEPLOYMENT.md §4.4](../operations/DEPLOYMENT.md) / [developer-guide §7](../developer-guide/FAQ_AND_OWL_CHAT_GUIDE.md)
+- 関連 docs: [DEPLOYMENT.md §4.4](../operations/develop/DEPLOYMENT.md) / [developer-guide §7](../operations/develop/FAQ_AND_OWL_CHAT_GUIDE.md)
 - 関連 memory: [feedback_human_handoff.md](../../C:/Users/SF02512/.claude/projects/c--Users-SF02512-GitHub-Private-BusinessManagementPlatform/memory/feedback_human_handoff.md)
 - KDD 関連: §5.X+193 (drift 検知 4 層、本 §196 で 5 層に拡張) / §5.X+194 (7 層 hard cap、同じ「複層防御」パターン)
 
@@ -19075,7 +19372,7 @@ export async function recordError(input: RecordErrorInput): Promise<void> {
 
 - 関連 PR: PR #471 (本 KDD の発端)
 - 関連 source: [src/services/error-log.service.ts:75-99](../../src/services/error-log.service.ts) (recordError 実装) / [src/app/api/help/chat/route.ts](../../src/app/api/help/chat/route.ts) (本パターン適用例)
-- 関連 docs: [docs/operations/INCIDENT_RESPONSE.md](../operations/INCIDENT_RESPONSE.md) (障害対応 SOP、Function logs 確認手順を含む)
+- 関連 docs: [docs/operations/INCIDENT_RESPONSE.md](../operations/operate/INCIDENT_RESPONSE.md) (障害対応 SOP、Function logs 確認手順を含む)
 
 ## §5.X+199 ★severity-low (SEO/SNS 影響)★ Next.js `metadata.metadataBase` 未設定で OG image / Twitter card の絶対 URL が `http://localhost:3000` フォールバック (PR #471 / 2026-05-30)
 

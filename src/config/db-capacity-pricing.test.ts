@@ -192,7 +192,7 @@ describe('classifyDbCapacityLevel — 4 層防御', () => {
     expect(classifyDbCapacityLevel(BigInt(30 * SI_GB_BYTES))).toBe('l2');
   });
 
-  it('50GB ちょうど → l3 (ハードキャップ到達)', () => {
+  it('50GB ちょうど → l3 (L3 監視アラート閾値到達)', () => {
     expect(classifyDbCapacityLevel(BigInt(DB_CAPACITY_L3_HARD_CAP_BYTES))).toBe('l3');
   });
 

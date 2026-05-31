@@ -4,7 +4,8 @@
 - **Date**: 2026-05-30
 - **Deciders**: teppei_suyama (Tech Lead)
 - **関連**: [ADR-0022](./0022-embedding-usage-based-billing.md) (Embedding 従量課金導入、本 ADR は判断を一部上書き) / [ADR-0029](./0029-embedding-price-revision-5jpy.md) (Embedding 単価 ¥5/call、本 ADR の予算換算根拠) / [ADR-0026](./0026-embedding-async-generation.md) (Embedding 非同期化、本 ADR と縮退モード設計が整合)
-- **影響**: テナント管理者画面 (使用量タブ + 請求タブ) UI 再編 / `withMeteredLLM` Step 3-4 判定経路 / Tenant スキーマ 1 カラム追加
+- **影響**: テナント管理者画面 (使用量タブ + 請求タブ) UI 再編 / `withMeteredLLM` Step 3-4 判定経路 / Tenant スキーマ 1 カラム追加 / **(2026-05-31 §6) ADR-0020・ADR-0021 の累積 50GB ハードキャップ・circuit-breaker 撤廃 (storage-guard.service.ts / db-capacity-pricing.ts / file-storage-pricing.ts)**
+- **Amends**: [ADR-0020](./0020-db-capacity-usage-based-billing.md) / [ADR-0021](./0021-file-storage-usage-based-billing.md) (§6 で累積ハードキャップ撤廃)
 
 ---
 
@@ -33,7 +34,8 @@ ADR-0022 (2026-06-01) で Embedding 系 7 featureUnit を Expert/Pro で従量�
 
 ### 制約 (新規)
 
-- **DB 容量 / ファイルストレージには月次上限を設けない**: 「データはたすきばの命」(= サービス継続性の根本) のため、容量制限による write block はユーザの蓄積資産を直接損なう。ADR-0025 (Beginner write guard) と 50GB ハードキャップ (= 他テナント保護の技術的安全弁) で十分とし、ユーザ設定可能な cap は導入しない。要望が出た時点で別 ADR で再検討する。
+- **DB 容量 / ファイルストレージには月次予算上限 (ユーザ設定 cap) を設けない**: 「データはたすきばの命」(= サービス継続性の根本) のため、容量制限による write block はユーザの蓄積資産を直接損なう。ユーザ設定可能な金額 cap は導入しない。要望が出た時点で別 ADR で再検討する。
+  - **2026-05-31 追加判断**: この「データはたすきばの命」原則をさらに推し進め、**従来 ADR-0020/0021 で設けていた累積 50GB ハードキャップ (= write/upload block) 自体も撤廃**することにした。詳細は本 ADR §6「2026-05-31 改定: DB/Storage 累積ハードキャップの撤廃」を参照。Beginner 無料枠ガード (ADR-0025) のみ存続する。
 
 ---
 
@@ -92,6 +94,38 @@ DB/Storage は月中 peak ベースで月末 cron 確定のため、請求タブ
 | **Fair Use Limit** (ADR-0019/0022) | 10,000 件/月 | Voyage 無料枠の bug / 攻撃対策 | 2nd (= Beginner 上限を意図的に外したコードバグ等の safety net) |
 
 Beginner cap 100 件が先に発火する設計のため Fair Use Limit は通常運用では到達しないが、不慮の cap bypass バグへの保険として残置。
+
+### 6. 2026-05-31 改定: DB/Storage 累積ハードキャップの撤廃
+
+本 ADR の「データはたすきばの命」原則を DB 容量 / ファイルストレージの設計判断へ拡張し、**従来 [ADR-0020](./0020-db-capacity-usage-based-billing.md) / [ADR-0021](./0021-file-storage-usage-based-billing.md) で設けていた累積 50GB ハードキャップ (= write/upload block) を撤廃する**。embedding 月次予算上限の本論 (§1〜§5) は不変。
+
+#### (a) 撤廃の意思決定 — 「データはたすきばの命」の拡張
+
+ADR-0020/0021 初版は「単一テナントが累積 50GB に到達したら write/upload を拒否する」ハードキャップを「他テナント保護の技術的安全弁」として設けていた。しかし本 ADR の中核原則「**データはたすきばの命** = 蓄積資産がサービス価値の源泉」に照らすと、**容量起因の write block はユーザが時間をかけて蓄積したナレッジ資産を直接損ない、大量ナレッジの継続蓄積を阻害する**。これは予算上限と Embedding の関係 (= 縮退モード + backfill で代替経路を保てる) とは異なり、DB/Storage には「止めても後で取り返せる代替経路」が存在しない。
+
+したがって、**全プラン共通の累積ハードキャップ (write/upload block) を撤廃**する。Expert/Pro は **青天井従量** (DB ¥50/GB、Storage ¥10/GB、旧「最大 ¥2,500 / ¥500」上限を撤廃) とし、write を止めない。**Beginner 無料枠ガード ([ADR-0025](./0025-beginner-write-guard.md): DB 50MB / Storage 100MB) のみ存続** — これはユーザ起動の課金回避 (90 日完全無料訴求) が目的で、容量保護とは別ロジックのため不変。
+
+#### (b) noisy-neighbor → Supabase Compute 増強の運用吸収
+
+旧ハードキャップが担っていた noisy-neighbor 対策 (= 単一テナントの巨大 DB が Supabase Micro 1GB RAM の cache hit ratio を劣化させる懸念) は、**write を止めるのではなく運用で吸収**する:
+
+- DB の L3 (50GB) / L4 (instance-wide、Compute 推奨容量の 80%) は **super_admin への監視アラート閾値**として機能 (write は止めない)。
+- alert を受けた super_admin が **Supabase Compute サイズを増強** (Micro → Small → Medium …) して吸収する。判断材料は **cache hit ratio**。将来 super_admin 画面に cache hit ratio 等の判断材料を表示する機能追加を予定。
+- ファイルストレージは Supabase Storage (オブジェクトストレージ) で Postgres RAM 非依存のため、そもそも noisy-neighbor 懸念がない。
+
+#### (c) 1 操作ペイロード上限 5MB の導入 (DB)
+
+累積ハードキャップ撤廃に伴い、「1 操作あたりの瞬間サーバ負荷」を抑える唯一のアプリ層ガードとして **`DB_WRITE_PAYLOAD_MAX_BYTES = 5MB` (UTF-8 byte 基準)** を新設 ([src/config/db-capacity-pricing.ts](../../src/config/db-capacity-pricing.ts))。Netlify Functions (= AWS Lambda) のリクエストペイロード硬上限 6MB の手前に置き、プラットフォームが不透明な 413 を返す前にアプリがクリーンなエラーを返す。検証は [src/lib/api-helpers.ts](../../src/lib/api-helpers.ts) `requireStorageQuotaForWrite`。ファイルは既存の **50MB/件** (`FILE_STORAGE_MAX_FILE_SIZE_BYTES`) が瞬間負荷ガードとして存続。
+
+#### (d) L3 (50GB) → 監視アラート閾値化
+
+DB/Storage 共に L1(1GB)/L2(10GB)/L3(50GB) は **監視アラート閾値のみ**となり、write/upload は止めない。L3 到達は「このテナントが 50GB に到達、Compute 増強を検討」を super_admin に知らせる合図。`classifyDbCapacityLevel` / `classifyFileStorageLevel` の `'l3'` 判定はそのまま (= 通知用)、定数名 `*_L3_HARD_CAP_BYTES` は import 影響回避のため残置 (リネームは別 PR 候補)。
+
+#### (e) circuit-breaker → fail-open
+
+「計測失敗時に write を拒否する circuit-breaker (fail-close)」を撤廃 → **fail-open** へ。累積ハードキャップが無くなり「計測できないから write 拒否」の根拠が消えたため。計測失敗時も write を通し、`recordError` で記録のみ残す。真値は日次 cron `updateAllStorageBytesUsed` が再計測して補正 (課金は月内 MAX peak で取りこぼさない)。撤去した実装シンボル: `StorageLimitExceededError` / `StorageGuardCircuitOpenError` / `FileStorageLimitExceededError` / `mapStorageGuardErrorToResponse` / `mapFileStorageGuardErrorToResponse` / `STORAGE_GUARD_CIRCUIT_BREAKER_THRESHOLD`。これらを「現行」として参照しないこと。
+
+> **実装の真値**: [src/config/db-capacity-pricing.ts](../../src/config/db-capacity-pricing.ts) / [src/config/file-storage-pricing.ts](../../src/config/file-storage-pricing.ts) / [src/services/storage-guard.service.ts](../../src/services/storage-guard.service.ts)。本改定で ADR-0020/0021 に Amended-by note を付与済。
 
 ---
 
@@ -191,7 +225,8 @@ Beginner cap 100 件が先に発火する設計のため Fair Use Limit は通�
 ### Alt-5: DB/ファイルストレージにもユーザ設定可能な月次上限を導入
 - 概要: 「想定請求額が ¥X を超えたら write block」または「N GB を超えたら write block」をユーザ設定可能化
 - メリット: 4 課金軸 (LLM / Embedding / DB / Storage) で UI 一貫性
-- 不採用理由: DB/Storage の write block は **データ蓄積の停止** = サービスの根幹を損なう。Embedding が「縮退モード + backfill」で代替経路を保てるのとは状況が異なる。「データはたすきばの命」の原則として、容量上限はサービス側 (50GB ハードキャップ + Beginner write guard) のみで管理し、ユーザ設定可能 cap は導入しない。要望が出たら別 ADR で再検討する
+- 不採用理由: DB/Storage の write block は **データ蓄積の停止** = サービスの根幹を損なう。Embedding が「縮退モード + backfill」で代替経路を保てるのとは状況が異なる。「データはたすきばの命」の原則として、ユーザ設定可能な金額 cap は導入しない。要望が出たら別 ADR で再検討する
+  - **2026-05-31 追記**: この原則の延長で、サービス側の累積 50GB ハードキャップ (= write/upload block) も撤廃した (本 ADR §6)。容量起因の write block は Beginner 無料枠ガード (ADR-0025) のみが存続し、Expert/Pro は青天井従量 + 監視アラート + Compute 増強運用で管理する
 
 ---
 
@@ -199,6 +234,7 @@ Beginner cap 100 件が先に発火する設計のため Fair Use Limit は通�
 
 - 詳細設計 (実装後): `src/lib/llm/metered.ts` Step 3-4 / `src/services/tenant-self.service.ts` / `src/app/(dashboard)/settings/tenant/tenant-settings-client.tsx`
 - 関連 ADR: [ADR-0019](./0019-billable-feature-units-and-free-tier-expansion.md) / [ADR-0022](./0022-embedding-usage-based-billing.md) / [ADR-0026](./0026-embedding-async-generation.md) / [ADR-0029](./0029-embedding-price-revision-5jpy.md)
+- **§6 で改定 (Amends)**: [ADR-0020](./0020-db-capacity-usage-based-billing.md) (DB 容量) / [ADR-0021](./0021-file-storage-usage-based-billing.md) (ファイルストレージ) — 累積 50GB ハードキャップ・circuit-breaker 撤廃 / [ADR-0025](./0025-beginner-write-guard.md) (Beginner 無料枠ガードは不変で存続)
 - 仕様: [docs/specification/BEGINNER_PLAN.md](../specification/BEGINNER_PLAN.md) / [docs/business/TENANT_AND_BILLING.md](../business/TENANT_AND_BILLING.md)
 - 公開 docs: [docs/public/api-usage-guide.md](../public/api-usage-guide.md) / [docs/public/plan-guide.md](../public/plan-guide.md)
 - Memory: [[feedback_billing_invariant]] (ApiCallLog SUM = 画面 = 請求 invariant)

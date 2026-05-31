@@ -25,7 +25,7 @@
 関連:
 - 詳細技術設計: [docs/design/STRIPE_TECHNICAL_DESIGN.md](../design/STRIPE_TECHNICAL_DESIGN.md) (= 本仕様の「how」レベル詳細)
 - 設計判断: [docs/adr/0006-stripe-metered-billing-integration.md](../adr/0006-stripe-metered-billing-integration.md)
-- 実装計画: [docs/roadmap/STRIPE_INTEGRATION_PLAN.md](../roadmap/STRIPE_INTEGRATION_PLAN.md)
+- 実装計画 (実装完了済・archive): [docs/archive/2026-06-01-pre-ops-reorg/roadmap/STRIPE_INTEGRATION_PLAN.md](../archive/2026-06-01-pre-ops-reorg/roadmap/STRIPE_INTEGRATION_PLAN.md)
 
 ## 概要
 
@@ -59,7 +59,7 @@
 |---|---|
 | **Stripe Customer** | Stripe 上のテナント表現。`Tenant.stripeCustomerId` に保存 |
 | **Stripe Subscription** | Stripe 上のテナント契約。1 テナント = 1 Subscription |
-| **Subscription Item** | Subscription 内の課金単位。リリース時は **Haiku per-call + Sonnet per-call の 2 Item**。Stripe-ready 設計で env を後付け設定すると **Embedding** (ADR-0022)、**DB 容量超過** (ADR-0020)、**ファイルストレージ超過** (ADR-0021) も Item として追加され、各 Meter Event が Stripe Invoice に反映 (= invoice 払いの BillingHistory と 4 経路 invariant 一致)。詳細は [STRIPE_SETUP.md §2.5/§2.6](../operations/STRIPE_SETUP.md) を参照 |
+| **Subscription Item** | Subscription 内の課金単位。**2026-06-01 リリース構成では 5 env (Haiku/Sonnet/Embedding/DB容量超過/Storage超過) すべて Production 設定済のため、新規 credit_card テナントは 5 Item invariant で組成される** ([stripe-billing.service.ts:851-881](../../src/services/stripe-billing.service.ts) `createSubscriptionForTenant`): ①Haiku per-call (Expert/LLM) ②Sonnet per-call (Pro/LLM) ③Embedding per-call (ADR-0022/0029) ④DB 容量超過 (ADR-0020) ⑤ファイルストレージ超過 (ADR-0021)。各 Meter Event が Stripe Invoice に反映 (= invoice 払いの BillingHistory = ApiCallLog SUM と invariant 一致、5 経路一貫)。env を未設定にすれば該当 Item を省いた旧挙動 (= Sandbox/開発で 2〜4 本構成) になる Stripe-ready 設計。対応 env: `STRIPE_PRICE_HAIKU` / `STRIPE_PRICE_SONNET` / `STRIPE_PRICE_EMBEDDING` / `STRIPE_PRICE_DB_CAPACITY_OVERAGE` / `STRIPE_PRICE_STORAGE_FILE_OVERAGE` ([src/lib/stripe.ts:220-245](../../src/lib/stripe.ts))。詳細は [STRIPE_SETUP.md §2.5/§2.6](../operations/setup/STRIPE_SETUP.md) を参照 |
 | **Usage Record** | Subscription Item に対する使用量レポート (= 各 API 呼び出しで送信) |
 | **Payment Method** | Stripe Customer に紐付くカード情報 |
 | **SetupIntent** | カード登録時のトークン化処理 (本仕様ではカード検証にも使用) |
@@ -176,17 +176,21 @@ model BillingHistory {
 
 ### 3.1 Stripe アカウント・Product・Price の作成
 
-実装前に super_admin が Stripe Dashboard で以下を手動セットアップする (詳細手順は [docs/operations/STRIPE_SETUP.md](../operations/STRIPE_SETUP.md) 参照):
+実装前に super_admin が Stripe Dashboard で以下を手動セットアップする (詳細手順は [docs/operations/STRIPE_SETUP.md](../operations/setup/STRIPE_SETUP.md) 参照):
+
+**2026-06-01 リリース構成 = 5 Item invariant** ([stripe-billing.service.ts:869-881](../../src/services/stripe-billing.service.ts) / env は [src/lib/stripe.ts:220-245](../../src/lib/stripe.ts)):
 
 | Product 名 | Price ID 環境変数 | 課金タイプ | 単価 |
 |---|---|---|---|
 | Expert プロジェクト作成/更新 (Haiku) | `STRIPE_PRICE_HAIKU` | Metered (per_unit) | **¥10 / call** (ADR-0019 / 2026-05-24 改定: ¥5 → ¥10) |
 | Pro プロジェクト作成/更新 + なぜ機能 (Sonnet) | `STRIPE_PRICE_SONNET` | Metered (per_unit) | **¥15 / call** (据置) |
-| **Embedding 業務操作** (ADR-0022 / 2026-06-01 + ADR-0029 / 2026-05-30 ¥1→¥5 改定) | `STRIPE_PRICE_EMBEDDING` *(optional、✅ Production 設定済)* | Metered (per_unit) | **¥5 / call** (Expert/Pro 共通、Beginner は Subscription 不要 / cost=0 のため queue 不投入) |
-| ~~Storage Add-on (Plus)~~ | ~~`STRIPE_PRICE_STORAGE_PLUS`~~ | ~~Recurring (固定)~~ | ~~¥500 / 月~~ (ADR-0020 で廃止、従量課金化済) |
-| ~~Storage Add-on (Pro Storage)~~ | ~~`STRIPE_PRICE_STORAGE_PRO`~~ | ~~Recurring (固定)~~ | ~~¥1,500 / 月~~ (同上) |
+| **Embedding 業務操作** (ADR-0022 / 2026-06-01 + ADR-0029 / 2026-05-30 ¥1→¥5 改定) | `STRIPE_PRICE_EMBEDDING` *(optional、✅ Production 設定済)* | Metered (per_unit) | **¥5 / call** (Expert/Pro 共通、Beginner は cost=0 のため queue 不投入) |
+| **DB 容量超過** (ADR-0020 / 2026-05-25 従量課金化) | `STRIPE_PRICE_DB_CAPACITY_OVERAGE` *(optional、✅ Production 設定済)* | Metered (per_unit) | **¥50 / GB tier** (無料枠 50MB / **累積上限なし = 青天井従量**。50GB は write を止めない監視アラート閾値であり請求上限ではない。1 操作上限 = DB ペイロード 5MB。月初 cron が前月 peak から quantity 算出。ADR-0030 / 2026-05-31 で累積ハードキャップ撤廃) |
+| **ファイルストレージ超過** (ADR-0021 / 2026-05-26 従量課金化) | `STRIPE_PRICE_STORAGE_FILE_OVERAGE` *(optional、✅ Production 設定済)* | Metered (per_unit) | **¥10 / GB tier** (無料枠 100MB / **累積上限なし = 青天井従量**。50GB は upload を止めない監視アラート閾値であり請求上限ではない。1 操作上限 = 1 ファイル 50MB。同じく月初 cron で算出。ADR-0030 / 2026-05-31 で累積ハードキャップ撤廃) |
 
-> **ADR-0022 (2026-06-01) + ADR-0029 (2026-05-30) Stripe-ready 設計**: `STRIPE_PRICE_EMBEDDING` 環境変数は **optional** な Stripe-ready 設計を維持しつつ、✅ 2026-05-30 から **Production 設定済** で credit_card 払い有効化済 (PR #469 + Sandbox→Live 移行 TC-L1〜L8 PASS)。`createSubscriptionForTenant` は 5 本構成の Subscription Item (Haiku + Sonnet + **Embedding** + DB 容量超過 + ファイルストレージ超過) を組成。Sandbox / 開発環境では env を未設定にすれば旧挙動 (= 2〜4 本構成) で運用可能。
+> **旧 Storage 固定 Item の廃止**: 4 段階プラン時代の固定額 Storage Add-on (`STRIPE_PRICE_STORAGE_PLUS` ¥500/月 / `STRIPE_PRICE_STORAGE_PRO` ¥1,500/月、Recurring 固定) は **ADR-0020/0021 で従量課金化に伴い完全撤去済**。DB スキーマの `stripeSubscriptionItemStorageId` も撤去され、現行は上記 ④DB 容量超過 / ⑤ファイルストレージ超過 の Metered Item に置き換わっている (= `chore/storage-addon-backend-removal` / 2026-05-26)。新規実装で `STRIPE_PRICE_STORAGE_PLUS|PRO` を参照してはならない。
+
+> **ADR-0022 (2026-06-01) + ADR-0029 (2026-05-30) Stripe-ready 設計**: 上記 3 つの optional env (`STRIPE_PRICE_EMBEDDING` / `STRIPE_PRICE_DB_CAPACITY_OVERAGE` / `STRIPE_PRICE_STORAGE_FILE_OVERAGE`) は **optional** な Stripe-ready 設計を維持しつつ、✅ 2026-05-30 から **3 つとも Production 設定済** で credit_card 払い有効化済 (PR #469 + Sandbox→Live 移行 TC-L1〜L8 PASS)。`createSubscriptionForTenant` は **5 本構成の Subscription Item** (Haiku + Sonnet + **Embedding** + **DB 容量超過** + **ファイルストレージ超過**) を組成する。Sandbox / 開発環境では該当 env を未設定にすれば旧挙動 (= 2〜4 本構成) で運用可能。
 
 > **重要 (ADR-0019 / 2026-05-24 価格改定)**: Stripe では一度作成した Price の単価変更ができません。**新規 Price を作成して Subscription Item を切り替える運用** が必要です。手順:
 > 1. Stripe Dashboard で新 Haiku Price (¥10/call) を作成 (Sonnet は ¥15 据置のため変更不要)
@@ -196,7 +200,7 @@ model BillingHistory {
 >
 > Sonnet Price (¥15/call) は据置のため、上記手順は Haiku のみ実施。
 >
-> 移行中は新旧 Price が並行して Usage Record を受け取り得るが、`Subscription Item` の active 状態管理で防御。詳細手順は [docs/operations/STRIPE_SETUP.md](../operations/STRIPE_SETUP.md) を参照。
+> 移行中は新旧 Price が並行して Usage Record を受け取り得るが、`Subscription Item` の active 状態管理で防御。詳細手順は [docs/operations/STRIPE_SETUP.md](../operations/setup/STRIPE_SETUP.md) を参照。
 
 ### 3.2 Webhook エンドポイント設定
 
@@ -276,14 +280,16 @@ Stripe Dashboard → Developers → Webhooks → Add endpoint:
       - 失敗は console.warn のみで続行 (= 既 canceled / Webhook で最終整合)
    Step 4: createSubscriptionForTenant
       - stripe.subscriptions.create() で Subscription 作成
-        * items: Haiku / Sonnet / Storage の Subscription Item を作成
+        * items: Haiku / Sonnet / Embedding / DB容量超過 / Storage超過 の 5 Subscription Item を作成
+          (= 5 Item invariant、optional env が全て Production 設定済のため。未設定 env は省略)
         * default_payment_method = pm_xxx
         * automatic_tax: { enabled: true }
         * idempotencyKey = `subscription:create:${tenantId}:${paymentMethodId}` (★PR #425 / KDD §5.X+106★)
           - 旧 key (= tenantId のみ) では「テナント生涯 1 回」の制約になり、カード差替で
             「Keys for idempotent requests can only be reused with the same parameters」エラー
    Step 5: DB の最終 commit (= 'credit_card' 切替確定)
-      - tenant.stripeSubscriptionId / SubscriptionItemHaikuId / ...Sonnet... / ...Storage...
+      - tenant.stripeSubscriptionId / SubscriptionItemHaikuId / ...SonnetId / ...EmbeddingId /
+        ...DbCapacityId / ...StorageFileId (= 5 Item 分の ID、設定済 env のみ非 null)
       - tenant.stripeDefaultPaymentMethodId = pm_xxx
       - tenant.paymentMethod = 'credit_card'
       - tenant.cardLastVerifiedAt = now
@@ -348,11 +354,16 @@ if (
 [テナント] API 呼び出し (= LLM 利用)
    ↓
 [サーバ側] withMeteredLLM(...) でラップ
-   - 既存処理 (= Tenant.currentMonthApiCallCount / currentMonthApiCostJpy を更新)
-   - 追加: paymentMethod === 'credit_card' なら
-     * stripe.subscriptionItems.createUsageRecord(itemId, { quantity: 1, timestamp: now })
-     * Haiku 呼び出し → stripeSubscriptionItemHaikuId
-     * Sonnet 呼び出し → stripeSubscriptionItemSonnetId
+   - 既存処理 (= LLM は Tenant.currentMonthApiCallCount / currentMonthApiCostJpy、
+     Embedding は currentMonthEmbeddingCallCount / currentMonthEmbeddingCostJpy を更新)
+   - 追加: paymentMethod === 'credit_card' かつ cost > 0 なら stripe_usage_record_queue に enqueue
+     (= 直接 Stripe API を叩かず非同期 queue。日次 cron /api/cron/stripe-usage-flush が Meter Event 送信)
+     * LLM × Pro 以外 → callType='haiku' (Meter event 'tasukiba_haiku_call')
+     * LLM × Pro    → callType='sonnet' (Meter event 'tasukiba_sonnet_call')
+     * Embedding    → callType='embedding' (Meter event 'tasukiba_embedding_call'、ADR-0022)
+     * Beginner (cost=0) / Backfill (cost=0) は queue 不投入
+   - DB容量超過 / ファイルストレージ超過 は withMeteredLLM 経由ではなく
+     月初 cron (tenant-monthly-reset) が前月 peak から ApiCallLog INSERT + Meter Event 送信
    ↓
 [月末: 自動]
    - Stripe が Subscription Item の Usage Record を集計
@@ -471,7 +482,8 @@ Webhook (`customer.subscription.deleted`) は冗長 (= 整合性二重チェッ�
      2. **成功時 / 既 canceled 時 (= invalid_request 系) いずれも DB を即時クリア**:
         - stripeSubscriptionId = null
         - stripeSubscriptionStatus = 'canceled'
-        - stripeSubscriptionItemHaikuId / SonnetId / StorageId = null
+        - stripeSubscriptionItemHaikuId / SonnetId / EmbeddingId / DbCapacityId / StorageFileId = null
+          (= 5 Item 分すべてクリア、[stripe-billing.service.ts:1112-1118](../../src/services/stripe-billing.service.ts))
         - stripeDefaultPaymentMethodId = null
         - cardVerificationStatus = null
         - cardLastVerifiedAt = null
@@ -572,7 +584,7 @@ cancel 直後 (= 秒単位) に「invoice → credit_card」へ再切替して�
 ```typescript
 import Stripe from 'stripe';
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: '2024-12-18.acacia' });
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: '2026-04-22.dahlia' }); // PR-V8 で acacia → dahlia に更新済 (src/lib/stripe.ts:47)
 
 export async function POST(req: NextRequest) {
   const signature = req.headers.get('stripe-signature');
@@ -593,10 +605,13 @@ export async function POST(req: NextRequest) {
 |---|---|---|
 | `STRIPE_SECRET_KEY` | Stripe API 認証 | テスト/本番でキー分離 (`sk_test_xxx` / `sk_live_xxx`) |
 | `STRIPE_WEBHOOK_SECRET` | Webhook 検証 | 同上 (`whsec_xxx`) |
-| `STRIPE_PRICE_HAIKU` | Haiku Price ID | テスト/本番で別 ID |
-| `STRIPE_PRICE_SONNET` | Sonnet Price ID | 同上 |
-| `STRIPE_PRICE_STORAGE_PLUS` | Storage Plus Price ID | 同上 |
-| `STRIPE_PRICE_STORAGE_PRO` | Storage Pro Price ID | 同上 |
+| `STRIPE_PRICE_HAIKU` | Haiku (Expert LLM) per-call Price ID | テスト/本番で別 ID |
+| `STRIPE_PRICE_SONNET` | Sonnet (Pro LLM) per-call Price ID | 同上 |
+| `STRIPE_PRICE_EMBEDDING` | Embedding per-call Price ID (ADR-0022/0029、optional、✅ Production 設定済) | 同上 |
+| `STRIPE_PRICE_DB_CAPACITY_OVERAGE` | DB 容量超過 ¥50/GB tier Price ID (ADR-0020、optional、✅ Production 設定済) | 同上 |
+| `STRIPE_PRICE_STORAGE_FILE_OVERAGE` | ファイルストレージ超過 ¥10/GB tier Price ID (ADR-0021、optional、✅ Production 設定済) | 同上 |
+
+> ~~`STRIPE_PRICE_STORAGE_PLUS` / `STRIPE_PRICE_STORAGE_PRO`~~ (旧 4 段階プランの固定額 Storage Add-on) は ADR-0020/0021 従量課金化で **撤去済**。上記 `STRIPE_PRICE_DB_CAPACITY_OVERAGE` / `STRIPE_PRICE_STORAGE_FILE_OVERAGE` (Metered) に置き換わった。
 
 ### 7.3 PCI DSS
 
@@ -686,9 +701,9 @@ Stripe (クレジットカード自動引落) は **2026-05-30 に有効化済**
 
 詳細手順は別ドキュメント:
 
-- [docs/operations/STRIPE_SETUP.md](../operations/STRIPE_SETUP.md): Stripe Dashboard の事前セットアップ
-- [docs/operations/BILLING_MONTHLY_OPERATIONS.md](../operations/BILLING_MONTHLY_OPERATIONS.md) 更新: credit_card テナントの月次運用フロー
-- [docs/operations/PAYMENT_DELINQUENCY_SOP.md](../operations/PAYMENT_DELINQUENCY_SOP.md) 更新: §0 入金確認に Stripe 自動検知を追記
+- [docs/operations/STRIPE_SETUP.md](../operations/setup/STRIPE_SETUP.md): Stripe Dashboard の事前セットアップ
+- [docs/operations/BILLING_MONTHLY_OPERATIONS.md](../operations/operate/BILLING_MONTHLY_OPERATIONS.md) 更新: credit_card テナントの月次運用フロー
+- [docs/operations/PAYMENT_DELINQUENCY_SOP.md](../operations/operate/PAYMENT_DELINQUENCY_SOP.md) 更新: §0 入金確認に Stripe 自動検知を追記
 
 ---
 

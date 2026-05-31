@@ -234,7 +234,7 @@ describe('classifyFileStorageLevel — 4 層防御 (= ADR-0020 と同閾値)', (
     expect(classifyFileStorageLevel(BigInt(30 * SI_GB_BYTES))).toBe('l2');
   });
 
-  it('50GB ちょうど → l3 (ハードキャップ到達)', () => {
+  it('50GB ちょうど → l3 (L3 監視アラート閾値到達)', () => {
     expect(classifyFileStorageLevel(BigInt(FILE_STORAGE_L3_HARD_CAP_BYTES))).toBe('l3');
   });
 
@@ -590,7 +590,7 @@ describe('billing invariant — 計算経路の整合性 (feedback_billing_invar
     expect(calculateFileStorageStripeQuantity(calculateFileStorageOverageJpy(peakBytes))).toBe(0);
   });
 
-  it('ハードキャップ 50GB でも overage → stripeQuantity invariant 保持', () => {
+  it('50GB 相当でも overage → stripeQuantity invariant 保持', () => {
     const peakBytes = BigInt(FILE_STORAGE_L3_HARD_CAP_BYTES);
     const costJpy = calculateFileStorageOverageJpy(peakBytes);
     expect(costJpy).toBe(500);

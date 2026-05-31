@@ -1,36 +1,30 @@
 /**
  * ストレージ容量 enforcement サービス (ADR-0020 / 2026-05-25 全面改修)
  *
- * 役割:
- *   テナント配下のデータを作成 / 更新 / インポートする際、
- *   ADR-0020 で定めた **50GB ハードキャップ** を超えないことをリアルタイムで保証する。
- *   ハードキャップは「他テナントへの影響を絶対不許容」原則 (R3) の技術的安全弁。
+ * 役割 (2026-05-31 改定 / ADR-0030「データはたすきばの命」):
+ *   テナント配下のデータを作成 / 更新 / インポートする際の容量管理。
+ *   **累積 50GB ハードキャップ (write 拒否) と circuit-breaker は撤廃**し、現在の役割は:
+ *     (a) Beginner プラン無料枠 (DB 50MB / Storage 100MB) の write block
+ *     (b) 月中 peak の計測 (課金根拠) + 監視アラート Level (L1/L2/L3) の更新
+ *   累積による他テナント保護 (noisy-neighbor) は運用 (Supabase Compute 増強) で吸収する方針へ変更。
  *
- * 主要機能 (ADR-0020):
- *   1. **月中 peak (= max bytes) 計測**: write 経由で `storageBytesPeakThisMonth` を MAX 更新
- *   2. **4 層防御 warning Level の自動分類**: 1GB / 10GB / 50GB / instance-wide
- *   3. **50GB ハードキャップ**: 超過時に write 拒否 (read / export は別ロジックで許可)
- *   4. **fail-close + circuit breaker** (R3): 計測失敗時は write 拒否、3 回連続失敗で long open
- *   5. **並列性制御** (R8/R9): SELECT FOR UPDATE で同テナント並列 write を直列化
- *   6. **動的計測** (R1): tenant-storage-tables.service へ委譲、新規テーブル自動追従
+ * 主要機能:
+ *   1. **月中 peak (= max bytes) 計測**: write 経由で `storageBytesPeakThisMonth` を MAX 更新 (課金根拠)
+ *   2. **監視アラート Level の自動分類**: 1GB(L1) / 10GB(L2) / 50GB(L3) — いずれも super_admin 通知用 (write は止めない)
+ *   3. **Beginner 無料枠ガード**: Beginner プランのみ DB 50MB / Storage 100MB 超過で write 拒否 (overage 課金なし)
+ *   4. **計測 fail-open**: DB 計測失敗時は write を止めず記録のみ (日次 cron `updateAllStorageBytesUsed` が補正)
+ *   5. **動的計測** (R1): tenant-storage-tables.service へ委譲、新規テーブル自動追従
  *
- * 旧仕様からの変更 (R4):
- *   - 4 段階 addon プラン (Standard 20MB / Plus 220MB / Pro 1.02GB / Enterprise 5.02GB) は廃止
- *   - 7 日 Grace period も廃止 (= 即時 hard cap 判定のみ)
- *   - 旧上限は env DB_CAPACITY_L3_HARD_CAP_BYTES で上書き可能だが default 50GB SI
- *
- * 二段階チェック戦略 (旧仕様から継承、ロジック更新):
+ * 二段階チェック戦略:
  *   **Pre-check** (リクエスト入口、低コスト):
- *     - `Tenant.storageBytesUsed` キャッシュ + 推測サイズで判定
- *     - 明らかにハードキャップ超過なら 413 で即時拒否
+ *     - `Tenant.storageBytesUsed` キャッシュ + 推測サイズで Beginner 無料枠を判定 (超過なら 403)
  *
- *   **Post-check** (transaction 内、正確):
- *     - SELECT FOR UPDATE で tenant 行ロック (並列 write race 防止)
+ *   **Post-check** (write コミット後の best-effort、正確):
  *     - 動的 SQL で `pg_column_size` 全テナント所属テーブルを集計
- *     - storageBytesUsed + storageBytesPeakThisMonth (MAX) を atomic 更新
+ *     - storageBytesUsed + storageBytesPeakThisMonth (MAX) を更新 (課金根拠 / billing invariant)
  *     - dbCapacityWarningLevel を classify 結果で更新 (通知 spam 防止)
- *     - 50GB 超過なら StorageLimitExceededError throw
- *     - 計測失敗時は circuitBreakerFailCount を increment、3 回で long open
+ *     - Beginner が 50MB 超過なら BeginnerWriteGuardExceededError throw
+ *     - 計測失敗は fail-open (記録のみ、日次 cron が補正)
  *
  * 関連:
  *   - ADR: docs/adr/0020-db-capacity-usage-based-billing.md
@@ -46,14 +40,11 @@ import type { PrismaClient } from '@/generated/prisma/client';
 import { prisma } from '@/lib/db';
 import {
   BEGINNER_DB_FREE_TIER_BYTES,
-  DB_CAPACITY_L3_HARD_CAP_BYTES,
-  STORAGE_GUARD_CIRCUIT_BREAKER_THRESHOLD,
   classifyDbCapacityLevel,
   type DbCapacityWarningLevel,
 } from '@/config/db-capacity-pricing';
 import {
   BEGINNER_STORAGE_FREE_TIER_BYTES,
-  FILE_STORAGE_L3_HARD_CAP_BYTES,
   classifyFileStorageLevel,
   type FileStorageWarningLevel,
 } from '@/config/file-storage-pricing';
@@ -66,27 +57,8 @@ export type TxClient = Omit<
   '$connect' | '$disconnect' | '$on' | '$transaction' | '$use' | '$extends'
 >;
 
-/**
- * ハードキャップ (50GB) 超過時に投げる例外。
- * transaction 内で throw すれば全件ロールバックされる。
- * 呼出側 API は本例外を catch して 403 STORAGE_LIMIT_EXCEEDED で応答する。
- *
- * 旧 addonPlan フィールドは ADR-0020 で 4 段階プラン廃止のため除去。
- */
-export class StorageLimitExceededError extends Error {
-  readonly code = 'STORAGE_LIMIT_EXCEEDED';
-  readonly currentBytes: number;
-  readonly limitBytes: number;
-
-  constructor(args: { tenantId: string; currentBytes: number; limitBytes: number }) {
-    super(
-      `Tenant ${args.tenantId} storage usage ${args.currentBytes} bytes exceeds hard cap ${args.limitBytes} bytes`,
-    );
-    this.name = 'StorageLimitExceededError';
-    this.currentBytes = args.currentBytes;
-    this.limitBytes = args.limitBytes;
-  }
-}
+// 2026-05-31: StorageLimitExceededError (DB 50GB 累積ハードキャップ例外) は撤去 (ADR-0030)。
+//   累積による write 拒否を廃止したため。Beginner 無料枠ガードは BeginnerWriteGuardExceededError を使用。
 
 /**
  * Beginner プラン無料枠超過 write ブロック例外 (ADR-0025、2026-05-29)。
@@ -127,24 +99,9 @@ export class BeginnerWriteGuardExceededError extends Error {
   }
 }
 
-/**
- * Circuit breaker open 中に投げる例外 (R3 fail-close)。
- * 連続 STORAGE_GUARD_CIRCUIT_BREAKER_THRESHOLD 回 (= 3) 失敗で発火、super_admin の手動復旧待ち。
- */
-export class StorageGuardCircuitOpenError extends Error {
-  readonly code = 'STORAGE_GUARD_CIRCUIT_OPEN';
-  readonly tenantId: string;
-  readonly failCount: number;
-
-  constructor(args: { tenantId: string; failCount: number }) {
-    super(
-      `Storage guard circuit open for tenant ${args.tenantId} (failCount=${args.failCount}), refusing write to protect data integrity`,
-    );
-    this.name = 'StorageGuardCircuitOpenError';
-    this.tenantId = args.tenantId;
-    this.failCount = args.failCount;
-  }
-}
+// 2026-05-31: StorageGuardCircuitOpenError (circuit-breaker fail-close) は撤去 (ADR-0030)。
+//   累積ハードキャップが無くなり「計測できないから write 拒否」の根拠が消えたため。
+//   計測失敗は fail-open (記録のみ) とし、日次 cron が真値を補正する。
 
 // ================================================================
 // Pre-check (低コスト)
@@ -168,7 +125,7 @@ export async function precheckStorageLimit(
   | { ok: true; cachedUsedBytes: number; limitBytes: number }
   | {
       ok: false;
-      code: 'STORAGE_LIMIT_EXCEEDED' | 'BEGINNER_DB_QUOTA_EXCEEDED';
+      code: 'BEGINNER_DB_QUOTA_EXCEEDED';
       cachedUsedBytes: number;
       limitBytes: number;
     }
@@ -180,31 +137,24 @@ export async function precheckStorageLimit(
     select: {
       plan: true,
       storageBytesUsed: true,
-      storageGuardCircuitOpenedAt: true,
     },
   });
   if (!tenant) {
     // テナント不在 → 上位で 401/404 が出ているはずだが defensive に通す (404 を Pre-check で扱わない)
-    return { ok: true, cachedUsedBytes: 0, limitBytes: DB_CAPACITY_L3_HARD_CAP_BYTES };
-  }
-
-  // Circuit open 中は早期に拒否 (= fail-close)
-  if (tenant.storageGuardCircuitOpenedAt != null) {
-    return {
-      ok: false,
-      code: 'STORAGE_LIMIT_EXCEEDED',
-      cachedUsedBytes: Number(tenant.storageBytesUsed),
-      limitBytes: DB_CAPACITY_L3_HARD_CAP_BYTES,
-    };
+    return { ok: true, cachedUsedBytes: 0, limitBytes: BEGINNER_DB_FREE_TIER_BYTES };
   }
 
   const cachedUsedBytes = Number(tenant.storageBytesUsed);
 
-  // ADR-0025: Beginner プラン専用 50MB 無料枠ガード (ハードキャップ判定より優先)。
+  // ADR-0025: Beginner プラン専用 50MB 無料枠ガード。
   //   ADR-0019 / ADR-0022 の「90 日完全無料」訴求を保証するため、Beginner プランは
   //   50MB 超過状態で INSERT/UPDATE を一律拒否し、overage 課金も発生させない。
   //   DELETE は許可 (= storage-guard を通らないため自動的に許可される)。
   //   詳細: docs/adr/0025-beginner-write-guard.md
+  //
+  // 2026-05-31: 累積 50GB ハードキャップ撤去 (ADR-0030「データはたすきばの命」)。
+  //   全プラン共通の write block は廃止し、Beginner 無料枠ガードのみ残す。
+  //   circuit-breaker (計測失敗時の write 拒否) も撤去 (計測は日次 cron が補正)。
   if (
     tenant.plan === 'beginner' &&
     cachedUsedBytes + estimatedNewBytes > BEGINNER_DB_FREE_TIER_BYTES
@@ -217,15 +167,7 @@ export async function precheckStorageLimit(
     };
   }
 
-  if (cachedUsedBytes + estimatedNewBytes > DB_CAPACITY_L3_HARD_CAP_BYTES) {
-    return {
-      ok: false,
-      code: 'STORAGE_LIMIT_EXCEEDED',
-      cachedUsedBytes,
-      limitBytes: DB_CAPACITY_L3_HARD_CAP_BYTES,
-    };
-  }
-  return { ok: true, cachedUsedBytes, limitBytes: DB_CAPACITY_L3_HARD_CAP_BYTES };
+  return { ok: true, cachedUsedBytes, limitBytes: BEGINNER_DB_FREE_TIER_BYTES };
 }
 
 // ================================================================
@@ -233,25 +175,29 @@ export async function precheckStorageLimit(
 // ================================================================
 
 /**
- * **Post-check** — transaction 内で実測値を計算し、以下を atomic に実施:
+ * **Post-check (2026-05-31 改定)** — ユーザのデータ書込が**別 tx で既にコミットされた後**に、
+ * best-effort で使用量を再計測して peak/level を更新し、Beginner 無料枠を post-check する:
  *
- *   1. SELECT FOR UPDATE で tenant 行ロック (R8/R9: 並列 write race 防止)
+ *   1. SELECT FOR UPDATE で tenant 行ロック
  *   2. 動的 SQL (`calculateTenantStorageBytesDynamic`) で実使用量を集計
- *   3. `storageBytesUsed` + `storageBytesPeakThisMonth` (MAX) を atomic 更新
- *   4. `dbCapacityWarningLevel` を classify 結果で更新 (`none` / `l1` / `l2` / `l3`)
- *   5. ハードキャップ (50GB) 超過なら `StorageLimitExceededError` throw (= tx 全件ロールバック)
- *   6. 計測失敗時は `storageGuardCircuitFailCount` increment、3 回連続で circuit open
+ *   3. `storageBytesUsed` + `storageBytesPeakThisMonth` (MAX) を更新 (課金根拠 / billing invariant)
+ *   4. `dbCapacityWarningLevel` を classify 結果で更新 (`none` / `l1` / `l2` / `l3` = 監視アラート閾値)
+ *   5. Beginner プランが 50MB 無料枠を超えていれば `BeginnerWriteGuardExceededError` throw
+ *   6. **計測失敗時は fail-open** (= recordError + return、write は止めない。日次 cron が補正)
  *
- * 呼出側パターン:
+ *   ※ 累積 50GB ハードキャップ (旧 §5b) と circuit-breaker は撤去済 (ADR-0030)。
+ *
+ * 呼出側パターン (write コミット後に別 tx で呼ぶ):
  *   ```ts
- *   await prisma.$transaction(async (tx) => {
- *     await tx.knowledge.create({...});
- *     await assertStorageLimitInTx(tx, tenantId);  // 書込直後
- *   });
+ *   const result = await prisma.$transaction((tx) => tx.knowledge.create({...})); // 書込コミット
+ *   try {
+ *     await prisma.$transaction((tx) => assertStorageLimitInTx(tx, tenantId));    // best-effort
+ *   } catch (e) {
+ *     // Beginner 超過は呼出側で UX 文言にマッピング。計測失敗等はログのみで握りつぶす。
+ *   }
  *   ```
  *
- * @throws StorageLimitExceededError ハードキャップ超過時
- * @throws StorageGuardCircuitOpenError circuit breaker open 中の場合
+ * @throws BeginnerWriteGuardExceededError Beginner プランが 50MB 無料枠超過時 (計測成功時のみ)
  */
 export async function assertStorageLimitInTx(
   tx: TxClient,
@@ -270,8 +216,6 @@ export async function assertStorageLimitInTx(
       // ADR-0025 (2026-05-29): Beginner プラン判定のため plan を select に追加
       plan: true,
       storageBytesPeakThisMonth: true,
-      storageGuardCircuitFailCount: true,
-      storageGuardCircuitOpenedAt: true,
       dbCapacityWarningLevel: true,
     },
   });
@@ -279,54 +223,30 @@ export async function assertStorageLimitInTx(
     throw new Error(`Tenant not found: ${tenantId}`);
   }
 
-  // Circuit breaker が open 中なら即時拒否 (= fail-close)
-  if (tenant.storageGuardCircuitOpenedAt != null) {
-    throw new StorageGuardCircuitOpenError({
-      tenantId,
-      failCount: tenant.storageGuardCircuitFailCount,
-    });
-  }
-
   // 2. 動的 SQL で実測 (= R1 計測対象の網羅性保証)
   let usedBytes: bigint;
   try {
     usedBytes = await calculateTenantStorageBytesDynamic(tenantId, tx);
   } catch (e) {
-    // R3 fail-close: 計測失敗時は counter increment、threshold で circuit open
-    const newFailCount = tenant.storageGuardCircuitFailCount + 1;
-    const shouldOpenCircuit = newFailCount >= STORAGE_GUARD_CIRCUIT_BREAKER_THRESHOLD;
-
-    await tx.tenant.update({
-      where: { id: tenantId },
-      data: {
-        storageGuardCircuitFailCount: newFailCount,
-        storageGuardCircuitOpenedAt: shouldOpenCircuit ? new Date() : null,
-      },
-    });
-
-    // super_admin に緊急アラート (recordError 経由 / R12-admin)
+    // 2026-05-31 fail-open (ADR-0030「データはたすきばの命」):
+    //   累積 50GB ハードキャップ撤去に伴い circuit-breaker (fail-close) も廃止。
+    //   計測失敗時は write を止めず、peak 更新を skip して記録のみ残す。真値は日次 cron
+    //   `updateAllStorageBytesUsed` が再計測して補正する (= 課金は月内 MAX なので取りこぼさない)。
+    //   ※ 本関数は「ユーザのデータ書込が別 tx で既にコミットされた後」に呼ばれる前提。
+    //     計測クエリ失敗で本 tx が abort しても、コミット済のユーザ書込には影響しない
+    //     (呼出側はこの計測 tx の失敗をログのみで握りつぶす)。
     await recordError({
-      severity: shouldOpenCircuit ? 'error' : 'warn',
+      severity: 'warn',
       source: 'server',
-      message: shouldOpenCircuit
-        ? `[storage-guard] CIRCUIT OPEN (tenant=${tenantId}, failCount=${newFailCount})`
-        : `[storage-guard] measurement failed (tenant=${tenantId}, failCount=${newFailCount})`,
+      message: `[storage-guard] DB usage 計測失敗 (fail-open, tenant=${tenantId})`,
       stack: e instanceof Error ? e.stack : undefined,
       context: {
-        kind: 'storage_guard_circuit',
+        kind: 'storage_guard_measure_failed',
         tenantId,
-        failCount: newFailCount,
-        circuitOpened: shouldOpenCircuit,
         originalError: e instanceof Error ? e.message : String(e),
       },
     });
-
-    // fail-close: 計測できない以上、write は通せない (= 他テナント保護の絶対原則 R3)
-    throw new StorageLimitExceededError({
-      tenantId,
-      currentBytes: 0,
-      limitBytes: DB_CAPACITY_L3_HARD_CAP_BYTES,
-    });
+    return;
   }
 
   // 3-4. peak / warning level / cache を atomic 更新
@@ -346,10 +266,6 @@ export async function assertStorageLimitInTx(
         ? { storageBytesPeakThisMonth: usedBytes, storageBytesPeakAt: new Date() }
         : {}),
       ...(levelChanged ? { dbCapacityWarningLevel: newLevel } : {}),
-      // 計測成功時は circuit breaker counter リセット
-      ...(tenant.storageGuardCircuitFailCount > 0
-        ? { storageGuardCircuitFailCount: 0 }
-        : {}),
     },
   });
 
@@ -383,14 +299,8 @@ export async function assertStorageLimitInTx(
     });
   }
 
-  // 5b. ハードキャップ判定 (全プラン共通、Beginner は §5a で先に弾かれる)
-  if (usedBytes > BigInt(DB_CAPACITY_L3_HARD_CAP_BYTES)) {
-    throw new StorageLimitExceededError({
-      tenantId,
-      currentBytes: usedBytesNumber,
-      limitBytes: DB_CAPACITY_L3_HARD_CAP_BYTES,
-    });
-  }
+  // 2026-05-31: 旧 §5b の 50GB 累積ハードキャップ write 拒否は撤去 (ADR-0030「データはたすきばの命」)。
+  //   L3 (50GB) は上記 classify による super_admin 監視アラート閾値としてのみ機能する (write は止めない)。
 }
 
 /**
@@ -442,88 +352,17 @@ export async function withStorageGuard<T>(
 // エラーマッピング — API route から共通利用
 // ================================================================
 
-/**
- * API route の error handling を簡潔にするためのヘルパ。
- *
- * ```ts
- * try {
- *   await withStorageGuard(tenantId, (tx) => tx.project.create(...));
- *   return NextResponse.json({ data: ... });
- * } catch (e) {
- *   const r = mapStorageGuardErrorToResponse(e);
- *   if (r) return r;
- *   throw e;
- * }
- * ```
- *
- * ADR-0020 (R13) ハードキャップエラーメッセージ:
- *   - read / export は別経路で許可される旨を伝える
- *   - サポート問い合わせは v1.x で個別契約フロー検討予定 (今は記載なし)
- */
-export function mapStorageGuardErrorToResponse(error: unknown):
-  | {
-      status: 403;
-      body: {
-        error: {
-          code: 'STORAGE_LIMIT_EXCEEDED' | 'STORAGE_GUARD_CIRCUIT_OPEN';
-          message: string;
-          currentBytes?: number;
-          limitBytes?: number;
-        };
-      };
-    }
-  | null {
-  if (error instanceof StorageLimitExceededError) {
-    return {
-      status: 403,
-      body: {
-        error: {
-          code: 'STORAGE_LIMIT_EXCEEDED',
-          message:
-            'データ容量が上限 50GB に達しました。データを削除してから再度お試しください。データの読み取り・エクスポートは引き続き可能です。',
-          currentBytes: error.currentBytes,
-          limitBytes: error.limitBytes,
-        },
-      },
-    };
-  }
-  if (error instanceof StorageGuardCircuitOpenError) {
-    return {
-      status: 403,
-      body: {
-        error: {
-          code: 'STORAGE_GUARD_CIRCUIT_OPEN',
-          message:
-            '一時的にデータの書き込みができません。管理者に通知済みです。しばらくしてから再度お試しください。',
-        },
-      },
-    };
-  }
-  return null;
-}
+// 2026-05-31: mapStorageGuardErrorToResponse (STORAGE_LIMIT_EXCEEDED / STORAGE_GUARD_CIRCUIT_OPEN
+//   のレスポンスマッピング) は撤去 (ADR-0030)。累積ハードキャップ撤廃で対象エラーが無くなったため。
+//   Beginner 無料枠超過は mapBeginnerWriteGuardErrorToResponse を使用する。
 
 // ================================================================
 // ファイルストレージ Pre-check / Post-check (ADR-0021 §10.7)
 // ================================================================
 
-/**
- * ファイルストレージ 50GB ハードキャップ超過例外 (ADR-0021 §10.7)。
- * DB 容量とは独立した SKU のため別エラー型として定義。
- */
-export class FileStorageLimitExceededError extends Error {
-  readonly code = 'STORAGE_FILE_HARD_CAP_EXCEEDED';
-  readonly currentBytes: number;
-  readonly limitBytes: number;
-
-  constructor(args: { tenantId: string; currentBytes: number; limitBytes: number }) {
-    super(
-      `Tenant ${args.tenantId} file storage usage ${args.currentBytes} bytes exceeds hard cap ${args.limitBytes} bytes`,
-    );
-    this.name = 'FileStorageLimitExceededError';
-    this.currentBytes = args.currentBytes;
-    this.limitBytes = args.limitBytes;
-  }
-}
+// 2026-05-31: FileStorageLimitExceededError (ファイル 50GB 累積ハードキャップ例外) は撤去 (ADR-0030)。
+//   ファイルは Supabase Storage (オブジェクトストレージ) で Postgres RAM 非依存のため累積上限を撤廃。
+//   1 ファイル上限 50MB は upload/finalize route 側の FILE_STORAGE_MAX_FILE_SIZE_BYTES 検証で担保。
 
 /**
  * Pre-check — Pre-signed URL 発行前にハードキャップ判定。
@@ -543,7 +382,7 @@ export async function precheckFileStorageLimit(
   | { ok: true; cachedUsedBytes: number; limitBytes: number }
   | {
       ok: false;
-      code: 'STORAGE_FILE_HARD_CAP_EXCEEDED' | 'BEGINNER_STORAGE_QUOTA_EXCEEDED';
+      code: 'BEGINNER_STORAGE_QUOTA_EXCEEDED';
       cachedUsedBytes: number;
       limitBytes: number;
     }
@@ -554,16 +393,20 @@ export async function precheckFileStorageLimit(
     select: { plan: true, storageFileBytesUsed: true },
   });
   if (!tenant) {
-    return { ok: true, cachedUsedBytes: 0, limitBytes: FILE_STORAGE_L3_HARD_CAP_BYTES };
+    return { ok: true, cachedUsedBytes: 0, limitBytes: BEGINNER_STORAGE_FREE_TIER_BYTES };
   }
 
   const cachedUsedBytes = Number(tenant.storageFileBytesUsed);
 
-  // ADR-0025: Beginner プラン専用 100MB 無料枠ガード (ハードキャップ判定より優先)。
+  // ADR-0025: Beginner プラン専用 100MB 無料枠ガード。
   //   Pre-signed URL 発行前の判定。Beginner プランは 100MB 超過状態でアップロード拒否、
   //   overage 課金も発生させない。File 削除は許可 (assertFileStorageLimitInTx で
   //   addedBytes < 0 のときは Beginner ガード判定を skip する)。
   //   詳細: docs/adr/0025-beginner-write-guard.md / docs/specification/BEGINNER_PLAN.md
+  //
+  // 2026-05-31: 累積 50GB ハードキャップ撤去 (ADR-0030)。ファイルは Supabase Storage
+  //   (オブジェクトストレージ) で Postgres RAM 非依存のため noisy-neighbor とも無関係。
+  //   1 ファイル上限 50MB (FILE_STORAGE_MAX_FILE_SIZE_BYTES) は upload/finalize route 側で別途検証。
   if (
     tenant.plan === 'beginner' &&
     cachedUsedBytes + estimatedNewBytes > BEGINNER_STORAGE_FREE_TIER_BYTES
@@ -576,15 +419,7 @@ export async function precheckFileStorageLimit(
     };
   }
 
-  if (cachedUsedBytes + estimatedNewBytes > FILE_STORAGE_L3_HARD_CAP_BYTES) {
-    return {
-      ok: false,
-      code: 'STORAGE_FILE_HARD_CAP_EXCEEDED',
-      cachedUsedBytes,
-      limitBytes: FILE_STORAGE_L3_HARD_CAP_BYTES,
-    };
-  }
-  return { ok: true, cachedUsedBytes, limitBytes: FILE_STORAGE_L3_HARD_CAP_BYTES };
+  return { ok: true, cachedUsedBytes, limitBytes: BEGINNER_STORAGE_FREE_TIER_BYTES };
 }
 
 /**
@@ -593,8 +428,9 @@ export async function precheckFileStorageLimit(
  *   1. SELECT FOR UPDATE で tenant 行ロック
  *   2. storageFileBytesUsed += addedBytes (delete の場合は負値で減算)
  *   3. storageFileBytesPeakThisMonth = MAX(現値, 新使用量)
- *   4. fileStorageWarningLevel を classify 結果で更新 (= 通知 spam 防止)
- *   5. ハードキャップ超過なら FileStorageLimitExceededError throw
+ *   4. fileStorageWarningLevel を classify 結果で更新 (= 通知 spam 防止 / L3=50GB は監視アラート閾値)
+ *   5. Beginner プランが 100MB 無料枠超過なら BeginnerWriteGuardExceededError throw
+ *      (2026-05-31: 50GB 累積ハードキャップ throw は撤去、ADR-0030)
  *
  * 呼出側パターン (POST /api/attachments/finalize):
  *   ```ts
@@ -608,7 +444,7 @@ export async function precheckFileStorageLimit(
  * @param tenantId 対象テナント
  * @param addedBytes 増減バイト数 (アップロード時 +n、削除時 -n)
  *
- * @throws FileStorageLimitExceededError ハードキャップ超過時
+ * @throws BeginnerWriteGuardExceededError Beginner プランが 100MB 無料枠超過時 (アップロード時のみ)
  */
 export async function assertFileStorageLimitInTx(
   tx: TxClient,
@@ -692,13 +528,8 @@ export async function assertFileStorageLimitInTx(
     });
   }
 
-  if (safeNewUsed > BigInt(FILE_STORAGE_L3_HARD_CAP_BYTES)) {
-    throw new FileStorageLimitExceededError({
-      tenantId,
-      currentBytes: Number(safeNewUsed),
-      limitBytes: FILE_STORAGE_L3_HARD_CAP_BYTES,
-    });
-  }
+  // 2026-05-31: 50GB 累積ハードキャップ (アップロード拒否) は撤去 (ADR-0030)。
+  //   L3 (50GB) は上記 classify による super_admin 監視アラート閾値としてのみ機能する。
 }
 
 function shouldNotifyFileStorageAdmin(
@@ -726,8 +557,6 @@ function shouldNotifyFileStorageAdmin(
  *   } catch (e) {
  *     const beginner = mapBeginnerWriteGuardErrorToResponse(e);
  *     if (beginner) return NextResponse.json(beginner.body, { status: beginner.status });
- *     const storage = mapStorageGuardErrorToResponse(e);
- *     if (storage) return NextResponse.json(storage.body, { status: storage.status });
  *     throw e;
  *   }
  *   ```
@@ -768,32 +597,5 @@ export function mapBeginnerWriteGuardErrorToResponse(error: unknown):
   return null;
 }
 
-export function mapFileStorageGuardErrorToResponse(error: unknown):
-  | {
-      status: 403;
-      body: {
-        error: {
-          code: 'STORAGE_FILE_HARD_CAP_EXCEEDED';
-          message: string;
-          currentBytes: number;
-          limitBytes: number;
-        };
-      };
-    }
-  | null {
-  if (error instanceof FileStorageLimitExceededError) {
-    return {
-      status: 403,
-      body: {
-        error: {
-          code: 'STORAGE_FILE_HARD_CAP_EXCEEDED',
-          message:
-            'ファイル添付の容量が上限 50GB に達しました。不要なファイルを削除してから再度お試しください。既存ファイルのダウンロードは引き続き可能です。',
-          currentBytes: error.currentBytes,
-          limitBytes: error.limitBytes,
-        },
-      },
-    };
-  }
-  return null;
-}
+// 2026-05-31: mapFileStorageGuardErrorToResponse (STORAGE_FILE_HARD_CAP_EXCEEDED マッピング) は撤去 (ADR-0030)。
+//   累積ハードキャップ撤廃で対象エラーが無くなったため。Beginner 超過は mapBeginnerWriteGuardErrorToResponse を使用。

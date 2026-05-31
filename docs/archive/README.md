@@ -70,6 +70,27 @@
 | 2026-05-19 | docs/roadmap/SUGGESTION_ENGINE_PLAN.md | [roadmap/SUGGESTION_ENGINE_PLAN.md](./roadmap/SUGGESTION_ENGINE_PLAN.md) | T-03 提案エンジン v2 実装計画。PR #220-#226 で実装完了済 |
 | 2026-05-19 | docs/roadmap/ROLE_REFACTORING_PLAN.md | [roadmap/ROLE_REFACTORING_PLAN.md](./roadmap/ROLE_REFACTORING_PLAN.md) | ロール再構築計画。`src/lib/permissions/role.ts` (isSuperAdmin / isAdminOrAbove / requireSuperAdmin) で実装完了済 |
 
+### 2026-06-01-pre-ops-reorg/roadmap/
+
+`docs/roadmap/` ディレクトリの全廃記録 (2026-06-01)。残存していた計画書 / future/ を一括退避。未実装かつ運用保守に必要な計画は [operations/ROADMAP.md](../operations/ROADMAP.md)(運用保守ロードマップ)へ無損失移植済。
+
+| 移動日 | 元の場所 | 移動先 | 経緯 |
+|---|---|---|---|
+| 2026-06-01 | docs/roadmap/RELEASE_ROADMAP.md | [2026-06-01-pre-ops-reorg/roadmap/RELEASE_ROADMAP.md](./2026-06-01-pre-ops-reorg/roadmap/RELEASE_ROADMAP.md) | リリースロードマップ全体。実装済機能を除く未実装計画は operations/ROADMAP.md へ移植 |
+| 2026-06-01 | docs/roadmap/STRIPE_INTEGRATION_PLAN.md | [2026-06-01-pre-ops-reorg/roadmap/STRIPE_INTEGRATION_PLAN.md](./2026-06-01-pre-ops-reorg/roadmap/STRIPE_INTEGRATION_PLAN.md) | Stripe Metered Billing 連携の実装計画。実装完了済 (恒久仕様は design/STRIPE_TECHNICAL_DESIGN.md) |
+| 2026-06-01 | docs/roadmap/README.md | [2026-06-01-pre-ops-reorg/roadmap/README.md](./2026-06-01-pre-ops-reorg/roadmap/README.md) | 旧 roadmap/ ディレクトリ索引 |
+| 2026-06-01 | docs/roadmap/future/ | [2026-06-01-pre-ops-reorg/roadmap/future/](./2026-06-01-pre-ops-reorg/roadmap/future/) | v2 以降の将来構想。CHAT_SEMANTIC_SEARCH は specification/ へ昇格済のため README.md のみ退避 |
+
+### 2026-06-01-pre-ops-reorg/ (完了済ハンドオフ / フォロー)
+
+運用整備リオーグ (2026-06-01) に伴い、完了済のハンドオフ文書と一過性フォロー案件を退避。
+
+| 移動日 | 元の場所 | 移動先 | 経緯 |
+|---|---|---|---|
+| 2026-05-31 | docs/security/FOLLOW_UP_AFTER_PR416.md | [2026-06-01-pre-ops-reorg/FOLLOW_UP_AFTER_PR416.md](./2026-06-01-pre-ops-reorg/FOLLOW_UP_AFTER_PR416.md) | PR #416 (CRUD 設計刷新) クローズ後のフォロー案件。一過性フォローで severity-1/2 は対応済のため security/ から退避 |
+| 2026-05-31 | HANDOFF_ADR_0021.md | [2026-06-01-pre-ops-reorg/HANDOFF_ADR_0021.md](./2026-06-01-pre-ops-reorg/HANDOFF_ADR_0021.md) | ADR-0021 (File Storage 従量課金) 実装ハンドオフ。完了済のため root から退避 |
+| 2026-05-31 | HANDOFF_FOOTER_AUTH_AWARE.md | [2026-06-01-pre-ops-reorg/HANDOFF_FOOTER_AUTH_AWARE.md](./2026-06-01-pre-ops-reorg/HANDOFF_FOOTER_AUTH_AWARE.md) | フッター認証状態対応のハンドオフ。完了済のため root から退避 |
+
 ### audits/
 
 | 移動日 | 元の場所 | 移動先 | 経緯 |
@@ -98,7 +119,7 @@
 
 | 対象 | 移動先 | トリガ条件 |
 |---|---|---|
-| `docs/roadmap/STRIPE_INTEGRATION_PLAN.md` | `docs/archive/roadmap/STRIPE_INTEGRATION_PLAN.md` | Stripe Metered Billing 連携リリース完了 |
+| ~~docs/roadmap/STRIPE_INTEGRATION_PLAN.md~~ | docs/archive/2026-06-01-pre-ops-reorg/roadmap/STRIPE_INTEGRATION_PLAN.md | Stripe Metered Billing 連携リリース完了 → ✅ **2026-06-01 archive 完了** (roadmap/ 全廃に伴い退避) |
 
 ### Phase 4 (active 維持の判断、参考)
 

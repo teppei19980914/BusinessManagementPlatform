@@ -77,9 +77,8 @@
 | 過去 30 日以内のリリース | ✅ (タグ付け後追加予定) |
 | それ以前のバージョン / 独自 fork | ❌ |
 
-本リポジトリはプレリリース段階 (2026-05-01 公開予定) のため、現時点では
-`main` ブランチのみをサポート対象としています。正式リリース (2026-06-01) 以降は
-リリース tag 基準でのサポート範囲を明示します。
+本サービスは 2026-06-01 に正式リリース済。現時点では `main` ブランチの最新コミットと
+過去 30 日以内のリリースをサポート対象としています (リリース tag 基準)。
 
 ---
 
@@ -88,7 +87,7 @@
 以下は脆弱性として受付対象外とさせていただきます:
 
 - **既知の設計上の制約** (e.g., 招待制のため外部ログインフォームが無い等、
-  [docs/developer/DESIGN.md](./docs/developer/DESIGN.md) に記載済みの設計判断)
+  [docs/design/SECURITY.md](./docs/design/SECURITY.md) に記載済みの設計判断)
 - **サードパーティ依存の脆弱性 (自動検知済)**
   - `pnpm audit` / Dependabot / CodeQL で検知されているものは既に対応中
   - ただしそれ以外の依存や、依存関係の**組み合わせによって顕在化する問題**は受付対象
@@ -113,8 +112,9 @@
 
 ## 7. 関連ドキュメント
 
-- [docs/developer/DESIGN.md](./docs/developer/DESIGN.md) — セキュリティ設計 (認証 / 認可 / 監査)
-- [docs/developer/TESTING_STRATEGY.md §2.5](./docs/developer/TESTING_STRATEGY.md) — セキュリティテストの自動化範囲と手動確認領域
+- [docs/design/SECURITY.md](./docs/design/SECURITY.md) — セキュリティ設計 (認証 / 認可 / 監査)
+- [docs/test/STRATEGY.md §2.5](./docs/test/STRATEGY.md) — セキュリティテストの自動化範囲と手動確認領域
+- [docs/security/STRIDE_REVIEW_PROCEDURE.md](./docs/security/STRIDE_REVIEW_PROCEDURE.md) — STRIDE 脅威モデリング実施手順 (人間運用版)
 - [.github/workflows/security.yml](./.github/workflows/security.yml) — CodeQL / pnpm audit の CI 設定
 - [CONTRIBUTING.md](./CONTRIBUTING.md) — 貢献規約 (機能改善の PR 送信先)
 

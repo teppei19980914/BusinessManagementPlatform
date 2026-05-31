@@ -56,6 +56,8 @@
    - 各カードに種別バッジ (📄Project / 📕Knowledge / ⚠️RiskIssue / 📋Retro / 📝Memo)
 ```
 
+> **pgvector は近似インデックス無し = ブルートフォース全件スキャン**: `content_embedding` カラムには HNSW / IVFFlat インデックスを **張っていない** (migration `20260502_pgvector_embedding/migration.sql` で「将来追加」とコメントアウト済、未適用)。Cosine 検索 `1 - (("content_embedding" <=> query::vector) / 2)` は `<=>` 演算子による全行スキャンで実行される ([chat-search.service.ts:159-249](../../src/services/chat-search.service.ts) `pgvectorSearch`)。MVP 規模 (テナントあたり数千行) では十分高速で、規模拡大時に別 migration で HNSW を追加して高速化する設計判断。
+
 ### 2.2 API 呼び出しトリガー (誰がいつ何を呼ぶか)
 
 | # | トリガー | 呼び出される API | 1 操作あたり呼び出し回数 |
@@ -146,30 +148,33 @@
 
 ---
 
-## 3. プラン別挙動 (ADR-0019 / 2026-05-24 改定後: 全プラン無料)
+## 3. プラン別挙動 (ADR-0022 / 0029 / 0030: Embedding 従量課金)
 
-**ADR-0019 (2026-05-24) でチャット検索 (`chat-semantic-search`) は全プラン無料化** されました。
+> **改定経緯**: ADR-0019 (2026-05-24) でチャット検索を一旦「全プラン無料」化したが、ADR-0022 (2026-06-01) で `chat-semantic-search` を **EMBEDDING_BILLABLE_FEATURE_UNITS** に再分類。ADR-0029 (2026-05-30) で Embedding 単価を ¥1 → **¥5** に改定。現行の真値は [src/config/billing-feature-units.ts:104-112](../../src/config/billing-feature-units.ts) と [src/config/embedding-pricing.ts](../../src/config/embedding-pricing.ts) `resolveEmbeddingCostJpy()`。
+
+`chat-semantic-search` は Embedding 系課金単位として全プラン共通単価で課金される (Beginner のみ ¥0)。
 
 | プラン | チャット検索 1 回あたり | 月次上限 | 縮退時挙動 |
 |---|---|---|---|
-| **Beginner** | **¥0 (無料)** | **無制限** (fair-use-limit 月 10,000 calls/tenant のみ) | pg_trgm fallback |
-| **Expert** | **¥0 (無料)** | **無制限** (fair-use-limit 同上) | pg_trgm fallback |
-| **Pro** | **¥0 (無料)** | **無制限** (fair-use-limit 同上) | pg_trgm fallback |
+| **Beginner** | **¥0** (resolveEmbeddingCostJpy('beginner')=0) | Embedding 系専用上限 (ADR-0030: 月次予算上限 + Beginner 試用 100 件) | pg_trgm fallback |
+| **Expert** | **¥5 / 検索 1 回** (ADR-0029) | 月次予算上限 (monthlyEmbeddingBudgetCap) | pg_trgm fallback |
+| **Pro** | **¥5 / 検索 1 回** (ADR-0029) | 月次予算上限 (monthlyEmbeddingBudgetCap) | pg_trgm fallback |
 
-### 3.1 全プラン無料化の根拠 (ADR-0019)
+### 3.1 Embedding 従量課金の設計 (ADR-0022)
 
-- **実コスト構造**: チャット検索は **Voyage embedding のみ** (1 検索 = 12,000 tokens 程度) で、Claude LLM を呼ばない。Voyage は 200M tokens/月 の無料枠があり、実コストは ¥0.036/call 程度
-- **無料化の事業判断**: チャット検索は「サービスの核心」体験のため、心理的ハードルなく使えることが UX 上重要。実コスト極小 (LLM の 1/50-1/150) のため、無料化しても事業継続性に影響しない
-- **暴走防止**: fair-use-limit (tenant 単位の月次 10,000 calls 上限) + Voyage 全社監視 (200M tokens) の 2 層で DoS / 経済的攻撃を防御
-- **詳細**: [ADR-0019](../adr/0019-billable-feature-units-and-free-tier-expansion.md)
+- **実コスト構造**: チャット検索は **Voyage embedding のみ** (1 検索 = 12,000 tokens 程度) で、Claude LLM を呼ばない。Voyage は 200M tokens/月 の無料枠があり実コストは極小だが、Embedding 機能群 (資産入力 / チャット検索) を従量課金対象に統一した (ADR-0022)。
+- **Beginner は完全無料維持**: `resolveEmbeddingCostJpy('beginner')=0` で LP 上の「資産入力・チャット検索は完全無料」訴求を保全。
+- **既存 LLM 上限ロジックは不変**: Beginner 50 件月次上限 (LLM) と monthlyBudgetCap (LLM) は **Embedding 系を判定しない**。Embedding はチャット検索/資産入力に必須のため、別系統の Embedding 専用上限 (ADR-0030) で制御する。
+- **詳細**: [ADR-0022](../adr/0022-embedding-usage-based-billing.md) / [ADR-0029](../adr/0029-embedding-price-revision.md) / [ADR-0030](../adr/0030-embedding-budget-and-beginner-trial-limit.md)
 
-### 3.2 課金記録の詳細 (ADR-0019 後)
+### 3.2 課金記録の詳細 (ADR-0022 後)
 
-- `ApiCallLog.featureUnit = 'chat-semantic-search'` で識別 (記録は継続、監査・分析用途)
-- **`costJpy=0`** で記録、`Tenant.currentMonthApiCallCount` / `currentMonthCostJpy` への加算は **しない** (ADR-0019)
-- Stripe queue にも投入しない
-- 失敗時 (rate_limited / fair_use_limit_exceeded / llm_error) は ApiCallLog 記録なし、ユーザに課金されない (= cost=0 のため元々課金なし)
-- クエリ文字列は `ApiCallLog` に保存しない (機微情報リスク回避、不変)
+- `ApiCallLog.featureUnit = 'chat-semantic-search'` で識別、`isEmbeddingBillableFeatureUnit` で課金判定。
+- cost は plan 依存 (Beginner ¥0 / Expert・Pro ¥5)。`Tenant.currentMonthEmbeddingCallCount` / `currentMonthEmbeddingCostJpy` (Embedding 系専用 counter) に increment。全プランで件数記録 (Beginner も cost=0 だが件数は UI 表示用に記録)。
+- Stripe queue へは **cost > 0 かつ credit_card テナント** のとき `tasukiba_embedding_call` event で投入 (Beginner はスキップ)。
+- 縮退理由 union に ADR-0030 の `embedding_budget_exceeded` / `embedding_beginner_limit_exceeded` を追加 ([chat-search.service.ts:92-94](../../src/services/chat-search.service.ts))。
+- 失敗時 (rate_limited / fair_use_limit_exceeded / llm_error 等) は pg_trgm fallback、課金されない。
+- クエリ文字列は `ApiCallLog` に保存しない (機微情報リスク回避、不変)。
 
 ---
 
@@ -241,7 +246,7 @@ V1 では構造的に該当しないが、Level 2 で LLM 生成を入れる場�
 | **API route (IP 単位)** | **1 分 30 リクエスト / IP** | `applyRateLimit(key: 'chat-search')` (route.ts 冒頭、認証直後) | **pg_trgm fallback の DB DoS 防御** (PR fix/chat-search-and-auto-open / 2026-05-24)。`withMeteredLLM` の rate_limited は LLM 経路にのみ作用し、縮退モードで pg_trgm が無防備になる弱点を route 側で塞ぐ |
 | ユーザ単位・分次 | **1 分 10 回** | `LLM_RATE_LIMIT` ([src/config/llm.ts](../../src/config/llm.ts)) | Voyage 側 429 / 連鎖障害防止 |
 | ユーザ単位・時間次 | **1 時間 60 回** | 同上 | 1 セッション集中検索の上限 |
-| Beginner プラン | **無料・無制限** (ADR-0019) | fair-use-limit 月 10,000 calls/tenant で異常利用のみ防御 | Voyage 200M tokens/月 無料枠の全社共有保護 |
+| Beginner プラン | **¥0 (Embedding free)** + ADR-0030 試用 100 件上限 | fair-use-limit 月 10,000 calls/tenant + Embedding 系専用上限 | Voyage 200M tokens/月 無料枠の全社共有保護。Expert/Pro は monthlyEmbeddingBudgetCap で制御 |
 
 ### 6.1 fail-closed 方針 (シードデータ参照)
 
@@ -263,13 +268,15 @@ Prisma / Voyage SDK が parameter / payload をエラーメッセージに含め
 
 ## 7. コスト・粗利構造 (運営側)
 
-| シナリオ | 月間クエリ | 運営原価 (Voyage) | 月間売上 | 粗利率 |
-|---|---|---|---|---|
-| リリース直後 (5-10 テナント) | 500 | ¥0 (無料枠内) | ¥2,500 | **100%** |
-| 中規模 (50 テナント) | 7,500 | ¥0 (無料枠 45%) | ¥52,500 | **100%** |
-| 拡大 (200 テナント) | 40,000 | ¥700 (超過 280M × ¥2.5/M) | ¥320,000 | **99.8%** |
+> ADR-0022/0029 後はチャット検索が Embedding 従量課金 (Expert/Pro ¥5/検索、Beginner ¥0) となったため、売上は Expert/Pro クエリ数 × ¥5 で計上される。運営原価は Voyage embedding (200M tokens/月 無料枠内のため当面 ¥0)。下表は Expert/Pro 比率を仮定した概算。
 
-書込操作 ([SUGGESTION_FEATURE.md §6.3](./SUGGESTION_FEATURE.md)) と同等の高粗利構造を維持。
+| シナリオ | 月間クエリ (課金対象 Expert/Pro) | 運営原価 (Voyage) | 月間売上 (×¥5) | 粗利率 |
+|---|---|---|---|---|
+| リリース直後 (5-10 テナント) | 500 | ¥0 (無料枠内) | ¥2,500 | **≈100%** |
+| 中規模 (50 テナント) | 7,500 | ¥0 (無料枠 45%) | ¥37,500 | **≈100%** |
+| 拡大 (200 テナント) | 40,000 | ¥700 (超過 280M × ¥2.5/M) | ¥200,000 | **99.6%** |
+
+書込操作 ([SUGGESTION_FEATURE.md §6](./SUGGESTION_FEATURE.md)) と同等の高粗利構造を維持。Beginner の検索は ¥0 (完全無料訴求の保全) のため売上には寄与しない。
 
 ---
 

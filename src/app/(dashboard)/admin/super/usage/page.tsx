@@ -331,12 +331,12 @@ function DefaultTenantUsageSection({
             unit=""
             subValue="(請求対象外)"
           />
-          {/* chore/storage-addon-backend-removal (2026-05-26): ADR-0020 50GB ハードキャップを上限として表示 */}
+          {/* 2026-05-31 (ADR-0030): 累積ハードキャップ撤去。50GB は L3 監視アラート閾値として進捗表示に使用 */}
           <UsageCard
             label="Storage 使用量"
             value={formatBytesLocal(defaultTenant.storageBytesUsed)}
             unit=""
-            subValue={`${(defaultTenant.storageUsageRatio * 100).toFixed(1)}% (50GB ハードキャップ)`}
+            subValue={`${(defaultTenant.storageUsageRatio * 100).toFixed(1)}% (50GB / L3 監視アラート閾値)`}
           />
         </div>
       )}

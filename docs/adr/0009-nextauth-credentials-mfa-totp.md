@@ -37,7 +37,7 @@ MVP 着手時点で検討した制約:
 
 1. **ログイン要求**: `/api/auth/signin` で email + password を検証
 2. **パスワード照合**: bcrypt で `users.password_hash` と比較
-3. **アカウントロック判定**: `users.permanent_lock` / `temporary_lock_until` / failed count をチェック ([INCIDENT_RESPONSE.md §6.5](../operations/INCIDENT_RESPONSE.md))
+3. **アカウントロック判定**: `users.permanent_lock` / `temporary_lock_until` / failed count をチェック ([INCIDENT_RESPONSE.md §6.5](../operations/operate/INCIDENT_RESPONSE.md))
 4. **MFA 検証** (有効時): TOTP 6 桁コード入力 → `mfa.service.ts` の `resolveEncryptionKey` で復号した秘密鍵で検証
 5. **session 確立**: `tenantId` / `userId` / `systemRole` / `mfaPassed` を JWT claim に格納
 6. **監査ログ**: `auth_event_logs` に `event_type='login_success' / 'login_failure'` を記録
@@ -100,7 +100,7 @@ MVP 着手時点で検討した制約:
 ## Related
 
 - 詳細設計: [docs/design/SECURITY.md §8](../design/SECURITY.md)
-- 認証イベント追跡: [docs/operations/INCIDENT_RESPONSE.md §6.5](../operations/INCIDENT_RESPONSE.md)
+- 認証イベント追跡: [docs/operations/INCIDENT_RESPONSE.md §6.5](../operations/operate/INCIDENT_RESPONSE.md)
 - アカウントロック仕様: [docs/business/USER_ROLES.md](../business/USER_ROLES.md)
 - MFA 暗号化キー分離タスク: [docs/security/SECURITY-TASKS.md F-01](../security/SECURITY-TASKS.md)
 - マルチテナント基盤: [ADR-0001](./0001-multitenant-foundation.md)

@@ -7,7 +7,8 @@
  *   - 危険拡張子 → 400 DANGEROUS_FILE_TYPE
  *   - 50MB 超 → 413
  *   - 認可失敗 → 403 / 404
- *   - 50GB 超 (precheck) → 403 STORAGE_FILE_HARD_CAP_EXCEEDED
+ *   - Beginner 無料枠超過 (precheck) → 403 BEGINNER_STORAGE_QUOTA_EXCEEDED
+ *     (2026-05-31: 50GB 累積ハードキャップは撤去 ADR-0030)
  *   - 正常系 → 200 + uploadUrl / token / objectKey
  *   - rate limit → 429
  *   - Supabase 失敗 → 503
@@ -46,7 +47,7 @@ import { applySubjectRateLimit } from '@/lib/rate-limit';
 import { authorizeForAttachmentEntity } from '@/services/attachment.service';
 import { precheckFileStorageLimit } from '@/services/storage-guard.service';
 import { createSignedUploadUrl } from '@/lib/supabase-storage';
-import { FILE_STORAGE_L3_HARD_CAP_BYTES } from '@/config/file-storage-pricing';
+import { BEGINNER_STORAGE_FREE_TIER_BYTES } from '@/config/file-storage-pricing';
 
 const TENANT_ID = 'aaaaaaaa-1111-4111-8111-111111111111';
 const USER = {
@@ -82,7 +83,7 @@ beforeEach(() => {
   vi.mocked(precheckFileStorageLimit).mockResolvedValue({
     ok: true,
     cachedUsedBytes: 0,
-    limitBytes: FILE_STORAGE_L3_HARD_CAP_BYTES,
+    limitBytes: BEGINNER_STORAGE_FREE_TIER_BYTES,
   });
   vi.mocked(createSignedUploadUrl).mockResolvedValue({
     signedUrl: 'https://example.supabase.co/storage/v1/object/upload/sign/attachments/x?token=t',
@@ -145,17 +146,17 @@ describe('POST /api/attachments/upload', () => {
     expect(res.status).toBe(403);
   });
 
-  it('50GB 超 (precheck NG) → 403 STORAGE_FILE_HARD_CAP_EXCEEDED', async () => {
+  it('Beginner 無料枠超過 (precheck NG) → 403 BEGINNER_STORAGE_QUOTA_EXCEEDED', async () => {
     vi.mocked(precheckFileStorageLimit).mockResolvedValueOnce({
       ok: false,
-      code: 'STORAGE_FILE_HARD_CAP_EXCEEDED',
-      cachedUsedBytes: FILE_STORAGE_L3_HARD_CAP_BYTES,
-      limitBytes: FILE_STORAGE_L3_HARD_CAP_BYTES,
+      code: 'BEGINNER_STORAGE_QUOTA_EXCEEDED',
+      cachedUsedBytes: BEGINNER_STORAGE_FREE_TIER_BYTES,
+      limitBytes: BEGINNER_STORAGE_FREE_TIER_BYTES,
     });
     const res = await POST(makeReq(validBody));
     expect(res.status).toBe(403);
     const body = await res.json();
-    expect(body.error.code).toBe('STORAGE_FILE_HARD_CAP_EXCEEDED');
+    expect(body.error.code).toBe('BEGINNER_STORAGE_QUOTA_EXCEEDED');
   });
 
   it('Supabase 発行失敗 → 503', async () => {

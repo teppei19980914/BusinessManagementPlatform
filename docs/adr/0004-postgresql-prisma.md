@@ -44,7 +44,7 @@
 
 ### Negative / Trade-off
 - **Prisma のパフォーマンス限界**: 大規模クエリ・複雑な JOIN ではパフォーマンスが劣化することがある。N+1 やバッチ化漏れが起きやすく、コードレビューでチェックが必要 (memory: feedback_perf_antipatterns)
-- **マイグレーションの罠**: 命名順 (アルファベット順実行) と冪等化が必要 ([docs/operations/DB_MIGRATION_PROCEDURE.md](../operations/DB_MIGRATION_PROCEDURE.md))
+- **マイグレーションの罠**: 命名順 (アルファベット順実行) と冪等化が必要 ([docs/operations/DB_MIGRATION_PROCEDURE.md](../operations/develop/DB_MIGRATION_PROCEDURE.md))
 - **Client Component への value import で build 失敗**: Prisma が client bundle に混入すると Netlify build が壊れる罠 (memory: feedback_client_service_boundary)
 - **マイグレーション数の累積**: MVP 開発中だけで 48 個 (2026-05-11 時点)。リリース前に init 系を squash する余地あり
 
@@ -78,8 +78,8 @@
 ## Related
 
 - 詳細設計: [docs/design/ARCHITECTURE.md](../design/ARCHITECTURE.md) §2.2 / [docs/design/DATA_MODEL.md](../design/DATA_MODEL.md) (全節)
-- マイグレーション手順: [docs/operations/DB_MIGRATION_PROCEDURE.md](../operations/DB_MIGRATION_PROCEDURE.md)
+- マイグレーション手順: [docs/operations/DB_MIGRATION_PROCEDURE.md](../operations/develop/DB_MIGRATION_PROCEDURE.md)
 - インフラ構成: [docs/design/INFRASTRUCTURE.md](../design/INFRASTRUCTURE.md)
 - AWS 移行計画: [docs/operations/MIGRATION_TO_AWS.md](../operations/MIGRATION_TO_AWS.md)
 - ベクトル検索の採用: [ADR-0003](./0003-embedding-based-suggestion-engine.md)
-- 関連 KDD: マイグレーション命名規約 + 冪等化規約 ([docs/developer-guide/REFERENCE.md](../developer-guide/REFERENCE.md) §5.68)
+- 関連 KDD: マイグレーション命名規約 + 冪等化規約 ([docs/developer-guide/REFERENCE.md](../operations/develop/REFERENCE.md) §5.68)

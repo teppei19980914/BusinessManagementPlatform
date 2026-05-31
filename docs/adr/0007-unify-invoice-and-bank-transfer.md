@@ -21,7 +21,7 @@ v1 (2026-06-01) リリース時点で `Tenant.paymentMethod` には以下 3 値�
 実装を進めた結果、`invoice` と `bank_transfer` は **コードレベルでは完全に同一処理** であった:
 
 1. **同じフロー**: どちらも super_admin が CSV → 請求書 PDF 手作成 → メール送付 → 銀行振込で受領 → 手動消込
-2. **同じ運用 SOP**: [PAYMENT_DELINQUENCY_SOP.md](../operations/PAYMENT_DELINQUENCY_SOP.md) / [BILLING_MONTHLY_OPERATIONS.md](../operations/BILLING_MONTHLY_OPERATIONS.md) で両者を一括して扱っている
+2. **同じ運用 SOP**: [PAYMENT_DELINQUENCY_SOP.md](../operations/operate/PAYMENT_DELINQUENCY_SOP.md) / [BILLING_MONTHLY_OPERATIONS.md](../operations/operate/BILLING_MONTHLY_OPERATIONS.md) で両者を一括して扱っている
 3. **同じ UI 説明文**: `/settings/tenant` の Stripe 支払い方法セクションで両者の説明文が完全一致 (「月末締めの翌月25日支払で、毎月請求書 PDF を請求担当者メールにお送りしています」)
 4. **同じ Stripe 連携の影響**: Stripe 連携対象外 (= `credit_card` のみが連携対象)
 

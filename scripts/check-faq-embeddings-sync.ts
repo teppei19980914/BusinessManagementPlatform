@@ -28,7 +28,7 @@
  * 関連:
  *   - scripts/generate-faq-embeddings.ts (本 script の検証対象)
  *   - docs/adr/0028-help-chat-rag-migration.md
- *   - docs/operations/DEPLOYMENT.md (本 script の deploy 時運用 SOP)
+ *   - docs/operations/develop/DEPLOYMENT.md (本 script の deploy 時運用 SOP)
  *   - feedback_drift_detection_design.md (4 層防御の 1 つとして機能)
  */
 
@@ -256,7 +256,7 @@ function main(): void {
   console.error('🛠 修正手順:');
   console.error('   - structure エラー: src/config/faq-content.ts / guide-content.ts を修正');
   console.error('   - drift エラー: ローカルで `pnpm generate:faq-embeddings` を実行 (本番 DATABASE_URL 設定)');
-  console.error('   - 詳細 SOP: docs/operations/DEPLOYMENT.md / docs/developer-guide/FAQ_AND_OWL_CHAT_GUIDE.md §7');
+  console.error('   - 詳細 SOP: docs/operations/develop/DEPLOYMENT.md / docs/operations/develop/FAQ_AND_OWL_CHAT_GUIDE.md §7');
   process.exit(1);
 }
 

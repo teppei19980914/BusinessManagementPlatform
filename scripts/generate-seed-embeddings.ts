@@ -30,7 +30,7 @@
  *     スクリプトは冪等のため再実行で残った行を埋められる。
  *
  * 関連:
- *   - 計画: docs/roadmap/V1_FINAL_TASKS.md PR-X5 5-7
+ *   - 計画: docs/archive/roadmap/V1_FINAL_TASKS.md PR-X5 5-7
  *   - 出力 JSON: prisma/seed-suggestion-embeddings.json
  *   - DB 書込 helper: src/services/embedding.service.ts (persistEmbedding)
  */

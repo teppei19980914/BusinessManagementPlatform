@@ -6,6 +6,7 @@
 > - [ADR-0019](../adr/0019-billable-feature-units-and-free-tier-expansion.md) — 課金対象 featureUnit を限定し Beginner 50 件月次上限を導入
 > - [ADR-0022](../adr/0022-embedding-usage-based-billing.md) — Embedding 機能を従量課金化 (Beginner は ¥0 維持)
 > - [ADR-0025](../adr/0025-beginner-write-guard.md) — Beginner DB/Storage 無料枠超過時 write ブロック (本書の容量挙動の根拠)
+> - **ADR-0030** — 累積 50GB ハードキャップ・circuit-breaker 撤廃 (「データはたすきばの命」、2026-05-31)。**Beginner 無料枠ガードは不変**。根拠コードは [src/config/db-capacity-pricing.ts](../../src/config/db-capacity-pricing.ts) / [file-storage-pricing.ts](../../src/config/file-storage-pricing.ts) / [storage-guard.service.ts](../../src/services/storage-guard.service.ts) (※専用 ADR md は未作成。既存 [0030-embedding-monthly-budget-cap.md](../adr/0030-embedding-monthly-budget-cap.md) は別主題 — 番号重複につき要整理)
 > - [docs/business/TENANT_AND_BILLING.md](../business/TENANT_AND_BILLING.md) — プラン全体の料金体系
 > - [docs/public/about.md](../public/about.md) — ユーザ向け公開ドキュメント
 
@@ -55,6 +56,15 @@
 | DB 容量 | 50MB (50,000,000 bytes) | `BEGINNER_DB_FREE_TIER_BYTES` | `tenant.storageBytesUsed` |
 | File Storage 容量 | 100MB (100,000,000 bytes) | `BEGINNER_STORAGE_FREE_TIER_BYTES` | `tenant.storageFileBytesUsed` |
 
+**1 操作あたりのペイロード上限 (全プラン共通、2026-05-31 / ADR-0030)**: 累積ハードキャップ撤廃に伴い、瞬間サーバ負荷を抑える唯一のアプリ層ガードとして以下を全プランに適用する (Beginner 無料枠ガードとは独立)。
+
+| 種別 | 1 操作上限 | 定数 |
+|---|---|---|
+| DB write 1 リクエスト (作成/更新) | **5MB** (UTF-8 バイト基準) | `DB_WRITE_PAYLOAD_MAX_BYTES` (db-capacity-pricing.ts) |
+| ファイルアップロード 1 ファイル | **50MB** | `FILE_STORAGE_MAX_FILE_SIZE_BYTES` (file-storage-pricing.ts) |
+
+DB 5MB は Netlify Functions (= AWS Lambda) のペイロード硬上限 6MB の 1MB 手前に置き、プラットフォームが不透明な 413 を返す前にアプリがクリーンなエラーを返せるようにする狙い。
+
 ### 3.2 計測タイミング
 
 cron で日次集計したキャッシュ値を使用 (最大 24h ズレ許容)。DELETE 後はキャッシュが古くなる UX 問題があるため、§3.5 の自動再集計で緩和する。
@@ -77,7 +87,15 @@ DB 容量と File Storage 容量の両方を消費する全エンティティ:
 - **DB**: Project, Knowledge, RiskIssue, Retrospective, Memo, Task, Customer, Stakeholder, Comment, Mention, Notification, Attachment (DB row 部分)
 - **File Storage**: Attachment (Supabase Storage バイト数部分)
 
-実装は [src/services/storage-guard.service.ts](../../src/services/storage-guard.service.ts) の 4 関数 (`precheckStorageLimit` / `assertStorageLimitInTx` / `precheckFileStorageLimit` / `assertFileStorageLimitInTx`) に Beginner 判定を統合。各 write route ごとにエラーマッパー (`mapBeginnerWriteGuardErrorToResponse` または `code === 'BEGINNER_*_QUOTA_EXCEEDED'` 分岐) で UX 文言を統一して返す。
+実装は [src/services/storage-guard.service.ts](../../src/services/storage-guard.service.ts) の 4 関数 (`precheckStorageLimit` / `assertStorageLimitInTx` / `precheckFileStorageLimit` / `assertFileStorageLimitInTx`) に Beginner 判定を統合。超過時は `BeginnerWriteGuardExceededError` (code = `BEGINNER_DB_QUOTA_EXCEEDED` / `BEGINNER_STORAGE_QUOTA_EXCEEDED`) を throw し、各 write route はエラーマッパー `mapBeginnerWriteGuardErrorToResponse` で UX 文言 + `upgradeUrl: /settings/tenant` を統一して返す。
+
+判定順序 (storage-guard.service.ts、2026-05-31 / ADR-0030 改定):
+1. **Beginner 無料枠ガード** (DB 50MB / Storage 100MB) — Beginner プランのみ、超過時 INSERT/UPDATE/アップロードを拒否
+2. **監視アラート Level の更新** (L1 1GB / L2 10GB / L3 50GB) — write は止めず super_admin 通知のみ (§3.6)
+
+> **(旧仕様 〜2026-05-30)**: 旧判定順序は「①circuit breaker open チェック (fail-close) → ②Beginner 無料枠ガード → ③50GB 累積ハードキャップ (全プラン共通の write 拒否)」だった。**ADR-0030「データはたすきばの命」で circuit-breaker と累積 50GB ハードキャップ (全プラン共通の write 拒否) はいずれも撤廃**。計測失敗は fail-open (記録のみ、日次 cron `updateAllStorageBytesUsed` が補正)。Beginner 無料枠ガードのみが write を止める唯一のロジックとして残る。
+
+DB 側は `precheckStorageLimit` の cached 値 + `assertStorageLimitInTx` の実測 (動的 SQL) の二段、File Storage 側は `precheckFileStorageLimit` の cached 値 + `assertFileStorageLimitInTx` の `addedBytes` 加算の二段で判定する。File Storage の Post-check は `addedBytes < 0` (= 削除) のとき Beginner ガードを skip する (DELETE 許可ポリシー)。
 
 **現在の Beginner エラー UX 文言が正しく返る経路**:
 - 単発 POST/PUT/PATCH 32 route (`requireStorageQuotaForWrite` 経由) — [src/lib/api-helpers.ts](../../src/lib/api-helpers.ts) で集約対応
@@ -108,6 +126,23 @@ cron キャッシュ値ベース判定の弱点 (ユーザが DELETE で容量�
 
 **対象外 DELETE 経路**: customer / stakeholder / comment / mention / notification / task / estimate の DELETE は自動再集計対象外 (= 容量寄与が小さいため省略)。これらの削除後に容量解放を即時反映したい場合は、テナント設定画面の `[DB 容量 / API 利用量を再集計]` ボタンを手動で押すことで強制再集計可能。
 
+### 3.6 監視アラート閾値 (L1-L3、DB/Storage 共通、ADR-0020 / ADR-0021 / ADR-0030)
+
+Beginner write guard (50MB / 100MB) とは独立に、全プラン共通の **監視アラート Level (L1-L3)** が `storage-guard.service.ts` 内で更新される (定数: [src/config/db-capacity-pricing.ts](../../src/config/db-capacity-pricing.ts) / [file-storage-pricing.ts](../../src/config/file-storage-pricing.ts))。**2026-05-31 / ADR-0030 改定: いずれの層も write を止めず、super_admin への監視通知に用いる**。Beginner プランは無料枠 (DB 50MB / Storage 100MB) で先に write ブロックされるため L1 (1GB) 以降には通常到達しない。
+
+| 層 | 閾値 | 挙動 (2026-05-31 改定) |
+|---|---|---|
+| L1 | 1GB | ユーザ通知 (`dbCapacityWarningLevel` / `fileStorageWarningLevel` = `l1`) |
+| L2 | 10GB | super_admin 通知 (`recordError` + ダッシュボード) |
+| L3 | 50GB | **super_admin への監視アラート閾値** (write は止めない。Supabase Compute 増強検討の合図) |
+| L4 (DB のみ) | instance-wide (Compute サイズ別) | super_admin alert |
+
+> **(旧仕様 〜2026-05-30) 累積 50GB ハードキャップ + circuit breaker は撤廃 (ADR-0030)**:
+> - 旧 L3 は「write 拒否の累積ハードキャップ (`StorageLimitExceededError` / `FileStorageLimitExceededError`)」だったが、「データはたすきばの命」原則で **累積による write block は撤廃**。L3 は現在 super_admin 監視アラート閾値としてのみ機能する (write は止めない)。例外クラス・エラーマッパーは撤去済。
+> - 旧 **circuit breaker** (fail-close、DB 計測経路で連続 3 回計測失敗時に全 write を拒否する仕組み: `STORAGE_GUARD_CIRCUIT_BREAKER_THRESHOLD` / `storageGuardCircuitFailCount` / `storageGuardCircuitOpenedAt`) も撤廃。累積ハードキャップが無くなり「計測できないから write 拒否」の根拠が消えたため。**計測失敗は fail-open (記録のみ、日次 cron `updateAllStorageBytesUsed` が真値を補正)** に変更。
+> - noisy-neighbor (Supabase Micro 1GB RAM の cache hit ratio 劣化) は、write を止めるのではなく **Compute 増強という運用**で吸収する方針 (L4 instance-wide alert が合図)。
+> - 瞬間負荷は §3.1 の 1 操作上限 (DB 5MB / ファイル 50MB/件) で別途抑制する。
+
 ---
 
 ## 4. 超過時のユーザ体験 (UX)
@@ -129,26 +164,30 @@ Beginner プランのユーザは `/settings/tenant?tab=usage` で:
 - **超過時バナー**: 「新規作成/更新ブロック中: 不要データを削除すると自動的に再集計されます。反映されない場合は [再集計] ボタンをご利用ください」
 - **[再集計] ボタン**: バナー近傍に配置 (既存 RecalculateButton コンポーネントを再利用)
 
-Expert / Pro プランのユーザには従来通りの 50GB ゲージ + 従量課金見積もりを表示 (変更なし)。
+Expert / Pro プランのユーザには累積使用量 + 従量課金見積もりを表示する。**2026-05-31 / ADR-0030 で 50GB 累積ハードキャップは撤廃**したため、ゲージは「上限 50GB を満タンとする残量表示」ではなく現使用量と当月従量課金見積もりの表示に位置づけが変わる (write は累積では止まらない)。
 
 ### 4.3 アップグレード動線
 
 - エラー文言の `[アップグレード →]` ボタン → `/settings/tenant?tab=overview` (プラン変更フォーム)
 - プラン変更で Expert (¥10/call) または Pro (¥15/call) を選択 → 即時反映
-- アップグレード後は 50GB ハードキャップまで write 可能、超過分は ¥50/GB tier (DB) / ¥10/GB tier (File Storage) で従量課金
+- アップグレード後は **累積容量の write 上限なし** (ADR-0030 で 50GB ハードキャップ撤廃)。超過分は青天井従量で ¥50/GB tier (DB) / ¥10/GB tier (File Storage)。**旧「最大 ¥2,500 / 最大 ¥500」等の上限は撤廃済**。1 操作あたりの上限 (DB 5MB / ファイル 50MB/件) のみ適用
 
 ---
 
 ## 5. 90 日試用期間との関係
 
+経過日数はテナント TZ のカレンダー日差 (`tenantCalendarDayDiff`) で判定する (= `createdAt` 起点。実装: [src/services/beginner-expiry.service.ts](../../src/services/beginner-expiry.service.ts) `getBeginnerExpiryState`)。
+
 | 経過日数 | 状態 | 挙動 |
 |---|---|---|
-| 0 〜 60 日 | `beginnerExpiryState: 'active'` | 通常運用、容量超過時のみ write ブロック |
-| 61 〜 74 日 | `beginnerExpiryState: 'warning_60'` | 黄色バナー「Beginner プランは残り N 日です」 |
-| 75 〜 89 日 | `beginnerExpiryState: 'warning_75'` | オレンジバナー「あと N 日で Beginner プランが終了します」 |
-| 90 日以降 | `beginnerExpiryState: 'expired'` | **全 write 操作拒否** (容量未満でも write 不可)、READ のみ可、Expert/Pro へアップグレードで復活 |
+| 0 〜 59 日 | `beginnerExpiryState: 'active'` | 通常運用、容量超過時のみ write ブロック |
+| 60 〜 74 日 | `beginnerExpiryState: 'warning_60'` | 黄色バナー「Beginner プランは残り N 日です」+ 60 日警告メール (日次 cron、冪等) |
+| 75 〜 89 日 | `beginnerExpiryState: 'warning_75'` | オレンジバナー「あと N 日で Beginner プランが終了します」+ 75 日再通知メール |
+| 90 日以降 | `beginnerExpiryState: 'expired'` | **全 write 操作拒否** (容量未満でも write 不可)、READ + データエクスポート + プラン変更 + セルフ解約のみ可、Expert/Pro へアップグレードで復活 |
 
-90 日期限と容量超過は独立したガードで、いずれかが先に到達した時点で write ブロックがかかる。期限到達後は容量に関係なく write 不可となる。
+定数 (`beginner-expiry.service.ts`): `BEGINNER_NOTICE_DAY_60 = 60` / `BEGINNER_NOTICE_DAY_75 = 75` / `BEGINNER_EXPIRY_DAYS = 90`。境界は `>=` 判定 (= Day 60 ちょうどで warning_60、Day 90 ちょうどで expired)。
+
+90 日期限と容量超過は独立したガードで、いずれかが先に到達した時点で write ブロックがかかる。期限到達後は容量に関係なく write 不可となる (= read-only モード)。expired 後さらに Day 150 / Day 170 で自動物理削除予告メール、Day 180 で業務データを物理削除 (`purgeExpiredBeginnerTenants`)。`beginnerEverUpgraded=true` のテナントは期限制御の対象外 (= 常に `active`)。
 
 ---
 
@@ -161,7 +200,7 @@ Beginner プランのテナントは、以下の課金経路すべてで **¥0**
 | featureUnit | Beginner での記録 |
 |---|---|
 | project-upsert / suggestion-explanation / auto-tag-extract (LLM) | `costJpy=0` で記録、月 50 件上限カウントに使用 |
-| knowledge-embedding / chat-semantic-search / 等 (Embedding 7 種) | `costJpy=0` で記録、Fair Use Limit カウントに使用 |
+| knowledge-embedding / chat-semantic-search / 等 (Embedding 7 種) | `costJpy=0` で記録、月 100 件試用上限 (ADR-0030) + Fair Use Limit 10,000 件 (safety net) のカウントに使用 |
 | db-capacity-overage (ADR-0020) | **記録されない** (ADR-0025 で月初 cron が Beginner を skip) |
 | storage-file-overage (ADR-0021) | **記録されない** (同上) |
 | project-embedding-backfill 等 (Embedding backfill) | `costJpy=0` で記録 (ADR-0022) |

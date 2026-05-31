@@ -51,9 +51,10 @@
 | ORM | Prisma | 7.x | 型安全なクエリ、マイグレーション管理、pg adapter 方式 |
 | データベース | PostgreSQL | 16.x | JSONB 対応、全文検索、信頼性 |
 | 認証 | NextAuth.js (Auth.js) | 5.x | Credentials + OAuth 対応、セッション管理 |
+| 国際化 (i18n) | next-intl | - | App Router 対応のメッセージカタログ。サーバ側 `getRequestConfig` でロケール解決 (§3.4) |
 | MFA | otplib | 13.x | TOTP（RFC 6238）対応 |
 | QR コード | qrcode | 1.x | MFA 設定用 QR コード生成 |
-| テスト | Vitest | 4.x | 単体テスト（141件） |
+| テスト | Vitest | 4.x | 単体テスト（数千件規模、`src/**/*.test.ts`。具体数は CI で変動するため固定値は記さない） |
 | Lint / Format | ESLint + Prettier | - | コード品質、一貫性 |
 | CI/CD | GitHub Actions | - | リポジトリ統合 |
 | コンテナ | Docker + Docker Compose | - | ローカル開発環境の統一 |
@@ -91,7 +92,7 @@
 │  │                   API Layer                           │   │
 │  │  ┌───────────┐  ┌───────────┐  ┌──────────────────┐ │   │
 │  │  │ Route     │  │Middleware │  │  Zod Validation  │ │   │
-│  │  │ Handlers  │  │(Auth/RBAC)│  │                  │ │   │
+│  │  │ Handlers  │  │(Auth+Guard│  │                  │ │   │
 │  │  └───────────┘  └───────────┘  └──────────────────┘ │   │
 │  └──────────────────────────────────────────────────────┘   │
 │  ┌──────────────────────────────────────────────────────┐   │
@@ -117,62 +118,89 @@
 
 ### 3.2 レイヤー構成
 
+以下は 2026-05-31 時点の実構成 (Glob で実在確認)。網羅ではなく主要セグメントの俯瞰。
+
 ```
 src/
 ├── app/                          # Next.js App Router
-│   ├── (auth)/                   # 認証関連ページ
-│   │   ├── login/
-│   │   └── register/
-│   ├── (dashboard)/              # 認証済みレイアウト
-│   │   ├── projects/             # プロジェクト関連
+│   ├── (auth)/                   # 認証関連ページ (login / mfa / setup-password / reset-password 等)
+│   ├── (dashboard)/              # 認証済みレイアウト (layout.tsx で認証ガード)
+│   │   ├── page.tsx              # ダッシュボード (ホーム)
+│   │   ├── projects/
 │   │   │   ├── page.tsx          # プロジェクト一覧
 │   │   │   └── [projectId]/
 │   │   │       ├── page.tsx      # プロジェクト詳細
 │   │   │       ├── estimates/    # 見積もり管理
-│   │   │       ├── tasks/        # WBS管理
+│   │   │       ├── tasks/        # WBS 管理
 │   │   │       ├── gantt/        # ガントチャート
-│   │   │       ├── risks/        # リスク/課題管理
+│   │   │       ├── risks/        # リスク管理
+│   │   │       ├── issues/       # 課題管理
 │   │   │       ├── knowledge/    # ナレッジ管理
 │   │   │       ├── retrospectives/ # 振り返り
-│   │   │       └── members/      # メンバー管理
+│   │   │       └── stakeholders/ # ステークホルダー管理
 │   │   ├── my-tasks/             # マイタスク
-│   │   ├── knowledge/            # ナレッジ横断検索
-│   │   └── admin/                # システム管理
+│   │   ├── customers/            # 顧客管理 (+ [customerId])
+│   │   ├── risks/                # リスク横断
+│   │   ├── issues/               # 課題横断
+│   │   ├── knowledge/            # ナレッジ横断
+│   │   ├── retrospectives/       # 振り返り横断
+│   │   ├── memos/                # メモ (個人資産)
+│   │   ├── all-memos/            # 全メモ (public 閲覧)
+│   │   ├── guide/                # 操作ガイド
+│   │   ├── help/                 # AI ヘルプチャット (たすきフクロウ)
+│   │   ├── settings/             # 個人/テナント設定 (about / tenant / tenant/billing / tenant/external-import)
+│   │   └── admin/                # 管理
 │   │       ├── users/            # ユーザ管理
-│   │       └── audit-logs/       # 監査ログ
+│   │       ├── audit-logs/       # 監査ログ
+│   │       ├── role-changes/     # 権限変更履歴
+│   │       └── super/            # super_admin 専用 (Basic Auth ガード)
+│   │           ├── tenants/      # テナント管理 (+ [id] / diagnostics / new)
+│   │           ├── billing/      # 売上集計 (+ [yearMonth])
+│   │           ├── stripe-dlq/   # Stripe DLQ
+│   │           ├── email-failures/ # メール送信失敗
+│   │           ├── cron-history/ # cron 実行履歴
+│   │           ├── usage/        # 利用量サマリ
+│   │           └── diagnostics/  # 診断
 │   ├── api/                      # API Route Handlers
-│   │   ├── auth/                 # 認証 API
-│   │   ├── projects/
-│   │   ├── tasks/
-│   │   ├── estimates/
-│   │   ├── risks/
-│   │   ├── knowledge/
-│   │   ├── retrospectives/
-│   │   └── admin/
+│   │   ├── auth/                 # 認証 (signin/mfa/setup-password/reset-password/verify-email/
+│   │   │                         #   explicit-signout/delete-account/change-password/recovery-codes 等)
+│   │   ├── projects/             # プロジェクト + 配下 (tasks/tree・workload, estimates, risks, knowledge,
+│   │   │                         #   retrospectives, stakeholders, members, suggestions, gantt, status 等)
+│   │   ├── customers/            # 顧客
+│   │   ├── risks/                # リスク横断 (GET/詳細/DELETE)
+│   │   ├── retrospectives/       # 振り返り横断
+│   │   ├── knowledge/            # ナレッジ横断
+│   │   ├── memos/                # メモ (+ bulk)
+│   │   ├── my-tasks/             # マイタスク
+│   │   ├── comments/             # コメント (polymorphic)
+│   │   ├── mention-candidates/   # @mention 候補
+│   │   ├── notifications/        # 通知 (+ mark-all-read)
+│   │   ├── attachments/          # ファイル添付 (Supabase Storage)
+│   │   ├── chat/                 # 意味検索 RAG (chat/search)
+│   │   ├── help/                 # AI ヘルプチャット RAG
+│   │   ├── settings/             # theme 等
+│   │   ├── tenants/              # テナント自己管理 (me/billing/stripe/*, export, self-delete, i18n, recalculate 等)
+│   │   ├── admin/                # admin + super (tenants suspend/resume/export/recalculate, stripe-dlq retry,
+│   │   │                         #   billing confirm-payment, cron-history, usage-summary 等)
+│   │   ├── webhooks/             # webhooks/stripe (署名検証)
+│   │   ├── cron/                 # cron (billing-monthly-aggregation, cron-failure-alert,
+│   │   │                         #   attachment-embedding, daily-notifications 等)
+│   │   ├── client-errors/        # クライアントエラー受信
+│   │   └── health/               # ヘルスチェック
 │   ├── layout.tsx
 │   └── globals.css
-├── components/                   # 共通UIコンポーネント
-│   ├── ui/                       # shadcn/ui ベース
-│   ├── forms/                    # フォームコンポーネント
-│   ├── tables/                   # テーブルコンポーネント
-│   └── gantt/                    # ガントチャート
+├── components/                   # 共通 UI コンポーネント (ui/ shadcn ベース 他)
 ├── lib/                          # ユーティリティ
-│   ├── db.ts                     # Prisma Client
-│   ├── auth.ts                   # NextAuth 設定
-│   ├── validators/               # Zod スキーマ
-│   └── permissions/              # 権限チェック
-├── services/                     # ビジネスロジック
-│   ├── project.service.ts
-│   ├── task.service.ts
-│   ├── estimate.service.ts
-│   ├── risk.service.ts
-│   ├── knowledge.service.ts
-│   ├── retrospective.service.ts
-│   └── state-machine.ts         # プロジェクト状態遷移
+│   ├── db.ts                     # Prisma Client (pg adapter / $use 無し)
+│   ├── auth.config.ts            # NextAuth Edge 互換設定 (JWT 戦略・read-only ガード)
+│   ├── auth.ts                   # NextAuth (authorize 実体・Node 側)
+│   ├── rate-limit.ts             # in-memory レート制限
+│   ├── basic-auth.ts             # super_admin 画面の Basic Auth
+│   └── permissions/              # 権限/テナント境界 (check-permission / membership / role / tenant)
+├── services/                     # ビジネスロジック (~70 service。DB 操作・認可・課金の中核)
+├── config/                       # 業務定数 (master-data / security / validation / suggestion 等)
 ├── types/                        # 型定義
-└── prisma/                       # Prisma
-    ├── schema.prisma
-    └── migrations/
+└── prisma/                       # schema.prisma + migrations/
 ```
 
 ### 3.3 設計原則
@@ -180,11 +208,40 @@ src/
 | 原則 | 適用方針 |
 |---|---|
 | レイヤー分離 | Route Handler → Service → Prisma の 3 層 |
-| 権限チェック | Service 層で統一実施。Middleware で認証のみ |
+| ロール/テナント認可 | **Service 層で明示実施** (各関数が `viewerTenantId` を引数に取り `where.tenantId` を強制)。**Middleware は認証だけでなく Basic Auth / login レート制限 / Beginner read-only / suspended write ブロックも担う** (詳細は [SECURITY.md §8.1](./SECURITY.md)) |
 | 状態遷移 | State Machine パターンでプロジェクト状態を管理 |
-| バリデーション | Zod スキーマをフロント/バックで共有 |
-| 論理削除 | 全テーブルに `deleted_at` カラム。クエリで自動フィルタ |
+| バリデーション | Zod スキーマで Route Handler / Server Action 側を検証 (フロント Zod も共有) |
+| 論理削除 | 全テーブルに `deleted_at` カラム。**各 service が where に `deletedAt: null` を明示記述** (Prisma `$use` による自動フィルタは**不使用** — `src/lib/db.ts` は `$use` フックを持たない) |
+| テナント分離 | service 層 `where.tenantId` が唯一の防御線。**DB の RLS はポリシー 0 件で実効的に無効**、Prisma が特権ロールで接続しバイパスする (詳細は [SECURITY.md §9.5.3](./SECURITY.md)) |
 | 監査 | 権限変更・状態変更は専用テーブルに記録 |
+
+> **訂正**: 旧版の「Prisma で project_id を自動付与」「論理削除フィルタをクエリで自動適用」は **実装と不一致**。
+> `src/lib/db.ts` は PrismaClient を pg adapter で生成するのみ (全 21 行、`$use` 無し)。tenantId / `deletedAt` の
+> 付与は service 層が where 句に明示記述する方式。SECURITY.md §9.5.3 と平仄を合わせる。
+
+### 3.4 国際化 (i18n) アーキテクチャ
+
+UI 文言の多言語対応は **next-intl** で実装する。メッセージカタログはサーバ側で解決し、Server / Client Component の双方に供給する。
+
+**ロケールとメッセージ構成**:
+
+| 項目 | 内容 |
+|---|---|
+| ライブラリ | next-intl (App Router、サーバ設定 `src/i18n/request.ts` の `getRequestConfig`) |
+| 対応ロケール | **`ja` (日本語) / `en-US` (英語)** の 2 つ。`src/i18n/request.ts#SUPPORTED_LOCALES` (= messages/ のファイル名) |
+| メッセージカタログ | `src/i18n/messages/ja.json` / `src/i18n/messages/en-US.json`。両者は同一キー構造 (`action` / `nav` / `field` / `message` 等のネスト) で、`src/i18n/messages.test.ts` がキー集合の整合をテストで保証 |
+| 既定ロケール | `ja` (`DEFAULT_LOCALE`)。未認証ページ・ロケール未解決時に適用 |
+| BCP 47 ↔ ファイル名 | `src/config/i18n.ts` は BCP 47 形式 (`ja-JP` / `en-US`) を扱い、`request.ts#toMessagesFilename` が messages/ ファイル名 (`ja` / `en-US`) に変換 (`ja-JP` / 未知ロケールは `ja` にフォールバック) |
+
+**ロケール解決順序** (3 段フォールバック、`src/config/i18n.ts#resolveLocale`):
+
+1. **認証ユーザの個別設定** — `auth().user.locale` (設定画面で変更、JWT claim 経由)
+2. **システムデフォルト** — 環境変数 `APP_DEFAULT_LOCALE`、未設定なら `ja-JP`
+3. **未サポート/未解決** — `ja` にフォールバック (`auth()` が middleware 等の特殊 context で throw した場合も含め安全側に倒す)
+
+> ロケール変更は JWT 再署名で全経路 (middleware / SSR / client) に透過反映する (`/api/tenants/me/i18n` → `reissueAuthJwtOnResponse`、[SECURITY.md §9.4.4.1](./SECURITY.md))。タイムゾーンも同じ 3 段フォールバック (`resolveTimezone`)。DB は常に UTC 保存し描画時に TZ/locale を解決する。
+
+**現状の方針 (MVP)**: プロダクトは **ja 中心** で開発・運用している。`en-US` カタログは既に全キーが翻訳済で `src/config/i18n.ts#SELECTABLE_LOCALES` も `'en-US': true` (Phase C 完了 / PR #175) のため UI のロケール選択肢としても **選択可能**。ただし MVP の主対象は日本語ユーザであり、英語は周辺対応の位置づけ。新規 UI 文言を追加する際は **ja / en-US 両方** にキーを追加すること (`messages.test.ts` がキー集合の欠落を検知する)。
 
 ---
 
@@ -224,7 +281,7 @@ src/
 | `src/config/app-routes.ts` | 画面遷移パス |
 | `src/config/theme-definitions.ts` | テーマ色定義 |
 
-詳細: [docs/developer-guide/REFERENCE.md](../developer-guide/REFERENCE.md)(設計原則のリマインダ)
+詳細: [docs/developer-guide/REFERENCE.md](../operations/develop/REFERENCE.md)(設計原則のリマインダ)
 
 ---
 
@@ -234,7 +291,7 @@ src/
 
 - `plan === 'beginner' && cached usage > BEGINNER_DB_FREE_TIER_BYTES (50MB)` で `BeginnerWriteGuardExceededError` を throw
 - DELETE は storage-guard を通らないため自動許可、`addedBytes < 0` (= ファイル削除) もガード対象外
-- 既存の 50GB ハードキャップ判定より前段で評価し、Beginner は早期 short-circuit
+- **2026-05-31 (ADR-0030「データはたすきばの命」)**: 累積 50GB ハードキャップ (全プラン write 拒否) と circuit-breaker (計測失敗時 fail-close) は撤去済。現在の storage-guard の write block は **Beginner 無料枠ガードのみ**。L1/L2/L3 (1GB/10GB/50GB) は super_admin への監視アラート閾値 (write は止めない)。計測失敗は **fail-open** (write 継続、日次 cron `updateAllStorageBytesUsed` が真値補正)。1 操作あたりの瞬間負荷は `DB_WRITE_PAYLOAD_MAX_BYTES` (5MB、`requireStorageQuotaForWrite`) / ファイル 50MB/件で抑制
 
 DELETE 後の自動再集計 (`maybeRecalcAfterBeginnerDelete()`) は post-commit hook として 6 主要 service (knowledge / project / risk / retrospective / memo / attachment) の DELETE 関数末尾で呼出。debounce 30 秒、fail-safe (re-calc 失敗は DELETE 本体を巻き戻さない)。
 

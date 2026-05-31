@@ -1,23 +1,30 @@
 # Stripe 実設定記録 — Embedding 課金 Price (¥1 → ¥5 改定 / 2026-05-30)
 
-最終更新: 2026-05-30
-ステータス: **ドラフト (二人三脚で実値確認中)** — ⚠️ `要確認` 欄は Stripe Dashboard の実値を反映してから確定とする
+最終更新: 2026-05-31
+ステータス: **完了 (履歴記録) / アーカイブ候補** — ¥1→¥5 改定 (ADR-0029) はコード・Stripe Price とも反映完了。本書は **改定作業の as-built 記録 (履歴)** として残置する。
+
+> 📌 **本書の位置づけ (2026-05-31 整理)**: ¥1→¥5 改定 (ADR-0029) は完了済。
+> - **改定の意思決定・最新の単価仕様** → [ADR-0029](../adr/0029-embedding-price-revision-5jpy.md)
+> - **env ↔ Price ID の対応 (恒久メンテ対象)** → [STRIPE_ENV_MAPPING.md §2](./STRIPE_ENV_MAPPING.md) + [ENVIRONMENT_VARIABLES.md §4](./ENVIRONMENT_VARIABLES.md)
+> - **本書** → 2026-05-30 の Stripe Dashboard 実設定スクリーンショット記録と整合チェックの **当時のスナップショット (履歴)**。
+>
+> 以後の embedding 単価メンテは ADR-0029 + ENV_MAPPING を正とし、本書は変更追従しない (アーカイブ可)。
 
 > ✅ **2026-05-30 整合完了**: credit_card 払いは **既に有効化済** (`STRIPE_ENABLED=true`、Production env 全 5 Price 設定済)、
 > Stripe Price も ¥5 で設定済み。~~リポジトリ内の複数 docs (CLAUDE.md / [src/lib/stripe.ts](../../src/lib/stripe.ts) コメント /
-> [ADR-0022](../adr/0022-embedding-usage-based-billing.md) / [STRIPE_SETUP.md §2.2-bis](../operations/STRIPE_SETUP.md) の
+> [ADR-0022](../adr/0022-embedding-usage-based-billing.md) / [STRIPE_SETUP.md §2.2-bis](../operations/setup/STRIPE_SETUP.md) の
 > 「リリース時は credit_card 未対応・将来 Stripe 有効化時」記述) は実態より古い~~ → 同セッション内で **全 docs 是正完了** (ADR-0022 / STRIPE_SETUP / STRIPE_BILLING / ENV_VARS / src/lib/stripe.ts / src/services/stripe-billing.service.ts / src/lib/llm/metered.ts / ADR-0006 / ADR-0020 / ADR-0021 / STRIPE_TECHNICAL_DESIGN.md)。
 関連:
-- ADR: [ADR-0022](../adr/0022-embedding-usage-based-billing.md) (Embedding 従量課金の初版、Expert/Pro ¥1) / **改定 ADR は本対応で新規作成予定 (ADR-0029 想定)**
+- ADR: [ADR-0022](../adr/0022-embedding-usage-based-billing.md) (Embedding 従量課金の初版、Expert/Pro ¥1) / [ADR-0029](../adr/0029-embedding-price-revision-5jpy.md) (¥1→¥5 改定、作成済・反映済)
 - 仕様: [STRIPE_BILLING.md](../business/STRIPE_BILLING.md)
 - 詳細技術設計: [STRIPE_TECHNICAL_DESIGN.md](./STRIPE_TECHNICAL_DESIGN.md)
-- 設定手順: [STRIPE_SETUP.md](../operations/STRIPE_SETUP.md) §2.2-bis
+- 設定手順: [STRIPE_SETUP.md](../operations/setup/STRIPE_SETUP.md) §2.2-bis
 - コード単価: [src/config/embedding-pricing.ts](../../src/config/embedding-pricing.ts) `EMBEDDING_PRICE_JPY_BY_PLAN`
 - Meter event 名: [src/lib/stripe.ts](../../src/lib/stripe.ts) `STRIPE_METER_EVENT_NAMES.embedding`
 
 > 本書の目的: Stripe Dashboard で実際に作成・変更した **Embedding 課金 Price / Meter / Product の実設定値** を
 > リポジトリ側の単一の真実源 (コード定数・env・ADR) と突き合わせ、**請求 invariant の整合**を担保する記録。
-> 「設定手順 (how-to)」は [STRIPE_SETUP.md](../operations/STRIPE_SETUP.md)、「実際にどう設定したか (as-built)」は本書が担う。
+> 「設定手順 (how-to)」は [STRIPE_SETUP.md](../operations/setup/STRIPE_SETUP.md)、「実際にどう設定したか (as-built)」は本書が担う。
 
 ---
 
@@ -115,15 +122,15 @@ invoice/bank_transfer: ApiCallLog.costJpy (= resolveEmbeddingCostJpy = ¥5) の 
 
 | # | リポジトリ側の値 | 期待 | 現状 | 一致? |
 |---|---|---|---|---|
-| 1 | `EMBEDDING_PRICE_JPY_BY_PLAN.expert` | 5 | **1** (未改定) | ❌ 要改定 |
-| 2 | `EMBEDDING_PRICE_JPY_BY_PLAN.pro` | 5 | **1** (未改定) | ❌ 要改定 |
-| 3 | `EMBEDDING_PRICE_JPY_BY_PLAN.beginner` | 0 | 0 | ✅ |
+| 1 | `EMBEDDING_PRICE_JPY_BY_PLAN.expert` | 5 | **5** (改定済、`embedding-pricing.ts:51`) | ✅ ADR-0029 反映済 (PR #472) |
+| 2 | `EMBEDDING_PRICE_JPY_BY_PLAN.pro` | 5 | **5** (改定済、`embedding-pricing.ts:52`) | ✅ ADR-0029 反映済 (PR #472) |
+| 3 | `EMBEDDING_PRICE_JPY_BY_PLAN.beginner` | 0 | 0 (`embedding-pricing.ts:50`) | ✅ |
 | 4 | `STRIPE_METER_EVENT_NAMES.embedding` | `tasukiba_embedding_call` | `tasukiba_embedding_call` | ✅ Sandbox Meter と完全一致確認済 (2026-05-30) |
 | 5 | Stripe Price 単価 (Sandbox) | ¥5/unit | ¥5/unit | ✅ (2026-05-30、price_1TchuCK3…) |
 | 6 | Stripe 商品 description (Sandbox/Live 両方) | ¥5 / ADR-0029 | **「¥1」のまま** | ❌ Dashboard で要更新 |
 | 7 | Stripe Price 単価 (Live) | ¥5/unit | ¥5/unit ✅ (price_1Tchn2KH…) | ✅ 2026-05-30 確認 |
 
-→ #1 / #2 を改定すれば請求 invariant が再び成立する (詳細 TODO は本対応の調査結果を参照)。
+→ #1 / #2 は **改定済 (PR #472、`expert: 5, pro: 5`)**。コード定数 ¥5 と Stripe Price ¥5/unit が一致し、請求 invariant が成立している。残るのは Stripe 商品 **description** の表示更新 (#6、請求無影響) のみ。
 
 ---
 
@@ -155,9 +162,12 @@ invoice/bank_transfer: ApiCallLog.costJpy (= resolveEmbeddingCostJpy = ¥5) の 
 - [x] Live Meter event_name `tasukiba_embedding_call` (表示名 `Embedding per-call (Expert/Pro)`) コード一致 / sum / payload 一致
 - [x] Live は全 5 Price が有効サブスク 0 (= 本番サブスク未作成、Item 整合問題なし)
 
-### ⏳ 残課題
-- [ ] `STRIPE_PRICE_EMBEDDING` env が新 ¥5 Price を指しているか (staging=`price_1TchuCK3…` / production=`price_1Tchn2KH…`)
-- [ ] **Stripe 商品 description が Sandbox/Live とも「¥1」のまま** → Dashboard で ¥5 / ADR-0029 に更新
+### ✅ 確定済 (env / コード)
+- [x] `STRIPE_PRICE_EMBEDDING` env が新 ¥5 Price を指す (staging=`price_1TchuCK3…` / production=`price_1Tchn2KH…`、[ENVIRONMENT_VARIABLES.md §4](./ENVIRONMENT_VARIABLES.md) で確認済)
+- [x] コード定数 `EMBEDDING_PRICE_JPY_BY_PLAN.expert/pro = 5` (PR #472)
+- [x] 改定 ADR は **ADR-0029 を新規作成** で決定 (2026-05-30)
+
+### ⏳ 残課題 (Dashboard 表示のみ・請求無影響)
+- [ ] **Stripe 商品 description が Sandbox/Live とも「¥1 (ADR-0022)」のまま** → Dashboard で「¥5 / ADR-0029」に更新 (表示ドリフトのみ、Price 単価・Meter は ¥5 で正)
 - [ ] **Sandbox 既存サブスクへの embedding Item 追加** (Sandbox は embedding 有効サブスク 0、§4 参照。Live は全 0 で問題なし)
 - [ ] Embedding Price の lookup_key (任意。付与するなら `embedding_per_call`)
-- [x] 改定 ADR は **ADR-0029 を新規作成** で決定 (2026-05-30)

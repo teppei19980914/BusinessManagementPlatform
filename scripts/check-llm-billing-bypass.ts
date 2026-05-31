@@ -33,7 +33,7 @@
  *       月 100 回上限の二重ガード)。BILLABLE_FEATURE_UNITS union に含まれず、課金集計対象外。
  *       ADR-0028 移行後は route 内で直接 anthropic は呼ぶが、RAG 用 Voyage embedding は
  *       embedding.service.ts の generateBatchEmbeddings 経由なので Voyage 側は ALLOWLIST 不要。
- *       根拠: ADR-0028 §6 課金分類 / docs/developer-guide/FAQ_AND_OWL_CHAT_GUIDE.md §1.3
+ *       根拠: ADR-0028 §6 課金分類 / docs/operations/develop/FAQ_AND_OWL_CHAT_GUIDE.md §1.3
  *   - *.test.ts ファイル (vi.mock でモック化、実呼出なし)
  *
  * 例外的に許可が必要な場合は該当行末に `// llm-billing-allow: <理由>` を付与する。

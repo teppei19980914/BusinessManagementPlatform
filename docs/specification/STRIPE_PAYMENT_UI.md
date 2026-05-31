@@ -1,7 +1,7 @@
 # クレジットカード払い UI 仕様 (v1.x)
 
-最終更新: 2026-05-25 (ADR-0019 価格改定反映)
-関連: [STRIPE_BILLING.md](../business/STRIPE_BILLING.md) / [STRIPE_TECHNICAL_DESIGN.md](../design/STRIPE_TECHNICAL_DESIGN.md) / [ADR-0006](../adr/0006-stripe-metered-billing-integration.md) / [ADR-0019](../adr/0019-billable-feature-units-and-free-tier-expansion.md)
+最終更新: 2026-05-31 (ADR-0030「今月請求金額」セクション同期 + Customer Portal 撤去の本文反映)
+関連: [STRIPE_BILLING.md](../business/STRIPE_BILLING.md) / [STRIPE_TECHNICAL_DESIGN.md](../design/STRIPE_TECHNICAL_DESIGN.md) / [ADR-0006](../adr/0006-stripe-metered-billing-integration.md) / [ADR-0019](../adr/0019-billable-feature-units-and-free-tier-expansion.md) / [ADR-0030](../adr/0030-embedding-monthly-budget-cap.md) / [TENANT_AND_BILLING.md §今月請求金額](../business/TENANT_AND_BILLING.md)
 
 本ドキュメントは、v1.x で導入する **クレジットカード払い + Stripe 連携** に関する画面仕様を定義する。バックエンド仕様は [STRIPE_BILLING.md](../business/STRIPE_BILLING.md) を参照。
 
@@ -27,7 +27,7 @@
 
 | 画面 | 変更内容 | ロール |
 |---|---|---|
-| `/settings/tenant` | 「支払い方法」セクション新設 (= invoice/card 切替、カード登録、Customer Portal リンク、検証ボタン) | admin |
+| `/settings/tenant?tab=billing` | 「今月請求金額」(ADR-0030) + 「請求先情報」(invoice/card 切替) + 「支払い方法」(状態表示・カード登録/更新・請求履歴リンク) + 「請求履歴」リンクを請求タブに配置。**Customer Portal リンク / ポータル管理ボタンは PR #425 で撤去済** | admin |
 | `/settings/tenant` (プラン変更ダイアログ) | プラン変更時にカード検証 → 失敗時のエラー表示 | admin |
 | `/admin/super/tenants/[id]` | paymentMethod 表示、Stripe Customer ID リンク (Stripe Dashboard へ) | super_admin |
 | `/admin/super/usage` | CSV エクスポートに `payment_method` 列追加、credit_card テナントの表示色を区別 | super_admin |
@@ -47,7 +47,7 @@
 
 旧仕様で「支払い方法」セクション内に独立した「クレジットカード払いに切替」ボタンを持っていたが、PR #425 で
 **paymentMethod の変更操作は上位の「請求先情報」フォームに統合** し、本セクションは
-「現在の状態表示 + カード情報更新 + Stripe ポータル / 銀行振込戻し ボタン」のみを担当する。
+「現在の状態表示 + カード情報更新 (= Stripe Checkout 起動) + 請求履歴リンク」のみを担当する (銀行振込戻しは上位「請求先情報」フォーム経由)。Customer Portal 遷移ボタンは PR #425 で撤去済。
 
 Stripe Checkout からの戻り URL (`returnUrl`) は `${origin}/settings/tenant?tab=billing` を渡しており、
 `api/.../setup/complete/route.ts:sanitizeReturnTo` がクエリ込みで origin 検証を通過するため、戻り時も
@@ -114,11 +114,14 @@ Stripe Checkout からの戻り URL (`returnUrl`) は `${origin}/settings/tenant
 │ │ ボタンをご利用ください。                     │ │
 │ └────────────────────────────────────────────────┘ │
 │                                                    │
-│ [💳 クレジットカード情報更新]                     │
-│ [🔧 Stripe ポータルで管理]                        │
+│ [💳 クレジットカード情報更新]  📋 請求履歴を見る  │
 └────────────────────────────────────────────────────┘
 ```
 
+> PR #425 / KDD §5.X+109 で **Customer Portal 経路を撤去** したため、本セクションのボタンは
+> 「💳 クレジットカード情報更新」(= 常に Stripe Checkout 起動) と「📋 請求履歴を見る」リンク
+> (= `/settings/tenant/billing`) の 2 つのみ。「🔧 Stripe ポータルで管理」ボタンは存在しない。
+>
 > 「請求に使用されるカード」表示は `getStripeCardSummary` の戻り値を描画。
 > **Subscription.default_payment_method 優先取得** (KDD §5.X+108) のため、ここに表示されるカード = 実際に毎月引落されるカードと **完全一致** する。
 
@@ -150,16 +153,24 @@ Stripe Checkout からの戻り URL (`returnUrl`) は `${origin}/settings/tenant
 │ └────────────────────────────────────────────────┘ │
 │                                                    │
 │ ⚠️ カードの状態を確認してください                 │
-│ - カードの有効期限が切れています。Stripe ポータル │
-│   からカード情報を更新してください。              │
+│ - (cardVerificationStatus === 'expired')          │
+│   カードの有効期限が切れています。「クレジット   │
+│   カード情報更新」から再登録してください。        │
+│ - (cardVerificationStatus === 'declined')         │
+│   カードが拒否されています。別カードへ変更を。    │
+│ - (cardVerificationStatus === 'never_verified')   │
+│   カードがまだ検証されていません。                │
 │ - (autoSuspendScheduledAt != null の場合)         │
 │   引落失敗が続いており、まもなくサービスが自動   │
 │   停止する予定です。                              │
 │                                                    │
-│ [💳 クレジットカード情報更新]                     │
-│ [🔧 Stripe ポータルで管理]                        │
+│ [💳 クレジットカード情報更新]  📋 請求履歴を見る  │
 └────────────────────────────────────────────────────┘
 ```
+
+> 文言分岐は `cardVerificationStatus` の値 (`expired` / `declined` / `never_verified`) と
+> `autoSuspendScheduledAt` の有無で `stripe-payment-method-section.tsx` が出し分ける。
+> ここにも「🔧 Stripe ポータルで管理」ボタンは存在しない (PR #425 撤去)。
 
 ### 2.3 切替フロー (= invoice → credit_card)
 
@@ -227,7 +238,7 @@ Visa •••• 4242   有効期限 12/34
 本 UI 仕様は以下の 3 点完全一致を invariant として死守:
 
 1. **アプリ画面** (= 本セクションの「請求に使用されるカード」表示 = `getStripeCardSummary` の戻り値)
-2. **Stripe Customer Portal** の「決済手段 / デフォルト」表示
+2. **Stripe Customer Portal** の「決済手段 / デフォルト」表示 (= 本アプリからは遷移しないが、Stripe Dashboard / 直 URL でユーザが見た場合の表示。同期維持の対象として残す)
 3. **実際の月次引落カード** (= Subscription.default_payment_method)
 
 これを満たすために:
@@ -239,9 +250,11 @@ Visa •••• 4242   有効期限 12/34
 
 | ボタン | 表示条件 | API / 遷移 | 挙動 |
 |---|---|---|---|
-| 💳 クレジットカード情報更新 | `state !== 'invoice_only'` (= 3 状態すべて活性、`invoice_only` では非活性) | `POST /api/tenants/me/billing/stripe/setup` → `checkoutUrl` 取得 → `window.location.href` で Stripe Checkout に遷移 | カード新規登録 / 差し替え。完了後は `/api/tenants/me/billing/stripe/setup/complete` ハンドラで Subscription 作成 + Customer デフォルト同期 + DB 確定 |
-| 🔧 Stripe ポータルで管理 | `state === 'credit_card_active' / 'credit_card_attention'` | `POST /api/tenants/me/billing/stripe/portal` | Stripe Customer Portal を別タブで開く |
+| 💳 クレジットカード情報更新 | `state !== 'invoice_only'` (= 3 状態すべて活性、`invoice_only` では非活性。`stripeEnabled=false` 時も非活性) | confirm ダイアログ → `POST /api/tenants/me/billing/stripe/setup`(body: `{ returnUrl: '${origin}/settings/tenant?tab=billing' }`) → `checkoutUrl` 取得 → `window.location.href` で Stripe Checkout に遷移 | **常に Stripe Checkout setup** (= 新規登録 / カード差し替え共通)。完了後は `/api/tenants/me/billing/stripe/setup/complete` ハンドラで Subscription 作成 or 既存維持 + `default_payment_method` update + Customer デフォルト同期 + DB 確定。KDD §5.X+109 で Customer Portal 経路を撤去したため、`unregistered` でも `active`/`attention` でも同一ハンドラ |
+| 📋 請求履歴を見る | 常時表示 (リンク) | `/settings/tenant/billing` へ遷移 | 請求履歴ページ閲覧 (旧 Customer Portal の請求履歴閲覧用途を代替) |
 | 🏦 銀行振込に戻す | `state === 'credit_card_active' / 'credit_card_attention'` (= 上位「請求先情報」フォーム経由) | 「請求先情報」フォームで支払い方法を「銀行振込」に変更して保存 → サーバ側で `cancelTenantStripeSubscription` 実行 | Stripe Subscription を cancel + DB の Stripe 関連フィールドを **即時クリア** (KDD §5.X+105、Webhook 待ちなし)。再切替時は新規 Subscription として作成 |
+
+> **`POST /api/tenants/me/billing/stripe/portal` は本 UI から呼ばれない** (KDD §5.X+109 で撤去)。「🔧 Stripe ポータルで管理」ボタンは UI に存在しない。
 
 ### 2.6 Stripe Checkout 戻り時のトースト表示
 
@@ -292,6 +305,41 @@ Visa •••• 4242   有効期限 12/34
 
 > PR #425 / KDD §5.X+99〜§5.X+108 を参照。
 
+### 2.8 「今月請求金額」セクション (ADR-0030 / 2026-05-30)
+
+請求タブ (`/settings/tenant?tab=billing`) の **先頭** に「今月請求金額」セクションを配置する
+(= `tenant-settings-client.tsx` の `MonthlyBillingTotalSection`、`data-testid="monthly-billing-total-section"`)。
+テナント管理者が請求書発行前に当月予測額を一目で把握でき、Stripe 自動引落 / 銀行振込いずれでも
+事前心算が可能になる。表示順は「今月請求金額」→「請求先情報」→「支払い方法」→「請求履歴」。
+
+```
+┌─ 今月請求金額          月末 cron で確定 / DB 容量・ファイルストレージは月中 peak ベースの想定 (税抜) ─┐
+│ LLM 費用        Embedding 費用    DB 容量超過 (想定)   Storage 超過 (想定)│
+│ ¥2,000          ¥1,200            ¥50                  ¥10                │
+│                                                                          │
+│ ─────────────────────────────────────────────────────────────────────  │
+│ 合計 (税抜)                                                    ¥3,260    │
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
+**集約式** (ADR-0030 / [TENANT_AND_BILLING.md §今月請求金額の集約](../business/TENANT_AND_BILLING.md)):
+
+| 項目 | データソース | 備考 |
+|---|---|---|
+| LLM 費用 | `info.currentMonthApiCostJpy` | ADR-0019 (project-upsert / suggestion-explanation / auto-tag-extract) |
+| Embedding 費用 | `info.currentMonthEmbeddingCostJpy` | ADR-0022 / ADR-0029 (¥5/call、Beginner=0) |
+| DB 容量超過 (想定) | `info.estimatedDbCapacityOverageJpy` | 月中 peak から `calculateOverageJpy` で算出 (ADR-0020) |
+| Storage 超過 (想定) | `info.estimatedFileStorageOverageJpy` | 月中 peak から `calculateFileStorageOverageJpy` で算出 (ADR-0021) |
+| **合計 (税抜)** | 上記 4 項目の単純加算 | `data-testid="monthly-billing-total"` |
+
+- **請求 invariant** ([[feedback_billing_invariant]]): 上記合計 = 表示 = 月末請求書 = ApiCallLog SUM (税抜)。
+  DB / Storage 超過は月中 peak ベースの **想定値** で、月末 cron が ApiCallLog INSERT して確定する。
+- 各カードは `title` 属性 (cursor-help) で課金根拠 (ADR 番号) を tooltip 表示。
+- 金額は全て **税抜**。消費税 (`TAX_RATE = 0.10`) は請求書生成時に加算 (= 本セクションには含めない)。
+- DB / Storage は「想定」と明記し、月末確定値とのズレ (= 月後半に peak 更新) を UI で示す。
+- 再集計は「使用量タブ」の容量セクションの `[再集計]` ボタン (RecalculateButton) で実施する
+  (= 本セクションには専用ボタンを置かず、課金根拠データの再集計動線は使用量タブに集約)。
+
 ---
 
 ## §3. プラン変更時のカード検証
@@ -337,8 +385,11 @@ Visa •••• 4242   有効期限 12/34
 プラン変更前にカード情報を更新してください。
 
 ┌─────────────────────────────────────────┐
-│ 🔧 Stripe ポータルでカードを更新する     │
+│ 💳 クレジットカード情報を更新する         │
 └─────────────────────────────────────────┘
+
+(= 「支払い方法」セクションの「クレジットカード情報更新」と同じ Stripe Checkout 起動。
+ Customer Portal は KDD §5.X+109 で撤去済のためポータル遷移は使わない)
 
 カード更新後、再度プラン変更をお試しください。
 
@@ -374,12 +425,22 @@ Visa •••• 4242   有効期限 12/34
 │ Default Payment Method: **** 4242 (Visa, 12/29)  │
 │ カード検証状態: ✅ valid (2026-07-15 検証)        │
 │                                                    │
-│ ── 当月の請求 ──                                   │
+│ ── 今月請求金額 (想定) ──                          │
 │ Invoice ID: in_xxxxxxxxxxxxxx                     │
-│ 状態: pending (= 月末に確定予定)                  │
-│ 予定額: ¥2,500 (LLM ¥2,000 + Storage ¥500)       │
+│ 状態: pending (= 月末 cron で確定予定)            │
+│ LLM 費用:              ¥2,000                      │
+│ Embedding 費用:        ¥1,200                      │
+│ DB 容量超過 (想定):    ¥50                         │
+│ Storage 超過 (想定):   ¥10                         │
+│ ───────────────────────────                       │
+│ 合計 (税抜):           ¥3,260                      │
 └────────────────────────────────────────────────────┘
 ```
+
+> 4 軸の集約は ADR-0030 / テナント自身の請求タブ「今月請求金額」セクション (§2.8) と同一の式
+> (= LLM + Embedding + DB 容量超過想定 + Storage 超過想定)。DB / Storage は月中 peak ベースの
+> 想定値で、月末 cron で ApiCallLog INSERT して確定する。請求 invariant ([[feedback_billing_invariant]])
+> として「ApiCallLog SUM = 画面表示 = 請求書」を維持。
 
 「Stripe Dashboard で開く」リンクは別タブで `https://dashboard.stripe.com/customers/cus_xxx` を開く。
 
@@ -459,7 +520,7 @@ CSV のヘッダに以下を追加:
 
 - バックエンド仕様: [STRIPE_BILLING.md](../business/STRIPE_BILLING.md)
 - 設計判断: [ADR-0006](../adr/0006-stripe-metered-billing-integration.md)
-- Stripe Dashboard 設定: [STRIPE_SETUP.md](../operations/STRIPE_SETUP.md)
+- Stripe Dashboard 設定: [STRIPE_SETUP.md](../operations/setup/STRIPE_SETUP.md)
 - 支払い条件: [PAYMENT_TERMS.md](../business/PAYMENT_TERMS.md)
 - 既存 UI ベース: `/settings/tenant` ([tenant-settings-client.tsx](../../src/app/(dashboard)/settings/tenant/tenant-settings-client.tsx))
 
@@ -469,6 +530,7 @@ CSV のヘッダに以下を追加:
 
 | 日付 | 変更 | PR / KDD |
 |---|---|---|
+| 2026-05-31 | 実装ミラー同期: ① 請求タブ「今月請求金額」セクション (§2.8) を ADR-0030 / `MonthlyBillingTotalSection` に合わせて新設 (LLM + Embedding + DB 容量超過想定 + Storage 超過想定の 4 軸集約、税抜、月末 cron 確定)、② 本文に残存していた「🔧 Stripe ポータルで管理」ボタン記述を全網羅削除 (§2.2 モックアップ / §2.5 ボタン表 / §3.3 検証失敗ダイアログ / §1 影響画面表 / §2.1) — Customer Portal 経路は PR #425 / KDD §5.X+109 で撤去済、③ §4.1 super_admin「当月の請求」を 4 軸集約レイアウトに更新、④ 「クレジットカード情報更新」は常に Stripe Checkout 起動である旨を明確化 | ADR-0030 / PR #425 (KDD §5.X+109) 実装突合 |
 | 2026-05-22 | §2 抜本改修: ① 状態モデルを旧 A/C/D の 3 状態 → 新 invoice_only / credit_card_unregistered / credit_card_active / credit_card_attention の 4 状態に拡張、② paymentMethod 切替を 1 ステップ強制遷移化 (「請求先情報フォームで paymentMethod 変更 → 自動 Stripe Checkout 遷移」)、③ 状態バッジ (✅/⚠/❌/🏦) を currentLabel に明示、④ Stripe 登録カード (brand/last4/exp) のリアルタイム表示を追加、⑤ 「画面のカード = 請求カード」一貫性原則 (3 点完全一致) を明文化、⑥ 銀行振込戻し時に Stripe Subscription を即時 cancel + DB 即時クリアの挙動を反映 | PR #425 / KDD §5.X+100/§5.X+103/§5.X+105/§5.X+108 |
 | 2026-05-14 | 初版策定 (旧 3 状態モデル A/C/D、独立した「クレジットカード払いに切替」ボタン経由の 2 ステップフロー)。旧版は本表より前の Git 履歴を参照 | docs/stripe-integration-spec |
 

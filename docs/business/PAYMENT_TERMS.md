@@ -2,7 +2,7 @@
 
 本ドキュメントは、本サービスの **銀行振込（請求書送付）支払いに関する支払い条件と、滞納が発生した場合の対外的なルール** を定義する。
 
-実際の super_admin 手順は [../operations/PAYMENT_DELINQUENCY_SOP.md](../operations/PAYMENT_DELINQUENCY_SOP.md) を参照。本文書は「ユーザに対してどう案内するか」「どこから利用制限・解約に進むか」のルールを規定し、利用規約 / 個別契約の根拠となる。
+実際の super_admin 手順は [../operations/operate/PAYMENT_DELINQUENCY_SOP.md](../operations/operate/PAYMENT_DELINQUENCY_SOP.md) を参照。本文書は「ユーザに対してどう案内するか」「どこから利用制限・解約に進むか」のルールを規定し、利用規約 / 個別契約の根拠となる。
 
 ## 0. 前提と適用範囲
 
@@ -32,7 +32,9 @@
 
 ### 0.3 課金対象プラン
 
-- **Beginner プラン**: 無料のため本文書の対象外 (滞納の概念がない。Beginner 90 日経過の read-only 化は別ロジック / [TENANT_AND_BILLING.md §34.14.4](./TENANT_AND_BILLING.md))
+- **Beginner プラン**: 無料のため本文書の対象外 (滞納の概念がない)。Beginner の利用制限は **時間経過による read-only 化ではなく、以下の実装ロジック** による (= 「90 日 read-only」という時限トリガは実装されていない。「90 日」は初回試用の位置付け・ダウングレード禁止の根拠として残る marketing/eligibility 概念であり、自動 read-only 化のトリガではない):
+    - **容量超過による write block (ADR-0025 / 2026-05-29)**: DB 50MB / File Storage 100MB の無料枠超過時に新規作成・更新を一律拒否 (削除のみ可)、overage 課金は発生しない。削除後 debounce 30 秒で自動再集計され write 再開 ([BEGINNER_PLAN.md](../specification/BEGINNER_PLAN.md))
+    - **試用上限による縮退モード**: LLM 月 50 件 (ADR-0019) / Embedding 月 100 件 (ADR-0030) 到達時に縮退モードへ。書込自体は継続し AI 裏方処理のみ一時停止 ([TENANT_AND_BILLING.md §34.14.4](./TENANT_AND_BILLING.md))
 - **Expert / Pro プラン**: 従量課金 (per-API-call) のため、本文書の対象
 
 ---
@@ -53,7 +55,7 @@
 - 請求書発行期限: 6/15
 - 支払期限: 6/25
 
-> 商用化後の支払い遅延損害金導入は再検討事項として [docs/roadmap/](../roadmap/) に切り出し。
+> 商用化後の支払い遅延損害金導入は再検討事項として [docs/operations/ROADMAP.md](../operations/ROADMAP.md)（運用保守ロードマップ）に切り出し。
 
 ### 1.2 期日の運用ルール
 
@@ -67,8 +69,8 @@
 super_admin は **翌月16日〜25日の入金期間中に随時** 銀行口座を確認し入金消込を行う。
 **翌月26日朝** に支払期限到来後の未入金テナントを抽出し、滞納フローへ移行する。
 
-詳細手順: [../operations/PAYMENT_DELINQUENCY_SOP.md](../operations/PAYMENT_DELINQUENCY_SOP.md) §0
-月次請求業務全体: [../operations/BILLING_MONTHLY_OPERATIONS.md](../operations/BILLING_MONTHLY_OPERATIONS.md)
+詳細手順: [../operations/operate/PAYMENT_DELINQUENCY_SOP.md](../operations/operate/PAYMENT_DELINQUENCY_SOP.md) §0
+月次請求業務全体: [../operations/operate/BILLING_MONTHLY_OPERATIONS.md](../operations/operate/BILLING_MONTHLY_OPERATIONS.md)
 
 > 自動消込は未実装。Stripe 連携 (Metered Billing) は v1.x 以降で実装し、その時点で本セクションを更新する ([TENANT_AND_BILLING.md §34.14.8](./TENANT_AND_BILLING.md))。
 
@@ -76,7 +78,7 @@ super_admin は **翌月16日〜25日の入金期間中に随時** 銀行口座�
 
 ## 2. 滞納フェーズと対応ルール
 
-支払い期日からの経過日数で 4 フェーズに分け、それぞれで取るアクションと利用制限を定義する。**実際の手順は [SOP](../operations/PAYMENT_DELINQUENCY_SOP.md) を参照**。
+支払い期日からの経過日数で 4 フェーズに分け、それぞれで取るアクションと利用制限を定義する。**実際の手順は [SOP](../operations/operate/PAYMENT_DELINQUENCY_SOP.md) を参照**。
 
 ### 2.1 全体像
 
@@ -112,7 +114,7 @@ super_admin は **翌月16日〜25日の入金期間中に随時** 銀行口座�
 - **読み取り**: 可能 (ログイン / プロジェクト閲覧 / リスク・課題閲覧 / ナレッジ閲覧)
 - **書き込み**: 不可 (新規プロジェクト作成 / リスク起票 / コメント投稿 / インポート / API 提案生成すべて 403 / "service suspended due to unpaid invoice")
 - **エクスポート**: **可能** (顧客のデータ所有権を尊重し、解約時の引き上げ手段を担保)
-- **Beginner 90 日 read-only との違い**: Beginner は永続防止のためのアップセル誘導 ([TENANT_AND_BILLING.md §34.14.4](./TENANT_AND_BILLING.md))、本フェーズは滞納による商業的措置。**両者の挙動は同一だが、根拠と解除条件が異なる** (未入金解消 vs プラン変更)
+- **Beginner プランの利用制限との違い**: Beginner の制限は (a) 容量超過 write block (ADR-0025: DB 50MB / Storage 100MB 超過で write 拒否、削除で自動解除) と (b) 試用上限縮退 (LLM 月 50 件 / Embedding 月 100 件、ADR-0030) であり、いずれも **時間経過 (90 日) による全体 read-only 化ではない** ([TENANT_AND_BILLING.md §34.14.4](./TENANT_AND_BILLING.md))。本滞納フェーズは Expert/Pro の未入金に対する商業的措置 (テナント全体 read-only)。**両者は別ロジックで、根拠と解除条件が異なる** (滞納: 未入金解消で super_admin が resume / Beginner 容量: 不要データ削除 or アップグレード / Beginner 試用上限: 月初リセット or アップグレード)
 - **実装状況 (2026-05-14 / PR #372)**: **専用フラグ `Tenant.suspendedAt` 実装済み**。
   super_admin が `/admin/super/tenants/[id]` 画面の「⏸ テナントを停止」ボタン、または
   `POST /api/admin/super/tenants/[id]/suspend { reason }` 経由で実行する。
@@ -209,14 +211,14 @@ super_admin は **翌月16日〜25日の入金期間中に随時** 銀行口座�
 
 ## 5. SOP との対応
 
-各フェーズの **具体的な super_admin 手順** は [../operations/PAYMENT_DELINQUENCY_SOP.md](../operations/PAYMENT_DELINQUENCY_SOP.md) の対応セクションを参照:
+各フェーズの **具体的な super_admin 手順** は [../operations/operate/PAYMENT_DELINQUENCY_SOP.md](../operations/operate/PAYMENT_DELINQUENCY_SOP.md) の対応セクションを参照:
 
 | フェーズ | SOP セクション |
 |---|---|
-| 1. 軽度遅延 | [SOP §2 リマインダーメール送信](../operations/PAYMENT_DELINQUENCY_SOP.md#2-フェーズ-1-軽度遅延) |
-| 2. 重度遅延 | [SOP §3 read-only 移行](../operations/PAYMENT_DELINQUENCY_SOP.md#3-フェーズ-2-重度遅延) |
-| 3. 連絡不通 | [SOP §4 内容証明準備](../operations/PAYMENT_DELINQUENCY_SOP.md#4-フェーズ-3-連絡不通) |
-| 4. 回収不能 | [SOP §5 削除と債権放棄](../operations/PAYMENT_DELINQUENCY_SOP.md#5-フェーズ-4-回収不能) |
+| 1. 軽度遅延 | [SOP §2 リマインダーメール送信](../operations/operate/PAYMENT_DELINQUENCY_SOP.md#2-フェーズ-1-軽度遅延) |
+| 2. 重度遅延 | [SOP §3 read-only 移行](../operations/operate/PAYMENT_DELINQUENCY_SOP.md#3-フェーズ-2-重度遅延) |
+| 3. 連絡不通 | [SOP §4 内容証明準備](../operations/operate/PAYMENT_DELINQUENCY_SOP.md#4-フェーズ-3-連絡不通) |
+| 4. 回収不能 | [SOP §5 削除と債権放棄](../operations/operate/PAYMENT_DELINQUENCY_SOP.md#5-フェーズ-4-回収不能) |
 
 ---
 

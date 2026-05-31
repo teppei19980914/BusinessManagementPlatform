@@ -56,10 +56,10 @@
 - **実装複雑性の増大**: `withMeteredLLM` ラッパー / Degraded mode service / 月初バッチの 3 つの仕組みが連携する必要がある
 - **「縮退モード中」の UX 設計負荷**: ユーザが「なぜ提案が出ないのか」を理解できる UI 説明が必要 (ダッシュボードバナー + 個別画面注釈)
 - **デバッグ難度の上昇**: 「提案エンジンに古いデータが出ない」の原因が「縮退モード中」「visibility=draft」「embedding NULL」のいずれか切り分けが必要
-- **月初バッチへの依存**: バッチ失敗 = 翌月のデータが提案候補に乗らない、という連鎖故障経路ができる ([INCIDENT_RESPONSE.md §6.8](../operations/INCIDENT_RESPONSE.md) で対処手順)
+- **月初バッチへの依存**: バッチ失敗 = 翌月のデータが提案候補に乗らない、という連鎖故障経路ができる ([INCIDENT_RESPONSE.md §6.8](../operations/operate/INCIDENT_RESPONSE.md) で対処手順)
 
 ### Risk / 留意事項
-- **NULL embedding の補完漏れ**: 月初バッチが失敗した場合、復旧手順 ([INCIDENT_RESPONSE.md §6.8](../operations/INCIDENT_RESPONSE.md)) で手動補完
+- **NULL embedding の補完漏れ**: 月初バッチが失敗した場合、復旧手順 ([INCIDENT_RESPONSE.md §6.8](../operations/operate/INCIDENT_RESPONSE.md)) で手動補完
 - **テナント単位のモニタリング**: 縮退モード状態の継続日数をダッシュボードに表示、長期化テナントは admin にアラート
 - **将来の Expert/Pro での扱い**: 現状は Beginner のみ縮退モード対象。Expert/Pro は無制限 + `monthlyBudgetCapJpy` 設定でアプリ層停止 (テナント管理者の自主制御)
 
@@ -89,5 +89,5 @@
 
 - 詳細設計: [docs/business/TENANT_AND_BILLING.md §34.14.4](../business/TENANT_AND_BILLING.md) / [docs/design/SUGGESTION_ENGINE.md §B-4](../design/SUGGESTION_ENGINE.md)
 - 課金モデル: [ADR-0002](./0002-tenant-billing-per-api-call.md)
-- インシデント対応: [docs/operations/INCIDENT_RESPONSE.md §6.8 (月初 cron 失敗時)](../operations/INCIDENT_RESPONSE.md)
+- インシデント対応: [docs/operations/INCIDENT_RESPONSE.md §6.8 (月初 cron 失敗時)](../operations/operate/INCIDENT_RESPONSE.md)
 - 用語: [docs/business/GLOSSARY.md (縮退モード)](../business/GLOSSARY.md)

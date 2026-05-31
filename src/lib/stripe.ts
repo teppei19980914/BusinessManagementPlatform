@@ -9,7 +9,7 @@
  * 設計方針:
  *   - **環境変数未設定でもエラーにしない**: 起動失敗を防ぐため、`getStripe()` 等は
  *     未設定時に null / throw する設計。STRIPE_ENABLED=false のときは呼ばれない前提
- *   - **API バージョン固定**: `2024-12-18.acacia` を固定参照 (= ADR-0006 で確定)
+ *   - **API バージョン固定**: `2026-04-22.dahlia` を固定参照 (ADR-0006 で固定方針確定、PR-V8 で acacia から更新。下記 `STRIPE_API_VERSION` を参照)
  *   - **Test / Production の自動切替**: `STRIPE_SECRET_KEY` の値 (sk_test_xxx / sk_live_xxx)
  *     で自動的に環境が切り替わる (Stripe SDK の標準挙動)
  *

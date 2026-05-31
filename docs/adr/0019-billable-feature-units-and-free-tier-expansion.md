@@ -122,7 +122,7 @@
 
 Stripe Meter Event 名 (`tasukiba_haiku_api_call` / `tasukiba_sonnet_api_call`) は据置。Haiku Price は新規発行 (¥10/call) し、旧 Price (¥5/call) は archive する。Sonnet Price は変更なし。
 
-詳細手順: [docs/operations/STRIPE_SETUP.md](../operations/STRIPE_SETUP.md) (本 ADR 反映時に更新)
+詳細手順: [docs/operations/STRIPE_SETUP.md](../operations/setup/STRIPE_SETUP.md) (本 ADR 反映時に更新)
 
 ## Consequences
 

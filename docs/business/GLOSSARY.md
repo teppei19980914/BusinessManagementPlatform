@@ -80,6 +80,31 @@ type で UI ラベルを切替える設計:
 `responseDetail` / `result` / `lessonLearned` は別途存在するが、現状 UI 露出対象外。
 CSV sync-import は 17 列で完全網羅 (旧 16 列 CSV も後方互換 import 可能)。
 
+### ステークホルダー (Stakeholder)
+
+プロジェクトに関与する全関係者 (内部メンバー + 外部関係者) を 1 テーブルで管理する PMBOK 13 準拠機能。
+Mendelow Power/Interest grid (影響度 × 関心度)、姿勢 (賛成/中立/反対)、エンゲージメント Gap で分類する。
+個人情報・人物評を含むため **PM/TL + admin のみ閲覧可**。
+実装: `src/services/stakeholder.service.ts` / `src/app/(dashboard)/projects/[projectId]/stakeholders/`。
+詳細: [MVP_SCOPE.md §7.11](./MVP_SCOPE.md)
+
+### メンション (Mention)
+
+コメント等で `@ユーザ` を指定して関係者に通知する仕組み。
+実装: `src/services/mention.service.ts` / `src/app/api/mention-candidates/route.ts` (候補補完)。
+mentions テーブルは comment に CASCADE で紐づく。
+
+### 通知 (Notification)
+
+期限・メンション・状態変化等をユーザに知らせる仕組み。画面右上の通知ベルで未読を確認する。
+実装: `src/services/notification.service.ts` / `src/components/notifications/notification-bell.tsx`。
+日次の期限リマインダ等は `src/app/api/cron/daily-notifications/route.ts` で生成。
+
+### コメント (Comment)
+
+タスク・ナレッジ・リスク課題等に対する自由記述のコメント (polymorphic)。
+実装: `src/services/comment.service.ts`。メンション通知と連動する。
+
 ---
 
 ## 2. テナントと課金
@@ -105,11 +130,12 @@ CSV sync-import は 17 列で完全網羅 (旧 16 列 CSV も後方互換 import
 
 **ADR-0030 (2026-05-30) Embedding 月次予算上限導入**: Tenant スキーマに `monthlyEmbeddingBudgetCapJpy` を追加し、Expert / Pro テナント管理者が **Embedding 専用の月次予算上限** を金額単位で任意設定可能化 (LLM 用 `monthlyBudgetCapJpy` とは独立カラム)。Beginner は **月 100 件試用上限** を新設し、LP「90 日完全無料、Embedding 無制限」訴求を「月 100 件まで」に修正。到達時は新規 embedding 生成のみ停止、既存 embedding 検索は継続、月初 backfill で次月補填 (= ADR-0026 非同期化 + ADR-0022 backfill との整合)。
 
-**4 階層 featureUnit 分類** (ADR-0022 / `src/config/billing-feature-units.ts`):
+**featureUnit 分類** (ADR-0022 / `src/config/billing-feature-units.ts`):
 1. `LLM_BILLABLE_FEATURE_UNITS`: project-upsert / suggestion-explanation / auto-tag-extract (plan 別単価、Beginner 50 件上限の対象)
 2. `EMBEDDING_BILLABLE_FEATURE_UNITS`: 上記 7 種 (Beginner ¥0 / Expert・Pro ¥5、ADR-0029、Beginner 上限の対象外)
 3. `STORAGE_OVERAGE_FEATURE_UNITS`: db-capacity-overage / storage-file-overage (月初 cron INSERT)
 4. `EMBEDDING_BACKFILL_FEATURE_UNITS`: 5 種 backfill (全プラン明示的 ¥0)
+5. `LEARNING_FREE_FEATURE_UNITS` (ADR-0027/0028 / 学習支援): `help-chat` / `help-chat-embedding` (AI ヘルプチャット = たすきフクロウ)。**全プラン ¥0** で `BILLABLE_FEATURE_UNITS` union に含めず請求集計対象外。運営コスト管理用にテナント単位の月次回数上限のみ設定 (課金ではない)。`/api/help/chat` route 内で直接 ApiCallLog を INSERT する (`withMeteredLLM` 非経由)。
 
 **「1 回の API 呼び出し」の定義 (1 業務操作 = 1 ApiCallLog ルール)**: ユーザ視点での 1 操作で内部的に複数の LLM/Embedding API を呼んでも、ApiCallLog は **1 件** に集約される。Embedding 系も同様 (CSV 100 件取込 = 1 ApiCallLog = 1 課金、ADR-0022 §2.1)。
 
@@ -136,8 +162,10 @@ per-user / per-token / per-seat ではなく per-API-call を採用 ([ADR-0002](
 
 ### 月初バッチ (Monthly Batch)
 
-毎月 1 日に実行される cron バッチ。役割: 月次カウンタリセット、縮退モード中に生成されなかった
-NULL embedding の補完、DB 容量・ファイルストレージ peak の月初請求確定、前月分 snapshot 保存。
+毎月 1 日に実行される 2 本の cron バッチに分離されている (単一の `monthly-batch` route は存在しない):
+- `src/app/api/cron/tenant-monthly-reset/route.ts` (`tenant-monthly-reset.service.ts`): 月次カウンタリセット、縮退モード中に生成されなかった NULL embedding の補完、前月分 snapshot 保存
+- `src/app/api/cron/billing-monthly-aggregation/route.ts` (`billing-aggregation.service.ts`): DB 容量・ファイルストレージ peak の月初請求確定 (請求書発行)
+
 プラン切替予約の適用は **2026-05-14 改修で廃止** (全プラン変更を即時反映に統一、Beginner ダウングレードは完全禁止) されており、月初 cron 内の `applyScheduledPlanChanges` は legacy DB レコード対策として残置中。
 
 ### Grace Period
@@ -151,10 +179,13 @@ NULL embedding の補完、DB 容量・ファイルストレージ peak の月�
 
 ### システムロール
 
-| ロール | 範囲 | 主な権限 |
-|---|---|---|
-| super_admin | テナント横断 | テナント追加・削除、利用量モニタ、課金状態確認 |
-| admin | テナント内 | ユーザ管理、課金設定、テナント設定、全プロジェクト閲覧 |
+3 階層 (`src/config/master-data.ts` `SYSTEM_ROLES`)。`=== 'admin'` チェックは「テナント管理者」を意味し、テナント横断用途は `isSuperAdmin()` ヘルパで判定する。
+
+| ロール | 日本語ラベル | 範囲 | 主な権限 |
+|---|---|---|---|
+| super_admin | システム管理者 | テナント横断 | テナント追加・削除、利用量モニタ、課金状態確認、診断/ドリフト修復 |
+| admin | テナント管理者 | テナント内 | ユーザ管理、課金設定、テナント設定、全プロジェクト閲覧 |
+| general | 一般ユーザ | テナント内 | プロジェクト/ロールに応じた権限 (プロジェクトロールで二段階制御) |
 
 ### プロジェクトロール
 
@@ -212,6 +243,28 @@ Anthropic Claude API でプロジェクト作成・更新時に自動的にタ�
 スコア順に **段階表示** する設計。網羅性 (recall) を最大化し、見落としを防ぐ。
 
 詳細: [SUGGESTION_ENGINE.md](../design/SUGGESTION_ENGINE.md) §B / memory: project_suggestion_engine_priority
+
+### なぜ機能 (Suggestion Explanation)
+
+提案候補が「なぜ推薦されたか」を LLM で説明生成する機能 (Pro プラン)。
+実装: `src/services/suggestion-explanation.service.ts` / `src/app/api/.../suggestions/explain` (POST)。
+featureUnit `suggestion-explanation` で課金 (`LLM_BILLABLE_FEATURE_UNITS`)。
+
+### チャット意味検索 (Chat Semantic Search)
+
+会議中などに過去資産 (ナレッジ / リスク・課題 / 振り返り / メモ) を自然文で問い合わせ、
+embedding (pgvector) + pg_trgm fallback で意味的に近い候補を返す機能。
+実装: `src/services/chat-search.service.ts` / `src/app/api/chat/search/route.ts` /
+`src/components/chat-semantic-search/chat-panel.tsx`。ChatPanel は `search` / `help` の 2 タブ統合 (ADR-0028)。
+
+### AI ヘルプチャット (たすきフクロウ)
+
+サービスの使い方・FAQ を自然文で質問できる学習支援 AI チャット (公式マスコット「たすきフクロウ」)。
+FAQ / Guide コンテンツを Voyage embedding で RAG 検索し、Claude Haiku で回答生成する。
+実装: `src/services/help-search.service.ts` (RAG, `faq_embeddings` / `guide_embeddings`) /
+`src/app/api/help/chat/route.ts` / `src/app/(dashboard)/help/` / `src/components/help-chat/`。
+**全プラン ¥0** (`LEARNING_FREE_FEATURE_UNITS`、課金集計対象外)。
+詳細: [ADR-0027](../adr/0027-help-ai-concierge.md) / [ADR-0028](../adr/0028-help-chat-rag-migration.md) / memory: project_faq_drives_ai_accuracy
 
 ---
 

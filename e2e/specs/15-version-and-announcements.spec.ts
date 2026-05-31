@@ -1,18 +1,26 @@
 /**
- * E2E: バージョン表示 / Changelog / お知らせ / About (feat/app-version-changelog-footer / 2026-05-23)
+ * E2E: バージョン表示 / Changelog / お知らせ / フッタ認証出し分け
+ * (初版 feat/app-version-changelog-footer / 2026-05-23,
+ *  改 feat/footer-auth-aware-links / 2026-05-31)
  *
  * カバー範囲:
  *   1. `/changelog` (公開) — v1.0.0 エントリと intro 文言が render される
  *   2. `/announcements` (公開) — 一覧と 2026-06-01-launch のリンクが render される
  *   3. `/announcements/[slug]` (公開) — 詳細ページの title / 戻るリンクが render される
- *   4. `/settings/about` (要認証) — サービス情報セクションとバージョン表示
+ *   4. フッタ (未ログイン) — 共通情報リンクのみ表示、ログイン後限定リンクは出さない
+ *   5. フッタ (ログイン後) — 共通情報 + お知らせ / セキュリティ報告 + AccountMenu の
+ *      「バージョンアップ情報」(/changelog) が表示される
  *
  * 設計:
- *   - 1-3 は認証不要 (PUBLIC_PATHS 追加済) なので login 経由しない高速 smoke
- *   - 4 は spec 04 と同じ admin 直接ログイン (MFA 無) パターンを最小限で再現
+ *   - 1-4 は認証不要なので login 経由しない高速 smoke
+ *   - 5 は spec 04 と同じ admin 直接ログイン (MFA 無) パターンを最小限で再現
  *   - 視覚回帰は別 layer (e2e/visual/) で対応するため、ここでは機能 smoke のみ
  *
- * カバレッジ: docs/test/E2E_COVERAGE.md `/changelog` `/announcements` `/announcements/[slug]` `/settings/about`
+ * 2026-05-31 変更:
+ *   旧 `/settings/about` (要認証) テストは削除。ページごと廃止し、運営者 / 規約 / 特商法は
+ *   外部 LP に集約 + バージョン/更新履歴は AccountMenu「バージョンアップ情報」へ移設したため。
+ *
+ * カバレッジ: docs/test/E2E_COVERAGE.md `/changelog` `/announcements` `/announcements/[slug]`
  */
 
 import { test, expect } from '@playwright/test';
@@ -36,7 +44,6 @@ test.describe('@feature:public バージョン / お知らせ 公開ページ', 
     ).toBeVisible();
     // feat/app-header-footer-unification (2026-05-24):
     //   全画面共通の AppHeader (testid="app-header-home") に統合済。
-    //   旧 testid `public-header-home` は廃止。
     await expect(page.getByTestId('app-header-home')).toBeVisible();
   });
 
@@ -73,9 +80,27 @@ test.describe('@feature:public バージョン / お知らせ 公開ページ', 
       '/announcements',
     );
   });
+
+  test('未ログイン時のフッタは共通情報のみ表示し、ログイン後限定リンクは出さない', async ({
+    page,
+  }) => {
+    await page.goto('/login');
+    await page.waitForLoadState('networkidle');
+
+    const footer = page.getByTestId('app-footer');
+    await expect(footer).toBeVisible();
+    await expect(footer).toHaveAttribute('data-authenticated', 'false');
+    // 共通情報 (製品ページ / 規約 / 特商法) は常時表示
+    await expect(footer.getByRole('link', { name: '製品ページ' })).toBeVisible();
+    await expect(footer.getByRole('link', { name: '利用規約' })).toBeVisible();
+    await expect(footer.getByRole('link', { name: '特定商取引法に基づく表記' })).toBeVisible();
+    // ログイン後限定 (お知らせ / セキュリティ報告) は未ログインでは出さない
+    await expect(footer.getByTestId('app-footer-announcements')).toHaveCount(0);
+    await expect(footer.getByTestId('app-footer-security-report')).toHaveCount(0);
+  });
 });
 
-test.describe('@feature:settings /settings/about 認証必須', () => {
+test.describe('@feature:settings ログイン後フッタ + バージョンアップ情報', () => {
   test.describe.configure({ mode: 'serial', retries: 0 });
 
   test.beforeAll(async () => {
@@ -87,7 +112,7 @@ test.describe('@feature:settings /settings/about 認証必須', () => {
     await disconnectDb();
   });
 
-  test('admin login 後に /settings/about が render され、バージョン + 運営者名が表示される', async ({
+  test('ログイン後はフッタにお知らせ/セキュリティ報告 + AccountMenu にバージョンアップ情報が出る', async ({
     page,
     context,
   }) => {
@@ -99,15 +124,23 @@ test.describe('@feature:settings /settings/about 認証必須', () => {
     await page.getByRole('button', { name: 'ログイン', exact: true }).click();
     await waitForProjectsReady(page);
 
-    await page.goto('/settings/about');
-    await page.waitForLoadState('networkidle');
+    // フッタはログイン後限定情報を追加表示する
+    const footer = page.getByTestId('app-footer');
+    await expect(footer).toHaveAttribute('data-authenticated', 'true');
+    await expect(footer.getByTestId('app-footer-announcements')).toHaveAttribute(
+      'href',
+      '/announcements',
+    );
+    await expect(footer.getByTestId('app-footer-security-report')).toBeVisible();
 
-    await expect(page.getByTestId('about-page')).toBeVisible({ timeout: 10_000 });
-    // バージョン表示は "v1.0.0" 形式
-    await expect(page.getByTestId('about-version')).toHaveText(/^v\d+\.\d+\.\d+/);
-    // 運営者名は src/config/operator.ts の OPERATOR_NAME = '須山 哲平'
-    await expect(page.getByTestId('about-operator-name')).toHaveText('須山 哲平');
-    // /changelog への遷移リンク
-    await expect(page.getByTestId('about-changelog-link')).toHaveAttribute('href', '/changelog');
+    // AccountMenu を開き「バージョンアップ情報」が /changelog を指すことを確認。
+    // chromium-mobile (iPhone 13 emulation, DPR=3) では auto-hide/sticky ヘッダ配下の
+    // hit-test が誤判定し「別要素が intercepts pointer events」で click が timeout する
+    // (KDD §5.X+124-126)。定石どおり { force: true } で bypass する。
+    await page.getByTestId('account-menu-trigger').click({ force: true });
+    await expect(page.getByTestId('account-menu-version-info')).toHaveAttribute(
+      'href',
+      '/changelog',
+    );
   });
 });

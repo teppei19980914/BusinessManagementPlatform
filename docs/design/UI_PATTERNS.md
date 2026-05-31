@@ -188,7 +188,7 @@ Andrew Hunt / David Thomas『達人プログラマー』で定式化された原
 | UI ラベル: 画面固有本文 | 🟡 部分的 | 真の多言語化が必要になった段階で Phase D として一括抽出。当面は JSX リテラル許容 |
 | コンポーネント固有のレイアウト定数 (Gantt の DAY_WIDTH 等) | 🟢 自己完結で許容 | 単一コンポーネント内のみで使用される数値 (§21.4.4 スコープ外) |
 | Tailwind utility class (`flex` / `gap-4` / `p-3` 等) | 🟢 対象外 | レイアウト・配置・サイズの class は外出し対象外 (Tailwind 設計方針に基づく) |
-| **サービス層 / API ルートのトップレベル docblock** (PR #79 Phase 1) | ✅ 準拠 | 全 18 サービス + 全 56 API ルートに役割・認可要件・監査記録・関連設計書セクションを記述。AI なしの将来運用引き継ぎを支える人間可読性確保 |
+| **サービス層 / API ルートのトップレベル docblock** (PR #79 Phase 1) | ✅ 準拠 | 全サービス + 全 API ルートに役割・認可要件・監査記録・関連設計書セクションを記述。AI なしの将来運用引き継ぎを支える人間可読性確保。**※件数「18 svc / 56 route / 386 test」は PR #79 当時 (2026-04-21) のスナップショットで現状と乖離 (実装は大幅増)。docblock を持つこと自体が規約であり、件数は最新値を `src/services/` / `src/app/api/` / `pnpm test` で都度確認のこと** |
 
 #### 21.4.7 違反発見時の対応フロー
 
@@ -1152,6 +1152,8 @@ PgBouncer 制約により `prisma.$transaction` は使えない (旧 import 同�
 
 ## 34. 「全○○」横断一覧画面の統一レイアウト規約 (feat/all-list-section-unification, 2026-05-24)
 
+> **⚠️ 番号衝突の注意**: 本 §34 は UI_PATTERNS.md (DESIGN.md 由来の連番) の「全○○ 横断一覧画面のレイアウト規約」であり、[SUGGESTION_ENGINE.md §34](./SUGGESTION_ENGINE.md) の「提案エンジン v2 アーキテクチャ」とは **完全に別概念**。両者は元 DESIGN.md の分割で同じ §34 番号を持つに至った歴史的経緯による衝突であり、相互参照ではない。
+
 ### 34.1 背景
 
 ナビ「資産」グループ配下の 5 画面 (全リスク / 全課題 / 全振り返り / 全ナレッジ / 全メモ) は
@@ -1427,10 +1429,12 @@ source-pattern invariant テスト
 
 ---
 
-## 36. チャット意味検索 UI パターン (PR #452 / 2026-05-27)
+## 36. チャットパネル UI パターン (PR #452 / 2026-05-27 → ADR-0028 タブ統合 / PR #471 / 2026-05-30)
 
 意味検索のユーザ自発経路として、**全画面共通のフローティングチャット UI** を導入。
+**ADR-0028 (PR #471 / 2026-05-30)** で、このパネルに「過去資産検索」と「AI ヘルプ・ガイド」の **2 タブを統合** した (詳細 §36.7)。
 関連仕様: [CHAT_SEMANTIC_SEARCH.md](../specification/CHAT_SEMANTIC_SEARCH.md)、
+embedding / RAG 設計: [SUGGESTION_ENGINE.md §D-4](./SUGGESTION_ENGINE.md)、
 関連マスコット規範: [MASCOT.md](./MASCOT.md)。
 
 ### 36.1 構成要素
@@ -1494,6 +1498,38 @@ LINE / Teams 等の対話 UI と同じ「**自分の発言は右、相手の発�
 - `src/components/chat-semantic-search/chat-panel.test.ts` — ヘッダ avatar に
   **priority 不在** (KDD §5.X+166 / 罠 A 回避)、AssistantBubble の aria-hidden 不在、
   object-cover 横展開、結果カードのアシスタント吹き出し内ネスト
+
+### 36.7 タブ統合 (ADR-0028 / PR #471 / 2026-05-30)
+
+ChatPanel は単一モード (意味検索のみ) から、**WAI-ARIA tab パターンで 2 モードを切替** する構成に拡張された。
+実装: [`chat-panel.tsx`](../../src/components/chat-semantic-search/chat-panel.tsx)。
+
+| 要素 | 仕様 |
+|---|---|
+| **モード型** | `type PanelMode = 'search' \| 'help'` (`chat-panel.tsx:159`)。`'search'` = 既存の過去資産意味検索 (Voyage + pgvector)、`'help'` = たすきフクロウ AI ヘルプチャット (ADR-0028 RAG。FAQ + 使い方ガイド) |
+| **タブ UI** | `role="tablist"` + `role="tab"` (`aria-selected` / `aria-controls` / `tabIndex` ロービング) + `role="tabpanel"` (`aria-labelledby`)。MDN/W3C 標準形。左→右で頻度の高い `search` を先頭に配置 (`🔍 過去資産検索` / `🦉 ヘルプ・ガイド`) |
+| **state 保持** | **両 tabpanel を常に mount** し `hidden` 属性で表示制御 (条件レンダリングしない)。search → help → search の切替で「入力中クエリ / in-flight fetch / scroll 位置」が保持される (`chat-panel.tsx:503-548`) |
+| **モード永続化** | `sessionStorage` キー **`tasukiba_chat_panel_mode_v1`** (`chat-panel.tsx:160`)。パネル再オープン / リロード後も同タブを維持。壊れた値は `'search'` に fail-safe |
+| **統一クリアボタン** | ヘッダのゴミ箱 🗑️ は mode 共通で常に表示し、現 mode に応じて対象履歴を切替 (`handleClearHistory`, `chat-panel.tsx:358`)。`search` 時は自身の `tasukiba_chat_history_v1` を削除、`help` 時は `tasukiba_help_chat_history_v1` を直接削除 + `helpResetKey` インクリメントで HelpChatInput を re-mount し内部 state を破棄。`disabled` 判定 / `aria-label` / `title` を mode 別に動的化 (search: 「過去資産検索の会話履歴をクリア」/ help: 「ヘルプ・ガイドの会話履歴をクリア」) |
+| **ヘッダ一元化** | アバター + ペルソナ名 + クリア + 閉じる を ChatPanel ヘッダに集約。help タブ内の `HelpChatInput` は `hideHeader` で自前ヘッダを抑止し、二重ヘッダを回避 ([[feedback_sibling_ui_pattern_horizontal_rollout]] 整合) |
+
+> sessionStorage キーは機能ごとに分離: `tasukiba_chat_history_v1` (意味検索の会話履歴) / `tasukiba_help_chat_history_v1` (ヘルプチャットの会話履歴) / `tasukiba_chat_panel_mode_v1` (タブ選択状態)。いずれも user isolation の 3 点セット (ログアウト clear + userId 変化検知 + 件数上限 50) を実装 ([[feedback_client_sessionstorage_user_isolation]])。
+
+### 36.8 共通コンポーネント `HelpChatInput` (3 箇所で再利用)
+
+たすきフクロウ AI ヘルプチャットの入力 / 表示 UI は単一コンポーネント [`HelpChatInput`](../../src/components/help-chat/help-chat-input.tsx) に集約し、**3 箇所で再利用** する (DRY 原則 §21.2)。
+
+| 再利用箇所 | `variant` | `hideHeader` | 備考 |
+|---|---|---|---|
+| `/help` ページ上部 ([`help-client.tsx`](../../src/app/(dashboard)/help/help-client.tsx)) | `'page'` (既定) | false | 自前ヘッダ + 枠付きメッセージ領域 (`max-h-96`) |
+| `/guide` ページ上部 ([`guide-client.tsx`](../../src/app/(dashboard)/guide/guide-client.tsx)) | `'page'` | false | 同上 |
+| ChatPanel の help タブ ([`chat-panel.tsx`](../../src/components/chat-semantic-search/chat-panel.tsx)) | `'panel'` | true | ヘッダ抑止 + ChatPanel と完全一致のメッセージ領域 / footer スタイル。`onTurnsCountChange` で turns 数を親へ通知 (クリアボタン disabled 判定) |
+
+- **`variant` の差分**: `'panel'` は枠なし `flex-1` で残り全域 + 上ボーダ footer (ChatPanel と完全一致)、`'page'` は `rounded-lg border` カード + `max-h-96` 固定上限 (`help-chat-input.tsx:257-272`)。
+- **会話履歴**: sessionStorage キー **`tasukiba_help_chat_history_v1`** (`help-chat-input.tsx:34`)、最大 50 ターン、タブ単位揮発。chat-panel.tsx と同じく ログアウト clear (H-2) / userId 変化検知 (H-5) を実装。
+- **API / 表示**: `POST /api/help/chat` を呼び、`answerType` (`faq` / `guide-walkthrough` / `out-of-scope` / `permission-denied`) で UI 分岐。結果カードではなく **FAQ / ガイドの出典ジャンプリンク** (`#faq-{id}` / `/guide#guide-{id}`) と「過去資産検索への誘導バナー」(`suggestSemanticSearch`) を表示。
+- **上限到達**: 429 + `fallbackToAccordion` で入力欄 disable + FAQ アコーディオンへ誘導 (`rateLimited` state)。
+- **設計の出自**: chat-semantic-search/chat-panel.tsx の設計を流用 (sessionStorage 履歴 / AbortController race 解消 / Enter 送信 + Shift+Enter 改行 / UserBubble・AssistantBubble + フクロウアバター)。RAG バックエンドは [SUGGESTION_ENGINE.md §D-4.2](./SUGGESTION_ENGINE.md)。
 
 ---
 
@@ -1566,4 +1602,139 @@ minDate / totalDays 計算では today を必ず allDates に含めることで�
 - [src/lib/format.ts](../../src/lib/format.ts) — locale フォーマッタ
 - [src/lib/use-formatters.ts](../../src/lib/use-formatters.ts) — React フック
 - [src/config/i18n.ts](../../src/config/i18n.ts) — `resolveTimezone` / `resolveLocale`
+
+---
+
+## 38. 全画面共通の横断 UI コンポーネント (未記載分の集約)
+
+§22〜§37 で扱った機能別 UI に加え、**全画面 (dashboard layout / root layout) に常駐 or 横断的に再利用される共通コンポーネント**をここに集約する。いずれも「同じ役割は同じ UI」(§21.1「繰り返す」) の徹底のため、専用コンポーネント 1 つに集約し全画面で流用する。
+
+### 38.1 DegradedModeBanner — 縮退モードバナー
+
+全画面共通の縮退モード告知バナー。dashboard layout 上部に **縮退モード起動時のみ** render される軽量 Server Component (state なし)。実装: [`src/components/degraded-mode-banner.tsx`](../../src/components/degraded-mode-banner.tsx)。
+
+| 項目 | 仕様 (`degraded-mode-banner.tsx`) |
+|---|---|
+| **配置** | dashboard layout の上部に常時表示 (縮退時のみ mount)。`role="alert"` + `bg-amber-50` 系の警告帯 (`degraded-mode-banner.tsx:58-61`) |
+| **props** | `reason: 'beginner_limit_exceeded' \| 'budget_exceeded' \| 'embedding_beginner_limit_exceeded' \| 'embedding_budget_exceeded' \| null` / `systemRole: SystemRole` (`degraded-mode-banner.tsx:14-26`) |
+| **表示条件** | `reason` が非 null のとき。reason 別に headline 文言を出し分け (LLM 上限 / 月次予算 / Embedding 試用上限 / Embedding 予算、`:33-46`) |
+| **ADR 連携** | ADR-0008 (LLM 縮退時はタグ:テキスト=5:5 で提案エンジン継続)。ADR-0030 (2026-05-30) で **Embedding 系 2 reason を追加**: 「新規 embedding 生成のみ停止、既存検索・提案エンジンは継続、月初 backfill で次月補填」を明示 (`:48-56`) |
+| **ロール出し分け** | `admin` / `super_admin` のみ「テナント設定を開く」リンク (`/settings/tenant`) を表示 (`:29`, `:67-74`)。一般ユーザには「テナント管理者に相談」案内 |
+| **a11y** | `role="alert"` のみ。page 遷移時に再描画されるため `aria-live` は不要 (docblock 記載) |
+
+詳細な reason 列挙の正は [`src/lib/degraded-error-messages.ts`](../../src/lib/degraded-error-messages.ts) の `DegradedReason`。
+
+### 38.2 NotificationBell — 通知ベル
+
+AppHeader 右側 (アカウントメニューの左) に常駐する通知ベル UI。Client Component。実装: [`src/components/notifications/notification-bell.tsx`](../../src/components/notifications/notification-bell.tsx) (props なし)。
+
+| 項目 | 仕様 (`notification-bell.tsx`) |
+|---|---|
+| **バッジ** | 未読 0 件 → ベルアイコン (`lucide-react` の `Bell`) のみ。≥ 1 件 → 右上に赤丸バッジ (`bg-destructive`) + 件数 (99 超は `99+`、`:140-147`)。testid `notification-unread-count` |
+| **ドロップダウン** | クリックで開閉 (`:130`)。新しい順の一覧、行クリックで `<Link href={n.link}>` 遷移 + `PATCH /api/notifications/[id]` で既読化 (`:92-111`)。「すべて既読」は `POST /api/notifications/mark-all-read` (`:113-124`) |
+| **ポーリング** | 開いている間 **30 秒**、閉じている間 **5 分** (`POLL_INTERVAL_OPEN_MS` / `POLL_INTERVAL_CLOSED_MS`、`:37-38`)。バッテリー / コスト配慮で間隔を切替 |
+| **失敗時** | fetch 失敗は silent (最後に成功した状態を保持、一覧継続性を阻害しない、`:56-65`)。既読化失敗時のみ `useToast().showError` |
+| **AppHeader 連携** | dropdown open 中は `useReportHeaderMenuOpen(open)` で AppHeader の auto-hide を抑止 (`:34`, `:50`)。「ベルを開く→スクロール→ヘッダごと dropdown が画面外へ」を防ぐ |
+| **セキュリティ** | `n.link` は API 側で `/projects/<UUID>/tasks?taskId=<UUID>` 形式に固定 (path 構築は service 層、ユーザ入力混入なし)。`<Link>` で安全遷移 |
+
+### 38.3 ToastProvider / useToast — 全画面共通トースト基盤
+
+リクエスト成功 / 失敗を画面下部に色分けで通知する共通 Context 基盤 (2026-04-30)。`<ToastProvider>` を dashboard layout に mount し、各 client / dialog から `useToast()` で利用する。実装: [`src/components/toast-provider.tsx`](../../src/components/toast-provider.tsx)。
+
+| 項目 | 仕様 (`toast-provider.tsx`) |
+|---|---|
+| **公開 API** | `useToast()` が `{ showSuccess(message), showError(message) }` を返す (`:44-56`)。メッセージ文字列は **呼出側が用意** (人間可読な文言を制御するため) |
+| **表示** | viewport 下部固定 (`fixed inset-x-0 bottom-0 z-50`)。success = 緑帯 (`bg-success`)、error = 赤帯 (`bg-destructive`) の 2 種 (`:142-149`)。同時複数表示可 (新しいものほど下/手前) |
+| **ディスミス** | 既定 **4 秒** (`AUTO_DISMISS_MS = 4000`、`:59`) で自動消去、× ボタンで手動消去も可 |
+| **依存最小化** | sonner / react-toastify 等のライブラリを追加せず Context で自前実装 (`:18-19`) |
+| **性能** | Context value を `useMemo` で stable 化 (`:90-93`)。これがないと toast 追加/消去のたびに `useToast()` 消費 25+ 箇所が不要 re-render する (docblock 記載) |
+| **a11y** | viewport は `role="region"` + `aria-live="polite"` (`:113-116`)、× ボタンは `aria-label="通知を閉じる"` + `aria-describedby` でメッセージ参照 |
+
+> 関連: DEVELOPER_GUIDE §5.43 (リクエスト成功/失敗の toast 通知パターン)。
+
+### 38.4 CommentSection — polymorphic コメント UI
+
+編集 dialog 内で再利用する汎用コメント UI (PR #199)。任意の entity に対しコメント投稿 / 編集 / 削除 + mention 補完を提供する。実装: [`src/components/comments/comment-section.tsx`](../../src/components/comments/comment-section.tsx)。
+
+| 項目 | 仕様 (`comment-section.tsx`) |
+|---|---|
+| **props** | `entityType: CommentEntityType` / `entityId: string` / `canPost?: boolean` (既定 true) / `postDisabledHint?: string` (`:86-100`, `:314`) |
+| **polymorphic** | `entityType` で任意 entity に紐付く汎用 UI。一覧は `GET /api/comments?entityType=&entityId=`、CRUD は `/api/comments` (POST) / `/api/comments/[id]` (PATCH/DELETE) (`:336-464`) |
+| **投稿導線** | `canPost=true` 時に投稿フォーム表示。**readOnly dialog でも投稿可能** (全○○ 画面は data 編集不可だがコメント可。`<fieldset disabled>` の外側に配置する設計、docblock)。`canPost=false` 時は `postDisabledHint` を表示 (`:488-524`) |
+| **編集 / 削除** | **投稿者本人のみ** 表示 (`canMutate`: `c.userId === currentUserId`、`:474-476`)。admin も不可 (API §5.51 と整合)。並び順は新しい順 (createdAt DESC、サーバ確定) |
+| **mention** | `MentionAutocompleteTextarea` が `@` 入力で候補ポップアップ (`GET /api/mention-candidates`、debounce 250ms、`:136-288`)。context は URL から判定 (`wbs` / `project_list` / `cross_list`、`:108-112`)。client は `DraftMention` (label 付き) で保持し、textarea から `@xxx` 削除時は `reconcileMentions` で同期 (`:68-84`)。サーバ送信時は label を剥がし `MentionInput[]` に戻す (schema 無変更) |
+| **deep link** | URL `?commentId=...` でロード後に該当コメントへ smooth scroll + 3 秒ハイライト (`:366-387`) |
+| **nested form 禁止** | 外側 dialog の `<form>` 内に `<form>` を入れず、`<div>` + `onKeyDown` (Ctrl/Meta+Enter で投稿) で制御 (`:488-497`)。投稿ボタンは `type="button"` |
+| **セキュリティ** | content は React の textContent で挿入 (innerHTML 不使用、XSS 安全)。サーバで trim + 1〜`COMMENT_CONTENT_MAX_LENGTH` 文字バリデート |
+
+### 38.5 UsageDriftBadge — drift 検知バッジ
+
+`Tenant.currentMonthApiCallCount` / `currentMonthApiCostJpy` (リアルタイム counter) と `ApiCallLog` SUM (整合性検証用の真値) の差分が閾値以上のときに警告 chip を表示する (2026-05-14、PR-V8 で強化)。実装: [`src/components/usage-drift-badge.tsx`](../../src/components/usage-drift-badge.tsx)。
+
+| 項目 | 仕様 (`usage-drift-badge.tsx`) |
+|---|---|
+| **props** | `reconcile: ApiUsageReconcileResult \| null` / `showDiagnosticsLink?: boolean` (既定 false、super_admin 画面のみ true、`:27-32`) |
+| **表示条件** | `reconcile == null` または `!reconcile.hasDrift` (= 閾値未満 = 健全) のときは `null` を返し **何も表示しない** (UI ノイズ削減、`:38-42`)。閾値は `DRIFT_WARNING_THRESHOLD` (`@/config/api-usage-drift` の pure module、Client bundle に Prisma 混入回避) |
+| **配色** | 警告 chip = `border-amber-400 bg-amber-50 text-amber-900` (dark は `amber-700/950/200`、`:60-62`) |
+| **併記** | 呼出回数 drift と費用 drift を両方計算し、支配的な方を primary 表示 (Beginner プランは cost=0 のため必ず call drift 表記、`:53-58`)。tooltip に counter / ApiCallLog SUM / 差分 / 方向 / 月境界を maintainer 向けに格納 (`:63-78`) |
+| **誘導** | `showDiagnosticsLink=true` 時のみ `/admin/super/tenants/{tenantId}/diagnostics` への「詳細」リンクを表示 (`:81-88`) |
+
+> 請求 invariant の根本方針 ([[feedback_billing_invariant]]): 表示・請求・CSV・Stripe 全経路で ApiCallLog SUM を真値とし、counter はホットパスの上限チェック専用。本バッジはその両者の乖離を可視化する drift 検知 UI。
+
+### 38.6 RecalculateButton — 課金根拠の再集計ボタン
+
+super_admin / テナント管理者のダッシュボードで「DB 容量」「API 利用量」を即時再集計するトリガー (2026-05-14)。Client Component。実装: [`src/components/recalculate-button.tsx`](../../src/components/recalculate-button.tsx)。
+
+| 項目 | 仕様 (`recalculate-button.tsx`) |
+|---|---|
+| **props** | `endpoint: string` (POST 先) / `label?: string` (既定「再集計」) / `size?` / `variant?` / `onSuccess?` / `className?` (`:30-43`) |
+| **状態** | `idle`「🔄 再集計」→ `pending`「⏳ 集計中…」(disabled, `aria-busy`) → `success`「✓ 完了」(3 秒後 idle 復帰) (`:45`, `:90-95`)。エラー時は idle に戻し `useToast().showError` |
+| **再描画** | 成功時に `router.refresh()` で RSC キャッシュを無効化し Server Component を再実行 → 最新値で再描画 (`:78`) |
+| **方針整合** | [[feedback_billing_data_realtime]]: 課金根拠データ (DB 容量 / API 利用量) は cron キャッシュ依存を避け、**ダッシュボード遷移時に再集計 + 再集計ボタンを併設** する。本ボタンが後者を担う (誤請求リスク予防) |
+
+### 38.7 簡潔記載: その他の横断共通コンポーネント
+
+| コンポーネント | 役割 (ソースで確認済の責務) | 主な props / 備考 |
+|---|---|---|
+| **MarkdownTextarea** ([`ui/markdown-textarea.tsx`](../../src/components/ui/markdown-textarea.tsx)) | 複数行入力 + プレビュー (右、トグル) + 差分 (下、トグル) の共通入力欄。プレビューは Markdown 構文を含めば react-markdown、含まなければ `whitespace-pre-wrap` プレーン表示 | `value` / `onChange` / `previousValue?` (差分用、編集 dialog のみ) / `rows?` / `maxLength?` / `required?` / `placeholder?` / `disabled?` / `className?`。プレビュー・差分とも **既定 OFF** |
+| **MarkdownDisplay / MarkdownRenderInner** ([`ui/markdown-textarea.tsx`](../../src/components/ui/markdown-textarea.tsx) export / [`ui/markdown-render-inner.tsx`](../../src/components/ui/markdown-render-inner.tsx)) | read-only で Markdown を描画 (all-memos 詳細 dialog / project-detail 概要タブで再利用)。`MarkdownRenderInner` は react-markdown + remark-gfm + remark-breaks (~150KB) を `next/dynamic` (`ssr: true`) で別 chunk 化し、Markdown を含むときだけロード (PR-2 perf 2026-05-29) | `MarkdownDisplay({ value, className? })`。XSS 対策で raw HTML 不許可、改行は `<br>` 変換 (remark-breaks) |
+| **SearchableSelect** ([`ui/searchable-select.tsx`](../../src/components/ui/searchable-select.tsx)) | 項目数が多い / 増える Select の代替 (PR #126)。Base UI Combobox ベース。検索欄は **viewport 高さの 50% に収まらない件数のときのみ** 動的表示 (`computeThreshold`)。ユーザ / メンバー / 顧客選択に限定採用、固定件数 select は従来の `<Select>` 維持 | `value` / `onValueChange` / `options: {value, label, disabled?}[]` / `placeholder?` / `disabled?` / `id?` / `aria-label?` / `className?`。フィルタは `includes()` ベース (ReDoS 回避) |
+| **EntitySyncImportDialog** ([`dialogs/entity-sync-import-dialog.tsx`](../../src/components/dialogs/entity-sync-import-dialog.tsx)) | §33 の WBS 専用 sync-import を **flat entity 向けに一般化** した汎用ダイアログ (T-22 Phase 22a)。risks / retrospectives / knowledge / memos の sync-import を共通化。WBS 版 (`wbs-sync-import-dialog.tsx`) から階層関連ロジックを除いた版で、entity 種別を prop で受けて使い回す | `apiBasePath` / `i18nNamespace` / `open` / `onOpenChange` / `onImported`。2 ステップ UX (`?dryRun=1` プレビュー → 確定実行)、削除モード (keep/warn/delete)、DB 容量事前判定パネル (`StoragePrecheckPanel`、Beginner block / L3 block で実行拒否) を内包 |
+| **AppHeader** ([`app-header.tsx`](../../src/components/app-header.tsx)) | 全画面共通ヘッダ (feat/app-header-footer-unification 2026-05-24、旧 DashboardHeader 等 3 系統を統合)。`user: AppHeaderUser \| null` で表示切替 (ログイン後=ナビ + NotificationBell + AccountMenu / ログイン前=アプリ名 + ログイン導線) | `sticky top-0 z-40` + auto-hide (下スクロールで隠れ上スクロールで再表示、先頭 64px は常時 visible)。dropdown 開放中は auto-hide 抑止 (`HeaderMenuContext` + `useReportHeaderMenuOpen`)。flat ↔ 3 分類 dropdown の切替 breakpoint は `xl:` (1280px)。adminOnly / superAdminOnly / visibleToSuperAdmin の 3 フラグで項目出し分け |
+| **AppFooter** ([`app-footer.tsx`](../../src/components/app-footer.tsx)) | 全画面共通フッタ (Server Component)。root layout の children の後に `mt-auto` で配置。**ADR-0031 (2026-05-31) で認証状態 2 層出し分けに全面改修**: ① **共通情報** (ログイン前後で常時表示) = 製品ページ / 利用規約 / プライバシーポリシー / 運営者情報 / 特定商取引法に基づく表記、すべて外部 LP (tasukiba-user) の各アンカーへ集約 (`target="_blank"`)。② **ログイン後限定** (`isAuthenticated` のみ) = お知らせ (アプリ内 `/announcements`、next/link) / セキュリティ報告 (LP `#security`)。旧「© copyright + 最終更新日 + サービス情報 (`/settings/about`)」は全廃し、バージョン / 更新履歴はヘッダ AccountMenu「バージョンアップ情報」(→ `/changelog`) へ移設。`/settings/about` ページは削除済 | `isAuthenticated: boolean` (root layout が `auth()` で解決、MFA 未検証=false=共通情報のみ)。`data-authenticated` 属性で状態を露出。**auto-hide 対象外** (fixed/sticky でなく document 末尾。下スクロール時は既に画面外のため「隠す」対象なし)。fixed-bottom 化する場合は ChatFab (fixed bottom-4) / Toast (fixed bottom-0 z-50) との重なり調整が必須。詳細は [ADR-0031](../adr/0031-footer-auth-aware-and-about-removal.md) |
+
+---
+
+## 39. 工数オーバーアサインの色分け閾値 (WBS / ガント)
+
+WBS 画面で ACT (Activity) を作成・編集する際、担当者の **1 人 1 日あたりの工数** が過大 (オーバーアサイン) にならないよう、日次工数を 3 段階で色分け表示する (PR #361 / 2026-05-14)。閾値は [`src/config/workload.ts`](../../src/config/workload.ts) に集約 (§21.4 ゼロハードコーディング)、Client / Server 双方から import 可能な pure module (Prisma 非依存)。
+
+### 39.1 閾値定数と分類関数
+
+| 定数 / 関数 | 値 / 仕様 | 出典 |
+|---|---|---|
+| `WORKLOAD_WARN_HOURS` | **7** (これを「超える」と warning。境界値 7.0 ちょうどは ok) | `workload.ts:20` |
+| `WORKLOAD_ALERT_HOURS` | **8** (これを「超える」と alert。境界値 8.0 ちょうどは warning) | `workload.ts:23` |
+| `classifyWorkloadLevel(maxDailyEffort)` | `> 8` → `'alert'` / `> 7` → `'warning'` / それ以外 → `'ok'` を返す | `workload.ts:39-41` |
+| `WorkloadLevel` 型 | `'ok' \| 'warning' \| 'alert'` (UI 側の色付けに使用) | `workload.ts:26` |
+
+境界条件 (docblock `workload.ts:28-37` より): 7.0 → `ok` / 7.01 → `warning` / 8.0 → `warning` / 8.01 → `alert`。「以上」ではなく「超える (`>`)」判定である点に注意。
+
+### 39.2 UI 配色
+
+[`src/components/wbs/workload-preview-line.tsx`](../../src/components/wbs/workload-preview-line.tsx) の `WorkloadPreviewLine` が ACT 作成・編集 dialog 内に「最大日工数: 9.5h (2026-06-15)」を 1 行表示する。レベル別配色:
+
+| レベル | 条件 | 配色 (`workload-preview-line.tsx:33-47`) | アイコン |
+|---|---|---|---|
+| `ok` | 日次工数 7h 以下 | `text-muted-foreground` (通常) | ✓ |
+| `warning` | 7h 超 8h 以下 | `text-amber-600 dark:text-amber-400 font-semibold` (黄色) + 「余裕なし、調整推奨」注記 | ⚠️ |
+| `alert` | 8h 超 | `text-destructive font-semibold` (赤) + 「オーバーアサインの可能性」注記 | 🚨 |
+
+### 39.3 データフロー
+
+- 集計サービス: [`src/services/task.service.ts`](../../src/services/task.service.ts) の `previewActivityWorkload` が期間内の日次工数最大値 (`maxDailyEffort`) と該当日を算出
+- API: `POST /api/projects/[projectId]/tasks/workload/preview`
+- フック: [`src/components/hooks/use-workload-preview.ts`](../../src/components/hooks/use-workload-preview.ts) が dialog から呼び出し、`WorkloadPreviewLine` に渡す
+
+将来の調整 (業界別閾値 / i18n) に備え、閾値はサービス層・UI 層から共通参照する単一定義に集約済 (`workload.ts` docblock)。
 

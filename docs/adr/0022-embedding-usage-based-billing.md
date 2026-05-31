@@ -102,7 +102,7 @@ Embedding 件数/課金額は新規カラム `Tenant.currentMonthEmbeddingCallCo
 - **未設定** (= 採択時想定 / Sandbox 等の補助環境): `getStripePriceConfig()` は throw せず embedding=undefined を返す。`createSubscriptionForTenant` は Embedding Item を Subscription に追加しない (= 4 本構成)。`stripe-usage-flush` は embedding queue を見ず空 queue 扱い。
 - **設定済み** (= ✅ Production 2026-05-30 以降): Subscription Item 5 本目として追加、queue 送信稼働中。env 設定だけで動作 (= コード変更ゼロの Stripe-ready 設計を維持)。
 
-新 Meter event 名 `tasukiba_embedding_call` を `STRIPE_METER_EVENT_NAMES.embedding` で定義。Stripe Dashboard で Meter + Price ([ADR-0029](./0029-embedding-price-revision-5jpy.md) で ¥1 → ¥5 改定済、Metered) 作成 + Netlify env 設定の運用作業を `docs/operations/STRIPE_SETUP.md` に記載。
+新 Meter event 名 `tasukiba_embedding_call` を `STRIPE_METER_EVENT_NAMES.embedding` で定義。Stripe Dashboard で Meter + Price ([ADR-0029](./0029-embedding-price-revision-5jpy.md) で ¥1 → ¥5 改定済、Metered) 作成 + Netlify env 設定の運用作業を `docs/operations/setup/STRIPE_SETUP.md` に記載。
 
 ### 3. 請求 invariant (= 5 経路一致の絶対要件)
 

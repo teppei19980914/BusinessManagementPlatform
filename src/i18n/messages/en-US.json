@@ -40,6 +40,7 @@
     "groupHelp": "Help",
     "guide": "How to Use",
     "help": "FAQ",
+    "versionInfo": "Version updates",
     "contactDeveloper": "Join the Tasukiba community (Discord)",
     "contactDeveloperTooltip": "Talk with the developer and other users on the Tasukiba Discord community (questions, usage tips, bug reports, requests)",
     "featureRequest": "Feature requests / Custom work",
@@ -115,33 +116,14 @@
     "metaDescription": "Capture knowledge. Connect decisions. Strengthen projects."
   },
   "footer": {
-    "lastUpdated": "Last updated",
+    "navLabel": "Service information",
+    "productPage": "Product page",
+    "terms": "Terms of Service",
+    "privacy": "Privacy Policy",
+    "operatorInfo": "Operator information",
+    "tokushoho": "Legal notice (Tokushoho)",
     "announcements": "Announcements",
-    "about": "About",
-    "copyright": "© {year} {operator}"
-  },
-  "about": {
-    "pageTitle": "About this service",
-    "pageDescription": "Operator and version information for Tasukiba Knowledge Relay",
-    "sectionService": "Service",
-    "serviceName": "Service name",
-    "serviceDescription": "Description",
-    "sectionVersion": "Version",
-    "currentVersion": "Current version",
-    "releaseDate": "Release date",
-    "viewChangelog": "View changelog",
-    "sectionOperator": "Operator",
-    "operatorName": "Operator",
-    "operatorForm": "Business form",
-    "operatorFormValue": "Sole proprietor",
-    "sectionContact": "Contact",
-    "contactGeneral": "General inquiries",
-    "contactGeneralLink": "Contact form",
-    "contactSecurity": "Security report",
-    "contactSecurityLink": "GitHub Security Advisory",
-    "sectionLegal": "Legal",
-    "termsLink": "Terms of Service",
-    "privacyLink": "Privacy Policy"
+    "securityReport": "Security report"
   },
   "changelogPage": {
     "pageTitle": "Changelog",

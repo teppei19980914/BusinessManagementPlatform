@@ -83,7 +83,7 @@ Project / Customer の cascade 削除は、関連エンティティが多岐に�
 
 ## Future Work
 
-- **大規模 project (knowledge 1000+ 件など) の batch chunk 化**: 現実装も timeout 超過リスクがあるため、knowledge / risk / retrospective の前段 cascade を 100 件単位の chunk 削除にする方針を Medium 優先度フォローとして検討 (`FOLLOW_UP_AFTER_PR416.md §Medium-3`)
+- **大規模 project (knowledge 1000+ 件など) の batch chunk 化**: 現実装も timeout 超過リスクがあるため、knowledge / risk / retrospective の前段 cascade を 100 件単位の chunk 削除にする方針を Medium 優先度フォローとして検討 ([FOLLOW_UP_AFTER_PR416.md](../archive/2026-06-01-pre-ops-reorg/FOLLOW_UP_AFTER_PR416.md) §Medium-3)
 - **failedProjects の自動リトライ cron**: 現状は手動再実行だが、将来的に日次 cron で `failedProjects` を自動再試行する経路を検討
 
 ## References
@@ -94,4 +94,4 @@ Project / Customer の cascade 削除は、関連エンティティが多岐に�
 - **影響ファイル**:
   - `src/services/project.service.ts` (`deleteProjectCascade`)
   - `src/services/customer.service.ts` (`deleteCustomerCascade`)
-- **フォローアップ**: `FOLLOW_UP_AFTER_PR416.md §Medium-3` (batch chunk 化検討)
+- **フォローアップ**: [FOLLOW_UP_AFTER_PR416.md](../archive/2026-06-01-pre-ops-reorg/FOLLOW_UP_AFTER_PR416.md) §Medium-3 (batch chunk 化検討)

@@ -40,7 +40,7 @@ const LEVEL_LABELS: Record<FileStorageWarningLevel, { label: string; color: stri
   none: { label: '正常', color: 'text-gray-600' },
   l1: { label: 'L1 警告 (1GB)', color: 'text-blue-700 bg-blue-50' },
   l2: { label: 'L2 警告 (10GB)', color: 'text-yellow-700 bg-yellow-50' },
-  l3: { label: 'L3 緊急 (50GB / アップロード拒否)', color: 'text-red-700 bg-red-50' },
+  l3: { label: 'L3 (50GB 到達/Compute 増強検討)', color: 'text-red-700 bg-red-50' },
 };
 
 export async function FileStorageAlertsCard() {

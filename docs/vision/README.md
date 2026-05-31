@@ -596,7 +596,7 @@ UI も機能も **地味で、印象に残るようなインパクトのある�
 つまりたすきばは、**ツール開発の物語であると同時に、個人としての夢を実現するための「乗り物」** でもある。
 
 関連する具体ドキュメント:
-- 具体的な計画: [`../roadmap/RELEASE_ROADMAP.md`](../roadmap/RELEASE_ROADMAP.md)
+- 今後のロードマップ (運用保守・未実装計画): [`../operations/ROADMAP.md`](../operations/ROADMAP.md)
 
 ---
 

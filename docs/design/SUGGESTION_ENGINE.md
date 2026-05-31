@@ -1,6 +1,6 @@
 # 提案エンジン v2: 技術設計 (Program Design)
 
-本ドキュメントは、本サービスの核心機能である提案エンジン v2 の技術設計を集約する。ビジネスロジック (テナント・課金) は [business/TENANT_AND_BILLING.md](../business/TENANT_AND_BILLING.md)、要件は [archive/developer/REQUIREMENTS.md §13](../archive/developer/REQUIREMENTS.md)、機能仕様は [archive/developer/SPECIFICATION.md §26](../archive/developer/SPECIFICATION.md)、脅威モデルは [security/SUGGESTION_ENGINE_THREAT_MODEL.md](../security/SUGGESTION_ENGINE_THREAT_MODEL.md)、実装計画は [roadmap/SUGGESTION_ENGINE_PLAN.md](../roadmap/SUGGESTION_ENGINE_PLAN.md)、設計議論経緯は [archive/developer/DEVELOPER_GUIDE.md §5.62](../archive/developer/DEVELOPER_GUIDE.md) を参照。
+本ドキュメントは、本サービスの核心機能である提案エンジン v2 の技術設計を集約する。ビジネスロジック (テナント・課金) は [business/TENANT_AND_BILLING.md](../business/TENANT_AND_BILLING.md)、要件は [archive/developer/REQUIREMENTS.md §13](../archive/developer/REQUIREMENTS.md)、機能仕様は [archive/developer/SPECIFICATION.md §26](../archive/developer/SPECIFICATION.md)、脅威モデルは [security/SUGGESTION_ENGINE_THREAT_MODEL.md](../security/SUGGESTION_ENGINE_THREAT_MODEL.md)、実装計画 (実装完了済・archive) は [archive/roadmap/SUGGESTION_ENGINE_PLAN.md](../archive/roadmap/SUGGESTION_ENGINE_PLAN.md)、設計議論経緯は [archive/developer/DEVELOPER_GUIDE.md §5.62](../archive/developer/DEVELOPER_GUIDE.md) を参照。
 
 > 🆕 **ADR-0019 (2026-05-24) 価格改定**: 課金対象を `BILLABLE_FEATURE_UNITS` (project-upsert / suggestion-explanation / auto-tag-extract) のみに縮小。資産入力 (knowledge-embedding / risk-issue-embedding / retrospective-embedding / memo-embedding) / チャット検索 (chat-semantic-search) / CSV インポート (external-import-embedding) / 月初 backfill cron (`*-embedding-backfill`) は **全プラン無料化**。Expert 単価 ¥5 → ¥10、Pro ¥15 据置。Beginner 上限 100 → 50 回 (課金対象 call のみカウント)。詳細: [ADR-0019](../adr/0019-billable-feature-units-and-free-tier-expansion.md)
 
@@ -84,7 +84,9 @@ Supabase pgvector が **保存済の embedding 同士の Cosine 類似度を DB 
 | **文字列類似度** | 0.2 | pg_trgm (3-gram 部分一致)。「請求書」⇔「請求」のような表記ゆれを拾う | purpose+background+scope / 候補の title+content |
 | **意味類似度** | 0.5 | Voyage embedding の Cosine 類似度。「請求書」⇔「インボイス」のような意味的な近さを拾う (本軸) | 各 entity の `content_embedding` (1024 次元) |
 
-**候補の絞り込み**: 各カテゴリで `SUGGESTION_SCORE_THRESHOLD = 0.05` 以上のものをスコア降順でソートし、`SUGGESTION_DEFAULT_LIMIT = 10` 件まで返す → **各カテゴリ最大 10 件、5 カテゴリ (Knowledge / 過去リスク / 過去課題 / 振り返り / メモ) 合計最大 50 件** (2026-05-15: Memo 追加)。
+**候補の絞り込み**: 各カテゴリで `SUGGESTION_SCORE_THRESHOLD = 0.01` (PR-X6 / 2026-05-07 で 0.05 → 0.01 に引き下げ。「人間が探さずに済む」「取りこぼし防止」のサービス哲学に合わせ、高再現率設計へ転換。`src/config/suggestion.ts:72`) 以上のものをスコア降順でソートし、`SUGGESTION_DEFAULT_LIMIT = 50` (同 PR-X6 で 10 → 50 に拡大。`src/config/suggestion.ts:81`) 件まで返す → **各カテゴリ最大 50 件、5 カテゴリ (Knowledge / 過去リスク / 過去課題 / 振り返り / メモ) 合計最大 250 件**。可読性は §B-4-1 の 3 段階 tier UI (strong は初期 5 件、medium / weak は折りたたみ) で担保する。
+
+> **tier 分類の実装** (`src/config/suggestion.ts:201` `assignPercentileTiers`): UI の段階表示は固定スコア閾値ではなく **相対パーセンタイル方式**。候補をスコア降順ソートし上位 30% を strong (`SUGGESTION_TIER_PERCENTILE_STRONG_RATIO`)、続く 50% を medium、残りを weak とする。ただし上位 30% でも score < `SUGGESTION_TIER_ABSOLUTE_FLOOR_FOR_STRONG` (= 0.05) なら medium に降格 (全候補が低スコアでも「強く関連」と誤誘導しないハイブリッド)。候補件数が `SUGGESTION_TIER_PERCENTILE_FALLBACK_THRESHOLD` (= 5) 以下の少件数時のみ、固定閾値方式 `classifyTier` (strong ≥ 0.3 / medium ≥ 0.1 / 他 weak) にフォールバックする。最低件数保証 `applyMinimumGuarantee` (= 5 件) は閾値未満でも常に上位 5 件を返す (0 件回避)。
 
 #### B-4. ハードキャップ超過時の挙動 (重要: 機能停止しない fail-safe 設計)
 
@@ -110,9 +112,18 @@ Supabase pgvector が **保存済の embedding 同士の Cosine 類似度を DB 
 
 共有定数 `SUGGESTION_TIER_STRONG_INITIAL_VISIBLE` は [src/config/suggestion.ts](../../src/config/suggestion.ts) に export し、suggestions-panel と chat-panel の両者で同一値を参照する (DRY)。「上位 5 件で判断できる」サービス哲学 ([docs/public/about.md §3-2](../public/about.md)) を UI レイヤで強化する設計判断。
 
-#### B-5. 将来構想: Phase 3 LLM Re-ranking (6/1 リリース時点で未実装)
+#### B-5. Phase 3 「なぜ?」説明文 (Pro プラン限定 / **実装済**)
 
-Pro プランの差別化価値として、提案結果上位 N 件に **Anthropic Sonnet が「なぜ関連するか」の人間ライクな説明文を付与しつつ再ランキング** する機能を Phase 3 で実装予定。6/1 リリース時点では **未実装** で、現状は Pro プランも Expert プランと同じ提案結果 (検索のみ、説明文なし) を表示する。
+Pro プランの差別化価値として、提案候補に対して **「なぜこのプロジェクトに関連するか」の人間ライクな説明文を Anthropic が付与** する機能。P-3 (2026-05-08) で **実装済** であり、§C の表とも整合する (旧版「未実装」記述は是正)。
+
+実装: [`src/services/suggestion-explanation.service.ts`](../../src/services/suggestion-explanation.service.ts) / API [`POST /api/projects/[projectId]/suggestions/explain`](../../src/app/api/projects/[projectId]/suggestions/explain/route.ts)。
+
+- **Lazy 生成**: ユーザが各候補の「なぜ?」ボタンをクリックした時だけ LLM を呼ぶ (再ランキングは行わず、説明文付与のみ)。
+- **Pro 限定**: サービス層冒頭で `tenant.plan !== 'pro'` を `plan_forbidden` で拒否 (UI のボタン非表示 + API 直叩き防御の二重)。`suggestion-explanation.service.ts:173`。
+- **モデル分岐**: Pro = Claude Sonnet (`claude-sonnet-4-6`)。`withMeteredLLM` が `resolveModelForPlan` 経由で自動判定 (= 課金は 1 ApiCallLog、featureUnit `suggestion-explanation`、Pro は ¥15/call の billable)。
+- **DB 永続キャッシュ**: `SuggestionExplanation` テーブル (unique key: `projectId + candidateKind + candidateId`)。cache hit 時は LLM を呼ばず再課金しない。
+- **候補種別** (`CandidateKind`): `knowledge` / `issue` / `risk` / `retrospective` / `memo`。`issue` / `risk` は `state='resolved'`、`memo` は `visibility='public'` を WHERE で強制 (提案候補化条件と整合)。
+- **インジェクション対策**: 入力を `<project_*>` / `<candidate_*>` XML タグで分離 + 閉じタグエスケープ + 各フィールド 2000 字 truncate + 出力 800 字上限。
 
 ### C. プラン概要 (3 プラン構成)
 
@@ -176,6 +187,40 @@ Pro プランの差別化価値として、提案結果上位 N 件に **Anthrop
 - **DB 容量**: テーブル + インデックス + embedding ベクトルの合計サイズ
 - **API 帯域 (egress)**: Supabase から外部 (ブラウザ・サーバ) へ送信されたデータ量。**ダウンロード方向のみ**課金 (アップロードは無料)
 - **同時接続**: PostgreSQL に同時に張られる TCP コネクション数。Netlify Functions (= AWS Lambda) で大量並列実行する場合、Supavisor (Transaction pooler) を使うことで実質無制限化可能 (本サービスは利用済)
+
+### D-4. Embedding 共有基盤の 3 利用 (提案 / チャット検索 / ヘルプチャット)
+
+Voyage embedding + pgvector の基盤は提案エンジン専用ではなく、**3 つの機能が同一基盤を共有** する ([[feedback_reuse_existing_design_first]] 方針)。いずれも `src/services/embedding.service.ts` の `generateEmbedding` / `generateBatchEmbeddings` (Voyage `voyage-4-lite`, 1024 次元) と pgvector の Cosine 類似度 (`1 - (a <=> b) / 2`) を共通利用する。
+
+| 機能 | 検索対象テーブル | クエリ embedding 生成タイミング | 課金 (featureUnit) | 縮退モード |
+|---|---|---|---|---|
+| **① 提案エンジン** (本章 A〜C) | Project / Knowledge / RiskIssue / Retrospective / Memo の inline `content_embedding` | 事前 (作成・更新時、ADR-0026 非同期)。表示時は生成しない | `project-upsert` 等。表示時 ¥0 | per-candidate 重み再配分 (タグ:テキスト=5:5) |
+| **② チャット意味検索** (D-4.1) | 同上 5 資産 + ADR-0021 で `attachments` | **表示時にリアルタイム生成** (ユーザの自然文クエリを embedding 化) | `chat-semantic-search` (全プラン無料化、ADR-0019。cost=0 で監査記録) | embedding 失敗時 pg_trgm fallback |
+| **③ AI ヘルプチャット** (D-4.2) | `faq_embeddings` / `guide_embeddings` (専用テーブル) | 表示時にリアルタイム生成 (質問文を embedding 化) | `help-chat-embedding` (LEARNING_FREE、cost=0) | embedding 失敗時 `degraded=true` で fallback 文言 |
+
+> **★実 DB に pgvector インデックスは無い (ブルートフォース全走査)★**: 5 資産・FAQ・Guide いずれの `content_embedding` も HNSW / IVFFlat 等の pgvector インデックスを **張っていない** (Supabase introspection で 0 件確認、ギャップ報告 §0 Q4a)。よって類似度検索は対象テーブルの全 NOT NULL 行を逐次スキャンする (= 全走査)。現規模 (テナント単位の少件数) では許容範囲だが、データ増大時は HNSW インデックス追加が必要になる (§34.4 にも「将来追加候補」と記載あり、現状は未実装)。`ORDER BY content_embedding <=> query` の `LIMIT N` は走査後の上位 N 件抽出にすぎず、index による枝刈りは効いていない点に注意。
+
+#### D-4.1. チャット意味検索 RAG ([`chat-search.service.ts`](../../src/services/chat-search.service.ts))
+
+ユーザの自発的な自然文クエリ (例: 「過去の似た案件で発生したリスクは?」) から 5 資産を横断意味検索する。提案エンジンとの根本差は **表示時にクエリ側 embedding をリアルタイム生成** する点 (提案は事前生成済みベクトル同士の比較)。
+
+- **フロー**: `generateEmbedding({ inputType: 'query', featureUnit: 'chat-semantic-search' })` → 5 資産を `Promise.all` で並列 pgvector Cosine 検索 (各 `SUGGESTION_DEFAULT_LIMIT` = 50 件) → `applyMinimumGuarantee` + `assignPercentileTiers` で tier 分類。
+- **visibility フィルタ**: Knowledge / RiskIssue / Retrospective は `visibility='public'`、Memo は `visibility='public' OR user_id = viewer` (自分の private メモも意味検索で思い出せる UX)、Project は visibility カラム無しでテナント内 non-deleted 全件。`findMany` でも defense-in-depth に再フィルタ。
+- **テナント越境防止**: `viewerTenantId` 必須、`tenant_id = ANY(...)` を SQL WHERE に強制。`seedDataEnabled=true` なら `MANAGEMENT_TENANT_ID` (シード) も含める。
+- **縮退モード (pg_trgm fallback)**: embedding 生成失敗 (`rate_limited` / `budget_exceeded` / `embedding_*` 等) 時は `degraded=true` で `pg_trgm` の `similarity()` のみで検索する (検索結果は減るが機能停止しない)。
+- **ファイルスコープ検出 (ADR-0021)**: 「ファイル」「添付」「PDF」等を `detectFileScopeQuery` で検出すると、5 資産を空にして `attachments` (`storage_provider='supabase'` かつ `embedding_status='completed'`) のみを検索する。
+- 仕様: [CHAT_SEMANTIC_SEARCH.md](../specification/CHAT_SEMANTIC_SEARCH.md)。UI パターンは [UI_PATTERNS.md §36](./UI_PATTERNS.md)。
+
+#### D-4.2. AI ヘルプチャット RAG ([`help-search.service.ts`](../../src/services/help-search.service.ts) / ADR-0027 → 0028)
+
+「たすきフクロウ」AI ヘルプチャットは、ユーザの質問を FAQ / 使い方ガイドから RAG で回答する。当初 ADR-0027 で **full-context 方式** (FAQ 全文を毎回 Haiku system prompt に同梱) を採用したが、FAQ 拡張時のコスト線形増大 (600 件で cache miss ¥17/query) のため **同日 ADR-0028 で撤回**、chat-semantic-search の embedding 基盤を流用した **RAG 方式へ移行** ([[feedback_reuse_existing_design_first]] 適用)。
+
+- **専用テーブル** (`prisma/schema.prisma` `FaqEmbedding` / `GuideEmbedding`): FAQ / ガイドは `src/config/faq-content.ts` / `guide-content.ts` を source-of-truth とし、各エントリの embedding を `content_embedding` (`vector(1024)`, **NOT NULL** = 生成完了の証跡) に保持。FAQ 本文はサービス全体で共有のため **tenant_id を持たない** (chat-search と異なりテナント境界フィルタ不要)。
+- **フロー** (`searchHelpContent`): `generateBatchEmbeddings({ inputType:'query', featureUnit:'help-chat-embedding' })` → `faq_embeddings` / `guide_embeddings` を `Promise.all` で並列 pgvector 検索 (default `HELP_SEARCH_DEFAULT_LIMIT` = 5) → score 降順 merge → 上位 5 件 → `/api/help/chat` route が `buildRagPromptSection` で LLM プロンプトに注入。
+- **権限 defense-in-depth (ADR-0028 §6, 3 層)**: (1) SQL 段で `requires_admin = false OR ${viewer.isTenantAdmin}` / `requires_project_pm` フィルタ、(2) TS 段で `getFaqEntriesForRole(viewer)` の id 集合と intersect (denormalize flag が drift しても安全側)、(3) LLM system prompt にロールガード文を注入。
+- **snapshot 優先順**: hit の本文は config 側 (`getFaqEntryById` / `composeFaqContentText`) を真値として再構成 (DB の `content_snapshot` は deploy 直後の乖離瞬間の予備)。`content_hash` (SHA-256) を `scripts/check-faq-embeddings-sync.ts` が CI で DB ↔ config 突合し drift を検知 (生命線)。
+- **fail-safe**: embedding 生成失敗 / DB 障害は throw せず `degraded=true` で返す (ヘルプチャット全体を落とさない)。
+- ADR: [0027](../adr/0027-help-ai-concierge.md) (Superseded) / [0028](../adr/0028-help-chat-rag-migration.md) (Accepted)。UI は [UI_PATTERNS.md §36](./UI_PATTERNS.md) の `HelpChatInput`。
 
 ### E. 月次コスト試算 (シナリオ別)
 
@@ -342,6 +387,19 @@ migration で有効化済。`gin_trgm_ops` GIN インデックスで高速化。
 
 ## 34. 提案エンジン v2: アーキテクチャと多層防御 (T-03 / 2026-06-01 リリース)
 
+> **⚠️ Status: 設計議論の記録 (一部現行と乖離)**
+>
+> 本 §34 は提案エンジン v2 の **初期設計検討メモ** であり、現行実装と乖離する記述を含む。現行の確定仕様は本ドキュメント上部 **§A〜§D-4 (2026-05 改定後)** を真値とすること。乖離の主なもの:
+>
+> - **embedding 生成は同期ではなく非同期** — §34.2 / §34.5 の「同期的に生成」「`@/cron/regenerate-embeddings.ts` で日次再生成」は旧前提。実装は Next.js `after()` でレスポンス後生成 + 月初 `runMonthlyEmbeddingBackfill` cron で補完 → **§A の「🆕 PR-9 perf (ADR-0026)」** を参照。
+> - **cron は Vercel Cron ではなく cron-job.org** — §34.2 / §34.6 / §34.8 / §34.14.8 の「Vercel Cron」は誤り (Vercel は ADR-0023 で完全撤退済、[[project_vercel_decommissioned]])。実 cron は外部 cron-job.org。
+> - **`subscription_tier` / `monthly_token_limit` 等のトークン制は廃止** — §34.2 / §34.7 / §34.12 の token ベース管理は、確定版 §34.14 で **`plan` ('beginner'/'expert'/'pro') + per-API-call 課金 (回数 + 円換算)** に置換済。設定定数の現値は `src/config/suggestion.ts` を真値とする (§34.7 の `SCORE_THRESHOLD=0.05` / `DEFAULT_LIMIT=10` は **現行 0.01 / 50** に改定済 — §B-3 参照)。
+> - **新規テーブル `token_usage_audit` / `llm_call_log` / `subscription_tier_change_log` 等は不採用** — 実装は `ApiCallLog` (§34.14.3) に統合。
+> - **URL は path-based tenant routing でなく単一ドメイン** — §34.11.6 の `tasukiba.vercel.app/{tenantSlug}` は未採用。
+> - tier 分類は §34.4 の「閾値で足切り」ではなく **相対パーセンタイル `assignPercentileTiers`** が現行 (§B-3 参照)。
+>
+> 以下本文は履歴として保存する。
+
 本セクションは、提案エンジン v2 の技術設計を記述する。要件定義は [REQUIREMENTS.md §13](./REQUIREMENTS.md)、機能仕様は [SPECIFICATION.md §26](./SPECIFICATION.md)、脅威モデルは [docs/security/SUGGESTION_ENGINE_THREAT_MODEL.md](../security/SUGGESTION_ENGINE_THREAT_MODEL.md)、実装計画は [SUGGESTION_ENGINE_PLAN.md](./SUGGESTION_ENGINE_PLAN.md) を参照。本セクションでは「どう作るか」の技術判断を記述する。
 
 ### 34.1 全体アーキテクチャ
@@ -406,7 +464,9 @@ NULL になった embedding は、外部 cron (cron-job.org) で日次に動作�
 
 ### 34.7 設定値と外出し
 
-提案エンジンの動作を支配する数値定数はすべて `@/config/suggestion.ts` に外出しし、運用中のチューニングを可能にする。タグ Jaccard 重み (`SUGGESTION_TAG_WEIGHT`、デフォルト 0.3)、pg_trgm 重み (`SUGGESTION_TEXT_WEIGHT`、デフォルト 0.2)、embedding 重み (`SUGGESTION_EMBEDDING_WEIGHT`、デフォルト 0.5)、スコア閾値 (`SUGGESTION_SCORE_THRESHOLD`、デフォルト 0.05)、件数上限 (`SUGGESTION_DEFAULT_LIMIT`、デフォルト 10)、月間トークン上限 (`MONTHLY_TOKEN_LIMIT_FREE` = 100000、`MONTHLY_TOKEN_LIMIT_PRO` = 1000000) を含む。
+提案エンジンの動作を支配する数値定数はすべて `@/config/suggestion.ts` に外出しし、運用中のチューニングを可能にする。タグ Jaccard 重み (`SUGGESTION_TAG_WEIGHT`、デフォルト 0.3)、pg_trgm 重み (`SUGGESTION_TEXT_WEIGHT`、デフォルト 0.2)、embedding 重み (`SUGGESTION_EMBEDDING_WEIGHT`、デフォルト 0.5)、スコア閾値 (`SUGGESTION_SCORE_THRESHOLD`、~~デフォルト 0.05~~ → **現行 0.01**)、件数上限 (`SUGGESTION_DEFAULT_LIMIT`、~~デフォルト 10~~ → **現行 50**)、月間トークン上限 (`MONTHLY_TOKEN_LIMIT_FREE` / `MONTHLY_TOKEN_LIMIT_PRO`) を含む。
+
+> **現行との乖離 (§34 Status 参照)**: 閾値 / 件数は PR-X6 (2026-05-07) で改定済 (§B-3 / `src/config/suggestion.ts:72,81`)。`MONTHLY_TOKEN_LIMIT_*` のトークン制は廃止され `plan` + per-API-call 課金 (§34.14) に置換済。tier 分類も `assignPercentileTiers` (相対分位) が現行で、§34.4 の「閾値で足切り」は固定閾値 `classifyTier` の少件数フォールバック扱い。
 
 LLM プロンプトのテンプレートは `@/config/llm-prompts.ts` に外出しし、プロンプトエンジニアリングのチューニングを実装変更なしに可能にする。各プロンプトには版数を付与し、変更履歴を git 履歴で追跡可能にする。
 

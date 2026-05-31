@@ -98,7 +98,7 @@ Claude Code が実装変更を行った場合、コミット前に以下を必�
 | 画面仕様・権限マトリクス | [docs/specification/](./docs/specification/) |
 | ビジネスロジック (プロジェクト状態遷移・課金・ロール) | [docs/business/](./docs/business/) |
 | 課金モデル ADR (LLM call / DB 容量) | [docs/adr/0019-billable-feature-units-and-free-tier-expansion.md](./docs/adr/0019-billable-feature-units-and-free-tier-expansion.md) (API call 課金) / [docs/adr/0020-db-capacity-usage-based-billing.md](./docs/adr/0020-db-capacity-usage-based-billing.md) (DB 容量従量課金) |
-| 障害対応 SOP・運用手順 | [docs/operations/INCIDENT_RESPONSE.md](./docs/operations/INCIDENT_RESPONSE.md) |
+| 障害対応 SOP・運用手順 | [docs/operations/operate/INCIDENT_RESPONSE.md](./docs/operations/operate/INCIDENT_RESPONSE.md) |
 | 過去の罠・教訓 (実装時に参照) | [docs/knowledge/](./docs/knowledge/) / [docs/test/E2E_LESSONS.md](./docs/test/E2E_LESSONS.md) |
 | テスト戦略・E2E カバレッジ | [docs/test/](./docs/test/) |
-| 環境変数・デプロイ | [docs/operations/ENV_VARS.md](./docs/operations/ENV_VARS.md) / [docs/operations/DEPLOYMENT.md](./docs/operations/DEPLOYMENT.md) |
+| 環境変数・デプロイ | [docs/operations/ENV_VARS.md](./docs/operations/ENV_VARS.md) / [docs/operations/develop/DEPLOYMENT.md](./docs/operations/develop/DEPLOYMENT.md) |
