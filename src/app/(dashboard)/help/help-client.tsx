@@ -47,6 +47,7 @@ const FIRST_STEP_FAQ_IDS: readonly string[] = [
   'onboarding-welcome-replay',
   'semantic-search-vs-fulltext',
   'db-vs-file-storage-concept',
+  'ai-training-usage',
   'member-first-step',
   'create-risk-issue-howto',
   'create-knowledge-howto',
