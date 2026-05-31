@@ -259,21 +259,35 @@ async function parseZip(zipBuffer: Buffer): Promise<ParsedExport> {
   //   200MB を超えていれば ZIP bomb 疑いで拒否する (= 実際にメモリに展開する前に弾く)。
   //   `_data.uncompressedSize` は jszip 内部 API だが安定して提供されている。
   //   将来 jszip の API 変更に備え、`?? 0` で fallback して null safe。
-  const totalUncompressed = Object.values(zip.files).reduce((sum, f) => {
+  //
+  // security/phase-2 (2026-05-31): 上記 fast-fail に加え、各 entry の **実展開後サイズ**
+  //   を累積カウンタで再検証する (= ZIP central directory に嘘の uncompressed size を
+  //   書いた bomb 対策、jszip 内部 API の将来変更耐性も兼ねる)。
+  //   実装: declared check が通っても、async() 展開後の byteLength を runningDecompressed に
+  //   加算し、超過時に即停止 (= 申告詐称・jszip API drift どちらでも防御)。
+  const declaredTotalUncompressed = Object.values(zip.files).reduce((sum, f) => {
     if (f.dir) return sum;
     const fileSize =
       (f as unknown as { _data?: { uncompressedSize?: number } })._data?.uncompressedSize ?? 0;
     return sum + fileSize;
   }, 0);
-  if (totalUncompressed > MAX_DECOMPRESSED_BYTES) {
+  if (declaredTotalUncompressed > MAX_DECOMPRESSED_BYTES) {
     throw new Error('DECOMPRESSED_TOO_LARGE');
   }
+
+  // security/phase-2: 実展開サイズの累積カウンタ (申告詐称耐性)
+  let runningDecompressed = 0;
 
   const result: Partial<Record<string, Record<string, unknown>[]>> = {};
   for (const name of REQUIRED_DATA_FILES) {
     const entry = zip.file(`data/${name}.json`);
     if (!entry) throw new Error('INVALID_FORMAT');
     const text = await entry.async('string');
+    // security/phase-2: 実サイズで累積カウンタ更新 + 上限超過チェック (申告詐称対応)
+    runningDecompressed += Buffer.byteLength(text, 'utf-8');
+    if (runningDecompressed > MAX_DECOMPRESSED_BYTES) {
+      throw new Error('DECOMPRESSED_TOO_LARGE');
+    }
     let parsedJson: unknown;
     try {
       parsedJson = JSON.parse(text);
@@ -289,8 +303,16 @@ async function parseZip(zipBuffer: Buffer): Promise<ParsedExport> {
   let metadata: Record<string, unknown> | undefined;
   if (metadataEntry) {
     try {
-      metadata = JSON.parse(await metadataEntry.async('string')) as Record<string, unknown>;
-    } catch {
+      const metaText = await metadataEntry.async('string');
+      // security/phase-2: metadata も累積に含める (= 巨大 metadata bomb 対策)
+      runningDecompressed += Buffer.byteLength(metaText, 'utf-8');
+      if (runningDecompressed > MAX_DECOMPRESSED_BYTES) {
+        throw new Error('DECOMPRESSED_TOO_LARGE');
+      }
+      metadata = JSON.parse(metaText) as Record<string, unknown>;
+    } catch (e) {
+      // DECOMPRESSED_TOO_LARGE は再 throw、JSON parse 失敗のみ警告として無視
+      if (e instanceof Error && e.message === 'DECOMPRESSED_TOO_LARGE') throw e;
       // metadata 破損は警告のみ (本体データが揃っていればインポート可)
     }
   }

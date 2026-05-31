@@ -72,10 +72,15 @@
 
 | 変数名 | スコープ | 用途 | 設定 context | 値 |
 |---|---|---|---|---|
+| `NEXT_PUBLIC_SUPABASE_URL` | 平文 | Supabase Storage のベース URL (`https://<ref>.supabase.co`)。Pre-signed URL 発行クライアント (`src/lib/supabase-storage.ts:25`) の接続先。**サーバ側のみ参照** (名前は `NEXT_PUBLIC_` だが client では未使用)。未設定だと添付アップロードが即 503 (CONFIG_MISSING) | 全 context (2026-05-31 追加) | `https://ejexwhjrnkttmmuvaxrh.supabase.co` |
 | `SUPABASE_SERVICE_ROLE_KEY` | 🔒 | 添付ファイルの Pre-signed URL 発行・bucket 容量集計・cron 削除 (RLS バイパス、絶対に client へ出さない) | **Prod/Prev/Branch** (2026-05-30 ステージング追加済、PSAR/Local 空) | 🔒 記載省略 |
-| `SUPABASE_STORAGE_BUCKET` | 平文 | 添付本体を保存する bucket 名 | 全 context | `attachments` |
+| `SUPABASE_STORAGE_BUCKET` | 平文 | 添付本体を保存する bucket 名。未設定でも既定 `attachments` が入る (`src/lib/supabase-storage.ts:29`) | 全 context | `attachments` |
 
 > ✅ **対応済 (2026-05-30)**: `SUPABASE_SERVICE_ROLE_KEY` を Deploy Previews / Branch deploys に設定済 (Production と同一 Supabase プロジェクトのため同値)。ステージングで添付ファイル機能が稼働可能に。
+>
+> ✅ **対応済 (2026-05-31)**: `NEXT_PUBLIC_SUPABASE_URL` が Netlify 全 context で **未設定** だったため、本番で添付アップロードが 503 (CONFIG_MISSING) で失敗していた。全 context に追加し再デプロイで解消。値は `SUPABASE_SERVICE_ROLE_KEY` と同一プロジェクトの URL であること (別プロジェクトの URL を入れると SIGN_FAILED になる)。
+>
+> ⚠️ **`NEXT_PUBLIC_SUPABASE_ANON_KEY` は不要**: 旧 SUPABASE_STORAGE_SETUP.md §6 が「既存・必須」と記載していたが、コード上どこからも参照されていない (2026-05-31 確認)。本番で添付機能を動かすのに必要なのは **URL + SERVICE_ROLE_KEY (+ 既定値を上書きする場合のみ BUCKET)** の組。
 
 ## 7. 初期管理者 / Super Admin (シード + Basic Auth)
 
@@ -135,6 +140,9 @@
    - **✅ 対応済 (2026-05-30)**: secret スコープ化済 (4 context、Local 空)。本書もマスキング済 (§7)。なお `ADMIN_SUPER_BASIC_AUTH_USER=admin` は引き続き平文・推測容易のため、必要なら変更検討。
 5. **環境変数ドキュメントの一本化 (ユーザ決定・2026-05-30 実施)**: 旧 `docs/operations/ENV_VARS.md` の固有 how-to を本書 §11〜§13 に統合し、本体は `docs/archive/ENV_VARS.md` へ移動。旧パスは本書を指すリダイレクト tombstone を残置 (= 既存 23 ファイルの参照リンク破損を防止)。**以後、環境変数の正は本書**。
 6. **`INITIAL_ADMIN_EMAIL=admin@example.com` / `SUPER_ADMIN_INITIAL_EMAIL=super@example.com`** が `example.com` のまま (seed 専用、初回ログインで変更前提)。本番管理者メールとして受信可能アドレスにするか要確認 (優先度低)。
+7. **`NEXT_PUBLIC_SUPABASE_URL` が Netlify 全 context で未設定だった (2026-05-31 検出)** → 本番でファイル添付アップロードが 503 (CONFIG_MISSING) で失敗。`SUPABASE_STORAGE_BUCKET` (2 日前追加) と `SUPABASE_SERVICE_ROLE_KEY` は設定済だったが、接続先 URL だけ欠落していた。
+   - **✅ 対応済 (2026-05-31、ユーザ実施)**: 全 context に `https://ejexwhjrnkttmmuvaxrh.supabase.co` (`service_role` と同一プロジェクト) を追加 → 再デプロイで解消。本書 §6 に変数行を追加し、見落とし再発を防止。
+   - **再発防止 (実装側 TODO)**: ① `.env.example` に Storage 変数を明記、② アップロード route が CONFIG_MISSING を transient と区別 (`しばらくして再試行` ではなく `機能が未設定` を返す) — `src/app/api/attachments/upload/route.ts`。
 
 ---
 
@@ -148,7 +156,8 @@
 | `STRIPE_SECRET_KEY` / `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` | Stripe Dashboard → Developers → API keys (`sk_`/`pk_`、Test/Live で別) |
 | `STRIPE_WEBHOOK_SECRET` | Stripe Dashboard → Developers → Webhooks → 該当 endpoint (`whsec_`、Test/Live で別 endpoint) |
 | `STRIPE_PRICE_*` | Stripe Dashboard → Products (§4 / STRIPE_ENV_MAPPING.md に実 Price ID) |
-| `SUPABASE_SERVICE_ROLE_KEY` | Supabase → Project Settings → API → `service_role` (RLS バイパス、client へ出さない) |
+| `NEXT_PUBLIC_SUPABASE_URL` | Supabase → Project Settings → API → **Project URL**。`https://<ref>.supabase.co` の形。⚠️ 末尾 `/rest/v1/` やスラッシュは付けない (クライアントが `/storage/v1/...` を自前で連結するため二重スラッシュで失敗)。`NEXT_PUBLIC_` のため **値追加後は再デプロイ (build) 必須** |
+| `SUPABASE_SERVICE_ROLE_KEY` | Supabase → Project Settings → API → `service_role` (RLS バイパス、client へ出さない)。`NEXT_PUBLIC_SUPABASE_URL` と**同一プロジェクト**であること |
 | `DATABASE_URL` / `DIRECT_URL` | Supabase → Database → Connection String。**DATABASE_URL=Transaction pooler (6543)** / **DIRECT_URL=Session/direct (5432)**。migration は lock のため direct 必須、アプリ実行は pooler で接続数抑制 |
 | `BREVO_API_KEY` | <https://app.brevo.com/settings/keys/api> (送信元アドレスは Brevo で事前検証必須) |
 

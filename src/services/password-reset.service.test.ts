@@ -94,7 +94,7 @@ describe('resetPassword', () => {
   it('トークンが無効なら 無効なリンク エラー', async () => {
     vi.mocked(prisma.passwordResetToken.findFirst).mockResolvedValue(null);
 
-    const res = await resetPassword('any', 'newpass');
+    const res = await resetPassword('any', 'newpass', 'org-1');
 
     expect(res.success).toBe(false);
     expect(res.error).toContain('無効');
@@ -106,9 +106,11 @@ describe('resetPassword', () => {
       userId: 'u1',
       usedAt: new Date(),
       expiresAt: new Date(Date.now() + 60000),
+      // security/phase-3 (2026-05-31): tenant 二重検証
+      tenant: { slug: 'org-1' },
     } as never);
 
-    const res = await resetPassword('any', 'newpass');
+    const res = await resetPassword('any', 'newpass', 'org-1');
 
     expect(res.success).toBe(false);
     expect(res.error).toContain('使用');
@@ -120,9 +122,10 @@ describe('resetPassword', () => {
       userId: 'u1',
       usedAt: null,
       expiresAt: new Date(Date.now() - 60000),
+      tenant: { slug: 'org-1' },
     } as never);
 
-    const res = await resetPassword('any', 'newpass');
+    const res = await resetPassword('any', 'newpass', 'org-1');
 
     expect(res.success).toBe(false);
     expect(res.error).toContain('有効期限');
@@ -134,13 +137,14 @@ describe('resetPassword', () => {
       userId: 'u1',
       usedAt: null,
       expiresAt: new Date(Date.now() + 60000),
+      tenant: { slug: 'org-1' },
     } as never);
     vi.mocked(prisma.passwordHistory.findMany).mockResolvedValue([
       { passwordHash: 'h_old' },
     ] as never);
     vi.mocked(compare).mockResolvedValueOnce(true as never);
 
-    const res = await resetPassword('any', 'reused');
+    const res = await resetPassword('any', 'reused', 'org-1');
 
     expect(res.success).toBe(false);
     expect(res.error).toContain('再利用');
@@ -153,12 +157,32 @@ describe('resetPassword', () => {
       userId: 'u1',
       usedAt: null,
       expiresAt: new Date(Date.now() + 60000),
+      tenantId: 'tenant-A',
+      tenant: { slug: 'org-1' },
     } as never);
     vi.mocked(prisma.passwordHistory.findMany).mockResolvedValue([]);
 
-    const res = await resetPassword('any', 'brandnew');
+    const res = await resetPassword('any', 'brandnew', 'org-1');
 
     expect(res.success).toBe(true);
     expect(prisma.$transaction).toHaveBeenCalled();
+  });
+
+  // security/phase-3 (2026-05-31): tenant 二重検証の効果テスト
+  it('tenantSlug が token 発行時の tenant と一致しないと「無効なリンク」', async () => {
+    vi.mocked(prisma.passwordResetToken.findFirst).mockResolvedValue({
+      id: 't1',
+      userId: 'u1',
+      usedAt: null,
+      expiresAt: new Date(Date.now() + 60000),
+      tenant: { slug: 'org-A' }, // 発行時 tenant
+    } as never);
+
+    // 別 tenant 名で叩く (= multi-tenant 越境攻撃シナリオ)
+    const res = await resetPassword('any', 'brandnew', 'org-B');
+
+    expect(res.success).toBe(false);
+    expect(res.error).toContain('無効');
+    expect(prisma.passwordHistory.findMany).not.toHaveBeenCalled();
   });
 });

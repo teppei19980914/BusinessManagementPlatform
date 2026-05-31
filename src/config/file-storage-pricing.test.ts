@@ -346,6 +346,31 @@ describe('isDangerousExtension — ADR-0021 §10.3 危険拡張子 blacklist', (
     expect(isDangerousExtension('archive.rar')).toBe(true);
   });
 
+  // security/phase-2 (2026-05-31): Content-Disposition: attachment 強制と二重防御
+  it('SVG 系 (browser inline 実行可) を拒否する', () => {
+    expect(isDangerousExtension('attack.svg')).toBe(true);
+    expect(isDangerousExtension('compressed.svgz')).toBe(true);
+  });
+
+  it('HTML 系 (XSS inline 実行) を拒否する', () => {
+    expect(isDangerousExtension('payload.html')).toBe(true);
+    expect(isDangerousExtension('legacy.htm')).toBe(true);
+    expect(isDangerousExtension('xml.xhtml')).toBe(true);
+    expect(isDangerousExtension('include.shtml')).toBe(true);
+    expect(isDangerousExtension('archive.mhtml')).toBe(true);
+    expect(isDangerousExtension('ie.mht')).toBe(true);
+    expect(isDangerousExtension('windows.hta')).toBe(true);
+  });
+
+  it('Flash / Java applet (legacy 攻撃ベクトル) を拒否する', () => {
+    expect(isDangerousExtension('legacy.swf')).toBe(true);
+    expect(isDangerousExtension('applet.jar')).toBe(true);
+  });
+
+  it('.xml は OFFICE 文書互換のため許容する (誤拒否回避)', () => {
+    expect(isDangerousExtension('config.xml')).toBe(false);
+  });
+
   it('大文字 .EXE も危険 (小文字化される)', () => {
     expect(isDangerousExtension('malware.EXE')).toBe(true);
   });

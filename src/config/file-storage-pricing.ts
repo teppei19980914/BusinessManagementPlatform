@@ -112,8 +112,14 @@ export const FILE_STORAGE_DRIFT_CRITICAL_RATIO = 1.0;
 
 /**
  * 危険拡張子 blacklist (アップロード時に拒否)。
- * 実行可能ファイル + スクリプト + モバイルアプリ + 高圧縮形式。
+ * 実行可能ファイル + スクリプト + モバイルアプリ + 高圧縮形式 + browser inline 実行可能形式。
  * 注: .zip は許容 (= 業務利用想定)、解凍はクライアント側で実施。
+ *
+ * security/phase-2 (2026-05-31): SVG / HTML 系を追加。
+ *   Content-Disposition: attachment 強制 (createSignedDownloadUrl の downloadFilename) が
+ *   主防御だが、何らかの理由で Content-Disposition が脱落した場合に備え、ブラウザが
+ *   インラインで script を実行し得る拡張子もアップロード段階で拒否する二重防御。
+ *   `.xml` は OFFICE 文書 (DOCX 内 .xml 等) の汎用拡張子で誤拒否リスク高のため除外。
  */
 export const DANGEROUS_FILE_EXTENSIONS: readonly string[] = [
   // Windows 実行
@@ -126,6 +132,14 @@ export const DANGEROUS_FILE_EXTENSIONS: readonly string[] = [
   '.apk', '.ipa',
   // Archive (高圧縮形式は zip bomb リスク高)
   '.zipx', '.rar',
+  // Browser inline 実行可能 (XSS / iframe 経由攻撃) — security/phase-2 (2026-05-31) で追加
+  '.svg', '.svgz',          // SVG は <script> タグ実行可
+  '.html', '.htm',          // HTML 直接実行
+  '.xhtml', '.shtml',        // XML / SSI HTML
+  '.mhtml', '.mht',         // MHTML (IE 系経由攻撃)
+  '.hta',                    // HTML Application
+  '.swf',                    // Flash (legacy)
+  '.jar',                    // Java applet
 ] as const;
 
 /**
