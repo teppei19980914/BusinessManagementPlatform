@@ -132,10 +132,12 @@ test.describe('@feature:release-acceptance signup ライフサイクル (払い�
   });
 
   test('TC-RA-23/24: リスク + 課題 作成 (API 真値で確認)', async () => {
+    // visibility='public' は superRefine で title + occurrence(考えられる事象/発生事象) が必須
     await postOk(page, `/api/projects/${projectId}/risks`, {
       type: 'risk',
       title: RISK_TITLE,
       content: 'E2E リスク本文',
+      occurrence: 'E2E 想定事象',
       impact: 'medium',
       visibility: 'public',
     });
@@ -143,6 +145,7 @@ test.describe('@feature:release-acceptance signup ライフサイクル (払い�
       type: 'issue',
       title: ISSUE_TITLE,
       content: 'E2E 課題本文',
+      occurrence: 'E2E 発生事象',
       impact: 'high',
       visibility: 'public',
     });
