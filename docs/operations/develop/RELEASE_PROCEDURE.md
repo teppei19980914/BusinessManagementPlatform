@@ -42,9 +42,11 @@
   - frontmatter の `severity` は内容に応じて: `info` (新機能告知) / `warning` (注意喚起) / `critical` (緊急) / `maintenance` (メンテ予告)
   - **bug fix のみのパッチリリースは告知不要** (ユーザ体験への影響が無い場合)
 - [ ] **(5) ローカルゲート確認** — `pnpm lint && pnpm tsc --noEmit && pnpm test && pnpm e2e:coverage-check && pnpm build`
-- [ ] **(6) PR 作成 → CI 通過 → squash merge** — CI には **🤖 機能受け入れ回帰 (E2E)** が含まれる: 払い出し→全資産CRUD→解約→eligibility→チャット/ヘルプ配線 (`e2e/specs/19〜23`、[RELEASE_ACCEPTANCE_TEST.md](../../test/RELEASE_ACCEPTANCE_TEST.md) の 🤖 項目)。E2E が red の場合は merge しない
+- [ ] **(6) PR 作成 → CI 通過** — CI には **🤖 機能受け入れ回帰 (E2E)** が含まれる: 払い出し→全資産CRUD→解約→eligibility→チャット/ヘルプ配線 (`e2e/specs/19〜23`、[RELEASE_ACCEPTANCE_TEST.md](../../test/RELEASE_ACCEPTANCE_TEST.md) の 🤖 項目)。E2E が red の場合は merge しない
+- [ ] **(6.5) 👤 Deploy Preview で機能受け入れスモーク (数分・マージ判断)** — `deploy-preview-<PR番号>--tasukiba.netlify.app` で [RELEASE_ACCEPTANCE_TEST.md §9](../../test/RELEASE_ACCEPTANCE_TEST.md#9-数分の人間スモーク-毎リリース必須) の **SMK-1〜7** を実施。Deploy Preview は**実外部サービス + ステージング DB** 接続のため、実メール到達・実 Storage 添付・実 AI 品質を**本番 DB を汚さず**検証できる。FAIL なら merge しない
+- [ ] **(6.6) squash merge**
 - [ ] **(7) Netlify Production deploy 成功確認** ([COMMIT_AND_DEPLOY.md §10.5 squash merge 時の skip キーワード罠](./COMMIT_AND_DEPLOY.md))
-- [ ] **(7.5) 👤 本番 機能受け入れスモーク (数分・毎リリース必須)** — [RELEASE_ACCEPTANCE_TEST.md §9](../../test/RELEASE_ACCEPTANCE_TEST.md#9-数分の人間スモーク-毎リリース必須) の SMK-1〜7 を**本番環境**に対して実施 (プラスエイリアスで払い出し→実メール到達→資産1件→添付1往復→チャット/ヘルプに1問ずつ→主要画面レンダリング)。自動 E2E が肩代わりできない「実メール・実 Storage・実 AI 品質・本番レンダリング」を確認。FAIL があれば原則ロールバック判断
+- [ ] **(7.5) 👤 本番で最終確認 (軽量・本番固有の差分のみ)** — 本番 `tasukiba.netlify.app` で SMK-2 (ログイン/Cookie)・SMK-7 (主要画面レンダリング) + 任意で実メール 1 通。Deploy Preview と本番は `NEXTAUTH_URL`/ドメイン/CONTEXT が異なり Cookie/認証・本番レンダリングは本番でしか確認できないため (破壊的操作は不要)。FAIL があれば原則ロールバック判断
 - [ ] **(8) `/changelog` を本番で開き (ヘッダ AccountMenu「バージョンアップ情報」経由)、バージョン番号とリリース日が反映されていることを確認**
 - [ ] **(9) `/changelog` `/announcements` を本番で開き、新エントリが表示されることを確認** (`/announcements` はフッタ「お知らせ」リンク = ログイン後のみ導線)
 
