@@ -1,31 +1,30 @@
-# Dependabot 設定 (PR feat/security-auto-update / 2026-05-09)
+# Dependabot 設定 (PR feat/security-auto-update / 2026-05-09, 自動マージ化 2026-06-04)
 #
-# 目的: セキュリティスキャナのアクションバージョン (gitleaks-action / codeql-action / setup-node 等)
-#   が古くなって新しい脅威パターンに追従できなくなる問題を防ぐ。github-actions エコシステムを
-#   週次で自動アップデート + npm の セキュリティアップデートのみ即時 PR 化することで
-#   「外部の最新検出ルールが常時取り込まれる」状態を担保する。
+# 目的: ライブラリ / アクションのバージョンを常時最新化し、既知脆弱性 (CVE) の取りこぼしを防ぐ。
+#   github-actions / npm を日次で検知 → PR 起票し、patch / minor は
+#   .github/workflows/dependabot-auto-merge.yml が CI green を条件に自動マージする。
+#   major (破壊的変更を含みうる) は自動マージ対象外で、人間が手動レビューする。
 #
 # 公式ドキュメント:
 #   https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
 #
 # 更新スコープ:
-#   - github-actions: 週次 (新しい脆弱性検出ルールをすぐに取り込む)
-#   - npm: 月次 (頻繁な PR を避け、セキュリティアップデートのみ別ルールで即時化)
+#   - github-actions: 日次 (新しい脆弱性検出ルールをすぐに取り込む)
+#   - npm: 日次 (新バージョンを随時 PR 化。patch/minor は自動マージ、major は手動)
 #   - npm (security only): 即時 PR (ライブラリの CVE 公表時に自動 PR)
 
 version: 2
 
 updates:
   # ────────────────────────────────────────────────
-  # GitHub Actions: 週次でアクションバージョンを自動更新
+  # GitHub Actions: 日次でアクションバージョンを自動更新
   #   gitleaks-action / codeql-action / pnpm/action-setup / actions/setup-node 等が対象
   #   これにより gitleaks 等の「アクションにバンドルされた検出ルール」が常に最新化される
   # ────────────────────────────────────────────────
   - package-ecosystem: 'github-actions'
     directory: '/'
     schedule:
-      interval: 'weekly'
-      day: 'monday'
+      interval: 'daily'
       time: '03:00'
       timezone: 'Asia/Tokyo'
     labels:
@@ -34,21 +33,19 @@ updates:
     commit-message:
       prefix: 'chore(actions)'
     open-pull-requests-limit: 5
-    # マイナー / パッチ更新を自動マージしてくれるツール導入を将来検討。現状は手動マージ。
-    # メジャーアップデートは破壊的変更を含むことがあるため別 PR で慎重に確認する。
+    # patch / minor は dependabot-auto-merge.yml が CI green を条件に自動マージする。
+    # メジャーアップデートは破壊的変更を含むことがあるため自動マージ対象外 (手動レビュー)。
 
   # ────────────────────────────────────────────────
-  # npm: 月次で全依存を更新 (粒度を抑えて開発を妨げない)
+  # npm: 日次で全依存を更新 (新バージョンを随時 PR 化)
+  #   patch/minor は自動マージされるため PR が滞留しない。major のみ手動レビューで残る。
   # ────────────────────────────────────────────────
   - package-ecosystem: 'npm'
     directory: '/'
     schedule:
       # NOTE: `schedule.day` は `interval: weekly` でのみ valid (公式 schema 制約)。
-      #   `monthly` 指定時は dependabot が毎月 1 日に自動実行するため省略する。
-      #   旧設定で `day: 'first monday'` を入れて GitHub の dependabot.yml validator が
-      #   「day は weekly でのみ valid」「'first monday' は無効値」で fail していた。
-      #   (有効値: monday/tuesday/.../sunday の単一指定のみ)
-      interval: 'monthly'
+      #   daily / monthly では day を指定しない (指定すると validator が fail する)。
+      interval: 'daily'
       time: '03:00'
       timezone: 'Asia/Tokyo'
     labels:
