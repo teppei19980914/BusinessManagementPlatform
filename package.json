@@ -13,6 +13,7 @@
     "format:check": "prettier --check \"src/**/*.{ts,tsx,js,jsx}\"",
     "db:seed": "tsx prisma/seed.ts",
     "db:seed:suggestion": "tsx prisma/seed-suggestion.ts",
+    "db:clean:suggestion": "tsx scripts/clean-management-seed.ts",
     "seed:generate-embeddings": "tsx scripts/generate-seed-embeddings.ts",
     "generate:faq-embeddings": "tsx scripts/generate-faq-embeddings.ts",
     "check:faq-embeddings-sync": "tsx scripts/check-faq-embeddings-sync.ts",

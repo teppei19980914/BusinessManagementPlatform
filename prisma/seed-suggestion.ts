@@ -228,7 +228,7 @@ export const SEED_KNOWLEDGE: SeedKnowledge[] = [
     content: 'ネットワーク通信は不確実 (タイムアウト・切断) なため、クライアントは同一リクエストを何度も送る可能性がある。サーバ側で **同じリクエストを何度受けても結果が同じ** な設計 (冪等性) にすれば、クライアントは安心してリトライできる。',
     result: '`Idempotency-Key` ヘッダーで重複検知を実装し、二重課金事故をゼロに。',
     conclusion: '副作用のある API (POST/PUT/DELETE) には冪等性キーまたは状態判定ロジックを必ず実装する。',
-    recommendation: 'クライアント側で UUID を発行し `Idempotency-Key` ヘッダーで送信、サーバ側で 24 時間保持して重複判定する標準パターンを採用 (Stripe API 形式)。',
+    recommendation: 'クライアント側で UUID を発行し `Idempotency-Key` ヘッダーで送信、サーバ側で 24 時間保持して重複判定する標準パターンを採用 (決済サービス API 形式)。',
     reusability: 'medium',
     techTags: ['rest_api', 'reliability', 'idempotency'],
     processTags: ['design'],
@@ -290,7 +290,7 @@ export const SEED_KNOWLEDGE: SeedKnowledge[] = [
     title: '冪等性のないバッチジョブが二重実行される',
     knowledgeType: 'lesson',
     background: 'Cron で起動するバッチジョブが、何らかの理由で重複起動し、課金処理が 2 重に走った。',
-    content: 'Cron / 外部 cron (cron-job.org) / GitHub Actions スケジュールいずれも、システム障害・ネットワーク再送によって稀に重複起動する。バッチジョブ自体に冪等性が無いと、データ破損につながる。',
+    content: 'Cron / 外部 cron (cron-job.org) / Gitホスティング Actions スケジュールいずれも、システム障害・ネットワーク再送によって稀に重複起動する。バッチジョブ自体に冪等性が無いと、データ破損につながる。',
     result: 'バッチ起動時に DB の advisory lock を取得し、二重起動時は後発をスキップする実装に変更。重複起動事故が再発ゼロに。',
     conclusion: 'バッチジョブは必ず排他制御 (advisory lock / 分散ロック) を仕込む。',
     recommendation: 'PostgreSQL なら `pg_try_advisory_lock(hashtext(\'job-name\'))` で軽量な排他を実現。Redis なら SETNX で同様。',
@@ -329,7 +329,7 @@ export const SEED_KNOWLEDGE: SeedKnowledge[] = [
     title: 'ログは構造化し、検索可能にする (JSON 形式)',
     knowledgeType: 'best_practice',
     background: '本番障害時、テキストログを grep するのに 30 分かかり、対応が遅れた。',
-    content: '非構造化テキストログ (`[INFO] User 12345 logged in from 1.2.3.4`) は人間が読みやすいが、機械的検索・集計に向かない。JSON 構造化ログ (`{"level": "info", "user_id": 12345, "ip": "1.2.3.4", "event": "login"}`) なら、ログ集約サービス (Datadog, Sentry, CloudWatch) で「user_id=12345 のログだけ」「event=login の件数推移」が即座に出る。',
+    content: '非構造化テキストログ (`[INFO] User 12345 logged in from 1.2.3.4`) は人間が読みやすいが、機械的検索・集計に向かない。JSON 構造化ログ (`{"level": "info", "user_id": 12345, "ip": "1.2.3.4", "event": "login"}`) なら、ログ集約サービス (監視SaaS, エラー監視SaaS, クラウド監視) で「user_id=12345 のログだけ」「event=login の件数推移」が即座に出る。',
     result: '構造化ログに切替え後、本番障害の調査時間が 30 分 → 3 分に短縮。',
     conclusion: 'ログは最初から構造化する。文字列連結ではなくフィールド付きで出力。',
     recommendation: 'pino / winston / Python の structlog 等の構造化ロギングライブラリを使用。`request_id` を全エンドポイントで通し、関連ログを横串検索できるようにする。',
@@ -341,11 +341,11 @@ export const SEED_KNOWLEDGE: SeedKnowledge[] = [
   {
     title: '機密情報は環境変数 + secret manager で、コードに書かない',
     knowledgeType: 'lesson',
-    background: 'GitHub に AWS の access key を誤コミットし、数時間で攻撃者に悪用された (数十万円の損害)。',
-    content: '誤コミットは git revert しても **GitHub の reflog や fork に残る**。漏洩した時点でキーは即座にローテーション必須。一次対策はコミット禁止 (.gitignore + pre-commit hook)、二次対策は環境変数経由、三次対策は secret manager (AWS Secrets Manager / Netlify env) からの動的取得。',
-    result: 'pre-commit hook (gitleaks) で AWS_KEY 形式を検知して block する仕組みを導入。さらに既存コードを全件監査して secret manager に移行。',
+    background: 'Gitホスティングに パブリッククラウドの access key を誤コミットし、数時間で攻撃者に悪用された (数十万円の損害)。',
+    content: '誤コミットは git revert しても **Gitホスティングの reflog や fork に残る**。漏洩した時点でキーは即座にローテーション必須。一次対策はコミット禁止 (.gitignore + pre-commit hook)、二次対策は環境変数経由、三次対策は secret manager (パブリッククラウド Secrets Manager / ホスティングサービス env) からの動的取得。',
+    result: 'pre-commit hook (gitleaks) で クラウドアクセスキー 形式を検知して block する仕組みを導入。さらに既存コードを全件監査して secret manager に移行。',
     conclusion: 'シークレットは複数層で防御。誤コミット時の即時ローテーション手順 (Runbook) を整備しておく。',
-    recommendation: 'gitleaks / TruffleHog でリポジトリスキャン。GitHub の Secret scanning も有効化。万一漏洩したら 1 時間以内のキーローテーションを SLO に。',
+    recommendation: 'gitleaks / TruffleHog でリポジトリスキャン。Gitホスティングの Secret scanning も有効化。万一漏洩したら 1 時間以内のキーローテーションを SLO に。',
     reusability: 'high',
     techTags: ['security', 'secret_management', 'devops'],
     processTags: ['security', 'incident_response'],
@@ -357,10 +357,10 @@ export const SEED_KNOWLEDGE: SeedKnowledge[] = [
     title: 'ベンダーロックイン — 単一クラウド依存のリスク',
     knowledgeType: 'best_practice',
     background: '特定クラウドのマネージドサービスを多用したら、別クラウドへの移行コストが極大化した。',
-    content: 'マネージドサービス (Cloud Run / Lambda / Cosmos DB 等) は便利だが、独自仕様で書かれたコードは他クラウドへ持ち運べない。単一クラウド依存はクラウド側の値上げ・ポリシー変更に逆らえない構造リスクを生む。',
+    content: 'マネージドサービス (Cloud Run / サーバレス関数 / Cosmos DB 等) は便利だが、独自仕様で書かれたコードは他クラウドへ持ち運べない。単一クラウド依存はクラウド側の値上げ・ポリシー変更に逆らえない構造リスクを生む。',
     result: '抽象化レイヤー (Repository / Cache インターフェース) を挟む方針に変更。コア業務ロジックは抽象化越しに依存し、クラウド固有部分は薄い実装層に閉じ込めた。移行コストが見積もり 6 ヶ月 → 1 ヶ月に短縮 (試算)。',
     conclusion: 'クラウド固有 API は薄い実装層に閉じ込め、業務ロジックは標準 SQL / 標準プロトコルに依存させる。',
-    recommendation: '初期から Postgres-compatible (RDS / Cloud SQL / Supabase 等で動く) 構成を選定し、独自データベースを避ける。',
+    recommendation: '初期から Postgres-compatible (マネージドRDB / Cloud SQL / Supabase 等で動く) 構成を選定し、独自データベースを避ける。',
     reusability: 'high',
     techTags: ['architecture', 'cloud', 'aws', 'gcp', 'azure'],
     processTags: ['risk_management', 'architecture'],
@@ -424,10 +424,10 @@ export const SEED_KNOWLEDGE: SeedKnowledge[] = [
     title: 'コードレビューはマージ前ではなく PR 作成と同時に依頼する',
     knowledgeType: 'best_practice',
     background: 'PR が放置されてマージ待ちが累積し、リリースが遅れる事象が続いた。',
-    content: 'PR を作成したら **すぐに** レビュー依頼を出す (Slack 通知 / GitHub 自動レビュアー設定)。「自分でもう 1 回見てから依頼」と先送りすると、レビュアーの稼働もずれて 2-3 日空くことが多い。',
-    result: 'PR 作成 → 自動的に Slack へレビュー依頼通知する Bot を導入。平均レビュー所要時間が 24 時間 → 4 時間に短縮。',
+    content: 'PR を作成したら **すぐに** レビュー依頼を出す (ビジネスチャット 通知 / Gitホスティング 自動レビュアー設定)。「自分でもう 1 回見てから依頼」と先送りすると、レビュアーの稼働もずれて 2-3 日空くことが多い。',
+    result: 'PR 作成 → 自動的に ビジネスチャットへレビュー依頼通知する Bot を導入。平均レビュー所要時間が 24 時間 → 4 時間に短縮。',
     conclusion: 'レビュー依頼は「自信がついてから」ではなく「動く状態になったら」即座に出す。',
-    recommendation: 'GitHub Actions + Slack Webhook で「PR opened → 即通知」を自動化。レビュアーアサインも CODEOWNERS で自動化。',
+    recommendation: 'Gitホスティング Actions + ビジネスチャット Webhook で「PR opened → 即通知」を自動化。レビュアーアサインも CODEOWNERS で自動化。',
     reusability: 'high',
     techTags: ['github', 'code_review', 'slack'],
     processTags: ['code_review', 'project_management'],
@@ -570,7 +570,7 @@ export const SEED_KNOWLEDGE: SeedKnowledge[] = [
     conclusion:
       '要件定義の合意は「言葉での合意」では不十分。視覚化 + 文書化 + 口頭確認の 3 段階で具体化する。',
     recommendation:
-      '受入条件は「Given-When-Then」形式で書き、テスト工程の入力にもなるよう設計する。プロトタイプは Figma / PowerApps 等で 1 週間以内に作成可能なツールを選ぶ。',
+      '受入条件は「Given-When-Then」形式で書き、テスト工程の入力にもなるよう設計する。プロトタイプは Figma / ローコード基盤 等で 1 週間以内に作成可能なツールを選ぶ。',
     reusability: 'high',
     techTags: ['figma', 'prototyping'],
     processTags: ['requirements', 'project_management', 'stakeholder_management'],
@@ -642,7 +642,7 @@ export const SEED_KNOWLEDGE: SeedKnowledge[] = [
     conclusion:
       'データ移行は「移行スクリプト実装」だけでは不十分。事前調査 + 性能テスト + 段階移行の 6 ステップ全てを計画に含める。',
     recommendation:
-      '本番切替時間は計画値の 1.5-2 倍を見込む。SAP / Oracle 等の大規模 ERP では 1 ヶ月の Mock-Run を 2-3 回実施する。',
+      '本番切替時間は計画値の 1.5-2 倍を見込む。ERP / 商用データベース 等の大規模 ERPでは 1 ヶ月の Mock-Run を 2-3 回実施する。',
     reusability: 'high',
     techTags: ['data_migration', 'etl'],
     processTags: ['migration', 'data_management', 'project_management'],
@@ -732,7 +732,7 @@ export const SEED_KNOWLEDGE: SeedKnowledge[] = [
     conclusion:
       'ベンダーロックインは構造的に発生する。段階的アプローチで「依存はあるが移行可能」な状態を維持する。',
     recommendation:
-      '初期から Postgres-compatible (RDS / Cloud SQL / Supabase 等で動く) 構成を選定。独自データベース (DynamoDB / Cosmos DB 等) は「ロックイン承知の上で採用」を意識する。',
+      '初期から Postgres-compatible (マネージドRDB / Cloud SQL / Supabase 等で動く) 構成を選定。独自データベース (マネージドNoSQL / Cosmos DB 等) は「ロックイン承知の上で採用」を意識する。',
     reusability: 'high',
     techTags: ['architecture', 'cloud', 'aws', 'gcp', 'azure', 'vendor_neutral'],
     processTags: ['architecture', 'risk_management', 'project_management'],
@@ -772,7 +772,7 @@ export const SEED_KNOWLEDGE: SeedKnowledge[] = [
     conclusion:
       '個人情報収集は「メール 1 通で完了」とは想定しない。多段階リマインド + 個別フォロー + 特殊ケース対応の 3 点を最初から計画する。',
     recommendation:
-      '提出状況可視化は社員番号 × 提出済み/未提出のシンプルな表で十分。Slack / Teams で人事部内に日次共有することで意識化が進む。',
+      '提出状況可視化は社員番号 × 提出済み/未提出のシンプルな表で十分。ビジネスチャットで人事部内に日次共有することで意識化が進む。',
     reusability: 'high',
     techTags: ['hr', 'mynumber'],
     processTags: ['operations', 'compliance', 'hr_process'],
@@ -782,13 +782,13 @@ export const SEED_KNOWLEDGE: SeedKnowledge[] = [
     title: '営業案件管理の入力習慣化 — リーダー先行 + 業務埋込み戦略',
     knowledgeType: 'lesson',
     background:
-      'CRM (Salesforce / HubSpot 等) を導入しても、営業現場での入力が習慣化せず Excel に逆戻りする事例が多発。せっかく導入したシステムが形骸化していた。',
+      'CRM (SFA/CRMツール / MA/CRMツール 等) を導入しても、営業現場での入力が習慣化せず 表計算ソフトに逆戻りする事例が多発。せっかく導入したシステムが形骸化していた。',
     content:
       '営業の入力習慣化には組織的アプローチが不可欠。失敗の主因は「画面操作の研修だけで動機付けが不足」と「入力項目が多すぎる」と「マネージャ層が CRM を業務に組み込んでいない」の 3 点。対策: (1) 必須項目を最小限に絞る (案件名 / 顧客 / 金額 / クローズ予定日 / フェーズの 5 項目程度)、(2) マネージャ層が CRM ベースで週次レビュー会議を実施 (= 部下の入力動機が継続)、(3) 入力データから自動でフィードバックを返す (例: 「あなたの案件は平均より早期にクローズ」等)。',
     result:
       '上記対策を実施したプロジェクトで、入力率 60% → 92% に改善。営業マネージャの集計業務時間も週 8 時間 → 1 時間に短縮し、戦略業務に集中できる体制に。',
     conclusion:
-      'CRM の成否は「リーダー層の利用」と「入力項目の最小化」で決まる。リーダーが Excel メールで指示すると部下も追従する。',
+      'CRM の成否は「リーダー層の利用」と「入力項目の最小化」で決まる。リーダーが 表計算ソフト メールで指示すると部下も追従する。',
     recommendation:
       '営業 30 名以上の組織では、リーダー教育を一般教育の 2 週間前倒しで実施。利用率の月次モニタリング + 部署別フィードバックで継続改善。',
     reusability: 'high',
@@ -802,13 +802,13 @@ export const SEED_KNOWLEDGE: SeedKnowledge[] = [
     background:
       'マーケ施策 (広告 / メール / SEM / コンテンツマーケ) の効果測定が「総 CV 数」のみで評価され、施策ごとの貢献度や顧客 LTV が見えていない事例が多発。',
     content:
-      'マーケ施策の効果測定は 2 軸が必要: (1) Attribution (どの施策がどれだけ獲得に貢献したか) — Last-touch / Multi-touch / Data-driven の 3 種を理解した上でモデル選択。Multi-touch が現実的な妥協案、(2) LTV (Customer Lifetime Value) — 獲得時のコスト効率だけでなく、その後の継続利用・追加購買による収益も含めた評価。両軸での評価により「短期 CV は高いが LTV が低い施策」と「短期 CV は低いが LTV が高い施策」を区別でき、予算配分の精度が向上する。BI ツール (Tableau / Looker) で両軸を統合ダッシュボード化することが標準。',
+      'マーケ施策の効果測定は 2 軸が必要: (1) Attribution (どの施策がどれだけ獲得に貢献したか) — Last-touch / Multi-touch / Data-driven の 3 種を理解した上でモデル選択。Multi-touch が現実的な妥協案、(2) LTV (Customer Lifetime Value) — 獲得時のコスト効率だけでなく、その後の継続利用・追加購買による収益も含めた評価。両軸での評価により「短期 CV は高いが LTV が低い施策」と「短期 CV は低いが LTV が高い施策」を区別でき、予算配分の精度が向上する。BI ツール (BIツール / BIツール) で両軸を統合ダッシュボード化することが標準。',
     result:
       'Attribution + LTV の両軸を導入した EC・SaaS で、マーケ予算の効率が 20-40% 改善 (=同予算で獲得数 / LTV 増加)。',
     conclusion:
       '単一指標 (CV 数 / CPA) ではマーケ施策の真価が見えない。Attribution + LTV の両軸で総合評価する。',
     recommendation:
-      'Multi-touch Attribution は Google Analytics 4 の標準機能 (data-driven attribution) で十分実用的。LTV 計算は BI 側で 6-12 ヶ月の継続データで実装。',
+      'Multi-touch Attribution は アクセス解析ツール 4 の標準機能 (data-driven attribution) で十分実用的。LTV 計算は BI 側で 6-12 ヶ月の継続データで実装。',
     reusability: 'medium',
     techTags: ['analytics', 'ga4', 'tableau', 'looker', 'attribution'],
     processTags: ['marketing', 'data_analysis', 'measurement'],
@@ -874,7 +874,7 @@ export const SEED_KNOWLEDGE: SeedKnowledge[] = [
     background:
       'サブスクサービスの顧客サポート問合せが急増し、サポートチームの人員が不足。問合せ対応コストが事業利益を圧迫する事例が多発。',
     content:
-      '顧客サポート問合せ削減は 2 軸で進める: (1) Self-Service の充実 (FAQ / ヘルプセンター / アプリ内ガイド / チャットボット)、ただし「自己解決させる」だけでなく「ユーザがすぐに答えに辿り着ける UX」が重要、(2) Context-Awareness による事前対応 (「アプリ内で何度も同じ画面を行き来している」「エラーに遭遇した直後」のタイミングで proactive にヘルプを提示)。Salesforce / Intercom / Zendesk 等の SaaS で実装可能。サブスク解約 UX のように「サポートを必要とする」状況を構造的に減らす設計も併せて検討。',
+      '顧客サポート問合せ削減は 2 軸で進める: (1) Self-Service の充実 (FAQ / ヘルプセンター / アプリ内ガイド / チャットボット)、ただし「自己解決させる」だけでなく「ユーザがすぐに答えに辿り着ける UX」が重要、(2) Context-Awareness による事前対応 (「アプリ内で何度も同じ画面を行き来している」「エラーに遭遇した直後」のタイミングで proactive にヘルプを提示)。SFA/CRMツール / Intercom / Zendesk 等の SaaS で実装可能。サブスク解約 UX のように「サポートを必要とする」状況を構造的に減らす設計も併せて検討。',
     result:
       'Self-Service + Context-Awareness を導入した SaaS で、サポート問合せが 30-50% 削減。同時に NPS (Net Promoter Score) も向上 (=ユーザは「すぐに解決した」体験を価値と感じる)。',
     conclusion:
@@ -916,9 +916,9 @@ export const SEED_KNOWLEDGE: SeedKnowledge[] = [
     conclusion:
       'データ品質は「正確性」だけでは捉えきれない。6 次元で多面的に評価し、継続的に改善する。',
     recommendation:
-      'Great Expectations / dbt tests 等のデータ品質テストフレームワークで自動化。テスト失敗時は Slack 通知でデータ運用者に即座に共有。',
+      'Great Expectations / ELTツール tests 等のデータ品質テストフレームワークで自動化。テスト失敗時は ビジネスチャット 通知でデータ運用者に即座に共有。',
     reusability: 'high',
-    techTags: ['data_quality', 'great_expectations', 'dbt', 'dwh', 'data_governance'],
+    techTags: ['data_quality', 'great_expectations', 'ELTツール', 'dwh', 'data_governance'],
     processTags: ['data_management', 'governance', 'operations'],
     businessDomainTags: ['データ品質', 'データガバナンス', 'BI', 'DWH', 'データ分析'],
   },
@@ -933,145 +933,142 @@ export const SEED_KNOWLEDGE: SeedKnowledge[] = [
 
 export const SAMPLE_PROJECTS: SeedSampleProject[] = [
   // ================================================================
-  // Sample Project A: PowerPlatform 業務アプリ (経理 / 中小企業向け業務改善)
+  // Sample Project A: ローコード基盤 業務アプリ (経理 / 中小企業向け業務改善)
   // ================================================================
   {
     name: '請求書承認ワークフロー構築 (サンプル)',
     customerName: 'サンプル A 商事',
     purpose:
-      '紙ベースの請求書承認業務を PowerPlatform で自動化し、月次クローズ業務の負荷を軽減する。経理担当者の請求書回付に関する作業時間を月 40 時間 → 8 時間に削減し、月次決算の早期化 (現状 5 営業日 → 目標 3 営業日) を実現する。',
+      '紙ベースの請求書承認業務を ローコード基盤で自動化し、月次クローズ業務の負荷を軽減する。経理担当者の請求書回付に関する作業時間を月 40 時間 → 8 時間に削減し、月次決算の早期化 (現状 5 営業日 → 目標 3 営業日) を実現する。',
     background:
       '月末に発生する請求書の承認作業が紙の物理回付で 3-5 営業日要しており、月次決算を圧迫していた。担当者の 8 割が紙の物理的な追跡 (どこで止まっているかの確認) に時間を費やしており、本来の経理判断業務 (仕訳精査・残高確認等) に集中できない状態が常態化。さらに在宅勤務との両立が困難で、月末は出社必須となるなど業務継続性にも課題があった。',
     scope:
-      'PowerApps によるモバイル対応の承認画面、Power Automate による回付・通知の自動化、SharePoint List による電子保管 (改ざん防止)、Outlook 連携によるメール通知、Teams 連携によるチャット通知。承認権限マトリクス (金額帯 × 部門) は Excel マスタを取り込む形で柔軟性を確保。承認履歴は監査要件のため最低 7 年保管。',
+      'ローコード基盤によるモバイル対応の承認画面、業務自動化ツールによる回付・通知の自動化、ドキュメント管理ツールによる電子保管 (改ざん防止)、メール・予定表ツール 連携によるメール通知、ビジネスチャット 連携によるチャット通知。承認権限マトリクス (金額帯 × 部門) は 表計算ソフト マスタを取り込む形で柔軟性を確保。承認履歴は監査要件のため最低 7 年保管。',
     outOfScope:
-      'SAP との直接連携 (会計仕訳起票は別プロジェクト)、外部取引先からの電子請求書受領 (PDF アップロードのみ対応、e-Invoice 標準対応は次フェーズ)、AI による自動仕訳推定。',
+      'ERPとの直接連携 (会計仕訳起票は別プロジェクト)、外部取引先からの電子請求書受領 (PDF アップロードのみ対応、e-Invoice 標準対応は次フェーズ)、AI による自動仕訳推定。',
     devMethod: 'low_code_no_code',
     contractType: '準委任',
     businessDomainTags: ['経理', '請求業務', '会計', '業務改善', '社内承認'],
     techStackTags: [
-      'PowerPlatform',
-      'PowerApps',
-      'PowerAutomate',
-      'SharePointSite',
-      'SharePointList',
-      'Outlook',
-      'Teams',
+      'ローコード基盤',
+      '業務自動化ツール',
+      'ドキュメント管理ツール',
+      'メール・予定表ツール',
+      'ビジネスチャット',
     ],
     processTags: ['仕様検討', '設計検討', '開発', 'テスト', '受け入れ'],
     plannedStartDate: '2026-04-01',
     plannedEndDate: '2026-09-30',
-    status: 'in_progress',
+    status: 'closed',
   },
 
   // ================================================================
-  // Sample Project B: AWS マルチアカウントによるクラウドインフラ構築 (SaaS スタートアップ)
+  // Sample Project B: パブリッククラウド マルチアカウントによるクラウドインフラ構築 (SaaS スタートアップ)
   // ================================================================
   {
-    name: '新規 SaaS 基盤の AWS マルチアカウント構築 (サンプル)',
+    name: '新規 SaaS 基盤のパブリッククラウド マルチアカウント構築 (サンプル)',
     customerName: 'サンプル B Tech',
     purpose:
-      '新規ローンチする B2B SaaS の本番運用基盤を AWS マルチアカウント構成で構築し、初期トラフィック (DAU 1,000) から成長期 (DAU 10 万) まで耐えうるスケーラブルな基盤を確立する。同時に、SOC 2 Type 2 取得を見据えたセキュリティガバナンスとコスト管理の自動化を組み込む。',
+      '新規ローンチする B2B SaaS の本番運用基盤を パブリッククラウド マルチアカウント構成で構築し、初期トラフィック (DAU 1,000) から成長期 (DAU 10 万) まで耐えうるスケーラブルな基盤を確立する。同時に、SOC 2 Type 2 取得を見据えたセキュリティガバナンスとコスト管理の自動化を組み込む。',
     background:
       'スタートアップが PoC から本格ローンチへ移行する段階で、PoC 構成 (シングルアカウント・手動構築・コンソール操作中心) では本番運用に耐えない状況。複数環境 (dev/staging/prod) の分離、IAM ガバナンス、コスト可視化、再現可能なインフラ構築が必須となり、エンジニア 5 名規模のチームでも運用可能な仕組みが求められた。創業期のため将来的な人員拡張も見越し、新人エンジニアでも安全に変更を加えられる教育性を持たせることも要件に含まれた。',
     scope:
-      'AWS Organizations / Service Control Policies (SCPs) によるアカウント分離 (root/security/log-archive/dev/staging/prod の 6 アカウント構成)、Terraform Cloud による IaC 化と remote state 管理、ECS Fargate + Aurora PostgreSQL の本番アーキテクチャ、CloudFront + AWS WAF の Web 配信層、GitHub Actions による CI/CD pipeline (PR レビュー → staging deploy → prod deploy approval gate)、CloudWatch + Datadog による監視 (SLO 設定込み)、災害対策 (RTO 4 時間 / RPO 1 時間)、SOC 2 準備の最低限ベースライン (CloudTrail / GuardDuty / Config / KMS 暗号化)。',
+      'パブリッククラウド Organizations / Service Control Policies (SCPs) によるアカウント分離 (root/security/log-archive/dev/staging/prod の 6 アカウント構成)、IaCツール Cloud による IaC 化と remote state 管理、マネージドコンテナ基盤 サーバレスコンテナ + マネージドRDB PostgreSQL の本番アーキテクチャ、CDN + パブリッククラウド WAF の Web 配信層、Gitホスティング Actions による CI/CD pipeline (PR レビュー → staging deploy → prod deploy approval gate)、クラウド監視 + 監視SaaS による監視 (SLO 設定込み)、災害対策 (RTO 4 時間 / RPO 1 時間)、SOC 2 準備の最低限ベースライン (CloudTrail / GuardDuty / Config / 鍵管理サービス 暗号化)。',
     outOfScope:
       '機械学習基盤 (SageMaker)、特定リージョン以外への展開 (US 拡張は V2)、コンプライアンス監査本番 (SOC 2 取得は別プロジェクト)、Multi-Region Active-Active 構成。',
     devMethod: 'scratch',
     contractType: '請負',
     businessDomainTags: ['SaaS', 'クラウド運用', 'セキュリティ', 'インフラ', 'スタートアップ'],
     techStackTags: [
-      'AWS',
-      'Terraform',
-      'ECS',
-      'Fargate',
-      'RDS',
-      'Aurora',
+      'パブリッククラウド',
+      'IaCツール',
+      'マネージドコンテナ基盤',
+      'サーバレスコンテナ',
+      'マネージドRDB',
       'PostgreSQL',
-      'CloudFront',
+      'CDN',
       'WAF',
-      'GitHubActions',
-      'CloudWatch',
-      'Datadog',
-      'KMS',
+      'CI/CDツール',
+      'クラウド監視',
+      '監視SaaS',
+      '鍵管理サービス',
     ],
     processTags: ['アーキテクチャ設計', '構築', '移行', 'テスト', '本番リリース', '運用設計'],
     plannedStartDate: '2026-03-15',
     plannedEndDate: '2026-08-31',
-    status: 'in_progress',
+    status: 'closed',
   },
 
   // ================================================================
-  // Sample Project C: Salesforce による営業組織の可視化・標準化 (大企業向けコンサル)
+  // Sample Project C: SFA/CRMツールによる営業組織の可視化・標準化 (大企業向けコンサル)
   // ================================================================
   {
-    name: 'Salesforce による営業活動可視化 (サンプル)',
+    name: 'SFA/CRMツールによる営業活動可視化 (サンプル)',
     customerName: 'サンプル C 商事',
     purpose:
-      '部門ごとに属人化した営業活動を Salesforce Sales Cloud で可視化し、商談状況・案件確度・顧客接点を全社共通基盤で管理する。営業マネージャーが週次の案件レビューを Excel 集計から脱却させ、データドリブンな営業組織への変革を 6 ヶ月で完遂させる。',
+      '部門ごとに属人化した営業活動を SFA/CRMツール SFA/CRMツールで可視化し、商談状況・案件確度・顧客接点を全社共通基盤で管理する。営業マネージャーが週次の案件レビューを 表計算ソフト 集計から脱却させ、データドリブンな営業組織への変革を 6 ヶ月で完遂させる。',
     background:
-      '既存営業は Excel + Outlook + 個人ノートで案件管理しており、商談状況の社内共有が口頭ベースで行われていた。マネージャーは案件状況を把握するのに毎週 8 時間以上の集計作業が発生し、戦略的判断 (どの案件に経営層を投入すべきか) が後手に回っていた。役員からは「営業の見える化」が経営課題として明示されており、トップダウンでの導入決定。営業 30 名のうち約 20 名が IT ツールに苦手意識を持っており、現場抵抗の緩和も成功要件に含まれた。',
+      '既存営業は 表計算ソフト + メール・予定表ツール + 個人ノートで案件管理しており、商談状況の社内共有が口頭ベースで行われていた。マネージャーは案件状況を把握するのに毎週 8 時間以上の集計作業が発生し、戦略的判断 (どの案件に経営層を投入すべきか) が後手に回っていた。役員からは「営業の見える化」が経営課題として明示されており、トップダウンでの導入決定。営業 30 名のうち約 20 名が IT ツールに苦手意識を持っており、現場抵抗の緩和も成功要件に含まれた。',
     scope:
-      'Salesforce Sales Cloud のテナント初期設定、リード / 商談 / 取引先のデータモデル設計、既存 Excel データ (約 5,000 件) の移行、3 拠点 (東京・大阪・名古屋) の営業 30 名への教育プログラム実施、ダッシュボード設計 (役員ビュー / マネージャビュー / 担当者ビューの 3 種)、運用ルール策定 (商談ステージ遷移基準・データ品質基準)、最低 6 ヶ月の運用伴走支援、Apex によるカスタム入力チェック (任意項目の必須化等)。',
+      'SFA/CRMツール SFA/CRMツールのテナント初期設定、リード / 商談 / 取引先のデータモデル設計、既存 表計算ソフト データ (約 5,000 件) の移行、3 拠点 (東京・大阪・名古屋) の営業 30 名への教育プログラム実施、ダッシュボード設計 (役員ビュー / マネージャビュー / 担当者ビューの 3 種)、運用ルール策定 (商談ステージ遷移基準・データ品質基準)、最低 6 ヶ月の運用伴走支援、カスタムロジック によるカスタム入力チェック (任意項目の必須化等)。',
     outOfScope:
       'Marketing Cloud (リード獲得自動化)、Service Cloud (顧客サポート)、CPQ (見積自動化)。これらは V2 で 2027 年度の検討候補。',
     devMethod: 'package',
     contractType: 'SES',
     businessDomainTags: ['営業', 'CRM', 'コンサルティング', 'データ統合', '組織変革', '教育'],
-    techStackTags: ['Salesforce', 'SalesCloud', 'Apex', 'SOQL', 'DataLoader', 'Tableau'],
+    techStackTags: ['SFA/CRMツール', 'カスタムロジック', 'クエリ言語', 'データ移行ツール', 'BIツール'],
     processTags: ['要件定義', '設計検討', 'データ移行', '教育', '運用設計', '伴走支援'],
     plannedStartDate: '2026-02-01',
     plannedEndDate: '2026-07-31',
-    status: 'in_progress',
+    status: 'closed',
   },
 
   // ================================================================
-  // Sample Project D: SAP S/4HANA 導入 (製造業 / 基幹システム刷新)
+  // Sample Project D: ERPパッケージ 導入 (製造業 / 基幹システム刷新)
   // ================================================================
   {
-    name: 'SAP S/4HANA への基幹システム移行 (サンプル)',
+    name: 'ERPパッケージへの基幹システム移行 (サンプル)',
     customerName: 'サンプル D 製造',
     purpose:
-      '老朽化したオンプレ ERP (SAP ECC 6.0) を SAP S/4HANA に移行し、サポート切れ前 (2027 年末) に基盤刷新を完遂する。同時に在庫・原価計算・財務会計の業務プロセスを標準化し、5 工場のグループガバナンスを強化する。連結原価計算の手動 Excel 集計 (2 週間) を 3 営業日に短縮することを KPI とする。',
+      '老朽化したオンプレ ERP (ERP ECC 6.0) を ERPパッケージに移行し、サポート切れ前 (2027 年末) に基盤刷新を完遂する。同時に在庫・原価計算・財務会計の業務プロセスを標準化し、5 工場のグループガバナンスを強化する。連結原価計算の手動 表計算ソフト 集計 (2 週間) を 3 営業日に短縮することを KPI とする。',
     background:
-      '自動車部品製造の中堅企業 (年商 300 億)。基幹システムが 15 年以上稼働しており、ベンダーサポート切れの問題に加えて、5 工場それぞれが独自カスタマイズを行ってきたためマスタ統一すらできていない。本社の連結原価計算が手動 Excel 集計で 2 週間かかる状態が常態化し、月次決算の早期化が長年の経営課題だった。ERP 刷新と同時に基幹業務プロセスの標準化を行わないと、システムだけ新しくしても効果が出ない構造的問題を抱えていた。',
+      '自動車部品製造の中堅企業 (年商 300 億)。基幹システムが 15 年以上稼働しており、ベンダーサポート切れの問題に加えて、5 工場それぞれが独自カスタマイズを行ってきたためマスタ統一すらできていない。本社の連結原価計算が手動 表計算ソフト 集計で 2 週間かかる状態が常態化し、月次決算の早期化が長年の経営課題だった。ERP 刷新と同時に基幹業務プロセスの標準化を行わないと、システムだけ新しくしても効果が出ない構造的問題を抱えていた。',
     scope:
-      'SAP S/4HANA Cloud (private edition) への移行。スコープ: 財務会計 (FI) / 管理会計 (CO) / 在庫管理 (MM) / 生産計画 (PP)。マスタ統一プロジェクトを並行 (品目マスタ約 15 万件・取引先マスタ約 8,000 件)。ABAP カスタム機能は現行の 3 割に削減 (標準機能で代替できるものは標準利用)。Fiori UI 採用で UX 刷新。データ移行は SLT (System Landscape Transformation) によるダウンタイム最小化アプローチ (本番切替時間 48 時間以内)。',
+      'ERPパッケージ Cloud (private edition) への移行。スコープ: 財務会計 (FI) / 管理会計 (CO) / 在庫管理 (MM) / 生産計画 (PP)。マスタ統一プロジェクトを並行 (品目マスタ約 15 万件・取引先マスタ約 8,000 件)。ERPアドオン言語 カスタム機能は現行の 3 割に削減 (標準機能で代替できるものは標準利用)。業務UIフレームワーク UI 採用で UX 刷新。データ移行は データ連携ツール (System Landscape Transformation) によるダウンタイム最小化アプローチ (本番切替時間 48 時間以内)。',
     outOfScope:
       '営業 (SD) は別フェーズ、人事 (HCM) は対象外、グループ各社の海外子会社展開は V2',
     devMethod: 'package',
     contractType: '請負',
     businessDomainTags: ['ERP', '会計', '原価管理', '在庫管理', '生産管理', '製造業', '基幹システム', 'マスタ統合', '月次決算'],
-    techStackTags: ['SAP', 'S/4HANA', 'ABAP', 'Fiori', 'HANA', 'SLT'],
-    processTags: ['要件定義', 'Fit&Gap分析', 'マスタ統合', 'データ移行', 'ABAP開発', 'テスト', '教育', '本番リリース'],
+    techStackTags: ['ERP', 'ERPパッケージ', 'ERPアドオン言語', '業務UIフレームワーク', 'インメモリDB', 'データ連携ツール'],
+    processTags: ['要件定義', 'Fit&Gap分析', 'マスタ統合', 'データ移行', 'ERPアドオン開発', 'テスト', '教育', '本番リリース'],
     plannedStartDate: '2026-01-01',
     plannedEndDate: '2027-06-30',
-    status: 'in_progress',
+    status: 'closed',
   },
 
   // ================================================================
-  // Sample Project E: kintone 導入 (中小企業 / 業務統合 / DX)
+  // Sample Project E: ローコード基盤 導入 (中小企業 / 業務統合 / DX)
   // ================================================================
   {
-    name: 'kintone による業務アプリ統合プラットフォーム構築 (サンプル)',
+    name: 'ローコード基盤による業務アプリ統合プラットフォーム構築 (サンプル)',
     customerName: 'サンプル E 物産',
     purpose:
-      '部署ごとに乱立した Excel 管理 (見積管理 / 受注管理 / 在庫管理 / 顧客台帳 / 経費精算など 30+ 個) を kintone に統合し、情報の二重管理と転記ミスを解消する。中小企業の限られた IT 人員 (情シス 1 名 + 兼任 2 名) でも持続可能な仕組みを構築する。手作業の二重入力時間を月 80 時間 → 10 時間に削減することを目標とする。',
+      '部署ごとに乱立した 表計算ソフト 管理 (見積管理 / 受注管理 / 在庫管理 / 顧客台帳 / 経費精算など 30+ 個) を ローコード基盤に統合し、情報の二重管理と転記ミスを解消する。中小企業の限られた IT 人員 (情シス 1 名 + 兼任 2 名) でも持続可能な仕組みを構築する。手作業の二重入力時間を月 80 時間 → 10 時間に削減することを目標とする。',
     background:
-      '食品商社 50 名規模企業。長年 Excel + Access + メールで業務が回っていたが、コロナ禍のテレワーク移行で「ファイル共有・バージョン管理・同時編集」の問題が一斉に顕在化。手作業の二重入力と顧客情報の散在で月次決算が遅れ、経営判断のスピードを阻害していた。過去にスクラッチ開発を試みたが情シス人員不足で頓挫した経緯があり、今回はベンダーロックイン回避と運用持続可能性を最重要視している。',
+      '食品商社 50 名規模企業。長年 表計算ソフト + Access + メールで業務が回っていたが、コロナ禍のテレワーク移行で「ファイル共有・バージョン管理・同時編集」の問題が一斉に顕在化。手作業の二重入力と顧客情報の散在で月次決算が遅れ、経営判断のスピードを阻害していた。過去にスクラッチ開発を試みたが情シス人員不足で頓挫した経緯があり、今回はベンダーロックイン回避と運用持続可能性を最重要視している。',
     scope:
-      'kintone 標準アプリ + JavaScript カスタマイズで 12 アプリを構築 (見積 / 受注 / 在庫 / 顧客 / 経費 / 勤怠 / 日報 / 出張申請 / 契約管理 / 取引先 / 商品マスタ / プロジェクト管理)。Microsoft 365 (Outlook / Teams / SharePoint) 連携。Zapier / Make による外部 SaaS 連携 (会計 freee、CRM HubSpot)。情シス担当 1 名で保守可能なシンプル設計を最優先 (高度なカスタマイズは原則禁止、避けられない場合は徹底的に文書化)。',
+      'ローコード基盤標準アプリ + JavaScript カスタマイズで 12 アプリを構築 (見積 / 受注 / 在庫 / 顧客 / 経費 / 勤怠 / 日報 / 出張申請 / 契約管理 / 取引先 / 商品マスタ / プロジェクト管理)。オフィススイート (メール・予定表ツール / ビジネスチャット / ドキュメント管理ツール) 連携。業務自動化ツール / 業務自動化ツールによる外部 SaaS 連携 (会計 クラウド会計ソフト、CRM MA/CRMツール)。情シス担当 1 名で保守可能なシンプル設計を最優先 (高度なカスタマイズは原則禁止、避けられない場合は徹底的に文書化)。',
     outOfScope:
       '倉庫の WMS、専用ハンドヘルダー連携、需要予測 AI、外部取引先との直接データ連携',
     devMethod: 'low_code_no_code',
     contractType: '準委任',
     businessDomainTags: ['業務統合', '受発注', '在庫管理', '顧客管理', '経費管理', '中小企業', 'DX', '業務改善', 'ローコード'],
-    techStackTags: ['kintone', 'JavaScript', 'Microsoft365', 'Outlook', 'Teams', 'Zapier', 'Make', 'freee', 'HubSpot'],
+    techStackTags: ['ローコード基盤', 'JavaScript', 'オフィススイート', 'メール・予定表ツール', 'ビジネスチャット', '業務自動化ツール', 'クラウド会計ソフト', 'MA/CRMツール'],
     processTags: ['要件ヒアリング', '業務フロー整理', 'アプリ設計', '構築', '教育', '伴走支援'],
     plannedStartDate: '2026-04-01',
     plannedEndDate: '2026-12-31',
-    status: 'in_progress',
+    status: 'closed',
   },
 
   // ================================================================
@@ -1085,41 +1082,41 @@ export const SAMPLE_PROJECTS: SeedSampleProject[] = [
     background:
       '年商 50 億円の通販事業者。EC ピーク (Black Friday / 年末セール) のたびにシステム全体障害でサービス停止が発生し、原因特定に 4 時間以上かかる事態が年 2-3 回起きていた。新機能投入も「全体テスト 2 ヶ月」が必須で競合 (Amazon / 楽天) に対するスピード劣後が経営課題。CTO 交代を機にアーキテクチャ刷新が経営方針として承認された。社内エンジニア 15 名のうち 5 名がモノリス保守でほぼ専任化しており、新人エンジニアの離職率も高い状態が続いていた。',
     scope:
-      '注文ドメイン / 在庫ドメイン / 会員ドメイン / 決済ドメインの 4 マイクロサービス化。Strangler Fig パターンで段階的に分離 (12 ヶ月計画の Phase 1: 注文ドメイン)。Spring Boot + Kotlin、PostgreSQL、Kafka (イベント駆動)、Kubernetes (EKS)。CI/CD 整備 (GitHub Actions + ArgoCD)、DDD 採用、サービスメッシュ (Istio)、分散トレーシング (Jaeger)、契約テスト (Pact)。データベース分割は段階的アプローチ (まずスキーマ分離 → 物理 DB 分離)。',
+      '注文ドメイン / 在庫ドメイン / 会員ドメイン / 決済ドメインの 4 マイクロサービス化。Strangler Fig パターンで段階的に分離 (12 ヶ月計画の Phase 1: 注文ドメイン)。Spring Boot + Kotlin、PostgreSQL、Kafka (イベント駆動)、Kubernetes (マネージドKubernetes)。CI/CD 整備 (Gitホスティング Actions + ArgoCD)、DDD 採用、サービスメッシュ (Istio)、分散トレーシング (Jaeger)、契約テスト (Pact)。データベース分割は段階的アプローチ (まずスキーマ分離 → 物理 DB 分離)。',
     outOfScope:
       '商品マスタ管理 (CMS 系)、レコメンド AI、フロントエンド改修、配送・物流連携',
     devMethod: 'scratch',
     contractType: '請負',
     businessDomainTags: ['EC', '注文管理', '在庫', '会員管理', '決済', '通販', 'B2C', 'マイクロサービス'],
-    techStackTags: ['Java', 'Kotlin', 'SpringBoot', 'PostgreSQL', 'Kafka', 'Kubernetes', 'EKS', 'Istio', 'Jaeger', 'Docker', 'ArgoCD', 'GitHubActions'],
+    techStackTags: ['Java', 'Kotlin', 'SpringBoot', 'PostgreSQL', 'Kafka', 'Kubernetes', 'マネージドKubernetes', 'Istio', 'Jaeger', 'Docker', 'ArgoCD', 'CI/CDツール'],
     processTags: ['アーキテクチャ設計', 'DDD設計', '段階的移行', 'リファクタリング', 'テスト自動化', '本番切替', 'リリース運用'],
     plannedStartDate: '2026-03-01',
     plannedEndDate: '2027-02-28',
-    status: 'in_progress',
+    status: 'closed',
   },
 
   // ================================================================
-  // Sample Project G: データ分析基盤 (Snowflake + BI / 小売業)
+  // Sample Project G: データ分析基盤 (クラウドDWH + BI / 小売業)
   // ================================================================
   {
     name: '全社データ統合 + BI ダッシュボード構築 (サンプル)',
     customerName: 'サンプル G リテール',
     purpose:
-      '店舗 POS / EC / 顧客管理 / 在庫の 4 系統に分散したデータを Snowflake DWH に統合し、経営層が日次で全社状況を把握できる Tableau ダッシュボードを構築する。データドリブンな意思決定文化を醸成し、機会損失 (欠品 / 過剰在庫) を年 5 億円削減する。経営会議の追加質問に「翌営業日まで持ち帰り」状態を解消する。',
+      '店舗 POS / EC / 顧客管理 / 在庫の 4 系統に分散したデータを クラウドDWH DWH に統合し、経営層が日次で全社状況を把握できる BIツール ダッシュボードを構築する。データドリブンな意思決定文化を醸成し、機会損失 (欠品 / 過剰在庫) を年 5 億円削減する。経営会議の追加質問に「翌営業日まで持ち帰り」状態を解消する。',
     background:
       'アパレル小売 (200 店舗 + EC) の中堅企業。データは各システムに閉じておりサイロ化、月次レポートは情シスが手動 ETL で 3 営業日かけて作成。経営会議での「商品 X の地域別売れ行きは?」のような追加質問に翌日まで答えられない。データアナリスト不在で BI ツール導入の試みも過去に 2 度失敗している。今回は経営層の強いコミットメント (CEO 直轄プロジェクト) と社内データアナリスト育成プログラムを並行することで、3 度目の正直として推進。',
     scope:
-      'Snowflake DWH 構築、dbt によるデータ変換層、Fivetran による各 SaaS からの ELT (Salesforce / Shopify / 在庫システム)、Tableau Cloud によるダッシュボード (経営層 / 店舗マネージャ / バイヤ向け 3 系統)、データガバナンス (アクセス権限 / マスタ管理 / 履歴保存 / GDPR 対応)、データアナリスト 2 名の社内育成プログラム (6 ヶ月の OJT)、Slack 連携によるアラート通知 (在庫切れ予兆等)。',
+      'クラウドDWH DWH 構築、ELTツール によるデータ変換層、データ連携ツール による各 SaaS からの ELT (SFA/CRMツール / ECプラットフォーム / 在庫システム)、BIツール Cloud によるダッシュボード (経営層 / 店舗マネージャ / バイヤ向け 3 系統)、データガバナンス (アクセス権限 / マスタ管理 / 履歴保存 / GDPR 対応)、データアナリスト 2 名の社内育成プログラム (6 ヶ月の OJT)、ビジネスチャット 連携によるアラート通知 (在庫切れ予兆等)。',
     outOfScope:
       'ML/AI 予測モデル (V2 で需要予測検討)、オンプレ既存システムリプレース、海外店舗データ統合',
     devMethod: 'package',
     contractType: '準委任',
     businessDomainTags: ['データ分析', 'BI', 'DWH', '小売', 'POS', 'EC', '在庫管理', '経営支援', 'マーケティング'],
-    techStackTags: ['Snowflake', 'dbt', 'Fivetran', 'Tableau', 'Salesforce', 'Shopify', 'SQL', 'Python', 'Slack'],
+    techStackTags: ['クラウドDWH', 'ELTツール', 'データ連携ツール', 'BIツール', 'SFA/CRMツール', 'ECプラットフォーム', 'SQL', 'Python', 'ビジネスチャット'],
     processTags: ['要件定義', 'データモデリング', 'ETL設計', 'ダッシュボード設計', 'データガバナンス', '教育', '運用伴走'],
     plannedStartDate: '2026-04-01',
     plannedEndDate: '2026-12-31',
-    status: 'in_progress',
+    status: 'closed',
   },
 
   // ================================================================
@@ -1139,11 +1136,11 @@ export const SAMPLE_PROJECTS: SeedSampleProject[] = [
     devMethod: 'scratch',
     contractType: '請負',
     businessDomainTags: ['医療', '電子カルテ', '薬剤管理', '服薬指導', '監査対応', '規制業界', 'コンプライアンス', '個人情報保護'],
-    techStackTags: ['Java', 'JavaEE', 'Spring', 'Oracle', 'HL7', 'FHIR'],
+    techStackTags: ['Java', 'JavaEE', 'Spring', '商用データベース', 'HL7', 'FHIR'],
     processTags: ['要件定義', '規制対応', '設計', '実装', 'テスト', '監査対応', '本番リリース'],
     plannedStartDate: '2026-05-01',
     plannedEndDate: '2026-12-31',
-    status: 'in_progress',
+    status: 'closed',
   },
 
   // ================================================================
@@ -1153,21 +1150,21 @@ export const SAMPLE_PROJECTS: SeedSampleProject[] = [
     name: '人事 / 勤怠 / 給与システムの SaaS 統合刷新 (サンプル)',
     customerName: 'サンプル I コーポレート',
     purpose:
-      '別ベンダーの 3 システム (人事マスタ / 勤怠管理 / 給与計算) を SmartHR + KING OF TIME + 給与奉行クラウド に統合し、人事業務の二重入力 (毎月 200 件超の手動データ移送) を解消する。法改正対応の運用負荷を 1 担当者から外部 SaaS 提供側に移管し、人事部の戦略業務 (人材開発・組織開発) への集中を可能にする。',
+      '別ベンダーの 3 システム (人事マスタ / 勤怠管理 / 給与計算) を 人事労務SaaS + KING OF TIME + 給与計算ソフトクラウド に統合し、人事業務の二重入力 (毎月 200 件超の手動データ移送) を解消する。法改正対応の運用負荷を 1 担当者から外部 SaaS 提供側に移管し、人事部の戦略業務 (人材開発・組織開発) への集中を可能にする。',
     background:
       '1,200 名規模の企業。人事マスタは 20 年前から自社開発の Lotus Notes 系で運用、勤怠は別ベンダー、給与は税理士事務所連携の昔のパッケージ。3 系統間で社員情報を毎月人手で同期しており、人事部 3 名のうち 1 名が完全にこの作業に張り付いている状態。働き方改革 / フレックス制導入で勤怠ロジックも複雑化が必要となり、現状システムでは対応コストが膨らむ一方。法改正 (年末調整デジタル化、社会保険手続きのオンライン化) も既存システムでは追従できず、刷新のタイミングが熟した。',
     scope:
-      'SmartHR (人事マスタ・労務手続き) + KING OF TIME (勤怠) + 給与奉行クラウド (給与計算) の 3 SaaS 連携構成。連携ハブを kintone で構築し、社員情報の Single Source of Truth を SmartHR に集約。マイナンバー収集・年末調整・社会保険手続きも自動化。データ移行は 1,200 名分 + 過去 3 年の勤怠 / 給与履歴 (約 50 万レコード)。フレックス勤務 / 裁量労働制 / 在宅勤務手当 の複雑な勤怠ロジック設計。',
+      '人事労務SaaS (人事マスタ・労務手続き) + KING OF TIME (勤怠) + 給与計算ソフトクラウド (給与計算) の 3 SaaS 連携構成。連携ハブを ローコード基盤で構築し、社員情報の Single Source of Truth を 人事労務SaaS に集約。マイナンバー収集・年末調整・社会保険手続きも自動化。データ移行は 1,200 名分 + 過去 3 年の勤怠 / 給与履歴 (約 50 万レコード)。フレックス勤務 / 裁量労働制 / 在宅勤務手当 の複雑な勤怠ロジック設計。',
     outOfScope:
       '採用管理 (ATS) / タレントマネジメント / 人事評価 / 福利厚生プラットフォーム',
     devMethod: 'package',
     contractType: '準委任',
     businessDomainTags: ['人事', '労務', '勤怠管理', '給与計算', 'マイナンバー', 'コンプライアンス', '働き方改革', '社会保険'],
-    techStackTags: ['SmartHR', 'KingOfTime', '給与奉行', 'kintone', 'API連携'],
+    techStackTags: ['人事労務SaaS', '勤怠管理SaaS', '給与計算ソフト', 'ローコード基盤', 'API連携'],
     processTags: ['要件定義', 'SaaS選定', 'データ移行', '連携設計', '教育', '運用設計'],
     plannedStartDate: '2026-04-01',
     plannedEndDate: '2026-10-31',
-    status: 'in_progress',
+    status: 'closed',
   },
 
   // ================================================================
@@ -1181,52 +1178,52 @@ export const SAMPLE_PROJECTS: SeedSampleProject[] = [
     background:
       'ヘルステック領域に参入する 5 名のスタートアップ。創業者は元医療従事者で「個人の健康データを AI で分析・コーチング」のビジョンを持つが、エンジニアリングは外部受託で進める方針。資金は Pre-Series A (1 億円) で、12 ヶ月の Runway 内に有料転換率 5% を達成しないと次回調達が困難という時間制約あり。市場には類似アプリが既に複数存在しており、UX の magic moment (使い始めて 1 週間以内に習慣化させる体験) で差別化することが必須要件。',
     scope:
-      'React Native による iOS / Android 同時開発、Firebase Authentication / Firestore のサーバレスバックエンド、HealthKit / Google Fit 連携、Stripe 決済、push 通知 (継続率向上施策)、簡易 AI コーチング機能 (OpenAI GPT-4 Mini)、App Store Optimization / Google Play 公開、初期ユーザ 1,000 名のクローズドベータ運営、グロース支援 (PMF 検証 + KPI 設計)。',
+      'React Native による iOS / Android 同時開発、モバイルバックエンド(BaaS) Authentication / マネージドNoSQL のサーバレスバックエンド、健康データ連携 / 健康データ連携連携、決済サービス 決済、push 通知 (継続率向上施策)、簡易 AI コーチング機能 (LLMプロバイダ 大規模言語モデル(LLM) Mini)、アプリストア Optimization / アプリストア 公開、初期ユーザ 1,000 名のクローズドベータ運営、グロース支援 (PMF 検証 + KPI 設計)。',
     outOfScope:
       'ウェアラブル独自開発、医療機器認証、薬機法に該当する機能 (診断・治療提案)、オンライン診療連携',
     devMethod: 'scratch',
     contractType: '請負',
     businessDomainTags: ['ヘルスケア', 'モバイル', 'B2C', 'スタートアップ', 'AI', 'ウェアラブル連携', 'サブスクリプション', 'グロース'],
-    techStackTags: ['ReactNative', 'TypeScript', 'Firebase', 'Firestore', 'HealthKit', 'GoogleFit', 'Stripe', 'OpenAI', 'GPT-4', 'AppStore', 'GooglePlay'],
+    techStackTags: ['ReactNative', 'TypeScript', 'モバイルバックエンド(BaaS)', 'マネージドNoSQL', '健康データ連携', '決済サービス', 'LLMプロバイダ', '大規模言語モデル(LLM)', 'アプリストア'],
     processTags: ['要件定義', 'UI/UX設計', '開発', 'クローズドベータ', 'リリース', 'グロース支援', 'KPI設計'],
     plannedStartDate: '2026-04-15',
     plannedEndDate: '2026-12-31',
-    status: 'in_progress',
+    status: 'closed',
   },
 ];
 
 export const SAMPLE_ISSUES: SeedSampleIssue[] = [
   // ================================================================
-  // Project A (PowerPlatform 請求書承認) 配下の課題
+  // Project A (ローコード基盤 請求書承認) 配下の課題
   // ================================================================
   {
     parentProjectName: '請求書承認ワークフロー構築 (サンプル)',
     type: 'issue',
-    title: 'PowerApps 一覧画面で大量データ表示時に応答が 5 秒以上に劣化',
+    title: 'ローコード基盤 一覧画面で大量データ表示時に応答が 5 秒以上に劣化',
     content:
       '請求書承認画面の一覧で過去 1 年分 (約 3,000 件) を表示した際、初回表示に 5-8 秒かかりユーザビリティが大きく低下した。営業日初日の朝の混雑時間帯にはタイムアウト (30 秒) でエラー表示されるケースも複数発生。承認待ち件数の確認が困難となり、結果として承認フローが滞留する事態が起きていた。',
     cause:
-      'PowerApps Gallery コントロールが SharePoint List 全件を取得し、クライアント側でフィルタリングしていたためクエリが Delegation 制限 (デフォルト 500 件) を超えて警告が出るも、開発時に「2,000 件まで」に上限を引き上げて対処していた。当時はテストデータが 500 件だったため見逃していた。',
+      'ローコード基盤 Gallery コントロールが ドキュメント管理ツール 全件を取得し、クライアント側でフィルタリングしていたためクエリが Delegation 制限 (デフォルト 500 件) を超えて警告が出るも、開発時に「2,000 件まで」に上限を引き上げて対処していた。当時はテストデータが 500 件だったため見逃していた。',
     impact: 'high',
     likelihood: 'high',
     priority: 'high',
     responsePolicy:
-      'SharePoint List 側で Indexed Column を設定し、PowerApps の Filter 関数を Delegation 対応関数 (StartsWith / =) のみに絞り込む。',
+      'ドキュメント管理ツール側で Indexed Column を設定し、ローコード基盤の Filter 関数を Delegation 対応関数 (StartsWith / =) のみに絞り込む。',
     responseDetail:
-      'Status / 担当者 / 月次フィルタの 3 つを Indexed Column 化。PowerApps の Search() 関数を StartsWith() に置換。さらに「未承認のみ表示」「自分宛のみ」のクイックフィルタを上部に配置し、デフォルトは未承認 + 自分宛のみ表示するよう変更 (件数を 50 件以下に絞る)。',
+      'Status / 担当者 / 月次フィルタの 3 つを Indexed Column 化。ローコード基盤の Search() 関数を StartsWith() に置換。さらに「未承認のみ表示」「自分宛のみ」のクイックフィルタを上部に配置し、デフォルトは未承認 + 自分宛のみ表示するよう変更 (件数を 50 件以下に絞る)。',
     state: 'resolved',
     result:
       'デフォルト表示の応答時間が 5-8 秒 → 0.5 秒に改善。タイムアウトエラーはゼロに。承認フロー滞留もほぼ解消した。',
     lessonLearned:
-      'PowerApps での大量データは「クライアント側全件取得 + 絞込」ではなく「サーバ側絞込 + 必要分のみ取得」が鉄則。Delegation 制限は警告ではなく禁止と捉え、警告を無視して上限引き上げで凌ぐのは将来的な技術負債になる。',
+      'ローコード基盤での大量データは「クライアント側全件取得 + 絞込」ではなく「サーバ側絞込 + 必要分のみ取得」が鉄則。Delegation 制限は警告ではなく禁止と捉え、警告を無視して上限引き上げで凌ぐのは将来的な技術負債になる。',
     riskNature: null,
   },
   {
     parentProjectName: '請求書承認ワークフロー構築 (サンプル)',
     type: 'issue',
-    title: 'Power Automate ループフロー誤動作で承認者に同一メールが 800 件送信',
+    title: '業務自動化ツール ループフロー誤動作で承認者に同一メールが 800 件送信',
     content:
-      '夜間バッチで動作させていた「未承認リマインダ送信フロー」が誤動作し、特定の承認者 1 名に同じ請求書のリマインダメールが 800 件以上送信される事故が発生。受信者の Outlook がフリーズし、業務開始時のメール確認に 1 時間以上を要した。本人からの苦情後 5 分以内にフロー停止の対応をとった。',
+      '夜間バッチで動作させていた「未承認リマインダ送信フロー」が誤動作し、特定の承認者 1 名に同じ請求書のリマインダメールが 800 件以上送信される事故が発生。受信者の メール・予定表ツール がフリーズし、業務開始時のメール確認に 1 時間以上を要した。本人からの苦情後 5 分以内にフロー停止の対応をとった。',
     cause:
       '「未承認の請求書を取得して各承認者に通知」する Apply to each フロー内で、誤って外側のループ内に「未承認件数を再取得する分岐」を埋め込んでしまっていた。N 件あるとき 1 件目処理後に件数が変わらない (= 未承認のまま) ため、ループの終了条件に到達せず再取得 → 再通知が反復された。テスト時は 2 件のテストデータしかなく、ループ性質を見逃した。',
     impact: 'high',
@@ -1235,51 +1232,51 @@ export const SAMPLE_ISSUES: SeedSampleIssue[] = [
     responsePolicy:
       'フロー内の冪等性を担保し、同一通知の二重送信を防ぐガードを設置する。',
     responseDetail:
-      '通知送信履歴を SharePoint List に記録し、「送信済みなら再送しない」のガードを追加。さらに 1 ユーザあたり 1 時間以内の同一通知は最大 3 件までに制限。Apply to each ループの設計レビューを必須化し、ネスト 2 段以上のループは設計書面でレビュー承認を取得するルールを導入。',
+      '通知送信履歴を ドキュメント管理ツールに記録し、「送信済みなら再送しない」のガードを追加。さらに 1 ユーザあたり 1 時間以内の同一通知は最大 3 件までに制限。Apply to each ループの設計レビューを必須化し、ネスト 2 段以上のループは設計書面でレビュー承認を取得するルールを導入。',
     state: 'resolved',
     result:
       '誤送信再発はゼロ。設計レビューフローも稼働しており、その後発見された別フローの誤設計 2 件をリリース前に修正できた。',
     lessonLearned:
-      'Power Automate のループフローは少量テストデータでは挙動を見抜けない。本番投入前に「終了条件が確実に到達するか」を時系列で図示確認することと、副作用ある操作 (送信・更新) には必ず冪等性ガードを入れるのが必須。',
+      '業務自動化ツールのループフローは少量テストデータでは挙動を見抜けない。本番投入前に「終了条件が確実に到達するか」を時系列で図示確認することと、副作用ある操作 (送信・更新) には必ず冪等性ガードを入れるのが必須。',
     riskNature: null,
   },
   {
     parentProjectName: '請求書承認ワークフロー構築 (サンプル)',
     type: 'issue',
-    title: 'SharePoint List のアクセス権継承で他部門にも請求書情報が閲覧可能に',
+    title: 'ドキュメント管理ツールのアクセス権継承で他部門にも請求書情報が閲覧可能に',
     content:
       'リリース 3 週間後、経理部門以外のユーザ (営業部) から「請求書の閲覧 URL がメンバ全員に共有されているグループに通知され、ファイルアクセスを試したら閲覧できた」との指摘。請求書には取引先別の単価情報が含まれており、営業情報の漏洩リスクが顕在化した。',
     cause:
-      'SharePoint Site の親グループから List がアクセス権を継承していた。承認フロー設計時に「サイトメンバーが承認操作するため」List 全体を Edit 権で公開しており、閲覧範囲を絞っていなかった。設計書には「経理のみ閲覧」と記載されていたが、実装時に SharePoint 標準機能の継承の理解が浅く、明示的に阻止していなかった。',
+      'ドキュメント管理ツールの親グループから List がアクセス権を継承していた。承認フロー設計時に「サイトメンバーが承認操作するため」List 全体を Edit 権で公開しており、閲覧範囲を絞っていなかった。設計書には「経理のみ閲覧」と記載されていたが、実装時に ドキュメント管理ツール標準機能の継承の理解が浅く、明示的に阻止していなかった。',
     impact: 'high',
     likelihood: 'high',
     priority: 'high',
     responsePolicy:
       'List のアクセス権継承を切り、明示的に経理部門のみ Edit、それ以外を権限なしに設定。',
     responseDetail:
-      'PowerShell スクリプトで全 List のアクセス権を一括見直し。継承を切り Owner / Member / Visitor の 3 グループに対し Read/Edit を明示割り当て。さらに四半期に 1 回の権限棚卸プロセスを導入。',
+      'シェルスクリプトで全リストのアクセス権を一括見直し。継承を切り Owner / Member / Visitor の 3 グループに対し Read/Edit を明示割り当て。さらに四半期に 1 回の権限棚卸プロセスを導入。',
     state: 'resolved',
     result:
       '不要なアクセス権を全テリトリーで撤去。情報漏洩は閲覧された痕跡のみで、機密データのダウンロードや外部送信は確認されなかった。',
     lessonLearned:
-      'SharePoint の権限は「継承デフォルト ON」を前提に設計する。設計書に「経理のみ」と書くだけではなく、実装でも明示的に継承を切ることが必須。リリース前のセキュリティテストとして、開発者以外のユーザによる「他部門アカウントでアクセスを試す」検証ステップを必ず入れる。',
+      'ドキュメント管理ツールの権限は「継承デフォルト ON」を前提に設計する。設計書に「経理のみ」と書くだけではなく、実装でも明示的に継承を切ることが必須。リリース前のセキュリティテストとして、開発者以外のユーザによる「他部門アカウントでアクセスを試す」検証ステップを必ず入れる。',
     riskNature: null,
   },
   {
     parentProjectName: '請求書承認ワークフロー構築 (サンプル)',
     type: 'issue',
-    title: 'Outlook 通知メールがスパム判定で承認者に届かない',
+    title: 'メール・予定表ツール 通知メールがスパム判定で承認者に届かない',
     content:
       '承認依頼の通知メールが特定の取引先 (大手 1 社) のみに届かない事象が発生。原因調査の間に承認遅延が累積し、月次クローズが 2 営業日遅延した。',
     cause:
-      'Power Automate から送信される通知メールは送信者が「ノーリプライ用の汎用アドレス」になっていた。受信側の Office 365 ではこのドメインからの大量同種メールがスパム検知ルールで自動隔離されていた。送信側 (社内側) ではメール送信ログ上「送信成功」となっており、不達に気付けなかった。',
+      '業務自動化ツールから送信される通知メールは送信者が「ノーリプライ用の汎用アドレス」になっていた。受信側の Office 365 ではこのドメインからの大量同種メールがスパム検知ルールで自動隔離されていた。送信側 (社内側) ではメール送信ログ上「送信成功」となっており、不達に気付けなかった。',
     impact: 'medium',
     likelihood: 'medium',
     priority: 'high',
     responsePolicy:
       '送信ドメインを正規の業務ドメインに変更し、SPF / DKIM 認証を整備する。',
     responseDetail:
-      'Power Automate の通知送信を Outlook コネクタから「Send an email V2」(認証付き) に変更。送信元を担当者のメールアドレスに切り替えた。さらに送信ドメインに SPF / DKIM レコードを設定し、受信側の信頼度を向上。受信確認の自動チェック (Webhook 監視) を追加して不達を即座検知できるようにした。',
+      '業務自動化ツールの通知送信を メール・予定表ツール コネクタから「Send an email V2」(認証付き) に変更。送信元を担当者のメールアドレスに切り替えた。さらに送信ドメインに SPF / DKIM レコードを設定し、受信側の信頼度を向上。受信確認の自動チェック (Webhook 監視) を追加して不達を即座検知できるようにした。',
     state: 'resolved',
     result:
       'スパム判定はゼロに。受信確認モニタリングで以降の送信状況を可視化できるようになった。',
@@ -1289,23 +1286,23 @@ export const SAMPLE_ISSUES: SeedSampleIssue[] = [
   },
 
   // ================================================================
-  // Project B (AWS マルチアカウント) 配下の課題
+  // Project B (パブリッククラウド マルチアカウント) 配下の課題
   // ================================================================
   {
-    parentProjectName: '新規 SaaS 基盤の AWS マルチアカウント構築 (サンプル)',
+    parentProjectName: '新規 SaaS 基盤のパブリッククラウド マルチアカウント構築 (サンプル)',
     type: 'issue',
-    title: 'RDS Aurora フェイルオーバー演習で復旧 12 分 (SLO 8 分を超過)',
+    title: 'マネージドRDB マネージドRDB フェイルオーバー演習で復旧 12 分 (SLO 8 分を超過)',
     content:
-      '本番リリース 2 週間前の災害対策演習で、Aurora の Writer 強制フェイルオーバを試行。Writer 切替自体は 30 秒で完了したが、アプリ側のコネクションプールが古い Writer を保持し続け、リトライで全コネクション再確立に 11 分かかった。SLO 「障害復旧 8 分」を 4 分超過した。',
+      '本番リリース 2 週間前の災害対策演習で、マネージドRDB の Writer 強制フェイルオーバを試行。Writer 切替自体は 30 秒で完了したが、アプリ側のコネクションプールが古い Writer を保持し続け、リトライで全コネクション再確立に 11 分かかった。SLO 「障害復旧 8 分」を 4 分超過した。',
     cause:
-      'アプリの DB クライアント (Spring HikariCP) のコネクション取得タイムアウトを 60 秒、再接続間隔を 10 秒で設定していた。Writer 切替時に既存コネクションは閉じられないため、HikariCP が「使用中」と判断し新規接続発行を遅らせた。設計時に Aurora の フェイルオーバ挙動を理解しておらず、「再接続するから大丈夫」と楽観視していた。',
+      'アプリの DB クライアント (Spring HikariCP) のコネクション取得タイムアウトを 60 秒、再接続間隔を 10 秒で設定していた。Writer 切替時に既存コネクションは閉じられないため、HikariCP が「使用中」と判断し新規接続発行を遅らせた。設計時に マネージドRDB の フェイルオーバ挙動を理解しておらず、「再接続するから大丈夫」と楽観視していた。',
     impact: 'high',
     likelihood: 'medium',
     priority: 'high',
     responsePolicy:
-      'Aurora フェイルオーバ時に既存コネクションを即座に切断・再確立する設計に変更。',
+      'マネージドRDB フェイルオーバ時に既存コネクションを即座に切断・再確立する設計に変更。',
     responseDetail:
-      'HikariCP の `connectionInitSql` で `SELECT 1` を毎回確認し、Read/Write 不整合検知時に強制 evict。さらに RDS Proxy を導入して Writer 切替を Proxy 側で吸収するアーキテクチャに変更。Aurora Failover Test を CI 自動化し、毎週フェイルオーバ → 復旧時間計測。',
+      'HikariCP の `connectionInitSql` で `SELECT 1` を毎回確認し、Read/Write 不整合検知時に強制 evict。さらに マネージドRDB Proxy を導入して Writer 切替を Proxy 側で吸収するアーキテクチャに変更。マネージドRDB Failover Test を CI 自動化し、毎週フェイルオーバ → 復旧時間計測。',
     state: 'resolved',
     result:
       '復旧時間が 12 分 → 90 秒に短縮 (SLO 8 分以内)。CI 自動化で以降のフェイルオーバ動作の劣化を継続監視。',
@@ -1314,11 +1311,11 @@ export const SAMPLE_ISSUES: SeedSampleIssue[] = [
     riskNature: null,
   },
   {
-    parentProjectName: '新規 SaaS 基盤の AWS マルチアカウント構築 (サンプル)',
+    parentProjectName: '新規 SaaS 基盤のパブリッククラウド マルチアカウント構築 (サンプル)',
     type: 'issue',
-    title: 'ECS Fargate タスクが起動直後のヘルスチェック失敗で再起動ループ',
+    title: 'マネージドコンテナ基盤 サーバレスコンテナ タスクが起動直後のヘルスチェック失敗で再起動ループ',
     content:
-      'staging 環境への新バージョンデプロイ時、ECS タスクが起動 → ヘルスチェック失敗 → 強制終了 → 再起動を繰り返すループに陥った。10 分以上 staging が利用不能となり、開発者の動作確認待ちが発生した。',
+      'staging 環境への新バージョンデプロイ時、マネージドコンテナ基盤 タスクが起動 → ヘルスチェック失敗 → 強制終了 → 再起動を繰り返すループに陥った。10 分以上 staging が利用不能となり、開発者の動作確認待ちが発生した。',
     cause:
       'ALB Target Group のヘルスチェックパスが `/health` (即時応答) ではなく `/api/v1/users` (DB アクセスあり) を指していた。アプリ起動直後は DB コネクションプール初期化中で、最初の数秒は応答が 502 を返す。ヘルスチェック許容失敗回数が 2 回・間隔 10 秒だったため、起動 30 秒以内に Healthy に至らずタスクが Kill された。',
     impact: 'high',
@@ -1327,29 +1324,29 @@ export const SAMPLE_ISSUES: SeedSampleIssue[] = [
     responsePolicy:
       'ヘルスチェックパスを軽量な `/health` に変更し、DB チェックは別 endpoint `/health/deep` に分離する。',
     responseDetail:
-      '`/health` は外部依存なしで 200 を即座返却。`/health/deep` は DB / 外部 API 接続確認を行うが、ヘルスチェック対象外。ECS の `startPeriod` を 60 秒に伸ばし、起動直後の grace period を確保。',
+      '`/health` は外部依存なしで 200 を即座返却。`/health/deep` は DB / 外部 API 接続確認を行うが、ヘルスチェック対象外。マネージドコンテナ基盤 の `startPeriod` を 60 秒に伸ばし、起動直後の grace period を確保。',
     state: 'resolved',
     result:
       'タスクの再起動ループは解消。staging のデプロイ時ダウンタイムも 10 分 → 30 秒未満に。',
     lessonLearned:
-      'コンテナのヘルスチェックは「最低限のシグナル」を返すパスにする。重い依存チェックは別 endpoint に分離。`startPeriod` の調整は ECS / Kubernetes 両方の必須運用ポイント。',
+      'コンテナのヘルスチェックは「最低限のシグナル」を返すパスにする。重い依存チェックは別 endpoint に分離。`startPeriod` の調整は マネージドコンテナ基盤 / Kubernetes 両方の必須運用ポイント。',
     riskNature: null,
   },
   {
-    parentProjectName: '新規 SaaS 基盤の AWS マルチアカウント構築 (サンプル)',
+    parentProjectName: '新規 SaaS 基盤のパブリッククラウド マルチアカウント構築 (サンプル)',
     type: 'issue',
-    title: 'Terraform state ロック競合で 3 人同時作業時にデプロイ失敗',
+    title: 'IaCツール state ロック競合で 3 人同時作業時にデプロイ失敗',
     content:
-      '開発チーム 3 人が同時に Terraform apply を実行したところ、後発 2 人がロックエラーで失敗。状態ファイルが古いまま残り、次回 apply で「想定外の差分」を検出して停止する事態となった。本番リリース直前の修正タイミングで発生し、緊急対応で 3 時間遅延。',
+      '開発チーム 3 人が同時に IaCツール apply を実行したところ、後発 2 人がロックエラーで失敗。状態ファイルが古いまま残り、次回 apply で「想定外の差分」を検出して停止する事態となった。本番リリース直前の修正タイミングで発生し、緊急対応で 3 時間遅延。',
     cause:
-      'state ファイルを S3 に置く構成だったが、DynamoDB ロックテーブルを設定していなかった。複数人での開発を想定せず、初期構築時に「1 人で apply するから不要」と判断していた。',
+      'state ファイルを オブジェクトストレージ に置く構成だったが、マネージドNoSQL ロックテーブルを設定していなかった。複数人での開発を想定せず、初期構築時に「1 人で apply するから不要」と判断していた。',
     impact: 'medium',
     likelihood: 'high',
     priority: 'high',
     responsePolicy:
-      'DynamoDB ベースの state ロックを導入し、CI/CD でしか apply できないよう運用ルール化する。',
+      'マネージドNoSQL ベースの state ロックを導入し、CI/CD でしか apply できないよう運用ルール化する。',
     responseDetail:
-      'Terraform Cloud に移行 (state 管理 + ロック + 履歴可視化を一括解決)。手元の terraform apply を禁止し、PR マージ後の GitHub Actions 経由のみで apply される運用に変更。drift detection を週次で動作させ、想定外の手動変更を検知。',
+      'IaCツール Cloud に移行 (state 管理 + ロック + 履歴可視化を一括解決)。手元の terraform apply を禁止し、PR マージ後の Gitホスティング Actions 経由のみで apply される運用に変更。drift detection を週次で動作させ、想定外の手動変更を検知。',
     state: 'resolved',
     result:
       'ロック競合事故ゼロ。手動変更の検知も週次で複数件発生したものを早期に修正できる体制に。',
@@ -1358,20 +1355,20 @@ export const SAMPLE_ISSUES: SeedSampleIssue[] = [
     riskNature: null,
   },
   {
-    parentProjectName: '新規 SaaS 基盤の AWS マルチアカウント構築 (サンプル)',
+    parentProjectName: '新規 SaaS 基盤のパブリッククラウド マルチアカウント構築 (サンプル)',
     type: 'issue',
-    title: 'CloudFront キャッシュ設定誤りで API レスポンスが他ユーザに混入',
+    title: 'CDN キャッシュ設定誤りで API レスポンスが他ユーザに混入',
     content:
-      'リリース 1 週間後、ユーザから「ログインしたら他人の名前が表示された」との報告。調査の結果、特定の API レスポンスが CloudFront でキャッシュされ、別ユーザにも同じレスポンスが返却されていた。個人情報を含むレスポンスのため即座にロールバック対応した。',
+      'リリース 1 週間後、ユーザから「ログインしたら他人の名前が表示された」との報告。調査の結果、特定の API レスポンスが CDN でキャッシュされ、別ユーザにも同じレスポンスが返却されていた。個人情報を含むレスポンスのため即座にロールバック対応した。',
     cause:
-      'CloudFront のデフォルトキャッシュビヘイビアが「すべてのリクエストをキャッシュ可能」になっていた。API パス `/api/*` に対して個別の Cache-Control を考慮しておらず、`Cache-Control: public, max-age=300` が誤って付与されたエンドポイントが他ユーザにも返却された。',
+      'CDN のデフォルトキャッシュビヘイビアが「すべてのリクエストをキャッシュ可能」になっていた。API パス `/api/*` に対して個別の Cache-Control を考慮しておらず、`Cache-Control: public, max-age=300` が誤って付与されたエンドポイントが他ユーザにも返却された。',
     impact: 'high',
     likelihood: 'low',
     priority: 'high',
     responsePolicy:
-      'API パス全体を CloudFront キャッシュ対象外とし、個別に Cache-Control を設計してから対象化する。',
+      'API パス全体を CDN キャッシュ対象外とし、個別に Cache-Control を設計してから対象化する。',
     responseDetail:
-      '`/api/*` への CloudFront ビヘイビアを「No-Cache」に変更。バックエンドのレスポンス Cache-Control は `private, no-store` をデフォルト化。明示的にキャッシュ可能なパス (静的アセット) のみ別ビヘイビアで対応。さらにレスポンスヘッダ検査の自動テストを CI に追加。',
+      '`/api/*` への CDN ビヘイビアを「No-Cache」に変更。バックエンドのレスポンス Cache-Control は `private, no-store` をデフォルト化。明示的にキャッシュ可能なパス (静的アセット) のみ別ビヘイビアで対応。さらにレスポンスヘッダ検査の自動テストを CI に追加。',
     state: 'resolved',
     result:
       'キャッシュ誤動作はゼロに。個人情報が混入したのは検知から 12 分以内に対応開始 (15 ユーザ影響範囲) で大事に至らず。',
@@ -1381,45 +1378,45 @@ export const SAMPLE_ISSUES: SeedSampleIssue[] = [
   },
 
   // ================================================================
-  // Project C (Salesforce CRM) 配下の課題
+  // Project C (SFA/CRMツール CRM) 配下の課題
   // ================================================================
   {
-    parentProjectName: 'Salesforce による営業活動可視化 (サンプル)',
+    parentProjectName: 'SFA/CRMツールによる営業活動可視化 (サンプル)',
     type: 'issue',
     title: 'データ移行で顧客マスタの重複 (3,000 件中 800 件が重複登録)',
     content:
-      '既存 Excel から Salesforce へ顧客マスタを移行した結果、3,000 社のうち 800 社 (約 27%) が重複登録となった。営業担当が「同じ会社が 3 つ表示される」と気付いて発覚。データクレンジングに 2 週間を要し、本稼働開始が 2 週間遅延。',
+      '既存 表計算ソフトから SFA/CRMツールへ顧客マスタを移行した結果、3,000 社のうち 800 社 (約 27%) が重複登録となった。営業担当が「同じ会社が 3 つ表示される」と気付いて発覚。データクレンジングに 2 週間を要し、本稼働開始が 2 週間遅延。',
     cause:
-      '元 Excel の顧客名フィールドが入力者によって表記揺れ (株式会社 vs 株, 全角 vs 半角, スペース有無) があり、それぞれ異なるレコードとして登録されていた。移行時に「Salesforce 側で重複検知ルール (Duplicate Rule) を後から設定する」想定でクレンジングをスキップしていた。',
+      '元 表計算ソフトの顧客名フィールドが入力者によって表記揺れ (株式会社 vs 株, 全角 vs 半角, スペース有無) があり、それぞれ異なるレコードとして登録されていた。移行時に「SFA/CRMツール側で重複検知ルール (Duplicate Rule) を後から設定する」想定でクレンジングをスキップしていた。',
     impact: 'high',
     likelihood: 'high',
     priority: 'high',
     responsePolicy:
       'データ移行の前に必ず正規化 (表記統一・重複検知) を行い、移行後のクレンジングは最小化する。',
     responseDetail:
-      '移行スクリプト中に Salesforce Duplicate Rule + Matching Rule を実行する事前検証ステップを追加。表記揺れは Python の正規化スクリプトで「株式会社/株/有限会社 → 株式会社」「全角 → 半角」等を統一。住所と業種の組合せでも重複判定を強化。',
+      '移行スクリプト中に SFA/CRMツール Duplicate Rule + Matching Rule を実行する事前検証ステップを追加。表記揺れは Python の正規化スクリプトで「株式会社/株/有限会社 → 株式会社」「全角 → 半角」等を統一。住所と業種の組合せでも重複判定を強化。',
     state: 'resolved',
     result:
       '重複は 0 件に統一。本稼働 2 週間遅延したが、移行品質は十分に確保され、運用後のデータクレンジング工数は当初想定より大幅に削減。',
     lessonLearned:
-      'パッケージ機能 (Salesforce Duplicate Rule) は「移行後のクリーンアップ」用ではなく「移行プロセスに組み込むべき検証ステップ」。表記揺れを前提に Pre-Migration Cleansing は必須工程として工数見積に必ず含める。',
+      'パッケージ機能 (SFA/CRMツール Duplicate Rule) は「移行後のクリーンアップ」用ではなく「移行プロセスに組み込むべき検証ステップ」。表記揺れを前提に Pre-Migration Cleansing は必須工程として工数見積に必ず含める。',
     riskNature: null,
   },
   {
-    parentProjectName: 'Salesforce による営業活動可視化 (サンプル)',
+    parentProjectName: 'SFA/CRMツールによる営業活動可視化 (サンプル)',
     type: 'issue',
-    title: '営業 30 名のうち 10 名が研修後も Excel 併用を続け Salesforce が形骸化',
+    title: '営業 30 名のうち 10 名が研修後も 表計算ソフト 併用を続け SFA/CRMツールが形骸化',
     content:
-      '導入研修を全営業 30 名に実施し本稼働開始したが、3 ヶ月後の利用状況調査で 10 名が「結局 Excel が早い」と Salesforce 入力をしておらず、データの完全性が崩れた。営業マネージャの可視化ダッシュボードも信頼性が低下し、経営層から「Salesforce 入れた効果は」との詰問が発生。',
+      '導入研修を全営業 30 名に実施し本稼働開始したが、3 ヶ月後の利用状況調査で 10 名が「結局 表計算ソフトが早い」と SFA/CRMツール 入力をしておらず、データの完全性が崩れた。営業マネージャの可視化ダッシュボードも信頼性が低下し、経営層から「SFA/CRMツール 入れた効果は」との詰問が発生。',
     cause:
-      '研修内容が「画面操作の説明」中心で、「なぜ Salesforce を使うか」の動機付けが弱かった。さらに UI が 12 項目の入力を要求し、現場感覚では Excel の 3-4 項目で済んでいた業務に対して負荷が重い設計になっていた。マネージャ層も Salesforce ダッシュボードの活用を業務に組み込んでいなかったため、現場の入力動機が継続しなかった。',
+      '研修内容が「画面操作の説明」中心で、「なぜ SFA/CRMツールを使うか」の動機付けが弱かった。さらに UI が 12 項目の入力を要求し、現場感覚では 表計算ソフトの 3-4 項目で済んでいた業務に対して負荷が重い設計になっていた。マネージャ層も SFA/CRMツール ダッシュボードの活用を業務に組み込んでいなかったため、現場の入力動機が継続しなかった。',
     impact: 'high',
     likelihood: 'high',
     priority: 'medium',
     responsePolicy:
       '入力項目を最低限に絞り、現場の業務フローに組み込む形でマネージャ層が能動利用する仕組みを構築。',
     responseDetail:
-      '必須項目を 12 → 5 に削減 (商談名 / 顧客 / 金額 / クローズ予定日 / フェーズのみ)。残りは任意化。マネージャ層の週次案件レビュー会議を Salesforce ダッシュボード前提で実施するルール変更。マネージャから現場へのフィードバックも Salesforce 上で行うことでデータが「見られている」ことを実感させる。',
+      '必須項目を 12 → 5 に削減 (商談名 / 顧客 / 金額 / クローズ予定日 / フェーズのみ)。残りは任意化。マネージャ層の週次案件レビュー会議を SFA/CRMツール ダッシュボード前提で実施するルール変更。マネージャから現場へのフィードバックも SFA/CRMツール上で行うことでデータが「見られている」ことを実感させる。',
     state: 'in_progress',
     result:
       '6 ヶ月後の利用率調査で入力率 60% → 92% に改善。継続的な現場ヒアリングで入力フォーム改善を継続中。',
@@ -1428,35 +1425,35 @@ export const SAMPLE_ISSUES: SeedSampleIssue[] = [
     riskNature: null,
   },
   {
-    parentProjectName: 'Salesforce による営業活動可視化 (サンプル)',
+    parentProjectName: 'SFA/CRMツールによる営業活動可視化 (サンプル)',
     type: 'issue',
-    title: 'Apex Trigger の bulk 処理で governor limit (SOQL 100 件) を超過',
+    title: 'カスタムロジック Trigger の bulk 処理で governor limit (クエリ言語 100 件) を超過',
     content:
-      'データ移行スクリプトで 5,000 件の商談を一括 INSERT した際、関連する 取引先のステータス更新を行う Apex Trigger が実行され「Too many SOQL queries: 101」エラーで全ロールバック。原因調査・修正・再移行で 3 営業日遅延した。',
+      'データ移行スクリプトで 5,000 件の商談を一括 INSERT した際、関連する 取引先のステータス更新を行う カスタムロジック Trigger が実行され「Too many クエリ言語 queries: 101」エラーで全ロールバック。原因調査・修正・再移行で 3 営業日遅延した。',
     cause:
-      'Apex Trigger 内で取引先 ID ごとに `SELECT FROM Account WHERE Id = :id` を呼び出す for ループ実装になっていた。Salesforce 標準の governor limit (1 トランザクションで SOQL 100 件まで) を超過。bulk 処理を想定した実装になっていなかった。',
+      'カスタムロジック Trigger 内で取引先 ID ごとに `SELECT FROM Account WHERE Id = :id` を呼び出す for ループ実装になっていた。SFA/CRMツール標準の governor limit (1 トランザクションで クエリ言語 100 件まで) を超過。bulk 処理を想定した実装になっていなかった。',
     impact: 'high',
     likelihood: 'medium',
     priority: 'high',
     responsePolicy:
-      'Apex Trigger を bulk-safe (1 SOQL で複数 ID を IN 句取得) なパターンにリファクタする。',
+      'カスタムロジック Trigger を bulk-safe (1 クエリ言語 で複数 ID を IN 句取得) なパターンにリファクタする。',
     responseDetail:
-      'Trigger 内のループを廃止し、Trigger.new から ID を集約 → 1 回の SOQL で全件取得 → Map で関連付け → 1 回の DML で更新する標準パターンに変更。さらに Apex 単体テストで 200 件の bulk 投入をテストケース化。Trailhead の Apex Best Practice モジュールをチームで履修。',
+      'Trigger 内のループを廃止し、Trigger.new から ID を集約 → 1 回の クエリ言語 で全件取得 → Map で関連付け → 1 回の DML で更新する標準パターンに変更。さらに カスタムロジック 単体テストで 200 件の bulk 投入をテストケース化。Trailhead の カスタムロジック Best Practice モジュールをチームで履修。',
     state: 'resolved',
     result:
       'governor limit エラーゼロ。本稼働後の大量データ操作 (月次集計など) でも安全動作。',
     lessonLearned:
-      'Salesforce Apex は「常に bulk 前提」で書く。SOQL を for ループ内に書くことは原則禁止。Apex 単体テストの実装データは少なくとも 200 件 (bulk 動作を想定) で実施する。',
+      'SFA/CRMツール カスタムロジック は「常に bulk 前提」で書く。クエリ言語 を for ループ内に書くことは原則禁止。カスタムロジック 単体テストの実装データは少なくとも 200 件 (bulk 動作を想定) で実施する。',
     riskNature: null,
   },
   {
-    parentProjectName: 'Salesforce による営業活動可視化 (サンプル)',
+    parentProjectName: 'SFA/CRMツールによる営業活動可視化 (サンプル)',
     type: 'risk',
     title: 'ダッシュボード権限設計でセールスマネージャに他部署データ表示の懸念',
     content:
-      'ダッシュボード設計レビューで、セールスマネージャ向けダッシュボードが「自部署データ + 全社平均」を表示する仕様だったが、SOQL の WHERE 句が抜けると他部署の個別案件まで見える設計になっていた。本番リリース前にセキュリティチームから差し戻し。',
+      'ダッシュボード設計レビューで、セールスマネージャ向けダッシュボードが「自部署データ + 全社平均」を表示する仕様だったが、クエリ言語 の WHERE 句が抜けると他部署の個別案件まで見える設計になっていた。本番リリース前にセキュリティチームから差し戻し。',
     cause:
-      'ダッシュボード作成時に Salesforce のレポート絞り込みを「ユーザ自身の部署」で設定していたが、その後の改修でフィルタが意図せず外れた。Sharing Rules / Role Hierarchy 設定との連動を考慮しておらず、データ可視範囲が想定外に拡大していた。',
+      'ダッシュボード作成時に SFA/CRMツールのレポート絞り込みを「ユーザ自身の部署」で設定していたが、その後の改修でフィルタが意図せず外れた。Sharing Rules / Role Hierarchy 設定との連動を考慮しておらず、データ可視範囲が想定外に拡大していた。',
     impact: 'high',
     likelihood: 'medium',
     priority: 'high',
@@ -1473,10 +1470,10 @@ export const SAMPLE_ISSUES: SeedSampleIssue[] = [
   },
 
   // ================================================================
-  // Project D (SAP S/4HANA) 配下の課題
+  // Project D (ERPパッケージ) 配下の課題
   // ================================================================
   {
-    parentProjectName: 'SAP S/4HANA への基幹システム移行 (サンプル)',
+    parentProjectName: 'ERPパッケージへの基幹システム移行 (サンプル)',
     type: 'issue',
     title: '5 工場の品目マスタ統合で同一品目が異なるコードで 1.2 万件重複登録',
     content:
@@ -1498,42 +1495,42 @@ export const SAMPLE_ISSUES: SeedSampleIssue[] = [
     riskNature: null,
   },
   {
-    parentProjectName: 'SAP S/4HANA への基幹システム移行 (サンプル)',
+    parentProjectName: 'ERPパッケージへの基幹システム移行 (サンプル)',
     type: 'issue',
-    title: 'ABAP カスタム機能の 30% が S/4HANA で動作不能 (廃止 API 使用)',
+    title: 'ERPアドオン言語 カスタム機能の 30% が ERPパッケージ で動作不能 (廃止 API 使用)',
     content:
-      '既存 ECC 6.0 から S/4HANA 移行時のコード互換性検証で、800 本の ABAP カスタムプログラムのうち 240 本 (30%) が廃止 API を使用していると判明。代替 API への置換作業に追加 4 ヶ月の工数見積が発生。',
+      '既存 ECC 6.0 から ERPパッケージ 移行時のコード互換性検証で、800 本の ERPアドオン言語 カスタムプログラムのうち 240 本 (30%) が廃止 API を使用していると判明。代替 API への置換作業に追加 4 ヶ月の工数見積が発生。',
     cause:
-      '移行計画策定時に SAP の Custom Code Migration Cockpit による事前互換性チェックを実施していなかった。営業 (SD) スコープ外の領域もチェック対象に含むべきだったが、対象外領域とされ未実施。実装に入って初めて廃止 API 使用が大量発覚。',
+      '移行計画策定時に ERPの Custom Code Migration Cockpit による事前互換性チェックを実施していなかった。営業 (SD) スコープ外の領域もチェック対象に含むべきだったが、対象外領域とされ未実施。実装に入って初めて廃止 API 使用が大量発覚。',
     impact: 'high',
     likelihood: 'high',
     priority: 'high',
     responsePolicy:
       'Custom Code Migration Cockpit で全コードを再診断し、置換可能なものは Quick Fix で自動置換、不可能なものは個別開発計画。',
     responseDetail:
-      'Custom Code Migration Cockpit を全社 ABAP コードに実行。240 本のうち 180 本は標準 Quick Fix で置換可能と判定。残り 60 本は手動で代替実装が必要。さらに「廃止 API を新規開発で使わない」社内ルールを ABAP 開発ガイドラインに追加。',
+      'Custom Code Migration Cockpit を全社 ERPアドオン言語 コードに実行。240 本のうち 180 本は標準 Quick Fix で置換可能と判定。残り 60 本は手動で代替実装が必要。さらに「廃止 API を新規開発で使わない」社内ルールを ERPアドオン言語 開発ガイドラインに追加。',
     state: 'in_progress',
     result:
       '180 本は 1 ヶ月で置換完了。残り 60 本も計画通り 3 ヶ月で対応中。プロジェクト全体の遅延は 4 ヶ月 → 2 ヶ月に圧縮見込み。',
     lessonLearned:
-      'ERP のメジャーバージョンアップは「コード互換性チェック」を要件定義段階で必ず実施する。ベンダーが提供する診断ツール (SAP Custom Code Migration Cockpit / Oracle Database Migration Assistant 等) は Day 1 で実行して工数見積に反映。',
+      'ERPのメジャーバージョンアップは「コード互換性チェック」を要件定義段階で必ず実施する。ベンダーが提供する診断ツール (ERP Custom Code Migration Cockpit / 商用データベース Database Migration Assistant 等) は Day 1 で実行して工数見積に反映。',
     riskNature: null,
   },
   {
-    parentProjectName: 'SAP S/4HANA への基幹システム移行 (サンプル)',
+    parentProjectName: 'ERPパッケージへの基幹システム移行 (サンプル)',
     type: 'issue',
-    title: 'SLT データ移行検証で予定 24 時間が実測 52 時間 (本番切替時間の予算超過)',
+    title: 'データ連携ツール データ移行検証で予定 24 時間が実測 52 時間 (本番切替時間の予算超過)',
     content:
-      '本番切替リハーサル (Mock-Run) で SLT (System Landscape Transformation) によるデータ移行が予定 24 時間 → 実測 52 時間。本番では計画 48 時間ダウンタイム枠を超過するため切替不可と判明。',
+      '本番切替リハーサル (Mock-Run) で データ連携ツール (System Landscape Transformation) によるデータ移行が予定 24 時間 → 実測 52 時間。本番では計画 48 時間ダウンタイム枠を超過するため切替不可と判明。',
     cause:
-      '移行対象データの量見積が不正確だった (購買履歴 7 年分 + 過去取引先別単価マスタが想定外に重く、見積の 3 倍)。さらに HANA インデックス作成中の並列度設定が未調整で、シングルスレッド近い状態で動作していた。',
+      '移行対象データの量見積が不正確だった (購買履歴 7 年分 + 過去取引先別単価マスタが想定外に重く、見積の 3 倍)。さらに インメモリDB インデックス作成中の並列度設定が未調整で、シングルスレッド近い状態で動作していた。',
     impact: 'high',
     likelihood: 'high',
     priority: 'high',
     responsePolicy:
-      '移行データを必須・任意で分類し、必須は本番切替時、任意は段階移行に分割する。同時に HANA の並列処理設定を最適化。',
+      '移行データを必須・任意で分類し、必須は本番切替時、任意は段階移行に分割する。同時に インメモリDB の並列処理設定を最適化。',
     responseDetail:
-      '購買履歴を 3 年分のみ本番切替時に移行 (4-7 年前は読み取り専用 archive システムで参照)。HANA インデックス作成の並列度を CPU 数の 70% に設定。並列処理設定後の Mock-Run で 18 時間に短縮。本番切替を計画 48 時間枠内に収められる見込み。',
+      '購買履歴を 3 年分のみ本番切替時に移行 (4-7 年前は読み取り専用 archive システムで参照)。インメモリDB インデックス作成の並列度を CPU 数の 70% に設定。並列処理設定後の Mock-Run で 18 時間に短縮。本番切替を計画 48 時間枠内に収められる見込み。',
     state: 'in_progress',
     result:
       'Mock-Run で 18 時間短縮済み。残課題として archive 環境の構築を本番切替前 1 ヶ月で完了予定。',
@@ -1542,39 +1539,39 @@ export const SAMPLE_ISSUES: SeedSampleIssue[] = [
     riskNature: null,
   },
   {
-    parentProjectName: 'SAP S/4HANA への基幹システム移行 (サンプル)',
+    parentProjectName: 'ERPパッケージへの基幹システム移行 (サンプル)',
     type: 'issue',
-    title: 'Fiori UI のテストでベテランオペレーターから「使えない」評価',
+    title: '業務UIフレームワーク UI のテストでベテランオペレーターから「使えない」評価',
     content:
-      '本社経理部のベテラン 5 名にて Fiori UI の受入テストを実施したところ、3 名から「現行 SAP GUI のキー操作が体に染み付いており、新 UI では作業効率が半減する」との否定的評価。プロジェクト計画上の重要マイルストーンであるユーザ受入が 1 ヶ月遅延した。',
+      '本社経理部のベテラン 5 名にて 業務UIフレームワーク UI の受入テストを実施したところ、3 名から「現行 ERP GUI のキー操作が体に染み付いており、新 UI では作業効率が半減する」との否定的評価。プロジェクト計画上の重要マイルストーンであるユーザ受入が 1 ヶ月遅延した。',
     cause:
-      '従業員の現行 SAP GUI 習熟度を考慮せず、Fiori UI へ全面移行する計画になっていた。20 年以上 SAP GUI を使い続けるベテラン層にとって、UI 大幅変更による生産性低下は致命的だった。教育プログラムも「Fiori の良さ」中心で、現行操作との対応マッピングが不十分。',
+      '従業員の現行 ERP GUI 習熟度を考慮せず、業務UIフレームワーク UI へ全面移行する計画になっていた。20 年以上 ERP GUI を使い続けるベテラン層にとって、UI 大幅変更による生産性低下は致命的だった。教育プログラムも「業務UIフレームワーク の良さ」中心で、現行操作との対応マッピングが不十分。',
     impact: 'high',
     likelihood: 'high',
     priority: 'medium',
     responsePolicy:
-      'Fiori と SAP GUI の併用期間を設け、ベテラン層は段階的に Fiori 移行する。教育プログラムを現行操作とのマッピング軸で再設計。',
+      '業務UIフレームワーク と ERP GUI の併用期間を設け、ベテラン層は段階的に 業務UIフレームワーク 移行する。教育プログラムを現行操作とのマッピング軸で再設計。',
     responseDetail:
-      '本番リリース後 6 ヶ月は SAP GUI と Fiori の併用可。Fiori 強制切替は新人・若手から段階移行。教育コンテンツは「現行の T-code XX-YY → Fiori の○○タイル」と現行操作の代替マッピング形式に再構成。本社経理ベテラン 5 名にはマンツーマン指導 (40 時間/人) を実施。',
+      '本番リリース後 6 ヶ月は ERP GUI と 業務UIフレームワーク の併用可。業務UIフレームワーク 強制切替は新人・若手から段階移行。教育コンテンツは「現行の T-code XX-YY → 業務UIフレームワーク の○○タイル」と現行操作の代替マッピング形式に再構成。本社経理ベテラン 5 名にはマンツーマン指導 (40 時間/人) を実施。',
     state: 'resolved',
     result:
-      '6 ヶ月の併用期間を経て、ベテラン 5 名のうち 4 名は Fiori 移行に成功。1 名は退職予定のため SAP GUI 利用継続を許容。生産性低下リスクは大幅に緩和された。',
+      '6 ヶ月の併用期間を経て、ベテラン 5 名のうち 4 名は 業務UIフレームワーク 移行に成功。1 名は退職予定のため ERP GUI 利用継続を許容。生産性低下リスクは大幅に緩和された。',
     lessonLearned:
       '基幹システム刷新時の UI 大幅変更は、長年利用者にとって「学習しなおし」の心理的ハードルが極めて高い。併用期間 + マンツーマン指導 + 現行操作とのマッピング教育の 3 点セットで対応する。教育予算を初期計画より厚く確保することが必須。',
     riskNature: null,
   },
 
   // ================================================================
-  // Project E (kintone 業務統合) 配下の課題
+  // Project E (ローコード基盤 業務統合) 配下の課題
   // ================================================================
   {
-    parentProjectName: 'kintone による業務アプリ統合プラットフォーム構築 (サンプル)',
+    parentProjectName: 'ローコード基盤による業務アプリ統合プラットフォーム構築 (サンプル)',
     type: 'risk',
     title: '情シス担当 1 名で 12 アプリの保守は持続不可能と判明',
     content:
       'リリース 3 ヶ月後、情シス担当者 1 名がアプリ追加・修正・問い合わせ対応に 1 日の 80% を費やし、本来の業務 (PC キッティング、ヘルプデスク) が滞る状況。担当者から「持続不可能」との SOS が経営層に。',
     cause:
-      'プロジェクト計画時に「情シス 1 名 + 兼任 2 名」で運用可能と楽観視していた。実際には kintone のカスタム JavaScript 修正、新業務追加、ユーザからの「使い方教えて」問合せが想定の 3 倍発生。兼任 2 名は本業優先のため実質サポートできなかった。',
+      'プロジェクト計画時に「情シス 1 名 + 兼任 2 名」で運用可能と楽観視していた。実際には ローコード基盤のカスタム JavaScript 修正、新業務追加、ユーザからの「使い方教えて」問合せが想定の 3 倍発生。兼任 2 名は本業優先のため実質サポートできなかった。',
     impact: 'high',
     likelihood: 'high',
     priority: 'high',
@@ -1590,20 +1587,20 @@ export const SAMPLE_ISSUES: SeedSampleIssue[] = [
     riskNature: 'threat',
   },
   {
-    parentProjectName: 'kintone による業務アプリ統合プラットフォーム構築 (サンプル)',
+    parentProjectName: 'ローコード基盤による業務アプリ統合プラットフォーム構築 (サンプル)',
     type: 'issue',
     title: '早期に書いた JavaScript カスタムが他者には読めない構造で技術負債化',
     content:
       'プロジェクト初期に開発者 A が独自パターンで書いた JavaScript カスタム (受注アプリの単価自動計算) を、A の異動後に B が修正しようとしたところ、コードの構造理解に 3 日要し、修正自体に 1 週間かかった。全 12 アプリ中 4 アプリが同様の状態と判明。',
     cause:
-      'kintone カスタマイズの社内コーディング規約・命名規約・コメント規約が存在しなかった。開発者 A は jQuery 系の旧パターン + 独自 utility 関数で実装し、B は最新の async/await + Vue を学んでいたためギャップが大きかった。コードレビューもなかった。',
+      'ローコード基盤 カスタマイズの社内コーディング規約・命名規約・コメント規約が存在しなかった。開発者 A は jQuery 系の旧パターン + 独自 utility 関数で実装し、B は最新の async/await + Vue を学んでいたためギャップが大きかった。コードレビューもなかった。',
     impact: 'medium',
     likelihood: 'high',
     priority: 'medium',
     responsePolicy:
-      'kintone カスタマイズの社内コーディング規約を整備し、リファクタリング期間を確保する。',
+      'ローコード基盤 カスタマイズの社内コーディング規約を整備し、リファクタリング期間を確保する。',
     responseDetail:
-      'kintone カスタマイズ規約を策定 (TypeScript 採用 / async/await 統一 / 公式 SDK 利用 / コメント必須項目 4 つ)。既存 4 アプリのコードを 6 週間でリファクタリング。プルリクエストレビュー必須化、複雑度 (cyclomatic complexity > 10) 警告の lint 導入。',
+      'ローコード基盤 カスタマイズ規約を策定 (TypeScript 採用 / async/await 統一 / 公式 SDK 利用 / コメント必須項目 4 つ)。既存 4 アプリのコードを 6 週間でリファクタリング。プルリクエストレビュー必須化、複雑度 (cyclomatic complexity > 10) 警告の lint 導入。',
     state: 'resolved',
     result:
       'リファクタリング完了後、コード理解時間が平均 3 日 → 半日に短縮。新規追加開発も担当者間の引継ぎがスムーズに。',
@@ -1612,25 +1609,25 @@ export const SAMPLE_ISSUES: SeedSampleIssue[] = [
     riskNature: null,
   },
   {
-    parentProjectName: 'kintone による業務アプリ統合プラットフォーム構築 (サンプル)',
+    parentProjectName: 'ローコード基盤による業務アプリ統合プラットフォーム構築 (サンプル)',
     type: 'issue',
-    title: 'Excel データ移行で絵文字・機種依存文字が約 500 件で文字化け',
+    title: '表計算ソフト データ移行で絵文字・機種依存文字が約 500 件で文字化け',
     content:
-      '既存 Excel データ (顧客台帳・案件メモ等) を kintone に移行した結果、約 500 件で「♡」「☆」「①」等の文字が「??」「?」に化け、コミュニケーション履歴が判別不能となった。営業現場から「過去のやりとりが分からない」との苦情多発。',
+      '既存 表計算ソフト データ (顧客台帳・案件メモ等) を ローコード基盤に移行した結果、約 500 件で「♡」「☆」「①」等の文字が「??」「?」に化け、コミュニケーション履歴が判別不能となった。営業現場から「過去のやりとりが分からない」との苦情多発。',
     cause:
-      '移行スクリプトで CSV 出力時の文字コード指定 (UTF-8) を行っていたが、Excel 側でファイルを開くと自動的に Shift_JIS で再保存される問題を見逃した。さらに kintone の文字エンコーディング処理の前提を確認しておらず、絵文字 (Unicode 高サロゲート) は kintone API の制約で受け入れ不可だった。',
+      '移行スクリプトで CSV 出力時の文字コード指定 (UTF-8) を行っていたが、表計算ソフト側でファイルを開くと自動的に Shift_JIS で再保存される問題を見逃した。さらに ローコード基盤の文字エンコーディング処理の前提を確認しておらず、絵文字 (Unicode 高サロゲート) は ローコード基盤 API の制約で受け入れ不可だった。',
     impact: 'medium',
     likelihood: 'medium',
     priority: 'medium',
     responsePolicy:
-      '移行データを Excel 経由ではなく Python スクリプトで直接 UTF-8 export し、絵文字 / 機種依存文字を事前に判定・置換する。',
+      '移行データを 表計算ソフト 経由ではなく Python スクリプトで直接 UTF-8 export し、絵文字 / 機種依存文字を事前に判定・置換する。',
     responseDetail:
-      'Python の openpyxl で Excel を直接読込み、UTF-8 で kintone API に POST する移行スクリプトに切り替え。絵文字検知ロジックを追加し、検知した場合はテキスト末尾に [絵文字あり] と注釈を追加 (元の意味を可能な限り保持)。化けた 500 件は手作業で原本確認・修正。',
+      'Python の openpyxl で 表計算ソフトを直接読込み、UTF-8 で ローコード基盤 API に POST する移行スクリプトに切り替え。絵文字検知ロジックを追加し、検知した場合はテキスト末尾に [絵文字あり] と注釈を追加 (元の意味を可能な限り保持)。化けた 500 件は手作業で原本確認・修正。',
     state: 'resolved',
     result:
-      '化けは全件解消。kintone への移行データは UTF-8 ベースで一貫処理され、新規データも問題なく登録できる体制に。',
+      '化けは全件解消。ローコード基盤への移行データは UTF-8 ベースで一貫処理され、新規データも問題なく登録できる体制に。',
     lessonLearned:
-      'Excel 経由のデータ移行は「文字コードの罠」が必ずある。Python / スクリプトで直接 export するパターンが安全。絵文字・機種依存文字の事前判定は移行スクリプトの必須機能。',
+      '表計算ソフト 経由のデータ移行は「文字コードの罠」が必ずある。Python / スクリプトで直接 export するパターンが安全。絵文字・機種依存文字の事前判定は移行スクリプトの必須機能。',
     riskNature: null,
   },
   // ================================================================
@@ -1726,26 +1723,26 @@ export const SAMPLE_ISSUES: SeedSampleIssue[] = [
   },
 
   // ================================================================
-  // Project G (Snowflake + BI) 配下の課題
+  // Project G (クラウドDWH + BI) 配下の課題
   // ================================================================
   {
     parentProjectName: '全社データ統合 + BI ダッシュボード構築 (サンプル)',
     type: 'issue',
-    title: '初回 ETL で Snowflake クレジット消費が想定の 5 倍',
+    title: '初回 ETL で クラウドDWH クレジット消費が想定の 5 倍',
     content:
-      '初回データ移行で Snowflake のクレジット消費が想定 1,000 USD → 実測 5,200 USD に。月次コストが想定外に膨張し、財務部からプロジェクト一時停止の指示が出る寸前まで行った。',
+      '初回データ移行で クラウドDWH のクレジット消費が想定 1,000 USD → 実測 5,200 USD に。月次コストが想定外に膨張し、財務部からプロジェクト一時停止の指示が出る寸前まで行った。',
     cause:
-      'dbt の incremental 設定をしておらず、毎回フル再構築が走っていた。さらに Warehouse サイズが Large 固定で、軽い変換でも巨大なリソースを使っていた。クエリの実行プランも検証されておらず、不要な JOIN が複数あった。',
+      'ELTツール の incremental 設定をしておらず、毎回フル再構築が走っていた。さらに Warehouse サイズが Large 固定で、軽い変換でも巨大なリソースを使っていた。クエリの実行プランも検証されておらず、不要な JOIN が複数あった。',
     impact: 'high',
     likelihood: 'medium',
     priority: 'high',
     responsePolicy:
-      'dbt incremental + Warehouse 自動サイズ変更 + クエリ最適化の 3 点でコスト圧縮する。',
+      'ELTツール incremental + Warehouse 自動サイズ変更 + クエリ最適化の 3 点でコスト圧縮する。',
     responseDetail:
-      'dbt model に `materialized = "incremental"` 設定を順次導入。Warehouse は X-Small ベースで自動スケール (auto-suspend 60 秒)。EXPLAIN PLAN を全 50 model で確認し、不要 JOIN・redundant CTE を整理。Snowflake の Resource Monitor で日次予算上限を設定し、超過時はクエリ実行停止。',
+      'ELTツール model に `materialized = "incremental"` 設定を順次導入。Warehouse は X-Small ベースで自動スケール (auto-suspend 60 秒)。EXPLAIN PLAN を全 50 model で確認し、不要 JOIN・redundant CTE を整理。クラウドDWH の Resource Monitor で日次予算上限を設定し、超過時はクエリ実行停止。',
     state: 'resolved',
     result:
-      '月次コストが 5,200 USD → 800 USD (約 85% 削減) に低減。dbt CI/CD で incremental 設定を必須化し、新規 model 追加時の事故も防止。',
+      '月次コストが 5,200 USD → 800 USD (約 85% 削減) に低減。ELTツール CI/CD で incremental 設定を必須化し、新規 model 追加時の事故も防止。',
     lessonLearned:
       'クラウド DWH は「設定の妥当性」がコスト直結。Warehouse サイズ・auto-suspend・incremental 設定・実行プランの 4 点を初期設計でしっかり詰める。Resource Monitor は Day 1 で必須設定。',
     riskNature: null,
@@ -1753,23 +1750,23 @@ export const SAMPLE_ISSUES: SeedSampleIssue[] = [
   {
     parentProjectName: '全社データ統合 + BI ダッシュボード構築 (サンプル)',
     type: 'issue',
-    title: 'dbt model の依存グラフが 50 モデル超で変更影響範囲が見えない',
+    title: 'ELTツール model の依存グラフが 50 モデル超で変更影響範囲が見えない',
     content:
-      'dbt model の追加・変更を続けた結果、依存関係が複雑化。1 モデル変更時に下流の何が壊れるかが直感的に分からず、リリース前テストに 1 日以上要するように。新規モデル追加スピードが大幅に低下。',
+      'ELTツール model の追加・変更を続けた結果、依存関係が複雑化。1 モデル変更時に下流の何が壊れるかが直感的に分からず、リリース前テストに 1 日以上要するように。新規モデル追加スピードが大幅に低下。',
     cause:
-      '初期設計で「とりあえず作って後で整理」する方針だったため、レイヤ (raw / staging / intermediate / mart) の責務分離があいまいに。dbt の docs / lineage 機能も活用しておらず、変更影響を頭で追っていた。',
+      '初期設計で「とりあえず作って後で整理」する方針だったため、レイヤ (raw / staging / intermediate / mart) の責務分離があいまいに。ELTツール の docs / lineage 機能も活用しておらず、変更影響を頭で追っていた。',
     impact: 'medium',
     likelihood: 'high',
     priority: 'medium',
     responsePolicy:
-      'レイヤ責務を明確化 (raw / staging / intermediate / mart) し、各レイヤ内のみで依存を許可。dbt docs を活用して lineage を可視化。',
+      'レイヤ責務を明確化 (raw / staging / intermediate / mart) し、各レイヤ内のみで依存を許可。ELTツール docs を活用して lineage を可視化。',
     responseDetail:
-      'dbt project structure を 4 レイヤに再構成。staging は raw のみ参照、intermediate は staging のみ、mart は intermediate のみ参照のルールを CI で強制 (yamllint カスタムチェック)。dbt docs を社内ポータルにデプロイし、誰でも lineage を確認可能に。',
+      'ELTツール project structure を 4 レイヤに再構成。staging は raw のみ参照、intermediate は staging のみ、mart は intermediate のみ参照のルールを CI で強制 (yamllint カスタムチェック)。ELTツール docs を社内ポータルにデプロイし、誰でも lineage を確認可能に。',
     state: 'resolved',
     result:
       '変更影響の特定時間が 1 日 → 30 分に短縮。新規モデル追加もレイヤ規約に従って迷わず実施可能に。',
     lessonLearned:
-      'データ変換層も「設計」が必要。レイヤ分離なくモデルを書き続けると必ず依存地獄になる。dbt docs / dataform / SQLMesh などの lineage 可視化ツールは Day 1 で導入する。',
+      'データ変換層も「設計」が必要。レイヤ分離なくモデルを書き続けると必ず依存地獄になる。ELTツール docs / dataform / SQLMesh などの lineage 可視化ツールは Day 1 で導入する。',
     riskNature: null,
   },
   {
@@ -1777,16 +1774,16 @@ export const SAMPLE_ISSUES: SeedSampleIssue[] = [
     type: 'issue',
     title: 'BI ユーザが個人情報を含む raw テーブルを直接参照',
     content:
-      'Tableau の自由探索機能で、本来 mart 層 (匿名化済み) のみ見せるべきユーザが raw 層 (顧客個人情報含む) を参照している事象を発見。GDPR 対応の観点で重大なインシデントとして扱われた。',
+      'BIツールの自由探索機能で、本来 mart 層 (匿名化済み) のみ見せるべきユーザが raw 層 (顧客個人情報含む) を参照している事象を発見。GDPR 対応の観点で重大なインシデントとして扱われた。',
     cause:
-      'Snowflake のロール設計で「Tableau 用ロール」が広く権限を持っており、raw / staging / mart 全てに SELECT 権を持っていた。アクセス制御の最小権限原則 (Principle of Least Privilege) が徹底されていなかった。',
+      'クラウドDWH のロール設計で「BIツール 用ロール」が広く権限を持っており、raw / staging / mart 全てに SELECT 権を持っていた。アクセス制御の最小権限原則 (Principle of Least Privilege) が徹底されていなかった。',
     impact: 'high',
     likelihood: 'medium',
     priority: 'high',
     responsePolicy:
       'ロール体系を 4 層 (raw / staging / intermediate / mart) で再設計し、BI ユーザは mart のみ参照可とする。',
     responseDetail:
-      'Snowflake のロール体系を再設計。`bi_user` ロールは mart スキーマのみ SELECT 可。raw / staging は `dbt_engineer` のみ。Row Access Policy で部署別データ可視化も実装 (営業マネージャは自部署のみ)。Audit Log で全クエリを Snowflake → Datadog に転送し monitoring。',
+      'クラウドDWH のロール体系を再設計。`bi_user` ロールは mart スキーマのみ SELECT 可。raw / staging は `dbt_engineer` のみ。Row Access Policy で部署別データ可視化も実装 (営業マネージャは自部署のみ)。Audit Log で全クエリを クラウドDWH → 監視SaaS に転送し monitoring。',
     state: 'resolved',
     result:
       'ロール再設計後、不正アクセスゼロ。GDPR 対応も legal team の最終承認を取得し、本番運用に問題なし。',
@@ -1808,7 +1805,7 @@ export const SAMPLE_ISSUES: SeedSampleIssue[] = [
     responsePolicy:
       '育成プログラムを「技術 + ビジネス文脈」の 2 軸に再構成し、業務内 OJT 比重を増やす。',
     responseDetail:
-      '育成プログラムを再設計。技術 (Snowflake / SQL / dbt / Tableau) は外部 Udemy 等で自学習、社内研修はビジネスケース (例: 売上低下要因の分析、商品 X の需要予測等) に集中。週 1 回のシニアアナリストによるメンタリングを必須化。OJT 比重を 30% → 70% に。',
+      '育成プログラムを再設計。技術 (クラウドDWH / SQL / ELTツール / BIツール) は外部 Udemy 等で自学習、社内研修はビジネスケース (例: 売上低下要因の分析、商品 X の需要予測等) に集中。週 1 回のシニアアナリストによるメンタリングを必須化。OJT 比重を 30% → 70% に。',
     state: 'in_progress',
     result:
       '研修開始から 9 ヶ月時点で、2 名とも独力でダッシュボード設計 + 経営層への提案ができるレベルに到達 (再設計後 3 ヶ月で大幅改善)。',
@@ -1834,7 +1831,7 @@ export const SAMPLE_ISSUES: SeedSampleIssue[] = [
     responsePolicy:
       'モジュール初期化を遅延ロード (lazy load) に変更し、ログインは認証のみに絞る。',
     responseDetail:
-      'ログイン処理から全モジュール初期化を撤去。各モジュールはユーザがメニュー選択した瞬間に初期化する lazy load 方式に変更。さらに認証のみに 1.5 秒以内の応答を SLO として設定。本番モニタリングを Datadog で追加 (応答時間 P95)。',
+      'ログイン処理から全モジュール初期化を撤去。各モジュールはユーザがメニュー選択した瞬間に初期化する lazy load 方式に変更。さらに認証のみに 1.5 秒以内の応答を SLO として設定。本番モニタリングを 監視SaaS で追加 (応答時間 P95)。',
     state: 'resolved',
     result:
       'ログイン応答が 8 秒 → 1.2 秒に短縮。医師からの苦情はゼロに復旧。SLO モニタリングも継続稼働。',
@@ -1847,16 +1844,16 @@ export const SAMPLE_ISSUES: SeedSampleIssue[] = [
     type: 'issue',
     title: '監査ログのストレージコストが想定の 5 倍',
     content:
-      '監査要件で 7 年保管が必須の監査ログを Oracle 同 DB に保存する設計だったが、リリース 3 ヶ月で容量が想定の 5 倍となり、ストレージコストが急増。財務部から構造見直しの指示。',
+      '監査要件で 7 年保管が必須の監査ログを 商用データベース 同 DB に保存する設計だったが、リリース 3 ヶ月で容量が想定の 5 倍となり、ストレージコストが急増。財務部から構造見直しの指示。',
     cause:
-      '監査ログの 1 レコードあたりサイズ見積が過小評価。実際にはユーザ操作ログ (画面表示・検索) も全て記録対象で、想定の「データ変更ログのみ」よりはるかに多かった。Oracle はストレージコストが高く、監査ログ保管には不向き。',
+      '監査ログの 1 レコードあたりサイズ見積が過小評価。実際にはユーザ操作ログ (画面表示・検索) も全て記録対象で、想定の「データ変更ログのみ」よりはるかに多かった。商用データベース はストレージコストが高く、監査ログ保管には不向き。',
     impact: 'medium',
     likelihood: 'high',
     priority: 'medium',
     responsePolicy:
-      '監査ログを Oracle から S3 (Glacier 階層) に分離し、ストレージコストを 1/10 に削減する。',
+      '監査ログを 商用データベースから オブジェクトストレージ (Glacier 階層) に分離し、ストレージコストを 1/10 に削減する。',
     responseDetail:
-      '直近 3 ヶ月の監査ログは Oracle 残置 (高速検索用)。3 ヶ月超は S3 Standard、12 ヶ月超は S3 Glacier に自動移行 (Lifecycle Policy)。検索画面は 2 経路 (Oracle 即時 / S3 非同期) を提供。',
+      '直近 3 ヶ月の監査ログは 商用データベース 残置 (高速検索用)。3 ヶ月超は オブジェクトストレージ Standard、12 ヶ月超は オブジェクトストレージ Glacier に自動移行 (Lifecycle Policy)。検索画面は 2 経路 (商用データベース 即時 / オブジェクトストレージ 非同期) を提供。',
     state: 'resolved',
     result:
       'ストレージコストが月 50 万円 → 8 万円 に低減 (約 85% 削減)。監査時の検索も非同期で 1 時間以内に対応可能。',
@@ -1915,18 +1912,18 @@ export const SAMPLE_ISSUES: SeedSampleIssue[] = [
   {
     parentProjectName: '人事 / 勤怠 / 給与システムの SaaS 統合刷新 (サンプル)',
     type: 'issue',
-    title: 'SmartHR と KING OF TIME の社員 ID 連携でズレ',
+    title: '人事労務SaaS と KING OF TIME の社員 ID 連携でズレ',
     content:
-      'SmartHR を Single Source of Truth として社員情報を管理する設計だったが、KING OF TIME 側の社員 ID マスタが手動メンテナンス時のミスで 100 名以上ズレ。給与計算時にデータ不整合が発生。',
+      '人事労務SaaS を Single Source of Truth として社員情報を管理する設計だったが、KING OF TIME 側の社員 ID マスタが手動メンテナンス時のミスで 100 名以上ズレ。給与計算時にデータ不整合が発生。',
     cause:
-      'SmartHR と KING OF TIME の双方向連携を Zapier で組んでいたが、双方向ゆえに「どちらが master」が運用上あいまいになっていた。結果として KING OF TIME での手動編集 (退職者を消すなど) が SmartHR に反映されず、ID 体系がズレていった。',
+      '人事労務SaaS と KING OF TIME の双方向連携を 業務自動化ツールで組んでいたが、双方向ゆえに「どちらが master」が運用上あいまいになっていた。結果として KING OF TIME での手動編集 (退職者を消すなど) が 人事労務SaaS に反映されず、ID 体系がズレていった。',
     impact: 'high',
     likelihood: 'high',
     priority: 'high',
     responsePolicy:
-      'SmartHR を完全な master とし、KING OF TIME は片方向 (SmartHR → KING OF TIME) の連携のみに変更する。',
+      '人事労務SaaS を完全な master とし、KING OF TIME は片方向 (人事労務SaaS → KING OF TIME) の連携のみに変更する。',
     responseDetail:
-      'KING OF TIME での社員 ID 直接編集を禁止 (権限剥奪)。SmartHR から KING OF TIME への片方向同期 (1 時間ごと) に変更。差分があれば SmartHR を正と見なして KING OF TIME を上書き。整合性チェック cron を毎日実行し、不整合検知時に Slack 通知。',
+      'KING OF TIME での社員 ID 直接編集を禁止 (権限剥奪)。人事労務SaaS から KING OF TIME への片方向同期 (1 時間ごと) に変更。差分があれば 人事労務SaaS を正と見なして KING OF TIME を上書き。整合性チェック cron を毎日実行し、不整合検知時に ビジネスチャット 通知。',
     state: 'resolved',
     result:
       '同期完了後、社員 ID のズレはゼロに。整合性チェック cron も以降の運用で異常なし。',
@@ -1946,12 +1943,12 @@ export const SAMPLE_ISSUES: SeedSampleIssue[] = [
     likelihood: 'high',
     priority: 'medium',
     responsePolicy:
-      'KING OF TIME の API を活用し、月次のカスタム集計を kintone 上で実装。差異を給与奉行に渡す前に補正する。',
+      'KING OF TIME の API を活用し、月次のカスタム集計を ローコード基盤上で実装。差異を給与計算ソフトに渡す前に補正する。',
     responseDetail:
-      'kintone に「勤怠補正アプリ」を構築。KING OF TIME から API で生データを取得し、フレックス・裁量 のロジックを kintone カスタム JavaScript で実装。補正後の確定値を給与奉行クラウドの API で投入。各従業員には kintone 上で勤怠サマリを確認・承認する画面を提供。',
+      'ローコード基盤に「勤怠補正アプリ」を構築。KING OF TIME から API で生データを取得し、フレックス・裁量 のロジックを ローコード基盤 カスタム JavaScript で実装。補正後の確定値を給与計算ソフトクラウドの API で投入。各従業員には ローコード基盤上で勤怠サマリを確認・承認する画面を提供。',
     state: 'resolved',
     result:
-      '月次給与計算のずれはゼロ。さらに補正ロジックは kintone で社内エンジニアが保守可能となり、ベンダー依存を回避。',
+      '月次給与計算のずれはゼロ。さらに補正ロジックは ローコード基盤で社内エンジニアが保守可能となり、ベンダー依存を回避。',
     lessonLearned:
       'パッケージ SaaS のフィット&ギャップで「99% OK」とされる残り 1% は、組織の重要層 (経営層・専門職) に該当することが多い。1% の重要度を見極め、必要なら拡張ロジックを別途設計する。SaaS と独自実装のハイブリッドは現実的な解。',
     riskNature: null,
@@ -1959,18 +1956,18 @@ export const SAMPLE_ISSUES: SeedSampleIssue[] = [
   {
     parentProjectName: '人事 / 勤怠 / 給与システムの SaaS 統合刷新 (サンプル)',
     type: 'risk',
-    title: '給与奉行クラウドの仕様変更で連携 break のリスク',
+    title: '給与計算ソフトクラウドの仕様変更で連携 break のリスク',
     content:
-      '給与奉行クラウドが過去 1 年で 3 回の API 仕様変更 (フィールド追加・削除・型変更) を実施。連携実装はその度に修正が必要となり、変更通知が直前 (リリース 2 週間前等) に来るケースもあった。今後の運用継続性に懸念。',
+      '給与計算ソフトクラウドが過去 1 年で 3 回の API 仕様変更 (フィールド追加・削除・型変更) を実施。連携実装はその度に修正が必要となり、変更通知が直前 (リリース 2 週間前等) に来るケースもあった。今後の運用継続性に懸念。',
     cause:
-      '給与計算特化の SaaS は法改正への追従で頻繁に仕様変更が発生する。ベンダー側のリリースノート購読は登録していたが、API 仕様変更まで詳細に把握していなかった。連携層 (kintone カスタム JavaScript) の自動テストも整備されておらず、変更検知が手動依存。',
+      '給与計算特化の SaaS は法改正への追従で頻繁に仕様変更が発生する。ベンダー側のリリースノート購読は登録していたが、API 仕様変更まで詳細に把握していなかった。連携層 (ローコード基盤 カスタム JavaScript) の自動テストも整備されておらず、変更検知が手動依存。',
     impact: 'medium',
     likelihood: 'high',
     priority: 'medium',
     responsePolicy:
       'API 連携層を契約テスト + 自動回帰テストで保護し、ベンダー仕様変更時の影響を CI で即座検知する。',
     responseDetail:
-      'kintone カスタム JavaScript に Jest 単体テスト整備。API レスポンスのスキーマ検証を Zod で実装。さらに給与奉行のステージング環境を契約し、ベンダー仕様変更時の事前検証ができる体制に。月次で給与奉行のリリースノートを確認するチェック手順を運用ルール化。',
+      'ローコード基盤 カスタム JavaScript に Jest 単体テスト整備。API レスポンスのスキーマ検証を Zod で実装。さらに給与計算ソフトのステージング環境を契約し、ベンダー仕様変更時の事前検証ができる体制に。月次で給与計算ソフトのリリースノートを確認するチェック手順を運用ルール化。',
     state: 'in_progress',
     result:
       '体制構築 4 ヶ月で、過去 2 回のベンダー仕様変更を CI で事前検知し、本番影響ゼロで対応完了。運用継続性のリスクは大幅に低下。',
@@ -1983,7 +1980,7 @@ export const SAMPLE_ISSUES: SeedSampleIssue[] = [
     type: 'issue',
     title: 'マイナンバー収集で従業員からの返信遅延でリリース 1 ヶ月延期',
     content:
-      'SmartHR への切替時にマイナンバー再収集が必要となり、全社員 1,200 名から収集を開始。しかし返信率は 1 ヶ月で 60% 止まり、SmartHR 切替リリースが 1 ヶ月延期となった。',
+      '人事労務SaaS への切替時にマイナンバー再収集が必要となり、全社員 1,200 名から収集を開始。しかし返信率は 1 ヶ月で 60% 止まり、人事労務SaaS 切替リリースが 1 ヶ月延期となった。',
     cause:
       '従業員への依頼メール 1 通で済ませていた。マイナンバー収集の重要性・期限・返信方法の周知が不十分。海外赴任中の社員、休職中の社員等の特殊ケースも考慮していなかった。',
     impact: 'high',
@@ -1995,7 +1992,7 @@ export const SAMPLE_ISSUES: SeedSampleIssue[] = [
       '初回メール → 1 週間後リマインド → 2 週間後個別電話 → 3 週間後郵送依頼 のステップを実装。海外赴任者には PDF 暗号化メールでの収集を提供。休職中社員は人事部からの個別フォローアップ。最終収集率を 100% 達成するまでフォロー継続。',
     state: 'resolved',
     result:
-      '計画より 1 ヶ月遅れたが、最終的に 1,200 名全員から収集完了。SmartHR への切替が完了。',
+      '計画より 1 ヶ月遅れたが、最終的に 1,200 名全員から収集完了。人事労務SaaS への切替が完了。',
     lessonLearned:
       '従業員からの個人情報収集は「メール 1 通」で完了しない。多段階リマインド + 個別フォロー + 特殊ケース対応 の 3 点を最初から計画する。返信率は「1 通で 50%」程度と見積もり、フォローのバッファを確保する。',
     riskNature: null,
@@ -2007,45 +2004,45 @@ export const SAMPLE_ISSUES: SeedSampleIssue[] = [
   {
     parentProjectName: 'B2C ヘルスケアアプリの新規開発 (サンプル)',
     type: 'issue',
-    title: 'iOS 17 リリース直後の HealthKit 権限挙動変化で機能失敗',
+    title: 'iOS 17 リリース直後の 健康データ連携 権限挙動変化で機能失敗',
     content:
-      'リリース 2 週間後、iOS 17 がリリースされ HealthKit 権限の取得 UX が変更。ユーザの 60% が初回権限ダイアログで「許可しない」を選択し、歩数・心拍数の取得不能に。MAU が想定の 40% で停滞。',
+      'リリース 2 週間後、iOS 17 がリリースされ 健康データ連携 権限の取得 UX が変更。ユーザの 60% が初回権限ダイアログで「許可しない」を選択し、歩数・心拍数の取得不能に。MAU が想定の 40% で停滞。',
     cause:
-      'iOS 17 では HealthKit 権限ダイアログのデフォルトボタンが「許可しない」に近い位置に変更された。さらに 1 度「許可しない」を選ぶと、設定アプリから手動許可が必要となり再依頼の UX も劣化。リリース前の OS バージョンチェックで対応していなかった。',
+      'iOS 17 では 健康データ連携 権限ダイアログのデフォルトボタンが「許可しない」に近い位置に変更された。さらに 1 度「許可しない」を選ぶと、設定アプリから手動許可が必要となり再依頼の UX も劣化。リリース前の OS バージョンチェックで対応していなかった。',
     impact: 'high',
     likelihood: 'medium',
     priority: 'high',
     responsePolicy:
       '権限依頼前に「なぜ必要か」を説明する画面を挟む onboarding を実装し、ユーザの理解度を上げてから権限ダイアログを表示する。',
     responseDetail:
-      'アプリ起動時に「健康データの活用方法」を 3 ステップで説明する onboarding を追加。各ステップで「これに同意しますか?」のミニ確認を入れ、ユーザの心理的準備を整える。HealthKit 権限ダイアログはこの後で表示。さらに WWDC のリリースノートを毎年 6 月に確認する運用を新設。',
+      'アプリ起動時に「健康データの活用方法」を 3 ステップで説明する onboarding を追加。各ステップで「これに同意しますか?」のミニ確認を入れ、ユーザの心理的準備を整える。健康データ連携 権限ダイアログはこの後で表示。さらに iOS の開発者向けカンファレンス のリリースノートを毎年 6 月に確認する運用を新設。',
     state: 'resolved',
     result:
       '改修後の権限取得率が 40% → 78% に向上。MAU も想定通りの推移に復帰。',
     lessonLearned:
-      'モバイルアプリは OS のメジャーアップデート時に挙動が変わる。WWDC / Google I/O のリリースノートを定期確認し、Beta 版での動作テストを習慣化する。プライバシー権限は「依頼の文脈」で取得率が大きく変わる。',
+      'モバイルアプリは OS のメジャーアップデート時に挙動が変わる。iOS の開発者向けカンファレンス / Android の開発者向けカンファレンス のリリースノートを定期確認し、Beta 版での動作テストを習慣化する。プライバシー権限は「依頼の文脈」で取得率が大きく変わる。',
     riskNature: null,
   },
   {
     parentProjectName: 'B2C ヘルスケアアプリの新規開発 (サンプル)',
     type: 'issue',
-    title: 'Apple App Store のレビュー却下 (機能の不明確さを指摘)',
+    title: 'アプリストアのレビュー却下 (機能の不明確さを指摘)',
     content:
-      '本番リリース前の App Store 審査で「機能の説明が不十分で、有料プランの内容が分かりにくい」との理由で 3 回連続却下。リリースが 3 週間遅延し、初期マーケティング施策との連動が崩れた。',
+      '本番リリース前の アプリストア 審査で「機能の説明が不十分で、有料プランの内容が分かりにくい」との理由で 3 回連続却下。リリースが 3 週間遅延し、初期マーケティング施策との連動が崩れた。',
     cause:
-      'App Store の Guideline 3.1.2 (Subscriptions) に詳述される要件 (有料プラン期間・自動更新・解約方法の明示) を満たしていなかった。プロダクト説明文も技術視点で書かれており、ユーザ向けの分かりやすさに欠けていた。',
+      'アプリストアの Guideline 3.1.2 (Subscriptions) に詳述される要件 (有料プラン期間・自動更新・解約方法の明示) を満たしていなかった。プロダクト説明文も技術視点で書かれており、ユーザ向けの分かりやすさに欠けていた。',
     impact: 'high',
     likelihood: 'medium',
     priority: 'high',
     responsePolicy:
-      'App Store Guideline 3.1.2 を逐条確認し、有料プラン関連の表記を完全準拠に修正する。',
+      'アプリストア Guideline 3.1.2 を逐条確認し、有料プラン関連の表記を完全準拠に修正する。',
     responseDetail:
-      '有料プラン購入画面に「期間 (1 ヶ月 / 1 年)」「自動更新」「解約方法 (App Store の購読管理から)」を明記。プロダクト説明文をユーザ視点で書き直し (技術用語を平易な言葉に置換)。App Store Connect の Reviewer Notes に「テスト用アカウント」「主要機能の動作確認手順」を詳細記載。',
+      '有料プラン購入画面に「期間 (1 ヶ月 / 1 年)」「自動更新」「解約方法 (アプリストアの購読管理から)」を明記。プロダクト説明文をユーザ視点で書き直し (技術用語を平易な言葉に置換)。アプリストア Connect の Reviewer Notes に「テスト用アカウント」「主要機能の動作確認手順」を詳細記載。',
     state: 'resolved',
     result:
       '次回審査で 1 回目で承認。リリース 3 週間遅延だが、その後の施策には影響を最小化。',
     lessonLearned:
-      'App Store / Google Play の Guideline は「個別事例」より「条文の精査」を最初に実施する。有料プラン関連の要件は特に厳格。Reviewer Notes には Reviewer がスムーズに動作確認できる情報を詳細に書く。',
+      'アプリストア / アプリストアの Guideline は「個別事例」より「条文の精査」を最初に実施する。有料プラン関連の要件は特に厳格。Reviewer Notes には Reviewer がスムーズに動作確認できる情報を詳細に書く。',
     riskNature: null,
   },
   {
@@ -2073,18 +2070,18 @@ export const SAMPLE_ISSUES: SeedSampleIssue[] = [
   {
     parentProjectName: 'B2C ヘルスケアアプリの新規開発 (サンプル)',
     type: 'issue',
-    title: 'Stripe サブスク決済の解約 UX が分かりにくく顧客サポート負荷急増',
+    title: '決済サービス サブスク決済の解約 UX が分かりにくく顧客サポート負荷急増',
     content:
       '有料プラン解約方法が分かりにくく、顧客サポートへの「解約方法」「返金してほしい」問い合わせが日 30 件以上。Pre-Series A の小規模チーム (5 名) で対応しきれず、創業者が深夜まで返信する状況が続いた。',
     cause:
-      '解約は App Store の購読管理 (Apple) または Google Play の定期購入管理 (Google) からのみ可能。アプリ内に「解約方法」の説明がなく、ユーザは「どこで解約できるか分からない」状態。さらに自動更新の通知タイミングが事前に十分通知されておらず、「気づかず課金された」苦情も多発。',
+      '解約は アプリストアの購読管理 (iOS) または アプリストアの定期購入管理 (Android) からのみ可能。アプリ内に「解約方法」の説明がなく、ユーザは「どこで解約できるか分からない」状態。さらに自動更新の通知タイミングが事前に十分通知されておらず、「気づかず課金された」苦情も多発。',
     impact: 'high',
     likelihood: 'high',
     priority: 'medium',
     responsePolicy:
       'アプリ内に解約方法の明示画面を追加し、自動更新の事前通知 (3 日前) を実装する。',
     responseDetail:
-      '設定画面に「サブスク管理」項目を追加。解約方法 (App Store / Google Play への遷移リンク + 手順の説明) を明示。自動更新 3 日前に push + メール通知を送る。さらに解約理由のアンケート機能も追加し、改善ポイントを発見。',
+      '設定画面に「サブスク管理」項目を追加。解約方法 (アプリストア / アプリストアへの遷移リンク + 手順の説明) を明示。自動更新 3 日前に push + メール通知を送る。さらに解約理由のアンケート機能も追加し、改善ポイントを発見。',
     state: 'resolved',
     result:
       '顧客サポート問い合わせが日 30 件 → 5 件に減少。チームの本業 (プロダクト改善) に集中できる体制に。',
@@ -2097,48 +2094,48 @@ export const SAMPLE_ISSUES: SeedSampleIssue[] = [
   // 既存の最後の entry の継続 (Project E の最後の entry)
   // ================================================================
   {
-    parentProjectName: 'kintone による業務アプリ統合プラットフォーム構築 (サンプル)',
+    parentProjectName: 'ローコード基盤による業務アプリ統合プラットフォーム構築 (サンプル)',
     type: 'issue',
-    title: '教育後 1 ヶ月で 30% のユーザが Excel に逆戻り',
+    title: '教育後 1 ヶ月で 30% のユーザが 表計算ソフトに逆戻り',
     content:
-      '全社員 50 名にユーザ教育 (各 2 時間) を実施し本稼働開始したが、1 ヶ月後の利用ログ調査で 15 名 (30%) が kintone をほぼ利用せず Excel に戻っていた。リーダー層も Excel メールで業務指示しており「kintone を使う動機」が現場で消えていた。',
+      '全社員 50 名にユーザ教育 (各 2 時間) を実施し本稼働開始したが、1 ヶ月後の利用ログ調査で 15 名 (30%) が ローコード基盤をほぼ利用せず 表計算ソフトに戻っていた。リーダー層も 表計算ソフト メールで業務指示しており「ローコード基盤を使う動機」が現場で消えていた。',
     cause:
-      '教育内容が画面操作中心で、Excel との比較で「kintone を使うメリット」が伝わっていなかった。さらにリーダー層の教育を後回しにしていたため、リーダーが Excel ベースで業務指示するパターンが残った。',
+      '教育内容が画面操作中心で、表計算ソフトとの比較で「ローコード基盤を使うメリット」が伝わっていなかった。さらにリーダー層の教育を後回しにしていたため、リーダーが 表計算ソフト ベースで業務指示するパターンが残った。',
     impact: 'high',
     likelihood: 'high',
     priority: 'medium',
     responsePolicy:
-      'リーダー層を最初に教育し、リーダーが kintone で業務指示することで部下の入力動機を作る。',
+      'リーダー層を最初に教育し、リーダーが ローコード基盤で業務指示することで部下の入力動機を作る。',
     responseDetail:
-      'リーダー層 8 名に再教育 (各 4 時間、業務シナリオ別の活用方法中心)。リーダーから部下への業務依頼は kintone 上のレコード作成で行うルールを徹底。Excel メール添付による業務指示を禁止 (3 ヶ月の猶予期間あり)。月次の利用率レポートを部署別に経営層に提示。',
+      'リーダー層 8 名に再教育 (各 4 時間、業務シナリオ別の活用方法中心)。リーダーから部下への業務依頼は ローコード基盤上のレコード作成で行うルールを徹底。表計算ソフト メール添付による業務指示を禁止 (3 ヶ月の猶予期間あり)。月次の利用率レポートを部署別に経営層に提示。',
     state: 'in_progress',
     result:
       '3 ヶ月後の利用率調査で 70% → 95% に改善。リーダー層の積極利用が部下にも波及する好循環が確立。',
     lessonLearned:
-      'システム導入の成否は「リーダー層の利用」で決まる。リーダーが旧ツール (Excel) を使い続けると部下も追従する。教育順序は「リーダー → 一般」が鉄則。導入後の利用率モニタリングを月次で行い、低い部署にはピンポイント対応する。',
+      'システム導入の成否は「リーダー層の利用」で決まる。リーダーが旧ツール (表計算ソフト) を使い続けると部下も追従する。教育順序は「リーダー → 一般」が鉄則。導入後の利用率モニタリングを月次で行い、低い部署にはピンポイント対応する。',
     riskNature: null,
   },
 ];
 
 export const SAMPLE_RETROSPECTIVES: SeedSampleRetrospective[] = [
   // ================================================================
-  // Project A (PowerPlatform 請求書承認) の振り返り
+  // Project A (ローコード基盤 請求書承認) の振り返り
   // ================================================================
   {
     parentProjectName: '請求書承認ワークフロー構築 (サンプル)',
     conductedDate: '2026-06-15',
     planSummary:
-      '4 月着手から 2 ヶ月、要件定義と設計を完了させ、6 月中に PowerApps 画面の 80% を完成、Power Automate 主要フロー 5 本のうち 3 本を実装完了することを計画していた。経理部 3 名のキーパーソンとの週次レビューで要件の歪みを早期発見する仕組みも設計の段階で組み込んでいた。',
+      '4 月着手から 2 ヶ月、要件定義と設計を完了させ、6 月中に ローコード基盤 画面の 80% を完成、業務自動化ツール 主要フロー 5 本のうち 3 本を実装完了することを計画していた。経理部 3 名のキーパーソンとの週次レビューで要件の歪みを早期発見する仕組みも設計の段階で組み込んでいた。',
     actualSummary:
-      '要件定義は計画通り 5 月末に完了したが、設計フェーズで「承認権限マトリクス」(金額帯 × 部門 × 役職の 3 軸) の合意が想定以上に紛糾し、2 週間遅延。さらに月末タイミングで経理部キーパーソンが多忙でレビューが取れず、設計確定が 6 月 10 日にずれ込んだ。PowerApps の画面は 60% 完成、Power Automate は 2 本完成と計画より 20% 進捗ビハインド。',
+      '要件定義は計画通り 5 月末に完了したが、設計フェーズで「承認権限マトリクス」(金額帯 × 部門 × 役職の 3 軸) の合意が想定以上に紛糾し、2 週間遅延。さらに月末タイミングで経理部キーパーソンが多忙でレビューが取れず、設計確定が 6 月 10 日にずれ込んだ。ローコード基盤の画面は 60% 完成、業務自動化ツール は 2 本完成と計画より 20% 進捗ビハインド。',
     goodPoints:
-      '週次レビューが機能し、3 度の要件追加 (代理承認・差戻し・期日リマインダ) を設計確定前に取り込めた。Power Automate のループ問題 (過去事例: 同一メール大量送信) を意識した冪等性ガードを最初から実装し、テスト時の事故ゼロ。経理部からの信頼を獲得しキーパーソンが積極的にプロジェクトに関与する関係性を構築できた。',
+      '週次レビューが機能し、3 度の要件追加 (代理承認・差戻し・期日リマインダ) を設計確定前に取り込めた。業務自動化ツールのループ問題 (過去事例: 同一メール大量送信) を意識した冪等性ガードを最初から実装し、テスト時の事故ゼロ。経理部からの信頼を獲得しキーパーソンが積極的にプロジェクトに関与する関係性を構築できた。',
     problems:
-      '承認権限マトリクスの合意が紛糾した最大要因は、「現状の慣習」(金額帯による暗黙の承認者判断) を明文化していなかったため、議論の土台が共有できなかったこと。月末タイミングのキーパーソン不在は予想可能だったが、リスク登録簿に乗せていなかった。PowerApps の画面開発が想定より時間を要したのは、Delegation 制限の理解不足で複数回リファクタリングしたことによる。',
+      '承認権限マトリクスの合意が紛糾した最大要因は、「現状の慣習」(金額帯による暗黙の承認者判断) を明文化していなかったため、議論の土台が共有できなかったこと。月末タイミングのキーパーソン不在は予想可能だったが、リスク登録簿に乗せていなかった。ローコード基盤の画面開発が想定より時間を要したのは、Delegation 制限の理解不足で複数回リファクタリングしたことによる。',
     improvements:
-      '次フェーズに向け、(1) 業務ルール (承認・例外処理) は要件定義段階で必ず明文化、(2) キーパーソンの繁忙期 (月末・四半期末) を計画初期にカレンダー化しレビュー時間を別途確保、(3) PowerApps の Delegation 対応関数リストを開発開始前に共有 — の 3 点を実施する。スケジュールバッファとして PowerApps 画面工程に + 30% を見込む。',
+      '次フェーズに向け、(1) 業務ルール (承認・例外処理) は要件定義段階で必ず明文化、(2) キーパーソンの繁忙期 (月末・四半期末) を計画初期にカレンダー化しレビュー時間を別途確保、(3) ローコード基盤の Delegation 対応関数リストを開発開始前に共有 — の 3 点を実施する。スケジュールバッファとして ローコード基盤 画面工程に + 30% を見込む。',
     knowledgeToShare:
-      'PowerApps 開発で最初に学ぶべきは Delegation 制限と対応関数リスト。SharePoint List 大量データを扱う案件は、データ件数の本番想定値で性能テストを設計フェーズに必須項目化する。承認権限マトリクスは「現状ヒアリング」だけでなく「文書化 + 経理部全員の合意」をリリース前に必ず取得する。',
+      'ローコード基盤 開発で最初に学ぶべきは Delegation 制限と対応関数リスト。ドキュメント管理ツール 大量データを扱う案件は、データ件数の本番想定値で性能テストを設計フェーズに必須項目化する。承認権限マトリクスは「現状ヒアリング」だけでなく「文書化 + 経理部全員の合意」をリリース前に必ず取得する。',
     state: 'confirmed',
   },
   {
@@ -2147,7 +2144,7 @@ export const SAMPLE_RETROSPECTIVES: SeedSampleRetrospective[] = [
     planSummary:
       '9 月末本番リリース後の運用 1 ヶ月で、月次クローズ業務時間の 75% 削減 (40 時間 → 10 時間)、紙の物理回付ゼロ、ユーザ満足度 80% を達成することを KPI に置いていた。',
     actualSummary:
-      '月次クローズ業務時間は 40 時間 → 12 時間 (70% 削減) に到達。紙の物理回付はゼロ達成。ただしユーザ満足度調査では満足度 65% 止まりで、KPI 未達。具体的には「PowerApps の応答速度」と「通知メールがスパム化」の 2 点で苦情多発。両方ともリリース後 2 週間以内に対処済みだが、初期体験の悪さが満足度に影響した模様。',
+      '月次クローズ業務時間は 40 時間 → 12 時間 (70% 削減) に到達。紙の物理回付はゼロ達成。ただしユーザ満足度調査では満足度 65% 止まりで、KPI 未達。具体的には「ローコード基盤の応答速度」と「通知メールがスパム化」の 2 点で苦情多発。両方ともリリース後 2 週間以内に対処済みだが、初期体験の悪さが満足度に影響した模様。',
     goodPoints:
       '紙の物理回付廃止という業務プロセス変革を完遂。経理部のキーパーソンが新システムを推進する社内ヒーローとして認知された。リリース直後の問題に対する 24 時間以内の対応スピードを評価され、次フェーズ (会計連携) も継続契約の見込み。',
     problems:
@@ -2160,114 +2157,114 @@ export const SAMPLE_RETROSPECTIVES: SeedSampleRetrospective[] = [
   },
 
   // ================================================================
-  // Project B (AWS マルチアカウント) の振り返り
+  // Project B (パブリッククラウド マルチアカウント) の振り返り
   // ================================================================
   {
-    parentProjectName: '新規 SaaS 基盤の AWS マルチアカウント構築 (サンプル)',
+    parentProjectName: '新規 SaaS 基盤のパブリッククラウド マルチアカウント構築 (サンプル)',
     conductedDate: '2026-05-30',
     planSummary:
-      'AWS Organizations による 6 アカウント構成 (root/security/log-archive/dev/staging/prod/backup) の確定、Terraform Cloud による IaC 基盤、ECS Fargate + Aurora の本番アーキテクチャを 2 ヶ月で確定する計画。SOC 2 対応の最低限ベースライン (CloudTrail / GuardDuty / Config) も同時整備。',
+      'パブリッククラウド Organizations による 6 アカウント構成 (root/security/log-archive/dev/staging/prod/backup) の確定、IaCツール Cloud による IaC 基盤、マネージドコンテナ基盤 サーバレスコンテナ + マネージドRDB の本番アーキテクチャを 2 ヶ月で確定する計画。SOC 2 対応の最低限ベースライン (CloudTrail / GuardDuty / Config) も同時整備。',
     actualSummary:
-      'アカウント構成は計画通り 6 アカウント完成。Terraform 基盤も初期構築完了。ECS Fargate 本番アーキテクチャは確定したが、Aurora のフェイルオーバ挙動でアプリ側の対応漏れが演習で発覚し、設計を見直すことに。さらに Terraform state ロック競合の事故が 2 件発生。SOC 2 ベースラインは予定通り完了。',
+      'アカウント構成は計画通り 6 アカウント完成。IaCツール 基盤も初期構築完了。マネージドコンテナ基盤 サーバレスコンテナ 本番アーキテクチャは確定したが、マネージドRDB のフェイルオーバ挙動でアプリ側の対応漏れが演習で発覚し、設計を見直すことに。さらに IaCツール state ロック競合の事故が 2 件発生。SOC 2 ベースラインは予定通り完了。',
     goodPoints:
-      'マルチアカウント設計を最初に確定したことで、各環境のリソース分離が明確に。SOC 2 ベースライン (CloudTrail / GuardDuty / Config) を初期構築段階に組み込んだことで、後追いコストを抑えられた。Datadog 監視も初期から設定したため、Aurora フェイルオーバ問題を発見できた。',
+      'マルチアカウント設計を最初に確定したことで、各環境のリソース分離が明確に。SOC 2 ベースライン (CloudTrail / GuardDuty / Config) を初期構築段階に組み込んだことで、後追いコストを抑えられた。監視SaaS 監視も初期から設定したため、マネージドRDB フェイルオーバ問題を発見できた。',
     problems:
-      'Terraform Cloud への移行を「あとで」と先送りした結果、state ロック競合事故が発生した。Aurora フェイルオーバはマネージド任せで「アプリ側で対応不要」と楽観視していた認識が誤り。両者とも「初期構築段階での未検証事項」が後の事故につながった。',
+      'IaCツール Cloud への移行を「あとで」と先送りした結果、state ロック競合事故が発生した。マネージドRDB フェイルオーバはマネージド任せで「アプリ側で対応不要」と楽観視していた認識が誤り。両者とも「初期構築段階での未検証事項」が後の事故につながった。',
     improvements:
       'IaC は「複数人作業前提」で Day 1 に環境整備 (state ロック / CI/CD / drift detection)。マネージドサービスのフェイルオーバ挙動は「ドキュメント確認 + 実機検証」を設計フェーズで実施。本番リリース前のフェイルオーバ演習を必須マイルストーンとして計画に組み込む。',
     knowledgeToShare:
-      'AWS 環境構築は「セキュリティ・運用 + 開発」の両輪を最初から組み込まないと後追いコストが膨らむ。Terraform の state ロック・CI/CD 連携は Day 1 の必須準備項目。マネージド DB の信頼性は「DB 単体」で評価せず「アプリ含む End-to-End」で検証する。',
+      'パブリッククラウド 環境構築は「セキュリティ・運用 + 開発」の両輪を最初から組み込まないと後追いコストが膨らむ。IaCツールの state ロック・CI/CD 連携は Day 1 の必須準備項目。マネージド DB の信頼性は「DB 単体」で評価せず「アプリ含む End-to-End」で検証する。',
     state: 'confirmed',
   },
   {
-    parentProjectName: '新規 SaaS 基盤の AWS マルチアカウント構築 (サンプル)',
+    parentProjectName: '新規 SaaS 基盤のパブリッククラウド マルチアカウント構築 (サンプル)',
     conductedDate: '2026-09-30',
     planSummary:
-      '8 月本番リリース後 1 ヶ月の運用安定性確認、SLO (可用性 99.9%、応答時間 P95 200ms) 達成、月次 AWS コスト目標 8,000 USD 以内、災害対策演習 (DR Drill) の月次実施を計画。',
+      '8 月本番リリース後 1 ヶ月の運用安定性確認、SLO (可用性 99.9%、応答時間 P95 200ms) 達成、月次 パブリッククラウド コスト目標 8,000 USD 以内、災害対策演習 (DR Drill) の月次実施を計画。',
     actualSummary:
-      '可用性は 99.92% で SLO 達成。応答時間 P95 は 180ms で SLO 達成。月次コストは 7,200 USD で予算内。災害対策演習は月 1 回実施し、復旧時間 90 秒以内を継続維持。1 ヶ月運用で計画外障害は 1 回 (CloudFront キャッシュ汚染、12 分ダウンタイム) のみ。',
+      '可用性は 99.92% で SLO 達成。応答時間 P95 は 180ms で SLO 達成。月次コストは 7,200 USD で予算内。災害対策演習は月 1 回実施し、復旧時間 90 秒以内を継続維持。1 ヶ月運用で計画外障害は 1 回 (CDN キャッシュ汚染、12 分ダウンタイム) のみ。',
     goodPoints:
-      'マネージドサービス (ECS / Aurora / CloudFront) の安定性が予想を上回り、運用負荷が想定の半分。Datadog 監視 + Slack アラート連携で、潜在的な問題を本番影響前に察知できる体制が機能。災害対策演習が習慣化したことで、本番障害発生時 (CloudFront 事故) も冷静に Incident Commander が指揮を取り、ユーザ影響を最小化。',
+      'マネージドサービス (マネージドコンテナ基盤 / マネージドRDB / CDN) の安定性が予想を上回り、運用負荷が想定の半分。監視SaaS 監視 + ビジネスチャット アラート連携で、潜在的な問題を本番影響前に察知できる体制が機能。災害対策演習が習慣化したことで、本番障害発生時 (CDN 事故) も冷静に Incident Commander が指揮を取り、ユーザ影響を最小化。',
     problems:
-      'CloudFront キャッシュ汚染事故は「キャッシュビヘイビアのデフォルト ON」設計が原因で、リリース前の検証不足。新人エンジニアが「CDN の挙動を理解していない状態」でデプロイできてしまった点も組織的課題。応答時間 P95 が想定より良好 (200ms 目標 → 180ms 実測) は予想外で、当初の Aurora インスタンスサイズが過剰だった可能性。',
+      'CDN キャッシュ汚染事故は「キャッシュビヘイビアのデフォルト ON」設計が原因で、リリース前の検証不足。新人エンジニアが「CDN の挙動を理解していない状態」でデプロイできてしまった点も組織的課題。応答時間 P95 が想定より良好 (200ms 目標 → 180ms 実測) は予想外で、当初の マネージドRDB インスタンスサイズが過剰だった可能性。',
     improvements:
-      '次フェーズに向けて、(1) CDN / WAF / 認証の挙動はリリース前の自動レスポンスヘッダ検査を CI に追加、(2) 新人エンジニアのオンボーディング教材に「クラウドサービスの基本挙動」モジュールを追加、(3) Aurora インスタンスサイズの最適化検証 (1 サイズダウンしてもパフォーマンス維持できるか) で月次コスト削減を試算。',
+      '次フェーズに向けて、(1) CDN / WAF / 認証の挙動はリリース前の自動レスポンスヘッダ検査を CI に追加、(2) 新人エンジニアのオンボーディング教材に「クラウドサービスの基本挙動」モジュールを追加、(3) マネージドRDB インスタンスサイズの最適化検証 (1 サイズダウンしてもパフォーマンス維持できるか) で月次コスト削減を試算。',
     knowledgeToShare:
-      'CDN / キャッシュ層は「デフォルト OFF + 個別 ON」が原則。デフォルト ON は事故源。レスポンスヘッダ検査は CI で自動化。クラウドのインスタンスサイズは「リリース後の実測」で最適化する。Datadog / Slack 連携は本番運用の必須インフラ。',
+      'CDN / キャッシュ層は「デフォルト OFF + 個別 ON」が原則。デフォルト ON は事故源。レスポンスヘッダ検査は CI で自動化。クラウドのインスタンスサイズは「リリース後の実測」で最適化する。監視SaaS / ビジネスチャット 連携は本番運用の必須インフラ。',
     state: 'confirmed',
   },
 
   // ================================================================
-  // Project C (Salesforce) の振り返り
+  // Project C (SFA/CRMツール) の振り返り
   // ================================================================
   {
-    parentProjectName: 'Salesforce による営業活動可視化 (サンプル)',
+    parentProjectName: 'SFA/CRMツールによる営業活動可視化 (サンプル)',
     conductedDate: '2026-04-30',
     planSummary:
-      '既存 Excel 顧客マスタ 3,000 件の Salesforce 移行、データクレンジング、Duplicate Rule 設定を 1 ヶ月で完了させる計画。並行して営業現場の利用シナリオヒアリングも完了し、ダッシュボード設計の前提を確定する。',
+      '既存 表計算ソフト 顧客マスタ 3,000 件の SFA/CRMツール 移行、データクレンジング、Duplicate Rule 設定を 1 ヶ月で完了させる計画。並行して営業現場の利用シナリオヒアリングも完了し、ダッシュボード設計の前提を確定する。',
     actualSummary:
-      'データ移行は 2 週間遅延。原因は Excel の表記揺れによる重複登録 (3,000 件中 800 件) で、後処理クレンジングに想定の 3 倍の工数が必要となった。営業現場ヒアリングは計画通り完了し、ダッシュボード設計の前提も確定。',
+      'データ移行は 2 週間遅延。原因は 表計算ソフトの表記揺れによる重複登録 (3,000 件中 800 件) で、後処理クレンジングに想定の 3 倍の工数が必要となった。営業現場ヒアリングは計画通り完了し、ダッシュボード設計の前提も確定。',
     goodPoints:
       '営業現場ヒアリングを計画通り進められたことで、ダッシュボード要件が明確化。プロジェクト全体の遅延を吸収する余地が生まれた。データクレンジングを通じて、顧客マスタの実態 (重複・表記揺れ) を可視化でき、運用ルール策定にもつながった。',
     problems:
-      'データ移行の見積りが甘かった。Salesforce Duplicate Rule に依存した「移行後クレンジング」設計は、表記揺れの大量重複には機能しなかった。移行前の Pre-Migration Cleansing を必須工程として位置付けていれば回避できた事象。',
+      'データ移行の見積りが甘かった。SFA/CRMツール Duplicate Rule に依存した「移行後クレンジング」設計は、表記揺れの大量重複には機能しなかった。移行前の Pre-Migration Cleansing を必須工程として位置付けていれば回避できた事象。',
     improvements:
-      'データ移行は (1) 元データの実態調査 (重複率・表記揺れ・欠損率) を先に実施、(2) 必要な正規化処理を移行スクリプトに組み込む、(3) Salesforce 機能 (Duplicate Rule) は「補助」として使う — の 3 段階で計画する。次フェーズ (Apex Trigger 開発) では bulk-safe な実装パターンを最初から導入する。',
+      'データ移行は (1) 元データの実態調査 (重複率・表記揺れ・欠損率) を先に実施、(2) 必要な正規化処理を移行スクリプトに組み込む、(3) SFA/CRMツール 機能 (Duplicate Rule) は「補助」として使う — の 3 段階で計画する。次フェーズ (カスタムロジック Trigger 開発) では bulk-safe な実装パターンを最初から導入する。',
     knowledgeToShare:
-      'パッケージ製品の機能 (Salesforce Duplicate Rule など) は「補助手段」であり「主軸」ではない。データ移行の主軸は移行スクリプトでの正規化処理。元データの実態調査 (重複率調査・表記揺れ調査) は移行計画策定の必須工程。',
+      'パッケージ製品の機能 (SFA/CRMツール Duplicate Rule など) は「補助手段」であり「主軸」ではない。データ移行の主軸は移行スクリプトでの正規化処理。元データの実態調査 (重複率調査・表記揺れ調査) は移行計画策定の必須工程。',
     state: 'confirmed',
   },
   {
-    parentProjectName: 'Salesforce による営業活動可視化 (サンプル)',
+    parentProjectName: 'SFA/CRMツールによる営業活動可視化 (サンプル)',
     conductedDate: '2026-07-15',
     planSummary:
-      '営業 30 名への研修プログラム実施 (各 4 時間)、本稼働開始、リリース 1 ヶ月後の利用率 90% 達成を目標。マネージャ層 (8 名) には事前に追加研修 (各 4 時間) を実施し、Salesforce ベースの週次案件レビュー文化を醸成。',
+      '営業 30 名への研修プログラム実施 (各 4 時間)、本稼働開始、リリース 1 ヶ月後の利用率 90% 達成を目標。マネージャ層 (8 名) には事前に追加研修 (各 4 時間) を実施し、SFA/CRMツール ベースの週次案件レビュー文化を醸成。',
     actualSummary:
-      '研修プログラムは計画通り実施。リリース 1 ヶ月後の利用率調査では入力率 92% に達し、目標を達成。ただし研修直後 (3 ヶ月時点) は 60% で、マネージャ層の利用習慣化に伴い改善した経緯。Salesforce ベースの週次案件レビュー文化は定着し、マネージャの集計業務時間が週 8 時間 → 1 時間に減少。',
+      '研修プログラムは計画通り実施。リリース 1 ヶ月後の利用率調査では入力率 92% に達し、目標を達成。ただし研修直後 (3 ヶ月時点) は 60% で、マネージャ層の利用習慣化に伴い改善した経緯。SFA/CRMツール ベースの週次案件レビュー文化は定着し、マネージャの集計業務時間が週 8 時間 → 1 時間に減少。',
     goodPoints:
-      'マネージャ層を最初に教育する戦略が機能した。マネージャが Salesforce 上で業務を行うことで、現場の入力動機が継続。週次案件レビュー文化の定着で「データを見て判断する」経営判断のスピードが向上し、経営層からの評価も高い。',
+      'マネージャ層を最初に教育する戦略が機能した。マネージャが SFA/CRMツール上で業務を行うことで、現場の入力動機が継続。週次案件レビュー文化の定着で「データを見て判断する」経営判断のスピードが向上し、経営層からの評価も高い。',
     problems:
       '研修直後 (1 ヶ月時点) の利用率が 60% と低かったのは、初期教育内容が「画面操作中心」で「業務との関連性」が伝わりにくかったため。マネージャ層の追加研修・週次レビュー文化醸成までの 2 ヶ月間は試行錯誤期間で、現場からの不満も少なくなかった。',
     improvements:
       '次プロジェクトでは (1) 教育内容を「業務シナリオ × 画面操作」のハイブリッドに改善、(2) リーダー教育を 2 週間前倒しでマネージャ層の習熟期間を確保、(3) 利用率の月次モニタリング + 部署別フィードバックを Day 1 で計画に組み込む。',
     knowledgeToShare:
-      '組織変革プロジェクトの成功は「リーダー層の利用」で決まる。リーダーが旧ツール (Excel) を使い続けると部下も追従する。教育順序は「リーダー → 一般」が鉄則。利用率は「導入直後 60% → 3 ヶ月後 90%」のような曲線を描くことが多く、初期の不安を抱え込まず計画通りに継続する。',
+      '組織変革プロジェクトの成功は「リーダー層の利用」で決まる。リーダーが旧ツール (表計算ソフト) を使い続けると部下も追従する。教育順序は「リーダー → 一般」が鉄則。利用率は「導入直後 60% → 3 ヶ月後 90%」のような曲線を描くことが多く、初期の不安を抱え込まず計画通りに継続する。',
     state: 'confirmed',
   },
 
   // ================================================================
-  // Project D (SAP S/4HANA) の振り返り
+  // Project D (ERPパッケージ) の振り返り
   // ================================================================
   {
-    parentProjectName: 'SAP S/4HANA への基幹システム移行 (サンプル)',
+    parentProjectName: 'ERPパッケージへの基幹システム移行 (サンプル)',
     conductedDate: '2026-04-30',
     planSummary:
-      '1 月着手から 4 ヶ月、Fit&Gap 分析を完了し、ABAP カスタム機能の現行/移行方針を確定する計画。マスタ統合 (品目 15 万件・取引先 8 千件) の方針も確定し、本格的な移行作業に入るためのマイルストーン。',
+      '1 月着手から 4 ヶ月、Fit&Gap 分析を完了し、ERPアドオン言語 カスタム機能の現行/移行方針を確定する計画。マスタ統合 (品目 15 万件・取引先 8 千件) の方針も確定し、本格的な移行作業に入るためのマイルストーン。',
     actualSummary:
-      'Fit&Gap 分析は計画通り完了。ただし ABAP カスタム機能の互換性チェック (Custom Code Migration Cockpit) で 30% (240 本) が廃止 API 使用と判明し、想定より大規模な置換作業が必要に。マスタ統合は品目重複問題で 2 ヶ月遅延の見込み。プロジェクト全体は計画より 2-3 ヶ月遅延の見通し。',
+      'Fit&Gap 分析は計画通り完了。ただし ERPアドオン言語 カスタム機能の互換性チェック (Custom Code Migration Cockpit) で 30% (240 本) が廃止 API 使用と判明し、想定より大規模な置換作業が必要に。マスタ統合は品目重複問題で 2 ヶ月遅延の見込み。プロジェクト全体は計画より 2-3 ヶ月遅延の見通し。',
     goodPoints:
       'Custom Code Migration Cockpit による事前互換性チェックを実施したことで、本格移行前に問題を発見できた。マスタ統合の品目重複問題も、AI + 熟練者目視のハイブリッドで対応方針を確立。手戻りを最小化する基盤が整った。',
     problems:
       '初期計画段階で Custom Code Migration Cockpit を実施していなかった。マスタ統合の方針 (命名ルール・判定基準) を先に確定しなかったため、データクレンジング工数が 2 倍になった。両者ともリスクとして登録簿に上げていれば早期に対応できた。',
     improvements:
-      '次フェーズ (本格移行) に向けて、(1) ABAP 廃止 API 置換は Quick Fix と手動実装のハイブリッドで進める、(2) マスタ統合の最終確認は購買担当ベテランの目視確認で品質を担保、(3) 月次マイルストーン進捗を可視化 (Burn-down chart) し、想定外遅延を早期検知する仕組みを導入。',
+      '次フェーズ (本格移行) に向けて、(1) ERPアドオン言語 廃止 API 置換は Quick Fix と手動実装のハイブリッドで進める、(2) マスタ統合の最終確認は購買担当ベテランの目視確認で品質を担保、(3) 月次マイルストーン進捗を可視化 (Burn-down chart) し、想定外遅延を早期検知する仕組みを導入。',
     knowledgeToShare:
-      'ERP のメジャーバージョンアップは「コード互換性チェック」を要件定義段階で必ず実施。ベンダーの診断ツール (Custom Code Migration Cockpit / Database Migration Assistant) は Day 1 で実行する。マスタ統合は「データ統合」より「定義統合」が先。命名ルール・判定基準の合意なく統合は不可能。',
+      'ERPのメジャーバージョンアップは「コード互換性チェック」を要件定義段階で必ず実施。ベンダーの診断ツール (Custom Code Migration Cockpit / Database Migration Assistant) は Day 1 で実行する。マスタ統合は「データ統合」より「定義統合」が先。命名ルール・判定基準の合意なく統合は不可能。',
     state: 'confirmed',
   },
 
   // ================================================================
-  // Project E (kintone) の振り返り
+  // Project E (ローコード基盤) の振り返り
   // ================================================================
   {
-    parentProjectName: 'kintone による業務アプリ統合プラットフォーム構築 (サンプル)',
+    parentProjectName: 'ローコード基盤による業務アプリ統合プラットフォーム構築 (サンプル)',
     conductedDate: '2026-09-30',
     planSummary:
       '12 アプリ全構築完了、社員 50 名の研修プログラム実施、本稼働開始 (10 月 1 日) を 4 月着手から 6 ヶ月で達成する計画。情シス担当 1 名 + 兼任 2 名で運用可能な持続性を確保。',
     actualSummary:
-      '12 アプリの構築は計画通り完了。研修プログラムも 50 名全員に実施。ただし運用フェーズで「情シス 1 名で全保守は持続不可能」「JavaScript カスタムが他者に読めない」「ユーザ 30% が Excel に逆戻り」などの問題が顕在化し、追加対応に 3 ヶ月を要した。',
+      '12 アプリの構築は計画通り完了。研修プログラムも 50 名全員に実施。ただし運用フェーズで「情シス 1 名で全保守は持続不可能」「JavaScript カスタムが他者に読めない」「ユーザ 30% が 表計算ソフトに逆戻り」などの問題が顕在化し、追加対応に 3 ヶ月を要した。',
     goodPoints:
-      '12 アプリの構築自体は kintone のローコード性により計画通り完成。各部署の業務を統一プラットフォーム上に集約できた点は事業価値として大きい。Citizen Developer 育成 (各部署 1 名 = 計 5 名) を後追いで実施し、運用持続性を確保できた。',
+      '12 アプリの構築自体は ローコード基盤のローコード性により計画通り完成。各部署の業務を統一プラットフォーム上に集約できた点は事業価値として大きい。Citizen Developer 育成 (各部署 1 名 = 計 5 名) を後追いで実施し、運用持続性を確保できた。',
     problems:
       'プロジェクト計画段階で「運用持続性」を技術面のみで評価し、「組織面 (Citizen Developer 育成)」を考慮していなかった。早期の JavaScript カスタムにコーディング規約・コードレビューがなく技術負債化。教育内容が画面操作中心で、リーダー層の利用率が低かったことで部下の利用率にも影響。',
     improvements:
@@ -2299,21 +2296,21 @@ export const SAMPLE_RETROSPECTIVES: SeedSampleRetrospective[] = [
   },
 
   // ================================================================
-  // Project G (Snowflake DWH) の振り返り
+  // Project G (クラウドDWH DWH) の振り返り
   // ================================================================
   {
     parentProjectName: '全社データ統合 + BI ダッシュボード構築 (サンプル)',
     conductedDate: '2026-08-31',
     planSummary:
-      '4 月着手から 5 ヶ月、Snowflake DWH 構築、dbt による変換層構築、Tableau ダッシュボード 3 系統 (経営/マネージャ/担当者) を完成させ、9 月本稼働開始を計画。',
+      '4 月着手から 5 ヶ月、クラウドDWH DWH 構築、ELTツール による変換層構築、BIツール ダッシュボード 3 系統 (経営/マネージャ/担当者) を完成させ、9 月本稼働開始を計画。',
     actualSummary:
-      'Snowflake DWH と Tableau ダッシュボードは計画通り完成し、9 月本稼働開始。ただし初回 ETL でクレジット消費が想定の 5 倍となり、コスト最適化作業に 1 ヶ月を要した。dbt model の依存グラフが複雑化し、レイヤ分離リファクタリングも追加実施。BI ユーザの権限設計問題も発見・修正済み。',
+      'クラウドDWH DWH と BIツール ダッシュボードは計画通り完成し、9 月本稼働開始。ただし初回 ETL でクレジット消費が想定の 5 倍となり、コスト最適化作業に 1 ヶ月を要した。ELTツール model の依存グラフが複雑化し、レイヤ分離リファクタリングも追加実施。BI ユーザの権限設計問題も発見・修正済み。',
     goodPoints:
       '計画通りの本稼働を達成。経営層からの追加質問に「翌営業日まで持ち帰り」が解消され、リアルタイムでデータドリブンな判断ができる体制を構築。データアナリスト 2 名の社内育成も並行して進行。',
     problems:
-      'Snowflake のコスト管理は「設定の妥当性」が直結する事を、初期構築時に深く理解していなかった。dbt model の設計も「とりあえず作って後で整理」スタンスで、レイヤ責務分離を最初に決めなかった結果、依存地獄になった。BI ユーザの権限設計も Snowflake のロール体系を初期から設計しなかったため、後で大幅見直しが必要に。',
+      'クラウドDWH のコスト管理は「設定の妥当性」が直結する事を、初期構築時に深く理解していなかった。ELTツール model の設計も「とりあえず作って後で整理」スタンスで、レイヤ責務分離を最初に決めなかった結果、依存地獄になった。BI ユーザの権限設計も クラウドDWH のロール体系を初期から設計しなかったため、後で大幅見直しが必要に。',
     improvements:
-      '次プロジェクトでは (1) クラウド DWH は Day 1 で Resource Monitor / Warehouse 自動サイズ変更 / dbt incremental を必須設定、(2) dbt model は 4 レイヤ (raw/staging/intermediate/mart) の責務分離を初期設計で確定、(3) ロール体系 (BI ユーザ / dbt エンジニア等) は Day 1 で最小権限原則で設計する。',
+      '次プロジェクトでは (1) クラウド DWH は Day 1 で Resource Monitor / Warehouse 自動サイズ変更 / ELTツール incremental を必須設定、(2) ELTツール model は 4 レイヤ (raw/staging/intermediate/mart) の責務分離を初期設計で確定、(3) ロール体系 (BI ユーザ / ELTツール エンジニア等) は Day 1 で最小権限原則で設計する。',
     knowledgeToShare:
       'クラウド DWH は「設定の妥当性」がコスト直結。Warehouse サイズ・auto-suspend・incremental 設定・実行プランの 4 点を初期設計で詰める。データ変換層もアーキテクチャ設計が必要 (レイヤ分離なくモデルを書き続けると依存地獄)。データ基盤は Day 1 で「ロール体系 + 最小権限原則」を設計する。',
     state: 'confirmed',
@@ -2347,15 +2344,15 @@ export const SAMPLE_RETROSPECTIVES: SeedSampleRetrospective[] = [
     parentProjectName: '人事 / 勤怠 / 給与システムの SaaS 統合刷新 (サンプル)',
     conductedDate: '2026-09-30',
     planSummary:
-      '4 月着手から 6 ヶ月、SmartHR + KING OF TIME + 給与奉行クラウド の 3 SaaS 統合構成、データ移行 1,200 名分、フレックス勤務ロジック実装、10 月切替リリースを計画。',
+      '4 月着手から 6 ヶ月、人事労務SaaS + KING OF TIME + 給与計算ソフトクラウド の 3 SaaS 統合構成、データ移行 1,200 名分、フレックス勤務ロジック実装、10 月切替リリースを計画。',
     actualSummary:
-      'SaaS 連携基盤は計画通り完成。データ移行はマイナンバー収集の遅延で 1 ヶ月延期 (11 月リリースへ)。フレックス勤務ロジックは SaaS 標準で表現できず kintone カスタムでの補完実装に。SmartHR と KING OF TIME の社員 ID ズレ問題も発見・修正済み。',
+      'SaaS 連携基盤は計画通り完成。データ移行はマイナンバー収集の遅延で 1 ヶ月延期 (11 月リリースへ)。フレックス勤務ロジックは SaaS 標準で表現できず ローコード基盤 カスタムでの補完実装に。人事労務SaaS と KING OF TIME の社員 ID ズレ問題も発見・修正済み。',
     goodPoints:
-      'SaaS 3 社統合という非自明な構成を実現できた。kintone を連携ハブとする設計は、フレックス勤務ロジックなどのカスタムを社内エンジニアで保守可能とし、ベンダー依存を回避。法改正対応も SaaS 提供側に移管されることで、人事部の運用負荷が大幅に低減する見込み。',
+      'SaaS 3 社統合という非自明な構成を実現できた。ローコード基盤を連携ハブとする設計は、フレックス勤務ロジックなどのカスタムを社内エンジニアで保守可能とし、ベンダー依存を回避。法改正対応も SaaS 提供側に移管されることで、人事部の運用負荷が大幅に低減する見込み。',
     problems:
       'マイナンバー収集の見積りが甘かった (1 通の依頼メールで完了する想定)。フレックス勤務ロジックを「99% 標準で OK」と評価したが、残り 1% が経営層含む幹部 200 名に該当する重要パターンだった。社員 ID 連携も「双方向同期で OK」と判断したが運用上破綻。',
     improvements:
-      'リリース後の運用に向けて、(1) 給与奉行クラウドの API 仕様変更を継続的に監視、(2) フレックス勤務ロジックの社内ドキュメントを整備し、保守可能性を担保、(3) Single Source of Truth の原則を全マスタデータに適用する。',
+      'リリース後の運用に向けて、(1) 給与計算ソフトクラウドの API 仕様変更を継続的に監視、(2) フレックス勤務ロジックの社内ドキュメントを整備し、保守可能性を担保、(3) Single Source of Truth の原則を全マスタデータに適用する。',
     knowledgeToShare:
       'SaaS 統合は「Single Source of Truth」を 1 つに定め、それ以外は片方向同期のみ許可するのが鉄則。フィット&ギャップで「99% OK」とされる残り 1% は組織の重要層に該当することが多く、軽視できない。マイナンバー収集など個人情報依頼は多段階リマインドが必須。',
     state: 'confirmed',
@@ -2366,13 +2363,13 @@ export const SAMPLE_RETROSPECTIVES: SeedSampleRetrospective[] = [
     planSummary:
       '11 月切替リリース後 1 ヶ月の運用安定性確認、給与計算の正確性 100%、人事部担当者の二重入力業務時間ゼロ達成を目標。',
     actualSummary:
-      '11 月の切替リリースは無事完了。12 月の給与計算も SmartHR + KING OF TIME + 給与奉行 の連携で正常動作。人事部担当者の二重入力業務はゼロに。ただし給与奉行クラウドの API 仕様変更が 11 月末に発生し、連携層に修正対応が必要となった。事前検知できたためインシデント化せず対応完了。',
+      '11 月の切替リリースは無事完了。12 月の給与計算も 人事労務SaaS + KING OF TIME + 給与計算ソフト の連携で正常動作。人事部担当者の二重入力業務はゼロに。ただし給与計算ソフトクラウドの API 仕様変更が 11 月末に発生し、連携層に修正対応が必要となった。事前検知できたためインシデント化せず対応完了。',
     goodPoints:
-      '切替リリースが無事完了。給与計算の正確性 100% を達成。人事部担当者 1 名分の業務時間 (二重入力) を完全に削減でき、戦略業務 (人材開発・組織開発) への集中が可能に。給与奉行 API 仕様変更も契約テスト + ステージング環境契約で事前検知できた。',
+      '切替リリースが無事完了。給与計算の正確性 100% を達成。人事部担当者 1 名分の業務時間 (二重入力) を完全に削減でき、戦略業務 (人材開発・組織開発) への集中が可能に。給与計算ソフト API 仕様変更も契約テスト + ステージング環境契約で事前検知できた。',
     problems:
-      '給与奉行クラウドの API 仕様変更は今後も継続的に発生する見込みで、運用負荷が読みにくい。フレックス勤務ロジックの kintone カスタムは現状動作中だが、保守者が 1 名のみで属人化リスク。',
+      '給与計算ソフトクラウドの API 仕様変更は今後も継続的に発生する見込みで、運用負荷が読みにくい。フレックス勤務ロジックの ローコード基盤 カスタムは現状動作中だが、保守者が 1 名のみで属人化リスク。',
     improvements:
-      '長期運用に向けて、(1) 給与奉行クラウドの API 仕様変更は月次でリリースノート確認 + 契約テスト自動化を継続、(2) kintone カスタムの保守可能者を 2 名に増やす (バス係数 1 → 2)、(3) 法改正対応の運用フローを文書化。',
+      '長期運用に向けて、(1) 給与計算ソフトクラウドの API 仕様変更は月次でリリースノート確認 + 契約テスト自動化を継続、(2) ローコード基盤 カスタムの保守可能者を 2 名に増やす (バス係数 1 → 2)、(3) 法改正対応の運用フローを文書化。',
     knowledgeToShare:
       'SaaS 連携は「ベンダー側の仕様変更」が継続的に発生する前提で運用設計する。契約テスト + スキーマ検証 + ベンダーのステージング環境契約 の 3 点セットで保護する。法改正対応が頻繁な業務 (給与・税務) は特に変更頻度が高い。属人化対策は最低 2 名での保守体制を Day 1 で確保する。',
     state: 'confirmed',
@@ -2385,30 +2382,30 @@ export const SAMPLE_RETROSPECTIVES: SeedSampleRetrospective[] = [
     parentProjectName: 'B2C ヘルスケアアプリの新規開発 (サンプル)',
     conductedDate: '2026-08-31',
     planSummary:
-      '4 月着手から 4 ヶ月、React Native iOS/Android アプリ開発、Firebase Auth + Firestore バックエンド、HealthKit / Google Fit 連携、Stripe サブスク決済、9 月本番リリースを計画。クローズドベータ 1,000 名運営。',
+      '4 月着手から 4 ヶ月、React Native iOS/Android アプリ開発、モバイルバックエンド(BaaS) Auth + マネージドNoSQL バックエンド、健康データ連携 / 健康データ連携連携、決済サービス サブスク決済、9 月本番リリースを計画。クローズドベータ 1,000 名運営。',
     actualSummary:
-      'アプリ開発は計画通り完了。クローズドベータも 1,000 名で完了し、フィードバック収集 + 改善も実施。本番リリースは App Store 審査の連続却下で 3 週間遅延 (9 月 → 10 月) になる見込み。push 通知 opt-in 率が想定 50% → 実測 18% で、グロース戦略も並行で見直し中。',
+      'アプリ開発は計画通り完了。クローズドベータも 1,000 名で完了し、フィードバック収集 + 改善も実施。本番リリースは アプリストア 審査の連続却下で 3 週間遅延 (9 月 → 10 月) になる見込み。push 通知 opt-in 率が想定 50% → 実測 18% で、グロース戦略も並行で見直し中。',
     goodPoints:
-      'クローズドベータでユーザフィードバックを早期に収集できたことで、本番投入前に多くの UX 改善 (onboarding 順序・記録画面のシンプル化等) を実施できた。Firebase + React Native の構成は小規模チームで開発効率が高く、6 名で 4 ヶ月での実装を達成。',
+      'クローズドベータでユーザフィードバックを早期に収集できたことで、本番投入前に多くの UX 改善 (onboarding 順序・記録画面のシンプル化等) を実施できた。モバイルバックエンド(BaaS) + React Native の構成は小規模チームで開発効率が高く、6 名で 4 ヶ月での実装を達成。',
     problems:
-      'App Store 審査の連続却下は、Guideline 3.1.2 (Subscriptions) の要件確認不足。push 通知 opt-in 率の想定値 (50%) が楽観的すぎた。両者とも「事前リサーチ不足」が原因で、ベータ段階で気付けなかった。',
+      'アプリストア 審査の連続却下は、Guideline 3.1.2 (Subscriptions) の要件確認不足。push 通知 opt-in 率の想定値 (50%) が楽観的すぎた。両者とも「事前リサーチ不足」が原因で、ベータ段階で気付けなかった。',
     improvements:
-      '本番リリースに向け、(1) App Store / Google Play の Guideline 関連項目を逐条チェックリスト化、(2) push 通知の権限ダイアログ表示タイミングを Aha Moment 後に変更、(3) Stripe サブスクの解約 UX 改善を Day 1 で実装。',
+      '本番リリースに向け、(1) アプリストア / アプリストアの Guideline 関連項目を逐条チェックリスト化、(2) push 通知の権限ダイアログ表示タイミングを Aha Moment 後に変更、(3) 決済サービス サブスクの解約 UX 改善を Day 1 で実装。',
     knowledgeToShare:
-      'モバイル B2C は「権限ダイアログ表示のタイミング」がユーザ獲得を決める。ユーザが価値を実感した直後 (Aha Moment) で依頼する。App Store / Google Play の Guideline は条文の精査を最初に実施する。クローズドベータは「ユーザフィードバック収集」のための最重要マイルストーンとして位置付ける。',
+      'モバイル B2C は「権限ダイアログ表示のタイミング」がユーザ獲得を決める。ユーザが価値を実感した直後 (Aha Moment) で依頼する。アプリストア / アプリストアの Guideline は条文の精査を最初に実施する。クローズドベータは「ユーザフィードバック収集」のための最重要マイルストーンとして位置付ける。',
     state: 'confirmed',
   },
   {
     parentProjectName: 'B2C ヘルスケアアプリの新規開発 (サンプル)',
     conductedDate: '2026-12-15',
     planSummary:
-      '10 月本番リリース後 2 ヶ月、MAU 1 万 + 有料転換率 5% の達成、D7 retention 25% 維持、Stripe サブスクの解約率 5% 以下を目標。',
+      '10 月本番リリース後 2 ヶ月、MAU 1 万 + 有料転換率 5% の達成、D7 retention 25% 維持、決済サービス サブスクの解約率 5% 以下を目標。',
     actualSummary:
-      'MAU は 12 月時点で 1.2 万に到達 (目標達成)。有料転換率は 4.8% (目標 5% にわずか未達、改善継続中)。D7 retention は改修後 28% で目標達成。サブスク解約率は 4% で目標内。Stripe サブスク解約 UX 改善で顧客サポート問い合わせも日 30 件 → 5 件に減少。',
+      'MAU は 12 月時点で 1.2 万に到達 (目標達成)。有料転換率は 4.8% (目標 5% にわずか未達、改善継続中)。D7 retention は改修後 28% で目標達成。サブスク解約率は 4% で目標内。決済サービス サブスク解約 UX 改善で顧客サポート問い合わせも日 30 件 → 5 件に減少。',
     goodPoints:
-      'MAU・retention・解約率の主要 KPI を達成し、Series A 調達への足場を構築。HealthKit 権限取得率の改善 (40% → 78%) と push 通知 opt-in 率の改善 (18% → 62%) はそれぞれグロースに大きく貢献。Stripe サブスク解約 UX 改善で顧客サポート負荷を大幅軽減し、本業 (プロダクト改善) に集中できる体制に。',
+      'MAU・retention・解約率の主要 KPI を達成し、Series A 調達への足場を構築。健康データ連携 権限取得率の改善 (40% → 78%) と push 通知 opt-in 率の改善 (18% → 62%) はそれぞれグロースに大きく貢献。決済サービス サブスク解約 UX 改善で顧客サポート負荷を大幅軽減し、本業 (プロダクト改善) に集中できる体制に。',
     problems:
-      '有料転換率が目標 5% に対して 4.8% でわずか未達。iOS 17 リリース直後の HealthKit 権限挙動変化など、外部要因によるトラブル対応で 2 週間以上を消費。スタートアップの Runway 制約上、外部要因対応の計画的バッファが不足していた。',
+      '有料転換率が目標 5% に対して 4.8% でわずか未達。iOS 17 リリース直後の 健康データ連携 権限挙動変化など、外部要因によるトラブル対応で 2 週間以上を消費。スタートアップの Runway 制約上、外部要因対応の計画的バッファが不足していた。',
     improvements:
       'Series A 調達後のフェーズに向けて、(1) 有料転換率向上のため有料プランの差別化強化、(2) iOS / Android のメジャーアップデート対応バッファを四半期計画に明記、(3) ユーザインタビュー定常化で UX 改善の継続的なネタ確保。',
     knowledgeToShare:
@@ -3038,6 +3035,11 @@ async function main() {
   // 2026-05-09 (PR G / 設計合意 B): シードデータの実体は管理テナントに集中。
   //   従来の default-tenant 既定は廃止。明示指定なき場合は管理テナント (MANAGEMENT_TENANT_ID)
   //   へ投入する。default 等の他テナントへ shoehorn 投入したい場合は --tenant <id> で指定。
+  // feat/starter-data-import (2026-06-05): この管理テナントへのシード投入は **引き続き必要**。
+  //   役割が「提案エンジンの越境参照元」から「各テナントのスターターデータ取込元 (クローン元)」に変わった。
+  //   提案/チャットは自テナントのみを参照する単一テナント化済みのため管理シードを参照しなくなったが、
+  //   テナント設定の「スターターデータ取込」(src/services/sample-clone.service.ts) が isSampleData=true の
+  //   この行を複製元にするため、db:seed での投入は維持する。
   const targetTenantId = tenantArgIdx !== -1 ? args[tenantArgIdx + 1] : MANAGEMENT_TENANT_ID;
 
   if (!targetTenantId) {
