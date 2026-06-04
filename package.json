@@ -68,7 +68,7 @@
   "devDependencies": {
     "@playwright/test": "^1.59.1",
     "@tailwindcss/postcss": "^4",
-    "@types/node": "^20",
+    "@types/node": "^25",
     "@types/pdf-parse": "^1.1.4",
     "@types/pg": "^8.20.0",
     "@types/qrcode": "^1.5.6",
