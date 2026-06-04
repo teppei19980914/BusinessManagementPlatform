@@ -61,6 +61,12 @@ updates:
       #   v2 へ上げる場合はコード移行 + 実 PDF 結合テスト + Netlify standalone 検証が必要 (#500 参照)。
       - dependency-name: 'pdf-parse'
         update-types: ['version-update:semver-major']
+      # stripe は課金コア (severity-1 請求 invariant)。v17→22 は5メジャー飛ばしで破壊的変更を
+      #   多数含み、src/lib/stripe.ts は apiVersion を `as unknown as` でキャストするため
+      #   型不一致を tsc で検知できず請求の実行時バグ化リスクがある。v17.7.0 に既知脆弱性なし
+      #   (2026-06-04 確認)。major 移行は専用の検証タスク (changelog 精査 + 課金フロー検証) で行う (#505 参照)。
+      - dependency-name: 'stripe'
+        update-types: ['version-update:semver-major']
     groups:
       # Next.js / React など同時更新したい関連パッケージはグループ化して PR 数を抑制
       next-react:
