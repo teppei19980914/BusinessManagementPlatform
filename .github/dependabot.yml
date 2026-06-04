@@ -54,7 +54,13 @@ updates:
     commit-message:
       prefix: 'chore(deps)'
     open-pull-requests-limit: 10
-    # ignore: ここで pin したいパッケージがあれば追加 (現状なし)
+    ignore:
+      # pdf-parse v2 は破壊的変更 (v1 の `pdf(buffer)→{text}` 廃止 →
+      #   `new PDFParse({ data }).getText()`)。src/services/file-text-extraction.service.ts が
+      #   v1 API 前提のため major 自動更新を抑止。v1.1.4 に既知脆弱性なし (2026-06-04 確認)。
+      #   v2 へ上げる場合はコード移行 + 実 PDF 結合テスト + Netlify standalone 検証が必要 (#500 参照)。
+      - dependency-name: 'pdf-parse'
+        update-types: ['version-update:semver-major']
     groups:
       # Next.js / React など同時更新したい関連パッケージはグループ化して PR 数を抑制
       next-react:
