@@ -117,10 +117,11 @@ test.describe('@feature:release-acceptance signup ライフサイクル (払い�
     // API 真値: プロジェクト配下ナレッジ GET にタイトルが含まれる
     await expectListContains(`/api/projects/${projectId}/knowledge`, KNOWLEDGE_TITLE);
 
-    // UI: グローバル /knowledge は「内容」列を表示する (タイトル列なし) ので content で確認
+    // UI: グローバル /knowledge は一覧で「タイトル」列を表示する (本文列(背景/内容/結果)は
+    //   2026-06-03 に詳細ダイアログのみへ移動し一覧からは撤去) ので title で確認
     await page.goto('/knowledge');
     await page.waitForLoadState('networkidle');
-    await expect(page.getByText(KNOWLEDGE_CONTENT).first()).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText(KNOWLEDGE_TITLE).first()).toBeVisible({ timeout: 10_000 });
 
     // 更新 → API 真値で反映確認 (更新はプロジェクト配下ルートのみ。グローバル /api/knowledge/[id] は
     //   GET + DELETE(admin モデレーション) のみで PATCH 非対応)
