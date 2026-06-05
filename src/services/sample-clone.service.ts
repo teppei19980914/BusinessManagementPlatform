@@ -140,7 +140,11 @@ export async function importSampleData(args: {
     const s: SampleCloneSummary = { ...EMPTY_SUMMARY };
 
     // embedding コピー対象 (table, srcId, newId) を貯めて最後に raw SQL でまとめてコピーする
-    const embeddingCopies: Array<{ table: string; srcId: string; newId: string }> = [];
+    const embeddingCopies: Array<{
+      table: 'projects' | 'knowledges' | 'risks_issues' | 'retrospectives';
+      srcId: string;
+      newId: string;
+    }> = [];
 
     // 3-1. 顧客 (1 回の取込内では source 顧客 id ごとに 1 回だけ作成)
     const customerIdMap = new Map<string, string>();
@@ -306,15 +310,24 @@ export async function importSampleData(args: {
     //   複製元 (管理テナント) 行を id で SELECT し、複製先 (実行者テナント) 行に書き込む。
     //   WHERE に tenant_id を付けて越境書込を遮断する。
     for (const c of embeddingCopies) {
-      // table は固定の許可リスト由来 (ユーザ入力ではない) のため安全。
-      await tx.$executeRawUnsafe(
-        `UPDATE "${c.table}" SET "content_embedding" = (` +
-          `SELECT "content_embedding" FROM "${c.table}" WHERE id = $1::uuid` +
-          `) WHERE id = $2::uuid AND tenant_id = $3::uuid`,
-        c.srcId,
-        c.newId,
-        tenantId,
-      );
+      // content_embedding は Prisma の Unsupported("vector(1024)") 型のため raw SQL で複製する。
+      // SQL インジェクション対策: テーブル名は固定リテラル (動的識別子なし)、id/tenant_id は
+      //   tagged template ($executeRaw) でパラメータ化する (= unsafe 系の raw API は使わない)。
+      //   WHERE tenant_id で越境書込を遮断。
+      switch (c.table) {
+        case 'projects':
+          await tx.$executeRaw`UPDATE "projects" SET "content_embedding" = (SELECT "content_embedding" FROM "projects" WHERE id = ${c.srcId}::uuid) WHERE id = ${c.newId}::uuid AND tenant_id = ${tenantId}::uuid`;
+          break;
+        case 'knowledges':
+          await tx.$executeRaw`UPDATE "knowledges" SET "content_embedding" = (SELECT "content_embedding" FROM "knowledges" WHERE id = ${c.srcId}::uuid) WHERE id = ${c.newId}::uuid AND tenant_id = ${tenantId}::uuid`;
+          break;
+        case 'risks_issues':
+          await tx.$executeRaw`UPDATE "risks_issues" SET "content_embedding" = (SELECT "content_embedding" FROM "risks_issues" WHERE id = ${c.srcId}::uuid) WHERE id = ${c.newId}::uuid AND tenant_id = ${tenantId}::uuid`;
+          break;
+        case 'retrospectives':
+          await tx.$executeRaw`UPDATE "retrospectives" SET "content_embedding" = (SELECT "content_embedding" FROM "retrospectives" WHERE id = ${c.srcId}::uuid) WHERE id = ${c.newId}::uuid AND tenant_id = ${tenantId}::uuid`;
+          break;
+      }
     }
 
     return s;

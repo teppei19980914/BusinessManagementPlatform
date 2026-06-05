@@ -20022,3 +20022,33 @@ schema を変更したセッションでローカル動作確認する前に、*
 - 関連 migration workflow: このリポは `migrate dev` 禁止 (破壊的 drift 生成)・日付名手書き SQL + `migrate deploy` / `reset` 運用
 - 関連 ADR: [ADR-0033](../adr/0033-starter-data-import-and-single-tenant-suggestion.md) (`is_seed_sample` 追加 / `seed_data_enabled` 撤去)
 - 関連 migration: `prisma/migrations/20260612_add_is_seed_sample_marker` / `20260613_drop_seed_data_enabled`
+
+---
+
+## §5.X+207: CI security gate (CRITICAL) / OSV-Scanner を「抜け道なし」で根本修正する (2026-06-05 / PR #511)
+
+### 事象
+
+v1.1.0 リリース PR で 2 つの CI が fail:
+
+1. **Security Score Gate (>= 90)** が 78/100 で fail。CRITICAL 2 件 = `sample-clone.service.ts` (スターターデータ複製) と同 test で **`$executeRawUnsafe`** を使用 (`scripts/security-check.ts` の INJECT カテゴリが unsafe 系 raw API を機械検出)。
+2. **OSV-Scanner** が fail。推移的依存 `hono@4.12.18` に Medium CVE 4 件 (GHSA-2gcr-mfcq-wcc3 ほか、fix=4.12.21)。OSV は pnpm-audit (`--audit-level=high`) より厳格で **Medium でも fail**。
+
+### 正しい修正 (dismiss / accept で逃げない)
+
+**1. raw SQL は「安全な API + 動的識別子の排除」で書き換える**
+
+- `content_embedding` は Prisma の `Unsupported("vector(1024)")` 型で通常 `update` では書けないため raw SQL が必要。だが `$executeRawUnsafe` でテーブル名を文字列補間すると、値をパラメータ化していても security-check は CRITICAL 判定する。
+- **対処**: テーブルは固定 4 種 (`projects` / `knowledges` / `risks_issues` / `retrospectives`) なので、`switch` で **テーブル名をリテラルにしたタグ付きテンプレート `$executeRaw`** に置換 (値は `${id}::uuid` でパラメータ化、`WHERE tenant_id` で越境書込遮断)。動的識別子が一切無くなり、機械検出も実害も同時に解消。
+- **罠**: コメントに unsafe 系 API の文字列を残すと再検出される (スキャナは文字列一致)。コメントも言い換える。
+- **テスト整合**: mock を `$executeRawUnsafe: fn` → `$executeRaw: fn` に、アサーションの第1引数を `expect.any(String)` → `expect.any(Array)` (タグ付きテンプレートの第1引数は `TemplateStringsArray`) に修正。
+
+**2. 推移的 CVE は `pnpm.overrides` で fix version に固定**
+
+- `package.json` の `pnpm.overrides` に `"hono": ">=4.12.21"` を指定 → **同一コミットで `pnpm install`** して `pnpm-lock.yaml` を同期 (lockfile 乖離は別 CI で 7 ジョブ同時 fail、KDD 既出 feedback_pnpm_lockfile_sync)。解決後は 4.12.23 に上がり CVE 解消。
+
+### 教訓
+
+- セキュリティ検出は「実害の有無」ではなく「危険 API の使用そのもの」を機械判定する。**実害が無くても安全な API へ置換する**のが正攻法 (dismiss はレビュー負債を残す)。
+- raw SQL でどうしても識別子が動的になる場合は、**固定集合なら `switch` でリテラル展開**するのが最も安全 (allowlist + `Prisma.raw` より検出も通りやすい)。
+- 関連: feedback_pnpm_lockfile_sync (lockfile 同一コミット), feedback_codeql_hibp_sha1_false_positive (機械検出 false positive の扱い)

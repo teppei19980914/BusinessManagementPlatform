@@ -110,7 +110,7 @@ describe('importSampleData', () => {
       riskIssueProject: { create: vi.fn() },
       retrospective: { create: vi.fn() },
       retrospectiveProject: { create: vi.fn() },
-      $executeRawUnsafe: execRaw,
+      $executeRaw: execRaw,
     };
     vi.mocked(prisma.$transaction).mockImplementation(((cb: (t: typeof tx) => unknown) => cb(tx)) as never);
 
@@ -136,7 +136,8 @@ describe('importSampleData', () => {
       expect.objectContaining({ data: expect.objectContaining({ tenantId: TENANT_ID, isSeedSample: true }) }),
     );
     // embedding を raw SQL で複製先テナントにコピー (越境書込み遮断のため tenantId を渡す)
-    expect(execRaw).toHaveBeenCalledWith(expect.any(String), 'src-p1', 'new-p1', TENANT_ID);
+    // tagged template ($executeRaw) 呼び出し: 第1引数は TemplateStringsArray、続いて値がパラメータ化される
+    expect(execRaw).toHaveBeenCalledWith(expect.any(Array), 'src-p1', 'new-p1', TENANT_ID);
     // 監査ログ
     expect(mockRecordAuditLog).toHaveBeenCalledWith(
       expect.objectContaining({ tenantId: TENANT_ID, action: 'CREATE', entityType: 'sample_data_import', entityId: TENANT_ID }),
