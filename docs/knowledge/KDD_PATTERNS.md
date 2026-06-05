@@ -20052,3 +20052,28 @@ v1.1.0 リリース PR で 2 つの CI が fail:
 - セキュリティ検出は「実害の有無」ではなく「危険 API の使用そのもの」を機械判定する。**実害が無くても安全な API へ置換する**のが正攻法 (dismiss はレビュー負債を残す)。
 - raw SQL でどうしても識別子が動的になる場合は、**固定集合なら `switch` でリテラル展開**するのが最も安全 (allowlist + `Prisma.raw` より検出も通りやすい)。
 - 関連: feedback_pnpm_lockfile_sync (lockfile 同一コミット), feedback_codeql_hibp_sha1_false_positive (機械検出 false positive の扱い)
+
+---
+
+## §5.X+208: 仕様変更 (アカウント状態/請求条件/一覧列) に E2E が追従漏れ → 根本原因ごとに修正 (2026-06-05 / PR #511)
+
+### 事象
+
+v1.1.0 PR の E2E が複数 fail。いずれも「本体仕様は意図的に変えたが E2E (テスト/フィクスチャ/baseline) が旧前提のまま」という追従漏れ。
+
+| 失敗 spec | 根本原因 | 正しい修正 |
+|---|---|---|
+| 14-signup-3tier | Beginner 既定で請求先セクション非表示化 → テストが `getByLabel('請求先メール *')` で timeout | 層判定は初期管理者「メールアドレス」入力のみで行う (請求先メールの fill を撤去) |
+| 19-signup-lifecycle | /knowledge 一覧から本文列(背景/内容/結果)を撤去しタイトル列表示に変更 → `getByText(CONTENT)` が出ない | 一覧の表示項目に合わせ `KNOWLEDGE_TITLE` で確認 |
+| 05-teardown (user 削除) | アカウント状態 3 値化 (招待中/有効/無効)。`ensureGeneralUser` フィクスチャが `invitation_accepted_at` 未設定 = 招待中扱い → 編集ダイアログの削除ボタンが「招待取消」に切替り timeout | フィクスチャの INSERT に `invitation_accepted_at = NOW()` を追加 (パスワード設定済 = 受諾済の有効ユーザを表す) |
+| visual (settings) | /settings に「他の端末からログアウト」セクション追加で画面が +144px → 全テーマ baseline 不一致 | `[gen-visual]` 空コミットで Linux CI baseline 再生成 (feedback_visual_baseline_gen) |
+
+### 教訓
+
+- **UI/仕様を変えたら同 PR で E2E・visual baseline・テストフィクスチャまで横展開する**。本体・テスト・フィクスチャの 3 点を同期させる (型/DB/dev サーバの 3 点同期 §5.X+206 と同じ発想)。
+- DB フィクスチャ (`e2e/fixtures/db.ts`) は「画面操作で作られる状態」を正しく再現する必要がある。新カラム (例: `invitation_accepted_at`) が状態判定 (accountStatus) に効く場合、フィクスチャも更新する。
+
+### CI 再トリガの罠 (同 PR で遭遇)
+
+- **GITHUB_TOKEN でコミットした変更 (例: `[gen-visual]` workflow の baseline 自動コミット) は後続ワークフローを起動しない** (GitHub の再帰防止)。CI_TRIGGER_PAT 未登録だと baseline コミット後に CI/E2E が回らず、PR ヘッドが bot コミットのままになる。
+- 対処: **ユーザ (人間/PAT) 名義のコミットを 1 つ上に積んで push** すると pull_request synchronize が発火して CI が回る。close/reopen はヘッドが bot コミットのままだと発火しないことがある。恒久対策は `CI_TRIGGER_PAT` の登録 (e2e-visual-baseline.yml 既出)。
