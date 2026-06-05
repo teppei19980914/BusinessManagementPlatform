@@ -38,6 +38,11 @@ export type MemberDTO = {
   userEmail: string;
   projectRole: string;
   createdAt: string;
+  // 2026-06-02: 一覧の監査列。作成者 = assignedBy (追加した人)、更新者 = updatedBy (ロール変更者)。
+  //   list 経路でのみ解決 (add/update 戻り値では undefined)。
+  createdByName?: string | null;
+  updatedAt?: string;
+  updatedByName?: string | null;
 };
 
 /**
@@ -56,6 +61,18 @@ export async function listMembers(
     orderBy: { createdAt: 'desc' },
   });
 
+  // 2026-06-02: 一覧表示用に作成者 (assignedBy) / 更新者 (updatedBy) 名をバルク取得 (氏名のみ select、N+1 回避)。
+  //   tenantId フィルタを明示し自テナントの User のみ解決 = 越境した id は null フォールバックで氏名漏えいしない。
+  const audUserIds = Array.from(new Set(
+    members.flatMap((m) => [m.assignedBy, m.updatedBy]).filter((id): id is string => id != null),
+  ));
+  const audUserNameById = new Map(
+    (audUserIds.length > 0
+      ? await prisma.user.findMany({ where: { id: { in: audUserIds }, tenantId: viewerTenantId }, select: { id: true, name: true } })
+      : []
+    ).map((u) => [u.id, u.name]),
+  );
+
   return members.map((m) => ({
     id: m.id,
     userId: m.userId,
@@ -63,6 +80,9 @@ export async function listMembers(
     userEmail: m.user.email,
     projectRole: m.projectRole,
     createdAt: m.createdAt.toISOString(),
+    createdByName: audUserNameById.get(m.assignedBy) ?? null,
+    updatedAt: m.updatedAt.toISOString(),
+    updatedByName: m.updatedBy ? (audUserNameById.get(m.updatedBy) ?? null) : null,
   }));
 }
 
@@ -171,7 +191,8 @@ export async function updateMemberRole(
   const updated = await prisma.$transaction(async (tx) => {
     const u = await tx.projectMember.update({
       where: { id: memberId },
-      data: { projectRole: newRole },
+      // 2026-06-02: 一覧「更新者」表示用に変更実行者を記録。
+      data: { projectRole: newRole, updatedBy: changedBy },
       include: { user: { select: { name: true, email: true } } },
     });
     await tx.roleChangeLog.create({

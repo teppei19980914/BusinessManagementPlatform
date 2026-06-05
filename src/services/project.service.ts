@@ -8,8 +8,10 @@
  *
  * 設計判断:
  *   - 論理削除 (deletedAt) を採用。クローズ後も振り返り・ナレッジ参照のため残す。
- *   - 状態遷移は state-machine.ts に集約。直接 status を更新する経路は禁止し、
- *     必ず changeProjectStatus() 経由にすることで「逆戻り禁止」「飛び級禁止」を強制する。
+ *   - ステータスは新規作成/編集フォームから任意に選択可能 (2026-06-03)。createProject /
+ *     updateProject が直接 status を set する。一方向の状態遷移制限 (canTransition) は課さない。
+ *     旧 state-machine 経路 (changeProjectStatus / /api/projects/[id]/status) は dormant として残置
+ *     (state-machine.ts と既存テストは温存)。新 UI からは呼び出されない。
  *   - businessDomainTags / techStackTags / processTags はいずれも JSONB 配列。
  *     提案型サービス (suggestion.service.ts) で過去ナレッジ/課題とのマッチングに使用。
  *   - createdBy / updatedBy は監査の最低限。詳細な変更履歴は audit_logs に別途記録。
@@ -76,9 +78,15 @@ export type ProjectDTO = {
   processTags: string[];
   plannedStartDate: string;
   plannedEndDate: string;
+  // 2026-06-02: 実績日 (担当者が進捗編集時に入力する任意項目)。未入力時は null。
+  actualStartDate: string | null;
+  actualEndDate: string | null;
   status: string;
   notes: string | null;
   createdBy: string;
+  // 2026-06-02: 一覧で作成者/更新者を表示するため名前解決 (list 経路のみ非null)。
+  createdByName: string | null;
+  updatedByName: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -100,6 +108,8 @@ type ProjectRowWithCustomer = {
   processTags: Prisma.JsonValue;
   plannedStartDate: Date;
   plannedEndDate: Date;
+  actualStartDate: Date | null;
+  actualEndDate: Date | null;
   status: string;
   notes: string | null;
   createdBy: string;
@@ -124,9 +134,13 @@ function toProjectDTO(p: ProjectRowWithCustomer): ProjectDTO {
     processTags: (p.processTags as string[]) || [],
     plannedStartDate: p.plannedStartDate.toISOString().split('T')[0],
     plannedEndDate: p.plannedEndDate.toISOString().split('T')[0],
+    actualStartDate: p.actualStartDate ? p.actualStartDate.toISOString().split('T')[0] : null,
+    actualEndDate: p.actualEndDate ? p.actualEndDate.toISOString().split('T')[0] : null,
     status: p.status,
     notes: p.notes,
     createdBy: p.createdBy,
+    createdByName: null,
+    updatedByName: null,
     createdAt: p.createdAt.toISOString(),
     updatedAt: p.updatedAt.toISOString(),
   };
@@ -193,7 +207,20 @@ export async function listProjects(
     prisma.project.count({ where }),
   ]);
 
-  return { data: projects.map(toProjectDTO), total };
+  // 2026-06-02: 一覧表示用に作成者/更新者名をバルク取得 (氏名のみ select、N+1 回避)。
+  //   tenantId フィルタを明示し自テナントの User のみ解決 = 越境した createdBy/updatedBy は
+  //   null フォールバックされ氏名漏えいしない (User は 1 ユーザ 1 テナント、@@unique([tenantId,email]))。
+  const userIds = Array.from(new Set(projects.flatMap((p) => [p.createdBy, p.updatedBy])));
+  const users = userIds.length > 0
+    ? await prisma.user.findMany({ where: { id: { in: userIds }, tenantId }, select: { id: true, name: true } })
+    : [];
+  const userNameById = new Map(users.map((u) => [u.id, u.name]));
+  const data = projects.map((p) => ({
+    ...toProjectDTO(p),
+    createdByName: userNameById.get(p.createdBy) ?? null,
+    updatedByName: userNameById.get(p.updatedBy) ?? null,
+  }));
+  return { data, total };
 }
 
 // null は明示クリア用 (validator schema で .nullable() 済、§5.12)
@@ -212,7 +239,12 @@ export type CreateProjectInput = {
   processTags?: string[];
   plannedStartDate: string;
   plannedEndDate: string;
+  // 2026-06-02: 実績日 (任意)。'YYYY-MM-DD' or null/undefined。
+  actualStartDate?: string | null;
+  actualEndDate?: string | null;
   notes?: string | null;
+  // 2026-06-03: ステータス (任意)。新規作成/編集フォームから選択。未指定時は createProject で 'planning' 補完。
+  status?: string;
 };
 
 export async function createProject(
@@ -258,8 +290,11 @@ export async function createProject(
       processTags: mergedTags.processTags as Prisma.InputJsonValue,
       plannedStartDate: new Date(input.plannedStartDate),
       plannedEndDate: new Date(input.plannedEndDate),
+      actualStartDate: input.actualStartDate ? new Date(input.actualStartDate) : null,
+      actualEndDate: input.actualEndDate ? new Date(input.actualEndDate) : null,
       notes: input.notes,
-      status: 'planning',
+      // 2026-06-03: 新規作成フォームで選択されたステータス。未指定時は 'planning'。
+      status: input.status ?? 'planning',
       createdBy: userId,
       updatedBy: userId,
     },
@@ -411,7 +446,15 @@ export async function updateProject(
     data.plannedStartDate = new Date(input.plannedStartDate);
   if (input.plannedEndDate !== undefined)
     data.plannedEndDate = new Date(input.plannedEndDate);
+  if (input.actualStartDate !== undefined)
+    data.actualStartDate = input.actualStartDate ? new Date(input.actualStartDate) : null;
+  if (input.actualEndDate !== undefined)
+    data.actualEndDate = input.actualEndDate ? new Date(input.actualEndDate) : null;
   if (input.notes !== undefined) data.notes = input.notes;
+  // 2026-06-03: ステータスを編集フォームから直接更新可能に (状態遷移の一方向制限は課さない)。
+  //   旧仕様では status は changeProjectStatus() 経由のみだったが、任意ステータス選択の
+  //   ユーザ要望により updateProject からも直接 set する。監査ログは PATCH route が before/after 記録。
+  if (input.status !== undefined) data.status = input.status;
 
   const project = await prisma.project.update({
     where: { id: projectId },

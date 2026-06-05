@@ -206,7 +206,7 @@ Voyage embedding + pgvector の基盤は提案エンジン専用ではなく、*
 
 - **フロー**: `generateEmbedding({ inputType: 'query', featureUnit: 'chat-semantic-search' })` → 5 資産を `Promise.all` で並列 pgvector Cosine 検索 (各 `SUGGESTION_DEFAULT_LIMIT` = 50 件) → `applyMinimumGuarantee` + `assignPercentileTiers` で tier 分類。
 - **visibility フィルタ**: Knowledge / RiskIssue / Retrospective は `visibility='public'`、Memo は `visibility='public' OR user_id = viewer` (自分の private メモも意味検索で思い出せる UX)、Project は visibility カラム無しでテナント内 non-deleted 全件。`findMany` でも defense-in-depth に再フィルタ。
-- **テナント越境防止**: `viewerTenantId` 必須、`tenant_id = ANY(...)` を SQL WHERE に強制。`seedDataEnabled=true` なら `MANAGEMENT_TENANT_ID` (シード) も含める。
+- **テナント越境防止 (単一テナント化, 2026-06-05)**: 提案候補は **常に `viewerTenantId` のみ** を参照する (`tenantScopeFilter = { tenantId: viewerTenantId }`)。旧 `seedDataEnabled` による `MANAGEMENT_TENANT_ID` (シード) 越境参照は **撤去**。見本データは「スターターデータ取込」(各テナントへ複製、`is_seed_sample` マーカー) に置換され、提案は自テナント内で完結する。インバリアントテスト (`tenant-isolation-invariants.test`) が越境参照の復活を防止する。
 - **縮退モード (pg_trgm fallback)**: embedding 生成失敗 (`rate_limited` / `budget_exceeded` / `embedding_*` 等) 時は `degraded=true` で `pg_trgm` の `similarity()` のみで検索する (検索結果は減るが機能停止しない)。
 - **ファイルスコープ検出 (ADR-0021)**: 「ファイル」「添付」「PDF」等を `detectFileScopeQuery` で検出すると、5 資産を空にして `attachments` (`storage_provider='supabase'` かつ `embedding_status='completed'`) のみを検索する。
 - 仕様: [CHAT_SEMANTIC_SEARCH.md](../specification/CHAT_SEMANTIC_SEARCH.md)。UI パターンは [UI_PATTERNS.md §36](./UI_PATTERNS.md)。

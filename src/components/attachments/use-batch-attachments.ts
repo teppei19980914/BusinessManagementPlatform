@@ -27,6 +27,11 @@ export function useBatchAttachments(
   entityType: AttachmentEntityType,
   entityIds: string[],
   slot: string = 'general',
+  // 2026-06-02: 再取得トリガ。entity の id 集合が変わらない更新 (= 既存エンティティの編集
+  //   ダイアログ内でリンク/添付を追加削除したケース) では join(',') ベースの key が不変で
+  //   refetch されず、一覧の添付/リンク列が古いまま (「-」表示) になっていた。呼出側が
+  //   ダイアログ閉鎖時などにこの値を変えると強制的に再取得する。
+  reloadToken: string | number = '',
 ): Record<string, AttachmentDTO[]> {
   const [map, setMap] = useState<Record<string, AttachmentDTO[]>>({});
   // 不正 ID (空文字 / 一時 ID / ステージ中など) を事前除外。サーバ側の lenient フィルタと
@@ -35,8 +40,9 @@ export function useBatchAttachments(
     () => entityIds.filter((id) => typeof id === 'string' && UUID_RE.test(id)),
     [entityIds],
   );
-  // validIds 単位で fetch trigger (entityIds の中身が同じなら fetch 不要)
-  const key = validIds.join(',') + '|' + slot + '|' + entityType;
+  // validIds 単位で fetch trigger (entityIds の中身が同じなら fetch 不要)。
+  //   reloadToken を key に含め、id 集合不変でも呼出側の明示要求で refetch できるようにする。
+  const key = validIds.join(',') + '|' + slot + '|' + entityType + '|' + reloadToken;
   const keyRef = useRef<string>('');
 
   useEffect(() => {

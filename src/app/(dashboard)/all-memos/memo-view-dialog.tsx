@@ -42,7 +42,8 @@ type Props = {
 export function MemoViewDialog({ memo, open, onOpenChange }: Props) {
   const tField = useTranslations('field');
   const tMemo = useTranslations('memo');
-  const { formatDateTime } = useFormatters();
+  // 作成日時/更新日時は監査列のため秒まで表示 (formatDateTimeSeconds = 全画面共通の設計)
+  const { formatDateTimeSeconds } = useFormatters();
   const { fullscreenClassName, FullscreenToggle } = useDialogFullscreen();
   const VISIBILITY_LABELS: Record<string, string> = {
     private: tMemo('visibilityPrivate'),
@@ -82,10 +83,10 @@ export function MemoViewDialog({ memo, open, onOpenChange }: Props) {
               </div>
               <div className="space-y-2">
                 <Label>{tMemo('colUpdatedAt')}</Label>
-                <Input value={formatDateTime(memo.updatedAt)} readOnly />
+                <Input value={formatDateTimeSeconds(memo.updatedAt)} readOnly />
               </div>
               <div className="flex items-center gap-2">
-                <Badge variant="outline">{tMemo('createdAt', { date: formatDateTime(memo.createdAt) })}</Badge>
+                <Badge variant="outline">{tMemo('createdAt', { date: formatDateTimeSeconds(memo.createdAt) })}</Badge>
                 {memo.isMine && <Badge>{tMemo('mineBadge')}</Badge>}
               </div>
             </fieldset>

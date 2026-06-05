@@ -19,7 +19,8 @@ vi.mock('@/lib/db', () => ({
     },
     project: { findFirst: vi.fn() },
     projectMember: { findMany: vi.fn() },
-    user: { findMany: vi.fn() },
+    // 2026-06-02: listRisks も作成者/更新者名を user.findMany で解決するため既定 [] を設定
+    user: { findMany: vi.fn().mockResolvedValue([]) },
     // PR #89: deleteRisk が attachment.updateMany を $transaction 内で呼ぶ
     attachment: { updateMany: vi.fn() },
     // PR fix/visibility-auth-matrix: deleteRisk が comment.updateMany を $transaction 内で呼ぶ

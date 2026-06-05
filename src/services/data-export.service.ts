@@ -54,6 +54,21 @@
 
 import JSZip from 'jszip';
 import { prisma } from '@/lib/db';
+// 2026-06-04: CSV の選択値も画面の日本語表示に揃える (閲覧用。復元は data/*.json なので無影響)。
+import {
+  DEV_METHODS,
+  CONTRACT_TYPES,
+  PROJECT_STATUSES,
+  KNOWLEDGE_TYPES,
+  VISIBILITIES,
+  RISK_ISSUE_STATES,
+  PRIORITIES,
+} from '@/config/master-data';
+
+/** リスク・課題の種別 (master-data に専用定数が無いためここで定義)。 */
+const RISK_TYPE_LABELS: Readonly<Record<string, string>> = { risk: 'リスク', issue: '課題' };
+/** メモの公開範囲 (private/public)。資産の VISIBILITIES (draft/public) とは別軸。 */
+const MEMO_VISIBILITY_LABELS: Readonly<Record<string, string>> = { private: '自分のみ', public: '公開' };
 
 // ================================================================
 // 公開型
@@ -290,6 +305,8 @@ export async function exportTenantData(tenantId: string): Promise<DataExportResu
   csvDir.file('risks_issues.csv', buildRisksIssuesCsv(risksIssues));
   csvDir.file('retrospectives.csv', buildRetrospectivesCsv(retrospectives));
   csvDir.file('memos.csv', buildMemosCsv(memos));
+  // 2026-06-04: csv/ の各列の意味・入れるデータ・プルダウン値を同梱 (人間が編集の参考にする)
+  csvDir.file('項目リファレンス.md', buildCsvFieldReference());
 
   const zipBuffer = await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE' });
 
@@ -330,6 +347,11 @@ export const USER_EXPORT_FIELDS = [
   'isActive',
   'themePreference',
   'lastLoginAt',
+  // 2026-06-03: 招待受諾日時 (アカウント状態 招待中/有効/無効 の導出元)。ライフサイクル metadata で PII ではない。
+  'invitationAcceptedAt',
+  // 2026-06-03: 作成者/更新者 (操作した管理者の UUID)。監査 metadata で PII ではない。
+  'createdBy',
+  'updatedBy',
   'createdAt',
   'updatedAt',
 ] as const;
@@ -417,10 +439,32 @@ export function csvEscape(value: unknown): string {
   return s;
 }
 
-function buildCsv(headers: string[], rows: Array<Record<string, unknown>>): string {
-  const lines = ['﻿' + headers.join(',')]; // UTF-8 BOM (Excel 日本語対応)
+/**
+ * CSV カラム定義。`header` は画面に合わせた日本語見出し、`field` は行オブジェクトの実キー。
+ *
+ * 2026-06-04: CSV のヘッダを英語フィールド名から **画面の日本語ラベル** に変更 (UX 改善)。
+ *   ZIP の **復元 (data-import) は `data/*.json` を読むため、CSV ヘッダの言語変更は往復に影響しない**
+ *   (csv/ は人間が Excel 等で閲覧する用)。データ値は従来と同一で、見出しのみ日本語化。
+ */
+type CsvColumn = {
+  header: string;
+  field: string;
+  /** 選択値を画面表示の日本語へ変換する対応表 (内部値→日本語)。未該当値・空はそのまま。 */
+  map?: Readonly<Record<string, string>>;
+};
+
+function buildCsv(columns: CsvColumn[], rows: Array<Record<string, unknown>>): string {
+  const lines = ['﻿' + columns.map((c) => csvEscape(c.header)).join(',')]; // UTF-8 BOM (Excel 日本語対応)
   for (const row of rows) {
-    lines.push(headers.map((h) => csvEscape(row[h])).join(','));
+    lines.push(
+      columns
+        .map((c) => {
+          const raw = row[c.field];
+          const value = c.map && typeof raw === 'string' ? (c.map[raw] ?? raw) : raw;
+          return csvEscape(value);
+        })
+        .join(','),
+    );
   }
   return lines.join('\r\n');
 }
@@ -428,10 +472,26 @@ function buildCsv(headers: string[], rows: Array<Record<string, unknown>>): stri
 function buildProjectsCsv(projects: Array<Record<string, unknown>>): string {
   return buildCsv(
     [
-      'id', 'name', 'customerId', 'purpose', 'background', 'scope', 'outOfScope',
-      'devMethod', 'contractType', 'businessDomainTags', 'techStackTags', 'processTags',
-      'plannedStartDate', 'plannedEndDate', 'status', 'notes',
-      'createdBy', 'updatedBy', 'createdAt', 'updatedAt',
+      { header: 'ID', field: 'id' },
+      { header: 'プロジェクト名', field: 'name' },
+      { header: '顧客ID', field: 'customerId' },
+      { header: '目的', field: 'purpose' },
+      { header: '背景', field: 'background' },
+      { header: 'スコープ', field: 'scope' },
+      { header: 'スコープ外', field: 'outOfScope' },
+      { header: '開発方式', field: 'devMethod', map: DEV_METHODS },
+      { header: '契約形態', field: 'contractType', map: CONTRACT_TYPES },
+      { header: '業務ドメインタグ', field: 'businessDomainTags' },
+      { header: '技術スタックタグ', field: 'techStackTags' },
+      { header: '工程タグ', field: 'processTags' },
+      { header: '開始予定日', field: 'plannedStartDate' },
+      { header: '終了予定日', field: 'plannedEndDate' },
+      { header: 'ステータス', field: 'status', map: PROJECT_STATUSES },
+      { header: '備考', field: 'notes' },
+      { header: '作成者ID', field: 'createdBy' },
+      { header: '更新者ID', field: 'updatedBy' },
+      { header: '作成日時', field: 'createdAt' },
+      { header: '更新日時', field: 'updatedAt' },
     ],
     projects,
   );
@@ -440,13 +500,26 @@ function buildProjectsCsv(projects: Array<Record<string, unknown>>): string {
 function buildKnowledgeCsv(knowledge: Array<Record<string, unknown>>): string {
   return buildCsv(
     [
-      'id', 'title', 'knowledgeType', 'background', 'content', 'result',
-      'conclusion', 'recommendation', 'reusability', 'techTags', 'devMethod',
-      'processTags', 'businessDomainTags', 'visibility',
+      { header: 'ID', field: 'id' },
+      { header: 'タイトル', field: 'title' },
+      { header: '種別', field: 'knowledgeType', map: KNOWLEDGE_TYPES },
+      { header: '背景', field: 'background' },
+      { header: '内容', field: 'content' },
+      { header: '結果', field: 'result' },
+      { header: '結論', field: 'conclusion' },
+      { header: '推奨', field: 'recommendation' },
+      { header: '再利用性', field: 'reusability' },
+      { header: '技術タグ', field: 'techTags' },
+      { header: '開発手法', field: 'devMethod' },
+      { header: '工程タグ', field: 'processTags' },
+      { header: '業務ドメインタグ', field: 'businessDomainTags' },
+      { header: '公開範囲', field: 'visibility', map: VISIBILITIES },
       // feat/asset-assignee-expansion (2026-05-26): 担当者を export/import round-trip 対応
-      'assigneeId',
-      'createdBy', 'updatedBy',
-      'createdAt', 'updatedAt',
+      { header: '担当者ID', field: 'assigneeId' },
+      { header: '作成者ID', field: 'createdBy' },
+      { header: '更新者ID', field: 'updatedBy' },
+      { header: '作成日時', field: 'createdAt' },
+      { header: '更新日時', field: 'updatedAt' },
     ],
     knowledge,
   );
@@ -455,10 +528,24 @@ function buildKnowledgeCsv(knowledge: Array<Record<string, unknown>>): string {
 function buildRisksIssuesCsv(risksIssues: Array<Record<string, unknown>>): string {
   return buildCsv(
     [
+      { header: 'ID', field: 'id' },
+      { header: 'プロジェクトID', field: 'projectId' },
+      { header: '種別', field: 'type', map: RISK_TYPE_LABELS },
+      { header: '件名', field: 'title' },
       // feat/risk-issue-4-section (2026-05-26): occurrence を title の直後に追加
-      'id', 'projectId', 'type', 'title', 'occurrence', 'content', 'cause', 'responsePolicy',
-      'responseDetail', 'state', 'priority', 'reportedBy', 'assigneeId',
-      'reportedAt', 'resolvedAt', 'createdAt', 'updatedAt',
+      { header: '発生事象', field: 'occurrence' },
+      { header: 'メモ', field: 'content' },
+      { header: '原因', field: 'cause' },
+      { header: '対応方針', field: 'responsePolicy' },
+      { header: '対応詳細', field: 'responseDetail' },
+      { header: '状態', field: 'state', map: RISK_ISSUE_STATES },
+      { header: '優先度', field: 'priority', map: PRIORITIES },
+      { header: '起票者ID', field: 'reportedBy' },
+      { header: '担当者ID', field: 'assigneeId' },
+      { header: '起票日時', field: 'reportedAt' },
+      { header: '解決日時', field: 'resolvedAt' },
+      { header: '作成日時', field: 'createdAt' },
+      { header: '更新日時', field: 'updatedAt' },
     ],
     risksIssues,
   );
@@ -467,11 +554,18 @@ function buildRisksIssuesCsv(risksIssues: Array<Record<string, unknown>>): strin
 function buildRetrospectivesCsv(retrospectives: Array<Record<string, unknown>>): string {
   return buildCsv(
     [
-      'id', 'projectId', 'conductedDate', 'goodPoints', 'problems', 'improvements',
-      'visibility',
+      { header: 'ID', field: 'id' },
+      { header: 'プロジェクトID', field: 'projectId' },
+      { header: '実施日', field: 'conductedDate' },
+      { header: '良かった点', field: 'goodPoints' },
+      { header: '問題点', field: 'problems' },
+      { header: '次回改善事項', field: 'improvements' },
+      { header: '公開範囲', field: 'visibility', map: VISIBILITIES },
       // feat/asset-assignee-expansion (2026-05-26): 担当者を export/import round-trip 対応
-      'assigneeId',
-      'createdBy', 'createdAt', 'updatedAt',
+      { header: '担当者ID', field: 'assigneeId' },
+      { header: '作成者ID', field: 'createdBy' },
+      { header: '作成日時', field: 'createdAt' },
+      { header: '更新日時', field: 'updatedAt' },
     ],
     retrospectives,
   );
@@ -480,13 +574,75 @@ function buildRetrospectivesCsv(retrospectives: Array<Record<string, unknown>>):
 function buildMemosCsv(memos: Array<Record<string, unknown>>): string {
   return buildCsv(
     [
-      'id', 'title', 'content', 'visibility',
+      { header: 'ID', field: 'id' },
+      { header: 'タイトル', field: 'title' },
+      { header: '内容', field: 'content' },
+      { header: '公開範囲', field: 'visibility', map: MEMO_VISIBILITY_LABELS },
       // feat/asset-assignee-expansion (2026-05-26): 担当者を export/import round-trip 対応
-      'assigneeId',
-      'createdBy', 'createdAt', 'updatedAt',
+      { header: '担当者ID', field: 'assigneeId' },
+      { header: '作成者ID', field: 'createdBy' },
+      { header: '作成日時', field: 'createdAt' },
+      { header: '更新日時', field: 'updatedAt' },
     ],
     memos,
   );
+}
+
+// ================================================================
+// 内部: csv/ 項目リファレンス (ZIP 同梱)
+// ================================================================
+
+/**
+ * csv/ 各ファイルの「列 → 画面項目 / 入れるデータ / 編集可否」とプルダウン値を説明する Markdown。
+ * ダウンロードした人がファイルを編集する際の参考にする。完全版は docs/public/export-csv-reference.md。
+ */
+function buildCsvFieldReference(): string {
+  return `# csv/ フォルダ 項目リファレンス
+
+このフォルダの CSV は「人間が Excel 等で内容を確認・編集するための閲覧用」です。見出し・選択値とも画面と同じ日本語です。
+
+> ⚠️ **重要**: この csv/ を編集して ZIP を再取り込みしても、編集は反映されません（復元は data/ 配下の JSON を使用します）。
+> 自分のデータを取り込みたい場合は、たすきばにログイン →「設定 → テナント設定 → 外部データ移行」から CSV を取り込んでください。
+> （その画面では、お手元の CSV の列を画面項目に割り当てて取り込めます。下の対応表がそのまま参考になります。）
+
+## 共通: 編集しない列（システムが自動で設定）
+
+\`ID\` / \`顧客ID\` / \`プロジェクトID\` / \`担当者ID\` / \`起票者ID\` / \`作成者ID\` / \`更新者ID\` / \`作成日時\` / \`更新日時\` / \`起票日時\` / \`解決日時\`
+→ これらは内部の識別子・履歴で、**手で書き換えないでください**（移行ウィザードでも入力対象外です）。
+
+## ファイルごとの列（編集する業務項目）
+
+### projects.csv（プロジェクト）
+プロジェクト名 / 目的 / 背景 / スコープ / スコープ外 / **開発方式**(選択) / **契約形態**(選択) / 開始予定日 / 終了予定日 / **ステータス**(選択) / 備考
+
+### knowledge.csv（ナレッジ）
+タイトル / **種別**(選択) / 背景 / 内容 / 結果 / **公開範囲**(選択)
+
+### risks_issues.csv（リスク・課題）
+**種別**(リスク/課題) / 件名 / 発生事象 / メモ / 原因 / 対応方針 / **状態**(選択) / （優先度は自動算出のため入力不可）
+
+### retrospectives.csv（振り返り）
+実施日 / 良かった点 / 問題点 / 次回改善事項 / **公開範囲**(選択)
+
+### memos.csv（メモ）
+タイトル / 内容 / **公開範囲**(選択)
+
+## プルダウン項目に入れる値
+
+| 項目 | 入れる値 |
+|---|---|
+| 公開範囲（ナレッジ/リスク/課題/振り返り） | 下書き / 公開 |
+| 公開範囲（メモ） | 自分のみ / 公開 |
+| プロジェクト ステータス | 企画中 / 見積中 / 計画中 / 実行中 / クローズ |
+| 開発方式 | スクラッチ開発 / ローコード・ノーコード開発 / パッケージ開発 / そのほか |
+| 契約形態 | 準委任 / 請負 / SES / そのほか（空=未設定） |
+| ナレッジ 種別 | 調査 / 検証 / 障害対応 / 意思決定 / 教訓 / ベストプラクティス / その他 |
+| リスク・課題 種別 | リスク / 課題 |
+| リスク・課題 状態 | 未対応 / 対応中 / 監視中 / 解消 |
+| 日付（開始予定日・終了予定日・実施日 等） | 2026-06-04 のような日付（多少崩れても取り込み時に自動補正） |
+
+> 上記以外の値を入れた場合、取り込み時は安全側に倒します（公開範囲は「下書き」、その他は既定値）。
+`;
 }
 
 // ================================================================

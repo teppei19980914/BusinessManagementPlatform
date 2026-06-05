@@ -110,17 +110,22 @@ export async function signupTenantViaUi(
   await page.locator('#slug').fill(slug);
 
   // 請求先
-  if (billingType === 'individual') {
-    await page.getByRole('radio', { name: '個人' }).check();
-  } else {
-    await page.locator('#billingCompanyName').fill(withRunId(`${label}-会社`));
+  // feat/billing-conditional-by-plan (2026-06-05): Beginner は請求先セクションが非表示になり、
+  //   請求先担当者名・メールは初期管理者の値で自動補完されるため、ここでは入力しない。
+  //   Expert/Pro のみ請求先フォームが表示され、住所まで入力する。
+  if (plan !== 'beginner') {
+    if (billingType === 'individual') {
+      await page.getByRole('radio', { name: '個人' }).check();
+    } else {
+      await page.locator('#billingCompanyName').fill(withRunId(`${label}-会社`));
+    }
+    await page.locator('#billingContactName').fill(adminName);
+    await page.locator('#billingContactEmail').fill(email);
+    await page.locator('#billingPostalCode').fill('100-0001');
+    await page.locator('#billingPrefecture').fill('東京都');
+    await page.locator('#billingCity').fill('千代田区');
+    await page.locator('#billingStreetAddress').fill('千代田1-1');
   }
-  await page.locator('#billingContactName').fill(adminName);
-  await page.locator('#billingContactEmail').fill(email);
-  await page.locator('#billingPostalCode').fill('100-0001');
-  await page.locator('#billingPrefecture').fill('東京都');
-  await page.locator('#billingCity').fill('千代田区');
-  await page.locator('#billingStreetAddress').fill('千代田1-1');
 
   // 初期 admin
   await page.locator('#initialAdminName').fill(adminName);

@@ -32,7 +32,7 @@ import {
   TableBody, TableCell, TableHeader, TableRow,
 } from '@/components/ui/table';
 import { RiskEditDialog } from '@/components/dialogs/risk-edit-dialog';
-import { PRIORITIES, RISK_ISSUE_STATES, VISIBILITIES } from '@/types';
+import { PRIORITIES, RISK_ISSUE_STATES } from '@/types';
 import type { AllRiskDTO } from '@/services/risk.service';
 import type { MemberDTO } from '@/services/member.service';
 import { AdminRiskDeleteButton } from './admin-delete-button';
@@ -41,8 +41,11 @@ import { matchesAnyKeyword } from '@/lib/text-search';
 // Phase E 要件 1〜3 (2026-04-29): 共通行クリック + フィルタバー部品
 import { ClickableRow } from '@/components/common/clickable-row';
 import { FilterBar } from '@/components/common/filter-bar';
+import { useTablePagination, TablePagination } from '@/components/common/table-pagination';
 import { useBatchAttachments } from '@/components/attachments/use-batch-attachments';
 import { AttachmentsCell } from '@/components/attachments/attachments-cell';
+// 2026-06-03: ○○一覧と列構成を統一 (リンク列を追加、公開範囲列を撤去)。
+import { LinksCell } from '@/components/attachments/links-cell';
 import { ResizableHead } from '@/components/ui/resizable-columns';
 import { ResizableTableShell } from '@/components/common/resizable-table-shell';
 import { SortableResizableHead } from '@/components/sort/sortable-resizable-head';
@@ -62,9 +65,8 @@ function getRiskSortValue(r: AllRiskDTO, columnKey: string): unknown {
     case 'project': return r.projectName ?? '';
     case 'type': return r.type;
     case 'title': return r.title;
-    case 'priority': return r.priority;
     case 'state': return r.state;
-    case 'visibility': return r.visibility;
+    case 'priority': return r.priority;
     case 'assignee': return r.assigneeName ?? '';
     case 'createdAt': return r.createdAt;
     case 'createdBy': return r.createdByName ?? '';
@@ -94,7 +96,7 @@ export function AllRisksTable({
   const router = useRouter();
   const tRisk = useTranslations('risk');
   const tCommon = useTranslations('common');
-  const { formatDateTime } = useFormatters();
+  const { formatDateTimeSeconds } = useFormatters();
   const [editingRisk, setEditingRisk] = useState<AllRiskDTO | null>(null);
   const [members, setMembers] = useState<MemberDTO[]>([]);
 
@@ -129,6 +131,11 @@ export function AllRisksTable({
     }
     return multiSort(xs, sortState, getRiskSortValue);
   }, [risks, typeFilter, keyword, filters, sortState]);
+
+  const { pageItems, page, pageCount, setPage } = useTablePagination(
+    filteredRisks,
+    `${keyword}|${filters.state}|${filters.priority}`,
+  );
 
   const attachmentsByEntity = useBatchAttachments(
     'risk',
@@ -169,14 +176,8 @@ export function AllRisksTable({
 
   return (
     <div className="space-y-6">
-      {/* feat/all-list-section-unification (2026-05-24): 全○○ 5 画面共通レイアウト規約
-          1. 件数行 (justify-end / フィルタ後件数 / common.itemCount)
-          2. FilterBar (検索・フィルタ、軸数は画面固有)
-          3. ResizableTableShell (テーブル本体)
-          4. 詳細ダイアログ (read-only) */}
-      <div className="flex justify-end">
-        <span className="text-sm text-muted-foreground">{tCommon('itemCount', { count: filteredRisks.length })}</span>
-      </div>
+      {/* 2026-06-03: フィルター位置をプロジェクト一覧に統一。FilterBar を先頭に置き、
+          件数は表の下部へ移動 (旧: 件数行 → FilterBar → 表 の順)。 */}
       {/* PR-δ / 項目 12: 検索 + フィルタ (○○一覧と同 UX に揃える) */}
       <FilterBar>
         <div className="grid grid-cols-1 gap-2 md:grid-cols-4">
@@ -219,24 +220,26 @@ export function AllRisksTable({
       <ResizableTableShell tableKey="all-risks">
         <TableHeader>
           <TableRow>
+            {/* 2026-06-03: リスク/課題一覧(タブ)と列構成を統一 — プロジェクト + [種別] + 件名・ステータス・優先度・担当者・結果・監査4・リンク・添付・操作。
+                公開範囲列は撤去 (タブと統一)。種別はタブ同様 typeFilter 時は非表示。 */}
             <SortableResizableHead columnKey="project" defaultWidth={140} label={tRisk('project')} sortState={sortState} onSortChange={setSortColumn} />
             {!typeFilter && <SortableResizableHead columnKey="type" defaultWidth={80} label={tRisk('kind')} sortState={sortState} onSortChange={setSortColumn} />}
             <SortableResizableHead columnKey="title" defaultWidth={220} label={tRisk('subject')} sortState={sortState} onSortChange={setSortColumn} />
-            {/* PR-δ / 項目 11: ○○一覧と同じ priority カラムを表示 (impact/likelihood は非表示、PR-γ 整合) */}
-            <SortableResizableHead columnKey="priority" defaultWidth={80} label={tRisk('priority')} sortState={sortState} onSortChange={setSortColumn} />
             <SortableResizableHead columnKey="state" defaultWidth={100} label={tRisk('state')} sortState={sortState} onSortChange={setSortColumn} />
-            <SortableResizableHead columnKey="visibility" defaultWidth={90} label={tRisk('visibility')} sortState={sortState} onSortChange={setSortColumn} />
+            <SortableResizableHead columnKey="priority" defaultWidth={80} label={tRisk('priority')} sortState={sortState} onSortChange={setSortColumn} />
             <SortableResizableHead columnKey="assignee" defaultWidth={120} label={tRisk('assignee')} sortState={sortState} onSortChange={setSortColumn} />
-            <SortableResizableHead columnKey="createdAt" defaultWidth={130} label={tRisk('createdAt')} sortState={sortState} onSortChange={setSortColumn} />
+            <ResizableHead columnKey="result" defaultWidth={200}>{tRisk('result')}</ResizableHead>
             <SortableResizableHead columnKey="createdBy" defaultWidth={120} label={tRisk('createdBy')} sortState={sortState} onSortChange={setSortColumn} />
-            <SortableResizableHead columnKey="updatedAt" defaultWidth={130} label={tRisk('updatedAt')} sortState={sortState} onSortChange={setSortColumn} />
+            <SortableResizableHead columnKey="createdAt" defaultWidth={150} label={tRisk('createdAt')} sortState={sortState} onSortChange={setSortColumn} />
             <SortableResizableHead columnKey="updatedBy" defaultWidth={120} label={tRisk('updatedBy')} sortState={sortState} onSortChange={setSortColumn} />
-            <ResizableHead columnKey="attachments" defaultWidth={200}>{tRisk('attachment')}</ResizableHead>
+            <SortableResizableHead columnKey="updatedAt" defaultWidth={150} label={tRisk('updatedAt')} sortState={sortState} onSortChange={setSortColumn} />
+            <ResizableHead columnKey="links" defaultWidth={200}>{tRisk('links')}</ResizableHead>
+            <ResizableHead columnKey="attachments" defaultWidth={180}>{tRisk('attachment')}</ResizableHead>
             {isAdmin && <ResizableHead columnKey="actions" defaultWidth={80}>{tRisk('actions')}</ResizableHead>}
           </TableRow>
         </TableHeader>
         <TableBody>
-          {filteredRisks.map((r) => (
+          {pageItems.map((r) => (
             <ClickableRow
               key={r.id}
               onClick={() => handleRowClick(r)}
@@ -281,29 +284,33 @@ export function AllRisksTable({
                 </TableCell>
               )}
               <TableCell className="font-medium">{r.title}</TableCell>
-              {/* PR-δ / 項目 11: priority / state / visibility / assignee の順 (○○一覧と同列配置) */}
-              <TableCell>{PRIORITIES[r.priority as keyof typeof PRIORITIES] || r.priority}</TableCell>
+              {/* 件名 → ステータス → 優先度 → 担当者 → 結果 の順 (リスク/課題一覧タブと統一)。公開範囲列は撤去。 */}
               <TableCell>
                 <Badge variant="outline">
                   {RISK_ISSUE_STATES[r.state as keyof typeof RISK_ISSUE_STATES] || r.state}
                 </Badge>
               </TableCell>
-              <TableCell className="text-sm">
-                {VISIBILITIES[r.visibility as keyof typeof VISIBILITIES] || r.visibility}
-              </TableCell>
+              <TableCell>{PRIORITIES[r.priority as keyof typeof PRIORITIES] || r.priority}</TableCell>
               <TableCell className="text-sm text-muted-foreground">
                 {r.assigneeName ?? <span className="text-muted-foreground">-</span>}
               </TableCell>
-              <TableCell className="whitespace-nowrap text-sm text-muted-foreground">{formatDateTime(r.createdAt)}</TableCell>
+              <TableCell className="max-w-xs truncate text-sm text-muted-foreground" title={r.result ?? undefined}>
+                {r.result || <span className="text-muted-foreground">-</span>}
+              </TableCell>
               <TableCell className="text-sm text-muted-foreground">
                 {r.createdByName ?? <span className="text-muted-foreground">-</span>}
               </TableCell>
-              <TableCell className="whitespace-nowrap text-sm text-muted-foreground">{formatDateTime(r.updatedAt)}</TableCell>
+              <TableCell className="whitespace-nowrap text-sm text-muted-foreground">{formatDateTimeSeconds(r.createdAt)}</TableCell>
               <TableCell className="text-sm text-muted-foreground">
-                {r.updatedByName ?? <span className="text-muted-foreground">-</span>}
+                {r.updatedAt !== r.createdAt ? (r.updatedByName ?? <span className="text-muted-foreground">-</span>) : <span className="text-muted-foreground">—</span>}
+              </TableCell>
+              <TableCell className="whitespace-nowrap text-sm text-muted-foreground">{r.updatedAt !== r.createdAt ? formatDateTimeSeconds(r.updatedAt) : '—'}</TableCell>
+              {/* リンク列 (url 型添付を縦に複数行) / 添付列 (ファイル本体のみ) */}
+              <TableCell onClick={(e) => e.stopPropagation()}>
+                <LinksCell items={attachmentsByEntity[r.id] ?? []} />
               </TableCell>
               <TableCell onClick={(e) => e.stopPropagation()}>
-                <AttachmentsCell items={attachmentsByEntity[r.id] ?? []} />
+                <AttachmentsCell items={(attachmentsByEntity[r.id] ?? []).filter((a) => a.storageProvider === 'supabase')} />
               </TableCell>
               {isAdmin && (
                 <TableCell onClick={(e) => e.stopPropagation()}>
@@ -319,15 +326,22 @@ export function AllRisksTable({
           ))}
           {filteredRisks.length === 0 && (
             <TableRow>
-              {/* PR-δ: カラム数変更 (impact/likelihood 削除 → state/visibility 追加で +1, -2 = 最終的に -1)。
-                  base = isAdmin ? 12 : 11、typeFilter 時はさらに -1。*/}
-              <TableCell colSpan={(isAdmin ? 12 : 11) - (typeFilter ? 1 : 0)} className="py-8 text-center text-muted-foreground">
+              {/* 2026-06-03: 列 = project +[type if !typeFilter]+ title/state/priority/assignee/result + 監査4 + links/attachments +[actions if admin]。
+                  typeFilter なし(両方表示)は type 列が増える。 */}
+              <TableCell colSpan={(isAdmin ? 13 : 12) + (typeFilter ? 0 : 1)} className="py-8 text-center text-muted-foreground">
                 {typeFilter === 'issue' ? tRisk('noneIssue') : typeFilter === 'risk' ? tRisk('noneRisk') : tRisk('noneBothSlash')}
               </TableCell>
             </TableRow>
           )}
         </TableBody>
       </ResizableTableShell>
+
+      <TablePagination page={page} pageCount={pageCount} onPageChange={setPage} />
+
+      {/* 2026-06-03: 件数は表の下部に表示 (フィルター位置統一に伴い上部から移動) */}
+      <div className="flex justify-end">
+        <span className="text-sm text-muted-foreground">{tCommon('itemCount', { count: filteredRisks.length })}</span>
+      </div>
 
       <RiskEditDialog
         risk={editingRisk}

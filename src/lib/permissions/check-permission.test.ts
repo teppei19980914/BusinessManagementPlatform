@@ -188,7 +188,7 @@ describe('checkPermission', () => {
   });
 
   describe('プロジェクト状態による制限', () => {
-    it('closed 状態では閲覧のみ許可', () => {
+    it('closed 状態では閲覧のみ許可 (編集系は不可)', () => {
       const c = ctx({ projectRole: 'pm_tl', projectStatus: 'closed' });
       expect(checkPermission('project:read', c).allowed).toBe(true);
       expect(checkPermission('task:read', c).allowed).toBe(true);
@@ -196,11 +196,13 @@ describe('checkPermission', () => {
       expect(checkPermission('task:create', c).allowed).toBe(false);
     });
 
-    it('retrospected 状態ではナレッジ更新と状態変更が許可', () => {
-      const c = ctx({ projectRole: 'pm_tl', projectStatus: 'retrospected' });
+    // 2026-06-03: クローズは読み取り専用だが「削除」だけは許可 (ユーザ要望)。削除は admin のみ実行可。
+    it('closed 状態でも admin は削除のみ可能 (編集系は不可)', () => {
+      const c = ctx({ systemRole: 'admin', projectStatus: 'closed' });
+      expect(checkPermission('project:delete', c).allowed).toBe(true);
       expect(checkPermission('project:read', c).allowed).toBe(true);
-      expect(checkPermission('project:change_status', c).allowed).toBe(true);
-      expect(checkPermission('knowledge:update', c).allowed).toBe(true);
+      // 編集系は admin でもクローズ中は不可
+      expect(checkPermission('project:update', c).allowed).toBe(false);
       expect(checkPermission('task:create', c).allowed).toBe(false);
     });
   });

@@ -126,6 +126,12 @@ export async function PATCH(
     action: 'UPDATE',
     entityType: 'attachment',
     entityId: id,
+    // 2026-06-03: どの画面の リンク/ファイル が更新されたかを監査ログで示す (内容自体は記録しない)
+    afterValue: {
+      parentEntityType: updated.entityType,
+      parentEntityId: updated.entityId,
+      storageProvider: updated.storageProvider,
+    },
   });
 
   return NextResponse.json({ data: updated });
@@ -171,6 +177,12 @@ export async function DELETE(
     action: 'DELETE',
     entityType: 'attachment',
     entityId: id,
+    // 2026-06-03: どの画面の リンク/ファイル が削除されたかを監査ログで示す (内容自体は記録しない)
+    afterValue: {
+      parentEntityType: existing.entityType,
+      parentEntityId: existing.entityId,
+      storageProvider: existing.storageProvider,
+    },
   });
 
   return NextResponse.json({ data: { success: true } });

@@ -41,6 +41,9 @@ export type EstimateDTO = {
   isConfirmed: boolean;
   notes: string | null;
   createdBy: string;
+  // 2026-06-02: 一覧で作成者/更新者を表示するため名前解決 (list 経路のみ非null)。
+  createdByName: string | null;
+  updatedByName: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -74,6 +77,8 @@ function toEstimateDTO(e: {
     isConfirmed: e.isConfirmed,
     notes: e.notes,
     createdBy: e.createdBy,
+    createdByName: null,
+    updatedByName: null,
     createdAt: e.createdAt.toISOString(),
     updatedAt: e.updatedAt.toISOString(),
   };
@@ -93,7 +98,19 @@ export async function listEstimates(
     where: { projectId, deletedAt: null, project: { tenantId: viewerTenantId } },
     orderBy: { createdAt: 'asc' },
   });
-  return estimates.map(toEstimateDTO);
+  // 2026-06-02: 一覧表示用に作成者/更新者名をバルク取得 (氏名のみ select、N+1 回避)。
+  //   tenantId フィルタを明示し自テナントの User のみ解決 = 越境した createdBy/updatedBy は
+  //   null フォールバックされ氏名漏えいしない (User は 1 ユーザ 1 テナント、@@unique([tenantId,email]))。
+  const userIds = Array.from(new Set(estimates.flatMap((e) => [e.createdBy, e.updatedBy])));
+  const users = userIds.length > 0
+    ? await prisma.user.findMany({ where: { id: { in: userIds }, tenantId: viewerTenantId }, select: { id: true, name: true } })
+    : [];
+  const userNameById = new Map(users.map((u) => [u.id, u.name]));
+  return estimates.map((e) => ({
+    ...toEstimateDTO(e),
+    createdByName: userNameById.get(e.createdBy) ?? null,
+    updatedByName: userNameById.get(e.updatedBy) ?? null,
+  }));
 }
 
 export async function getEstimate(
@@ -125,10 +142,12 @@ export async function createEstimate(
       projectId,
       itemName: input.itemName,
       category: input.category,
-      devMethod: input.devMethod,
+      // 2026-06-02: 開発方式は UI 撤去済。未送信時は NOT NULL 列を満たすため 'other' で既定補完。
+      devMethod: input.devMethod ?? 'other',
       estimatedEffort: input.estimatedEffort,
       effortUnit: input.effortUnit,
-      rationale: input.rationale,
+      // 2026-06-02: 見積根拠はフォーム撤去 (備考に置換)。未送信時は NOT NULL 列を満たすため '' で補完。
+      rationale: input.rationale ?? '',
       preconditions: input.preconditions,
       notes: input.notes,
       createdBy: userId,

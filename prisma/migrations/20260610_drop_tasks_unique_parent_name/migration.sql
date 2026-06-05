@@ -1,0 +1,21 @@
+-- 2026-06-04: tasks の (project_id, parent_task_id, name) 部分 UNIQUE インデックスを撤去
+--
+-- 背景 (ADR-0032):
+--   ADR-0017 (PR #420) で「同一 WP 配下の同名タスク」を defense-in-depth として禁止する
+--   部分 UNIQUE インデックス idx_tasks_project_parent_name_unique を追加していた。
+--   しかし WBS sync-import のプレビュー (computeSyncDiff) は 2026-05-26 (PR #449) で同名重複を
+--   「エラー → 警告」に格下げしており、DB 制約の撤去漏れでドリフトが発生していた。
+--   結果「プレビューは警告のみで通るが、本実行だけ必ず P2002 で 500 になる」製品バグになっていた。
+--
+--   そもそもタスクの突合は ID (UUID) のみで行い、名前で照合する処理は存在しない
+--   (旧テンプレートインポートは廃止済)。同名を許しても機能は壊れないため、一意性ルールを
+--   全面撤廃し「同一 WP 配下の同名タスク (例: 週内に繰り返す学習タスク)」を正式に許容する。
+--
+-- 影響:
+--   - app 層の事前ガード (assertTaskNameUniqueInParent) も同 PR で撤去。
+--   - 一括複製の "(コピー)" 自動リネームは UX 上有益なため維持 (重複禁止ではなく可読性目的)。
+--
+-- ロールバック: 同ディレクトリの rollback.sql (= ADR-0017 の元 migration を再適用) 参照。
+--   ただし撤廃後に同名タスクが作成されているとインデックス再作成は失敗する。
+
+DROP INDEX IF EXISTS "idx_tasks_project_parent_name_unique";

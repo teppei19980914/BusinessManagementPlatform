@@ -132,7 +132,7 @@ export default async function DiagnosticsPage() {
               </div>
               <dl className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
                 <Stat
-                  label="状態"
+                  label="ステータス"
                   value={c.status === 'never_recorded' ? '⚠️ 記録なし' : '⚠️ 長期停止'}
                   emphasis
                 />

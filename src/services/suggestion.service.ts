@@ -33,9 +33,8 @@
  */
 
 import { prisma } from '@/lib/db';
-// 2026-05-09 (PR G / 設計合意 B + #24): シードデータは管理テナントに集中。
-//   テナント別 seedDataEnabled toggle で管理テナントの参照を遮断する。
-import { MANAGEMENT_TENANT_ID } from '@/lib/tenant';
+// feat/starter-data-import (2026-06-05): 単一テナント化。提案候補は自テナントのみを参照するため、
+//   管理テナント (MANAGEMENT_TENANT_ID) の越境参照は撤去した (旧 seedDataEnabled toggle も廃止)。
 import { jaccard, unifyProjectTags, unifyKnowledgeTags, combineScores } from '@/lib/similarity';
 import {
   SUGGESTION_TAG_WEIGHT as TAG_WEIGHT,
@@ -180,11 +179,6 @@ type ProjectContext = {
    *   null の場合は縮退モード (タグ:テキスト = 5:5 で再配分、2026-05-14 確定仕様)。
    */
   embeddingText: string | null;
-  /**
-   * PR G (#24 / 2026-05-09): 自テナントの seedDataEnabled。
-   *   false のときは管理テナント (MANAGEMENT_TENANT_ID) のシードデータを提案候補から除外。
-   */
-  seedDataEnabled: boolean;
 };
 
 async function loadProjectContext(
@@ -208,17 +202,8 @@ async function loadProjectContext(
   });
   if (!p) return null;
 
-  // PR G (#24): プロジェクトの所属テナントの seedDataEnabled を取得。
-  //   この値で管理テナントのシードを提案候補に含めるかを判定する。
-  // PR fix/chat-search-and-auto-open (2026-05-24): tenant lookup が null を返す異常系では
-  //   fail-closed 方針で `?? false` に倒す。旧 `?? true` は MANAGEMENT_TENANT_ID のシード
-  //   漏洩リスクをはらむフェイルオープン。正常系では tenant は常に存在するため UX 影響なし
-  //   (提案候補が一時的に減るのみ)。
-  const tenant = await prisma.tenant.findUnique({
-    where: { id: p.tenantId },
-    select: { seedDataEnabled: true },
-  });
-  const seedDataEnabled = tenant?.seedDataEnabled ?? false;
+  // feat/starter-data-import (2026-06-05): 単一テナント化。提案候補は常に自テナントのみを参照するため、
+  //   旧 seedDataEnabled (管理テナントのシード越境参照可否) の lookup は不要になった。
   const tags = unifyProjectTags({
     businessDomainTags: (p.businessDomainTags as string[]) ?? [],
     techStackTags: (p.techStackTags as string[]) ?? [],
@@ -237,7 +222,7 @@ async function loadProjectContext(
   `;
   const embeddingText = embRows[0]?.embedding ?? null;
 
-  return { id: p.id, tags, text, embeddingText, seedDataEnabled };
+  return { id: p.id, tags, text, embeddingText };
 }
 
 /**
@@ -405,13 +390,12 @@ export async function suggestForProject(
   const ctx = await loadProjectContext(projectId, viewerTenantId);
   if (!ctx) return { knowledge: [], pastIssues: [], pastRisks: [], retrospectives: [], memos: [], attachments: [] };
 
-  // 2026-05-09 feedback Phase 2-7: severity-1 越境対策。
-  //   旧仕様は提案候補に他テナントのデータが混入する設計バグだった。
-  //   - seedDataEnabled=true: 自テナント + 管理テナント (シード) を許可
-  //   - seedDataEnabled=false: 自テナントのみ
-  const tenantScopeFilter = ctx.seedDataEnabled
-    ? { tenantId: { in: [viewerTenantId, MANAGEMENT_TENANT_ID] } }
-    : { tenantId: viewerTenantId };
+  // 2026-05-09 feedback Phase 2-7 / feat/starter-data-import (2026-06-05): severity-1 越境対策。
+  //   提案候補は **常に自テナントのみ** を参照する (単一テナント化)。
+  //   旧仕様は seedDataEnabled=true のとき管理テナント (MANAGEMENT_TENANT_ID) のシードを越境参照していたが、
+  //   スターターデータは「取込ボタン」で各テナントに複製する方式に変更したため、提案は自テナント内で完結する。
+  //   = 越境参照そのものを撤去し、テナント分離をさらに強化する。
+  const tenantScopeFilter = { tenantId: viewerTenantId };
   // 旧名 excludeManagementTenant の互換 (where に展開する形に統一)
   const excludeManagementTenant = tenantScopeFilter;
 
@@ -901,8 +885,9 @@ export async function adoptPastIssueAsTemplate(
       id: sourceIssueId,
       deletedAt: null,
       type: 'issue',
-      // sourceIssue は自テナント + 管理テナントのシードを許容 (suggestForProject の seedDataEnabled と整合)
-      tenantId: { in: [viewerTenantId, MANAGEMENT_TENANT_ID] },
+      // feat/starter-data-import (2026-06-05): 単一テナント化。複製元は自テナントのみ
+      //   (スターターデータは取込で自テナントに複製済のため、越境参照は不要)。
+      tenantId: viewerTenantId,
     },
     select: {
       title: true,
@@ -955,15 +940,14 @@ export async function linkKnowledgeToProject(
   projectId: string,
   viewerTenantId: string,
 ): Promise<void> {
-  // 2026-05-09 feedback Phase 2-7: 越境紐付けを遮断するため、knowledge と project 両方の
-  //   tenant 一致を verify。knowledge は自テナント + シード (MANAGEMENT_TENANT_ID) を許容、
-  //   project は自テナントのみ。
+  // 2026-05-09 feedback Phase 2-7 / feat/starter-data-import (2026-06-05): 越境紐付けを遮断。
+  //   単一テナント化により knowledge / project とも自テナントのみを許容する。
   const [knowledge, project] = await Promise.all([
     prisma.knowledge.findFirst({
       where: {
         id: knowledgeId,
         deletedAt: null,
-        tenantId: { in: [viewerTenantId, MANAGEMENT_TENANT_ID] },
+        tenantId: viewerTenantId,
       },
       select: { id: true },
     }),
@@ -1004,8 +988,8 @@ export async function suggestRelatedIssuesForText(
   const trimmed = inputText.trim();
   if (trimmed.length < 10) return []; // 10 文字未満はノイズ多いので走らせない
 
-  // 2026-05-09 feedback Phase 2-7: 自テナント + シード (MANAGEMENT_TENANT_ID) のみ対象に。
-  //   旧仕様は他テナントの過去 issue が候補に混入していた重大バグ。
+  // 2026-05-09 feedback Phase 2-7 / feat/starter-data-import (2026-06-05): 自テナントのみ対象 (単一テナント化)。
+  //   旧仕様は管理テナントのシードを越境参照していたが、取込で自テナントに複製する方式に変更した。
   const issues = await prisma.riskIssue.findMany({
     where: {
       deletedAt: null,
@@ -1014,7 +998,7 @@ export async function suggestRelatedIssuesForText(
       // PR #358 (2026-05-14): draft は提案候補から除外 (PR #357 案D との整合性)。
       //   inline 軽量サジェスト (起票中の入力に対する関連 issue 候補) も draft 除外する。
       visibility: 'public',
-      tenantId: { in: [viewerTenantId, MANAGEMENT_TENANT_ID] },
+      tenantId: viewerTenantId,
       NOT: { riskIssueProjects: { some: { projectId: currentProjectId } } },
     },
     select: {

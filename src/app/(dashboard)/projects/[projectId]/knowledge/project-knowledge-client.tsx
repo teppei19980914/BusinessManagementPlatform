@@ -18,7 +18,7 @@
  * 関連: SPECIFICATION.md (プロジェクト別ナレッジ管理)
  */
 
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useLoading } from '@/components/loading-overlay';
 import { useToast } from '@/components/toast-provider';
@@ -33,7 +33,6 @@ import {
 import { Trash2 } from 'lucide-react';
 import { matchesAnyKeyword } from '@/lib/text-search';
 // UI_PATTERNS §35 (2026-05-24): カードから軽量テーブルに移行 (5 一覧 UI 統一)
-import { VisibilityBadge } from '@/components/common/visibility-badge';
 import { ClickableRow } from '@/components/common/clickable-row';
 import { BulkSelectHeader, BulkSelectCell } from '@/components/common/bulk-select';
 import {
@@ -41,6 +40,7 @@ import {
 } from '@/components/ui/table';
 import { ResizableHead } from '@/components/ui/resizable-columns';
 import { ResizableTableShell } from '@/components/common/resizable-table-shell';
+import { useTablePagination, TablePagination } from '@/components/common/table-pagination';
 import { SortableResizableHead } from '@/components/sort/sortable-resizable-head';
 import { useMultiSort } from '@/components/sort/use-multi-sort';
 import { multiSort } from '@/lib/multi-sort';
@@ -60,6 +60,8 @@ import type { MemberDTO } from '@/services/member.service';
 // PR #168: 一覧画面に添付列を表示 (横展開)
 import { useBatchAttachments } from '@/components/attachments/use-batch-attachments';
 import { AttachmentsCell } from '@/components/attachments/attachments-cell';
+// 2026-06-02: 「リンク」列 (url 型添付を縦に複数行表示)。添付列はファイル本体のみに分離。
+import { LinksCell } from '@/components/attachments/links-cell';
 // feat/dialog-fullscreen-toggle: 文字量が多い dialog 向けの全画面トグル
 import { useDialogFullscreen } from '@/components/ui/use-dialog-fullscreen';
 // feat/markdown-textarea: Markdown 入力 + プレビュー (create dialog のため previousValue なし)
@@ -84,8 +86,10 @@ function getProjectKnowledgeSortValue(k: KnowledgeDTO, columnKey: string): unkno
   switch (columnKey) {
     case 'title': return k.title;
     case 'type': return k.knowledgeType;
-    case 'visibility': return k.visibility;
+    case 'assigneeName': return k.assigneeName ?? '';
     case 'createdBy': return k.creatorName ?? '';
+    case 'createdAt': return k.createdAt;
+    case 'updatedByName': return k.updaterName ?? '';
     case 'updatedAt': return k.updatedAt;
     default: return null;
   }
@@ -127,9 +131,17 @@ export function ProjectKnowledgeClient({
   const KNOWLEDGE_VISIBILITY_OPTIONS = buildKnowledgeVisibilityOptions(tKnowledge);
   const { withLoading } = useLoading();
   const { showSuccess, showError } = useToast();
-  const { formatDate } = useFormatters();
+  const { formatDateTimeSeconds } = useFormatters();
   // UI_PATTERNS §35: カラムソート (sessionStorage 永続化、複数列対応)
   const { sortState, setSortColumn } = useMultiSort(`sort:project-knowledge-${projectId}`);
+  // 2026-06-02: 一覧の添付/リンク列を再取得させるトリガ (use-batch-attachments の reloadToken)。
+  const [attachToken, setAttachToken] = useState(0);
+  const bumpAttachToken = useCallback(() => setAttachToken((t) => t + 1), []);
+  // 添付が変わり得る CRUD 後 (作成/削除/編集保存/インポート) は onReload と併せて再取得する。
+  const reload = useCallback(async () => {
+    bumpAttachToken();
+    await onReload();
+  }, [onReload, bumpAttachToken]);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   // T-22 Phase 22c: 上書きインポート (sync-import) ダイアログ
   const [isSyncImportOpen, setIsSyncImportOpen] = useState(false);
@@ -157,6 +169,11 @@ export function ProjectKnowledgeClient({
     return multiSort(xs, sortState, getProjectKnowledgeSortValue);
   })();
 
+  const { pageItems, page, pageCount, setPage } = useTablePagination(
+    filteredKnowledges,
+    `${bulkFilter.keyword}|${bulkFilter.mineOnly}`,
+  );
+
   // fix/list-export-import-bugs (2026-05-26): チェックボックスは export + bulk visibility 兼用に拡張。
   //   全行選択可とし、bulk visibility は サーバ側で per-row 認可 (createdBy/assigneeId 不一致は silent skip)。
   //   export は visibility フィルタ済の表示中ナレッジを対象に ids 指定で絞り込む。
@@ -165,7 +182,7 @@ export function ProjectKnowledgeClient({
     = selectableKnowledgeIds.length > 0 && selectableKnowledgeIds.every((id) => selectedIds.has(id));
 
   // PR #168: 添付バッチ取得 (他エンティティ一覧と同パターン)
-  const attachmentsByEntity = useBatchAttachments('knowledge', filteredKnowledges.map((k) => k.id));
+  const attachmentsByEntity = useBatchAttachments('knowledge', filteredKnowledges.map((k) => k.id), 'general', attachToken);
 
   function toggleOneKnowledge(id: string) {
     setSelectedIds((prev) => {
@@ -242,7 +259,7 @@ export function ProjectKnowledgeClient({
     setIsCreateOpen(false);
     setForm(initialForm);
     showSuccess('ナレッジを作成しました');
-    await onReload();
+    await reload();
   }
 
   async function handleDelete(knowledgeId: string) {
@@ -285,21 +302,10 @@ export function ProjectKnowledgeClient({
     URL.revokeObjectURL(url);
   }
 
+  // fix/knowledge-ui-consistency (2026-06-02): 縦間隔を他「○○一覧」(risks / issues / retrospectives)
+  // と揃えて space-y-6 に統一 (作成ボタン〜テーブルヘッダー間の高さ差を解消)。
   return (
-    <div className="space-y-4">
-      {/* PR #165: project-level「ナレッジ一覧」での一括 visibility 変更 */}
-      <CrossListBulkVisibilityToolbar
-        endpoint={`/api/projects/${projectId}/knowledge/bulk`}
-        formIdPrefix={`project-knowledge-${projectId}`}
-        filter={bulkFilter}
-        onFilterChange={setBulkFilter}
-        selectedIds={selectedIds}
-        onSelectionClear={() => setSelectedIds(new Set())}
-        visibilityOptions={KNOWLEDGE_VISIBILITY_OPTIONS}
-        entityLabel={tKnowledge('title')}
-        onApplied={async () => { await onReload(); }}
-      />
-
+    <div className="space-y-6">
       {/* PR fix/list-export-and-filter (2026-05-01): 他「○○一覧」(risks / retrospectives 等)
           と UI を揃えるため、justify-end (ボタン右寄せのみ) + size 既定 (sm 不使用) に統一。
           件数表示は他一覧では出していないため本行から削除。 */}
@@ -334,6 +340,33 @@ export function ProjectKnowledgeClient({
                   {error && (
                     <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{error}</div>
                   )}
+                  {/* 2026-06-02: 「公開範囲・種別」を 1 行目、タイトルを 2 行目に並べ替え (公開範囲を左) */}
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>{tKnowledge('visibility')}</Label>
+                      <select
+                        value={form.visibility}
+                        onChange={(e) => setForm({ ...form, visibility: e.target.value })}
+                        className={nativeSelectClass}
+                      >
+                        {Object.entries(VISIBILITIES).map(([key, label]) => (
+                          <option key={key} value={key}>{label}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>{tKnowledge('kind')}</Label>
+                      <select
+                        value={form.knowledgeType}
+                        onChange={(e) => setForm({ ...form, knowledgeType: e.target.value })}
+                        className={nativeSelectClass}
+                      >
+                        {Object.entries(KNOWLEDGE_TYPES).map(([key, label]) => (
+                          <option key={key} value={key}>{label}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
                   <div className="space-y-2">
                     <Label>
                       {tKnowledge('fieldTitle')}
@@ -348,32 +381,6 @@ export function ProjectKnowledgeClient({
                       maxLength={150}
                       required={form.visibility === 'public'}
                     />
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label>{tKnowledge('kind')}</Label>
-                      <select
-                        value={form.knowledgeType}
-                        onChange={(e) => setForm({ ...form, knowledgeType: e.target.value })}
-                        className={nativeSelectClass}
-                      >
-                        {Object.entries(KNOWLEDGE_TYPES).map(([key, label]) => (
-                          <option key={key} value={key}>{label}</option>
-                        ))}
-                      </select>
-                    </div>
-                    <div className="space-y-2">
-                      <Label>{tKnowledge('visibility')}</Label>
-                      <select
-                        value={form.visibility}
-                        onChange={(e) => setForm({ ...form, visibility: e.target.value })}
-                        className={nativeSelectClass}
-                      >
-                        {Object.entries(VISIBILITIES).map(([key, label]) => (
-                          <option key={key} value={key}>{label}</option>
-                        ))}
-                      </select>
-                    </div>
                   </div>
                   {/* refactor/list-create-content-optional (2026-04-27 #6): タイトル必須、3 セクションは任意 */}
                   <div className="space-y-2">
@@ -434,6 +441,21 @@ export function ProjectKnowledgeClient({
         onImported={async () => { await onReload(); }}
       />
 
+      {/* PR #165: project-level「ナレッジ一覧」での一括 visibility 変更。
+          fix/knowledge-ui-consistency (2026-06-02): 振り返り一覧と UI を揃えるため、
+          ツールバー (フィルター) を作成ボタン行の「後・テーブル直前」に配置する。 */}
+      <CrossListBulkVisibilityToolbar
+        endpoint={`/api/projects/${projectId}/knowledge/bulk`}
+        formIdPrefix={`project-knowledge-${projectId}`}
+        filter={bulkFilter}
+        onFilterChange={setBulkFilter}
+        selectedIds={selectedIds}
+        onSelectionClear={() => setSelectedIds(new Set())}
+        visibilityOptions={KNOWLEDGE_VISIBILITY_OPTIONS}
+        entityLabel={tKnowledge('title')}
+        onApplied={async () => { await onReload(); }}
+      />
+
       {/* UI_PATTERNS §35 (2026-05-24): 軽量テーブル統一。詳細 (background / content / result) は
           行クリックで KnowledgeEditDialog (readOnly 判定付き) を開いて表示する。 */}
       <ResizableTableShell tableKey={`project-knowledge-${projectId}`}>
@@ -449,9 +471,14 @@ export function ProjectKnowledgeClient({
             </ResizableHead>
             <SortableResizableHead columnKey="title" defaultWidth={240} label={tKnowledge('fieldTitle')} sortState={sortState} onSortChange={setSortColumn} />
             <SortableResizableHead columnKey="type" defaultWidth={100} label={tKnowledge('kind')} sortState={sortState} onSortChange={setSortColumn} />
-            <SortableResizableHead columnKey="visibility" defaultWidth={90} label={tKnowledge('visibility')} sortState={sortState} onSortChange={setSortColumn} />
+            {/* 2026-06-02: 公開範囲列を削除し、担当者列を 種別 と 作成者 の間に追加 (リスク/課題一覧と同パターン)。 */}
+            <SortableResizableHead columnKey="assigneeName" defaultWidth={120} label={tKnowledge('assignee')} sortState={sortState} onSortChange={setSortColumn} />
             <SortableResizableHead columnKey="createdBy" defaultWidth={120} label={tKnowledge('createdBy')} sortState={sortState} onSortChange={setSortColumn} />
-            <SortableResizableHead columnKey="updatedAt" defaultWidth={130} label={tKnowledge('updatedAt')} sortState={sortState} onSortChange={setSortColumn} />
+            <SortableResizableHead columnKey="createdAt" defaultWidth={150} label={tKnowledge('createdAt')} sortState={sortState} onSortChange={setSortColumn} />
+            <SortableResizableHead columnKey="updatedByName" defaultWidth={120} label={tKnowledge('updatedBy')} sortState={sortState} onSortChange={setSortColumn} />
+            <SortableResizableHead columnKey="updatedAt" defaultWidth={150} label={tKnowledge('updatedAt')} sortState={sortState} onSortChange={setSortColumn} />
+            {/* 2026-06-02: リンク列 (作成日時〜添付の間)。url 型添付を縦に複数行表示。 */}
+            <ResizableHead columnKey="links" defaultWidth={200}>{tKnowledge('links')}</ResizableHead>
             <ResizableHead columnKey="attachments" defaultWidth={180}>{tKnowledge('attachment')}</ResizableHead>
             {/* 2026-04-24 / §35: 作成者本人だけが削除ボタンを使うので、自分の行が 1 つでもあれば列を出す。
                 feat/asset-assignee-expansion (2026-05-26): 担当者も削除可能なので OR で拡張。 */}
@@ -464,14 +491,14 @@ export function ProjectKnowledgeClient({
           {filteredKnowledges.length === 0 ? (
             <TableRow>
               <TableCell
-                colSpan={filteredKnowledges.some((k) => k.createdBy === currentUserId || k.assigneeId === currentUserId) ? 8 : 7}
+                colSpan={filteredKnowledges.some((k) => k.createdBy === currentUserId || k.assigneeId === currentUserId) ? 11 : 10}
                 className="py-8 text-center text-muted-foreground"
               >
                 {tKnowledge('noneInList')}
               </TableCell>
             </TableRow>
           ) : (
-            filteredKnowledges.map((k) => {
+            pageItems.map((k) => {
               // feat/asset-assignee-expansion (2026-05-26): 作成者 OR 担当者を編集可能
               const isOwner = k.createdBy === currentUserId || k.assigneeId === currentUserId;
               return (
@@ -493,17 +520,18 @@ export function ProjectKnowledgeClient({
                       {KNOWLEDGE_TYPES[k.knowledgeType as keyof typeof KNOWLEDGE_TYPES] || k.knowledgeType}
                     </Badge>
                   </TableCell>
-                  <TableCell>
-                    <VisibilityBadge
-                      visibility={k.visibility}
-                      label={VISIBILITIES[k.visibility as keyof typeof VISIBILITIES] || k.visibility}
-                      className="text-xs"
-                    />
-                  </TableCell>
-                  <TableCell className="text-sm text-muted-foreground">{k.creatorName ?? ''}</TableCell>
-                  <TableCell className="text-sm text-muted-foreground">{formatDate(k.updatedAt)}</TableCell>
+                  <TableCell className="text-sm text-muted-foreground">{k.assigneeName || '—'}</TableCell>
+                  <TableCell className="text-sm text-muted-foreground">{k.creatorName || '—'}</TableCell>
+                  <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{formatDateTimeSeconds(k.createdAt)}</TableCell>
+                  <TableCell className="text-sm text-muted-foreground">{k.updatedAt !== k.createdAt ? (k.updaterName || '—') : '—'}</TableCell>
+                  <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{k.updatedAt !== k.createdAt ? formatDateTimeSeconds(k.updatedAt) : '—'}</TableCell>
+                  {/* 2026-06-02: リンク列 (url 型添付を縦に複数行表示) */}
                   <TableCell onClick={(e) => e.stopPropagation()}>
-                    <AttachmentsCell items={attachmentsByEntity[k.id] ?? []} />
+                    <LinksCell items={attachmentsByEntity[k.id] ?? []} />
+                  </TableCell>
+                  {/* 添付列 → 2026-06-02 ファイル本体 (supabase 型) のみ表示 */}
+                  <TableCell onClick={(e) => e.stopPropagation()}>
+                    <AttachmentsCell items={(attachmentsByEntity[k.id] ?? []).filter((a) => a.storageProvider === 'supabase')} />
                   </TableCell>
                   {filteredKnowledges.some((x) => x.createdBy === currentUserId || x.assigneeId === currentUserId) && (
                     <TableCell onClick={(e) => e.stopPropagation()}>
@@ -528,6 +556,8 @@ export function ProjectKnowledgeClient({
         </TableBody>
       </ResizableTableShell>
 
+      <TablePagination page={page} pageCount={pageCount} onPageChange={setPage} />
+
       {/* §35 件数表示は table 下部 (project 配下は table 上部に CRUD ボタン群があるため) */}
       <div className="flex justify-end text-xs text-muted-foreground">
         {tCommon('itemCount', { count: filteredKnowledges.length })}
@@ -541,8 +571,8 @@ export function ProjectKnowledgeClient({
         projectId={projectId}
         members={members}
         open={editingKnowledge != null}
-        onOpenChange={(v) => { if (!v) setEditingKnowledge(null); }}
-        onSaved={async () => { await onReload(); }}
+        onOpenChange={(v) => { if (!v) { setEditingKnowledge(null); bumpAttachToken(); } }}
+        onSaved={async () => { await reload(); }}
         readOnly={
           editingKnowledge != null &&
           editingKnowledge.createdBy !== currentUserId &&

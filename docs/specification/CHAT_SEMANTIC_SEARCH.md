@@ -45,7 +45,7 @@
    c. generateEmbedding({ text, inputType: 'query', featureUnit: 'chat-semantic-search' })
       └ Voyage 1 回呼出 + ApiCallLog 1 件記録
    d. 5 資産に対して pgvector Cosine 類似度検索を並列実行 (Promise.all)
-      - tenantId フィルタ + seedDataEnabled 判定で MANAGEMENT_TENANT_ID 含めるか
+      - tenantId フィルタ = 自テナントのみ (2026-06-05 単一テナント化、MANAGEMENT_TENANT_ID 越境参照は撤去)
       - deletedAt IS NULL + content_embedding IS NOT NULL
       - visibility='public' のみ (Memo のみ自分の private も含む)
    e. 各資産で SUGGESTION_DEFAULT_LIMIT=50 件取得 → assignPercentileTiers で tier 分類
@@ -231,7 +231,7 @@ V1 では構造的に該当しないが、Level 2 で LLM 生成を入れる場�
 
 ## 5. テナント境界・認可
 
-- **viewerTenantId 必須**: 検索結果は自テナント (+ `seedDataEnabled=true` ならシード `MANAGEMENT_TENANT_ID`) に限定
+- **viewerTenantId 必須 (単一テナント化, 2026-06-05)**: 検索結果は **常に自テナントのみ** に限定 (`tenantIds = [viewerTenantId]`)。旧 `seedDataEnabled` による管理テナント越境参照は撤去 (提案エンジンと同方針)。見本データは「スターターデータ取込」で各テナントへ複製する方式に変更
 - 越境防止: [TENANT_AND_BILLING.md](../business/TENANT_AND_BILLING.md) §テナント分離原則 と同方針、where 句に必ず `tenantId` を効かせる
 - セキュリティ脅威モデル: [SUGGESTION_ENGINE_THREAT_MODEL.md](../security/SUGGESTION_ENGINE_THREAT_MODEL.md) を流用 (本機能は同じ embedding 基盤 + チャット拡張脅威 §4)
 
@@ -248,13 +248,14 @@ V1 では構造的に該当しないが、Level 2 で LLM 生成を入れる場�
 | ユーザ単位・時間次 | **1 時間 60 回** | 同上 | 1 セッション集中検索の上限 |
 | Beginner プラン | **¥0 (Embedding free)** + ADR-0030 試用 100 件上限 | fair-use-limit 月 10,000 calls/tenant + Embedding 系専用上限 | Voyage 200M tokens/月 無料枠の全社共有保護。Expert/Pro は monthlyEmbeddingBudgetCap で制御 |
 
-### 6.1 fail-closed 方針 (シードデータ参照)
+### 6.1 単一テナント化 (2026-06-05, feat/starter-data-import)
 
-`viewerSeedDataEnabled` の決定は `tenant?.seedDataEnabled ?? false` (PR fix/chat-search-and-auto-open / 2026-05-24)。
-旧仕様 `?? true` は tenant lookup が null を返す異常系 (削除中 race / DB 異常) で
-`MANAGEMENT_TENANT_ID` のシードデータを意図せず露出させうるフェイルオープンだった。
-正常系では tenant は常に存在するため UX 影響なし (シード参照が一時的に止まるのみ)。
-同方針を `src/services/suggestion.service.ts` (既存提案エンジン) にも適用済。
+旧 6.1「fail-closed 方針 (シードデータ参照)」は **廃止**。チャット検索は管理テナント (`MANAGEMENT_TENANT_ID`)
+を越境参照しなくなり、`tenantIds = [viewerTenantId]` の単一テナント参照に純化した
+(`seedDataEnabled` lookup / `viewerSeedDataEnabled` 引数とも撤去)。
+越境参照そのものが無くなったため、旧 fail-open (シード露出) リスクも構造的に消滅した。
+見本データは「スターターデータ取込」(`sample-clone.service`) で各テナントへ複製する。
+同方針を `src/services/suggestion.service.ts` (提案エンジン) にも適用済。
 
 ### 6.2 error_log への redact
 

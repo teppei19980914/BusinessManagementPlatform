@@ -54,6 +54,8 @@ export function UserEditDialog({
     isActive: true,
   });
   const [error, setError] = useState('');
+  // 2026-06-03: リカバリーコード再発行で 1 回だけ返る平文コード。null = 未発行 (この画面で未操作)。
+  const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null);
   // PR #85: ロック判定用の「今」スナップショット (render 中に Date.now() を呼べないため)
   const [nowAtMount] = useState(() => Date.now());
 
@@ -72,6 +74,8 @@ export function UserEditDialog({
       isActive: user.isActive,
     });
     setError('');
+    // 別ユーザを開いたら前ユーザのコード平文を残さない (1 回表示の徹底)
+    setRecoveryCodes(null);
   }
   if (!user && prevUserId !== null) {
     // ダイアログを閉じたら prevId を null に戻し、次回の同一 ID オープン時も resync させる
@@ -124,6 +128,67 @@ export function UserEditDialog({
     void onSaved();
   }
 
+  // 2026-06-03: リカバリーコード再発行 (MFA 復旧導線)。
+  // 旧コードを全失効し新コード一式を生成。平文は応答で 1 回だけ返るため画面に表示して控えてもらう。
+  // ダイアログは閉じない (コードを表示し続ける必要があるため)。
+  async function handleReissueRecovery() {
+    if (!user) return;
+    if (!confirm(t('recoveryReissueConfirm', { name: user.name }))) return;
+    setError('');
+    const res = await withLoading(() =>
+      fetch(`/api/admin/users/${user.id}/recovery-codes`, { method: 'POST' }),
+    );
+    if (!res.ok) {
+      const json = await res.json().catch(() => ({}));
+      const msg = json.error?.message || t('recoveryReissueFailed');
+      setError(msg);
+      showError('リカバリーコードの再発行に失敗しました');
+      return;
+    }
+    const json = await res.json().catch(() => ({ data: { recoveryCodes: [] } }));
+    setRecoveryCodes(json?.data?.recoveryCodes ?? []);
+    showSuccess(t('recoveryCodesDone'));
+  }
+
+  // 2026-06-03: 招待メールの再送 (招待中ユーザのみ)。即時 close → reload は裏で。
+  async function handleResendInvitation() {
+    if (!user) return;
+    setError('');
+    const res = await withLoading(() =>
+      fetch(`/api/admin/users/${user.id}/resend-invitation`, { method: 'POST' }),
+    );
+    if (!res.ok) {
+      const json = await res.json().catch(() => ({}));
+      const msg = json.error?.message || t('inviteResendFailed');
+      setError(msg);
+      showError('招待メールの再送に失敗しました');
+      return;
+    }
+    onOpenChange(false);
+    showSuccess('招待メールを再送しました');
+    void onSaved();
+  }
+
+  // 2026-06-03: 招待の取消 (招待中ユーザのみ)。物理削除して席を解放する。
+  async function handleCancelInvitation() {
+    if (!user) return;
+    if (!confirm(t('inviteCancelConfirm', { name: user.name, email: user.email }))) return;
+    setError('');
+    const res = await withLoading(() =>
+      fetch(`/api/admin/users/${user.id}/cancel-invitation`, { method: 'POST' }),
+    );
+    if (!res.ok) {
+      const json = await res.json().catch(() => ({}));
+      const msg = json.error?.message || t('inviteCancelFailed');
+      setError(msg);
+      showError('招待の取消に失敗しました');
+      return;
+    }
+    onOpenChange(false);
+    showSuccess('招待を取り消しました');
+    void onSaved();
+  }
+
   // PR #89: ユーザ削除 (論理削除 + ProjectMember 物理削除)。
   // 2 段階 confirm (意思確認 + 影響告知) で誤操作を防ぐ。
   async function handleDelete() {
@@ -154,6 +219,9 @@ export function UserEditDialog({
     = !!user.lockedUntil && new Date(user.lockedUntil).getTime() > nowAtMount;
   const isLocked = user.permanentLock || temporaryLocked;
   const canShowUnlockButton = isLocked || user.failedLoginCount > 0;
+  // 2026-06-03: 招待中 (パスワード未設定) は有効/無効の切替・ロック・リカバリーが無意味なので、
+  //   専用の「招待中」セクション (再送 / 取消) を出し、それ以外のセクションは隠す。
+  const isInvited = user.accountStatus === 'invited';
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -205,15 +273,73 @@ export function UserEditDialog({
               value={form.isActive ? 'active' : 'inactive'}
               onChange={(e) => setForm({ ...form, isActive: e.target.value === 'active' })}
               className={nativeSelectClass}
+              // 2026-06-03: 招待中 (未受諾) は有効/無効を切り替えられない (受諾後に意味を持つ)
+              disabled={isInvited}
+              title={isInvited ? t('statusEditInvitedDisabled') : undefined}
             >
               <option value="active">{t('statusActive')}</option>
               <option value="inactive">{t('statusInactive')}</option>
             </select>
+            {isInvited && (
+              <p className="text-xs text-muted-foreground">{t('statusEditInvitedDisabled')}</p>
+            )}
           </div>
           <Button type="submit" className="w-full">{tAction('save')}</Button>
         </form>
 
-        {/* PR #85: ロック情報 + 解除ボタン */}
+        {/* 2026-06-03: アカウント情報 (状態 / 前回ログイン日時 / MFA 有無) — 読み取り専用表示 */}
+        <div className="mt-4 space-y-1 rounded-md border border-border bg-muted/30 p-3 text-sm">
+          <div className="font-medium">{t('accountInfoSectionTitle')}</div>
+          <div className="space-y-1 text-muted-foreground">
+            <div>
+              {t('accountStatusLabel')}{' '}
+              <span className="font-medium text-foreground">
+                {user.accountStatus === 'active'
+                  ? t('statusActive')
+                  : user.accountStatus === 'invited'
+                    ? t('statusInvited')
+                    : t('statusInactive')}
+              </span>
+            </div>
+            <div>
+              {t('lastLoginLabel')}{' '}
+              {user.lastLoginAt ? formatDateTimeFull(user.lastLoginAt) : t('lastLoginNever')}
+            </div>
+            <div>
+              {t('mfaLabel')}{' '}
+              <span className={user.mfaEnabled ? 'font-medium text-foreground' : ''}>
+                {user.mfaEnabled ? t('mfaEnabledYes') : t('mfaEnabledNo')}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* 2026-06-03: 招待中セクション (招待メール再送 / 招待取消)。招待中ユーザのみ表示。 */}
+        {isInvited && (
+          <div className="mt-4 space-y-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm dark:border-amber-700 dark:bg-amber-950/40">
+            <div className="font-medium text-amber-900 dark:text-amber-200">{t('inviteSectionTitle')}</div>
+            <div className="text-xs text-amber-800 dark:text-amber-300">{t('inviteSectionDescription')}</div>
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full"
+              onClick={handleResendInvitation}
+            >
+              {t('inviteResendButton')}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full border-destructive/40 text-destructive hover:bg-destructive/10"
+              onClick={handleCancelInvitation}
+            >
+              {t('inviteCancelButton')}
+            </Button>
+          </div>
+        )}
+
+        {/* PR #85: ロック情報 + 解除ボタン (招待中は対象外) */}
+        {!isInvited && (
         <div className="mt-4 space-y-2 rounded-md border border-border bg-muted/30 p-3 text-sm">
           <div className="font-medium">{t('lockSectionTitle')}</div>
           <div className="space-y-1 text-muted-foreground">
@@ -245,8 +371,39 @@ export function UserEditDialog({
             </Button>
           )}
         </div>
+        )}
 
-        {/* PR #89: 削除ボタン (論理削除 + ProjectMember 物理削除) */}
+        {/* 2026-06-03: リカバリーコード再発行 (MFA 復旧導線)。MFA 設定済みユーザのみ表示 */}
+        {user.mfaEnabled && (
+          <div className="mt-4 space-y-2 rounded-md border border-border bg-muted/30 p-3 text-sm">
+            <div className="font-medium">{t('recoverySectionTitle')}</div>
+            <div className="text-xs text-muted-foreground">{t('recoverySectionDescription')}</div>
+            {recoveryCodes && (
+              <div className="space-y-2 rounded-md border border-amber-300 bg-amber-50 p-3 dark:border-amber-700 dark:bg-amber-950/40">
+                <div className="text-xs font-medium text-amber-900 dark:text-amber-200">
+                  {t('recoveryCodesTitle')}
+                </div>
+                <ul className="grid grid-cols-2 gap-x-4 gap-y-1 font-mono text-sm">
+                  {recoveryCodes.map((code) => (
+                    <li key={code}>{code}</li>
+                  ))}
+                </ul>
+                <div className="text-xs text-amber-800 dark:text-amber-300">{t('recoveryCodesHint')}</div>
+              </div>
+            )}
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full"
+              onClick={handleReissueRecovery}
+            >
+              {t('recoveryReissueButton')}
+            </Button>
+          </div>
+        )}
+
+        {/* PR #89: 削除ボタン (論理削除 + ProjectMember 物理削除)。招待中は「招待取消」を使うため非表示。 */}
+        {!isInvited && (
         <div className="mt-4 space-y-2 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm">
           <div className="font-medium text-destructive">{t('dangerZoneTitle')}</div>
           <div className="space-y-1 text-xs text-muted-foreground">
@@ -261,6 +418,7 @@ export function UserEditDialog({
             {t('deleteButton')}
           </Button>
         </div>
+        )}
       </DialogContent>
     </Dialog>
   );

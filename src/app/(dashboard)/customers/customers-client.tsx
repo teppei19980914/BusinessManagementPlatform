@@ -20,15 +20,14 @@ import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
+import { useFormatters } from '@/lib/use-formatters';
 import { useLoading } from '@/components/loading-overlay';
 import { useToast } from '@/components/toast-provider';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
-  Table,
   TableBody,
   TableCell,
-  TableHead,
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
@@ -43,10 +42,14 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import type { CustomerDTO } from '@/services/customer.service';
-import { SortableHeader } from '@/components/sort/sortable-header';
+// 2026-06-03: 他一覧と同様に列幅調整 + 「列幅をリセット」を提供するため Resizable 系へ移行。
+import { SortableResizableHead } from '@/components/sort/sortable-resizable-head';
+import { ResizableHead } from '@/components/ui/resizable-columns';
+import { ResizableTableShell } from '@/components/common/resizable-table-shell';
 import { useMultiSort } from '@/components/sort/use-multi-sort';
 import { multiSort } from '@/lib/multi-sort';
 import { useListSearchParams } from '@/components/common/use-list-search-params';
+import { useTablePagination, TablePagination } from '@/components/common/table-pagination';
 
 type Props = {
   initialCustomers: CustomerDTO[];
@@ -85,6 +88,8 @@ export function CustomersClient({ initialCustomers, initialKeyword = '' }: Props
   const router = useRouter();
   const t = useTranslations('customer');
   const tAction = useTranslations('action');
+  const tCommon = useTranslations('common');
+  const { formatDateTimeSeconds } = useFormatters();
   const { withLoading } = useLoading();
   const { showSuccess, showError } = useToast();
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -109,6 +114,7 @@ export function CustomersClient({ initialCustomers, initialKeyword = '' }: Props
     );
   }, [initialCustomers, keyword]);
   const sortedCustomers = multiSort(filteredCustomers, sortState, getCustomerSortValue);
+  const { pageItems, page, pageCount, setPage } = useTablePagination(sortedCustomers, keyword);
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -165,16 +171,10 @@ export function CustomersClient({ initialCustomers, initialKeyword = '' }: Props
 
   return (
     <div className="space-y-6">
-      {/* Phase A 要件 6: h2 ページタイトル削除 (ナビタブ名と重複のため) */}
-      <div className="flex items-center justify-between gap-4">
-        {/* PR #425 (2026-05-22) KDD §5.X+102: 入力即フィルタ (debounce で URL 同期) */}
-        <Input
-          placeholder={t('searchPlaceholder')}
-          value={keyword}
-          onChange={(e) => setKeyword(e.target.value)}
-          className="max-w-xs"
-          data-testid="customers-search-input"
-        />
+      {/* Phase A 要件 6: h2 ページタイトル削除 (ナビタブ名と重複のため)。
+          2026-06-03: フィルター位置をプロジェクト一覧に統一 — 作成ボタンは独立した右寄せ行、
+          検索フィルターはその下の独立した行 (左寄せ) に配置する。 */}
+      <div className="flex items-center justify-end">
         <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
           <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-xs hover:bg-primary/90">
             {t('createButton')}
@@ -255,37 +255,41 @@ export function CustomersClient({ initialCustomers, initialKeyword = '' }: Props
         </Dialog>
       </div>
 
-      <div className="rounded-md border">
-        <Table>
+      {/* 検索・フィルタ (プロジェクト一覧と同位置・同スタイル: 作成ボタン行の下の独立行 / 左寄せ) */}
+      <div className="flex gap-4">
+        <Input
+          placeholder={t('searchPlaceholder')}
+          value={keyword}
+          onChange={(e) => setKeyword(e.target.value)}
+          className="max-w-xs"
+          data-testid="customers-search-input"
+        />
+      </div>
+
+      <ResizableTableShell tableKey="customers">
           <TableHeader>
             <TableRow>
-              <TableHead>
-                <SortableHeader columnKey="name" label={t('fieldName')} sortState={sortState} onSortChange={setSortColumn} />
-              </TableHead>
-              <TableHead>
-                <SortableHeader columnKey="department" label={t('fieldDepartment')} sortState={sortState} onSortChange={setSortColumn} />
-              </TableHead>
-              <TableHead>
-                <SortableHeader columnKey="contactPerson" label={t('fieldContactPerson')} sortState={sortState} onSortChange={setSortColumn} />
-              </TableHead>
-              <TableHead>
-                <SortableHeader columnKey="email" label={t('fieldEmail')} sortState={sortState} onSortChange={setSortColumn} />
-              </TableHead>
-              <TableHead>
-                <SortableHeader columnKey="projects" label={t('fieldRelatedProjects')} sortState={sortState} onSortChange={setSortColumn} />
-              </TableHead>
-              <TableHead className="text-right">{t('fieldActions')}</TableHead>
+              <SortableResizableHead columnKey="name" defaultWidth={200} label={t('fieldName')} sortState={sortState} onSortChange={setSortColumn} />
+              <SortableResizableHead columnKey="department" defaultWidth={140} label={t('fieldDepartment')} sortState={sortState} onSortChange={setSortColumn} />
+              <SortableResizableHead columnKey="contactPerson" defaultWidth={120} label={t('fieldContactPerson')} sortState={sortState} onSortChange={setSortColumn} />
+              <SortableResizableHead columnKey="email" defaultWidth={200} label={t('fieldEmail')} sortState={sortState} onSortChange={setSortColumn} />
+              <SortableResizableHead columnKey="projects" defaultWidth={130} label={t('fieldRelatedProjects')} sortState={sortState} onSortChange={setSortColumn} />
+              <ResizableHead columnKey="createdByName" defaultWidth={110}>{tCommon('auditCreatedBy')}</ResizableHead>
+              <ResizableHead columnKey="createdAt" defaultWidth={150}>{tCommon('auditCreatedAt')}</ResizableHead>
+              <ResizableHead columnKey="updatedByName" defaultWidth={110}>{tCommon('auditUpdatedBy')}</ResizableHead>
+              <ResizableHead columnKey="updatedAt" defaultWidth={150}>{tCommon('auditUpdatedAt')}</ResizableHead>
+              <ResizableHead columnKey="actions" defaultWidth={80}>{t('fieldActions')}</ResizableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {sortedCustomers.length === 0 && (
               <TableRow>
-                <TableCell colSpan={6} className="text-center text-muted-foreground">
+                <TableCell colSpan={10} className="text-center text-muted-foreground">
                   {t('listEmpty')}
                 </TableCell>
               </TableRow>
             )}
-            {sortedCustomers.map((customer) => (
+            {pageItems.map((customer) => (
               <TableRow key={customer.id}>
                 <TableCell className="font-medium">
                   <Link
@@ -305,6 +309,10 @@ export function CustomersClient({ initialCustomers, initialKeyword = '' }: Props
                     <span className="text-muted-foreground">{t('projectCount', { count: 0 })}</span>
                   )}
                 </TableCell>
+                <TableCell>{customer.createdByName || '—'}</TableCell>
+                <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{formatDateTimeSeconds(customer.createdAt)}</TableCell>
+                <TableCell>{customer.updatedAt !== customer.createdAt ? (customer.updatedByName || '—') : '—'}</TableCell>
+                <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{customer.updatedAt !== customer.createdAt ? formatDateTimeSeconds(customer.updatedAt) : '—'}</TableCell>
                 <TableCell className="text-right">
                   <Button
                     variant="destructive"
@@ -322,8 +330,9 @@ export function CustomersClient({ initialCustomers, initialKeyword = '' }: Props
               </TableRow>
             ))}
           </TableBody>
-        </Table>
-      </div>
+      </ResizableTableShell>
+
+      <TablePagination page={page} pageCount={pageCount} onPageChange={setPage} />
     </div>
   );
 }

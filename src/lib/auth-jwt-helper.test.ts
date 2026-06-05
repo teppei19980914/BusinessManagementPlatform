@@ -138,6 +138,30 @@ describe('reissueAuthJwtOnResponse', () => {
     expect(decoded?.locale).toBe('en-US');
   });
 
+  // feat/logout-other-devices (2026-06-03): tokenVersion を新値で再署名できる
+  //   (「他の端末からログアウト」で increment 後の新 tokenVersion を呼出端末の JWT に焼き直す)
+  it('tokenVersion を再署名: 新 tokenVersion が含まれる', async () => {
+    const original = await buildSignedJwt();
+    const req = makeReqWithCookie(original);
+    const res = NextResponse.json({ ok: true });
+    const newVersion = (baseToken.tokenVersion as number) + 1;
+    const result = await reissueAuthJwtOnResponse(req as never, res, {
+      tokenVersion: newVersion,
+    });
+    expect(result.ok).toBe(true);
+
+    const newJwt = res.headers
+      .get('set-cookie')!
+      .split(';')[0]
+      .replace(`${AUTH_SESSION_COOKIE_NAME}=`, '');
+    const decoded = await decode({
+      token: newJwt,
+      secret: TEST_SECRET,
+      salt: AUTH_SESSION_COOKIE_NAME,
+    });
+    expect(decoded?.tokenVersion).toBe(newVersion);
+  });
+
   it('★既存 claim は保持される (id / tenantId / systemRole 等が消えない)', async () => {
     const original = await buildSignedJwt();
     const req = makeReqWithCookie(original);

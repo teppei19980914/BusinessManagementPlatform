@@ -109,7 +109,9 @@ test.describe('@feature:auth:admin-flow Steps 1-6', () => {
     await waitForProjectsReady(page);
 
     await page.goto('/settings');
-    await expect(page.getByRole('heading', { name: '設定' })).toBeVisible();
+    // 2026-06-05: 画面名「設定」見出しは撤去 (ナビ折りたたみ幅でのみ表示)。
+    //   画面ロード確認はアカウント情報セクション (常時表示) の testid で行う。
+    await expect(page.getByTestId('account-info-section')).toBeVisible();
 
     // Label 文言重複 (パスワード変更フォーム vs MFA) を避けるため、パスワード変更カード内で scope する
     // `（確認）` は全角括弧 (UI 実装と一致)。半角 `(確認)` とは Unicode 上別文字なので要注意。

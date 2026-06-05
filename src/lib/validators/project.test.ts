@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createProjectSchema, changeStatusSchema } from './project';
+import { createProjectSchema, updateProjectSchema, changeStatusSchema } from './project';
 
 describe('createProjectSchema', () => {
   const validInput = {
@@ -65,6 +65,20 @@ describe('createProjectSchema', () => {
     expect(createProjectSchema.safeParse({ ...validInput, plannedStartDate: '20260501' }).success).toBe(false);
   });
 
+  // 2026-06-02: 実績日 (任意)。有効日付 / 空文字 / null / 省略 を受け入れ、不正形式は拒否。
+  it('実績日: 有効な日付を受け入れる', () => {
+    expect(createProjectSchema.safeParse({ ...validInput, actualStartDate: '2026-05-10', actualEndDate: '2026-06-20' }).success).toBe(true);
+  });
+  it('実績日: 空文字 / null / 省略 を受け入れる (任意項目)', () => {
+    expect(createProjectSchema.safeParse({ ...validInput, actualStartDate: '', actualEndDate: '' }).success).toBe(true);
+    expect(createProjectSchema.safeParse({ ...validInput, actualStartDate: null, actualEndDate: null }).success).toBe(true);
+    expect(createProjectSchema.safeParse(validInput).success).toBe(true); // 省略
+  });
+  it('実績日: 不正な日付形式を拒否する', () => {
+    expect(createProjectSchema.safeParse({ ...validInput, actualStartDate: '2026/05/10' }).success).toBe(false);
+    expect(createProjectSchema.safeParse({ ...validInput, actualEndDate: '20260620' }).success).toBe(false);
+  });
+
   it('オプションフィールドは省略可能', () => {
     expect(createProjectSchema.safeParse(validInput).success).toBe(true);
   });
@@ -85,11 +99,40 @@ describe('createProjectSchema', () => {
     const tags = Array.from({ length: 51 }, (_, i) => `tag${i}`);
     expect(createProjectSchema.safeParse({ ...validInput, processTags: tags }).success).toBe(false);
   });
+
+  // 2026-06-03: ステータスを新規作成フォームから任意に選択可能に。
+  it('status: 5 ステータスを全て受け入れ、省略も可能 (省略時は service が planning 補完)', () => {
+    for (const status of ['planning', 'estimating', 'scheduling', 'executing', 'closed']) {
+      expect(createProjectSchema.safeParse({ ...validInput, status }).success).toBe(true);
+    }
+    expect(createProjectSchema.safeParse(validInput).success).toBe(true); // 省略 OK
+  });
+
+  it('status: 無効なステータス (廃止した completed/retrospected 含む) を拒否する', () => {
+    expect(createProjectSchema.safeParse({ ...validInput, status: 'draft' }).success).toBe(false);
+    expect(createProjectSchema.safeParse({ ...validInput, status: '' }).success).toBe(false);
+    // 2026-06-03 廃止
+    expect(createProjectSchema.safeParse({ ...validInput, status: 'completed' }).success).toBe(false);
+    expect(createProjectSchema.safeParse({ ...validInput, status: 'retrospected' }).success).toBe(false);
+  });
+});
+
+describe('updateProjectSchema', () => {
+  // 2026-06-03: 編集フォームから任意ステータス更新可能 (partial なので status 単独 PATCH も可)。
+  it('status 単独の部分更新を受け入れ、一方向遷移の制限は課さない (例: closed → planning も可)', () => {
+    expect(updateProjectSchema.safeParse({ status: 'planning' }).success).toBe(true);
+    expect(updateProjectSchema.safeParse({ status: 'closed' }).success).toBe(true);
+    expect(updateProjectSchema.safeParse({ status: 'executing' }).success).toBe(true);
+  });
+
+  it('status: 無効値は拒否する', () => {
+    expect(updateProjectSchema.safeParse({ status: 'unknown' }).success).toBe(false);
+  });
 });
 
 describe('changeStatusSchema', () => {
-  it('有効なステータスを受け入れる', () => {
-    const statuses = ['planning', 'estimating', 'scheduling', 'executing', 'completed', 'retrospected', 'closed'];
+  it('有効なステータスを受け入れる (2026-06-03: 5 ステータス)', () => {
+    const statuses = ['planning', 'estimating', 'scheduling', 'executing', 'closed'];
     for (const status of statuses) {
       expect(changeStatusSchema.safeParse({ status }).success).toBe(true);
     }

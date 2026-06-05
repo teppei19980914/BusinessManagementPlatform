@@ -267,7 +267,7 @@ erDiagram
 | 90日失効通知日時 | beginner_expired_notice_sent_at | TIMESTAMPTZ | YES | NULL | |
 | 150日削除予告日時 | beginner_auto_delete_notice_day150_sent_at | TIMESTAMPTZ | YES | NULL | |
 | 170日削除予告日時 | beginner_auto_delete_notice_day170_sent_at | TIMESTAMPTZ | YES | NULL | |
-| シード参照有効 | seed_data_enabled | BOOLEAN | NO | true | 提案エンジンに管理テナントのシードを含めるか |
+| ~~シード参照有効~~ | ~~seed_data_enabled~~ | — | — | — | **2026-06-05 撤去** (migration 20260613)。提案/チャットを単一テナント化 (管理テナント越境参照を廃止)。見本データは「スターターデータ取込」(各テーブルの is_seed_sample マーカー) に置換 |
 | インポート中ロック | import_in_progress_at | TIMESTAMPTZ | YES | NULL | 30 分で自動失効 |
 | Storage 使用量 | storage_bytes_used | BIGINT | NO | 0 | DB 容量キャッシュ (日次 cron) |
 | Storage 更新日時 | storage_bytes_used_at | TIMESTAMPTZ | YES | NULL | |
@@ -331,14 +331,18 @@ erDiagram
 | MFA 失敗回数 | mfa_failed_count | INT | NO | 0 | 3 回で 30 分ロック |
 | MFA ロック解除日時 | mfa_locked_until | TIMESTAMPTZ | YES | NULL | |
 | 最終ログイン日時 | last_login_at | TIMESTAMPTZ | YES | NULL | |
+| 招待受諾日時 | invitation_accepted_at | TIMESTAMPTZ | YES | NULL | **NULL = 招待中**（パスワード未設定）、値あり = 受諾済。アカウント状態(招待中/有効/無効)を `is_active` と合わせて導出。2026-06-03 追加 (migration `20260610`) |
 | パスワード変更強制 | force_password_change | BOOLEAN | NO | false | |
 | トークンバージョン | token_version | INT | NO | 0 | JWT 失効カウンタ (increment で全 JWT 失効) |
 | テーマ設定 | theme_preference | VARCHAR(30) | NO | 'light' | |
+| 作成者 | created_by | UUID | YES | NULL | 招待した管理者の User.id。**自己参照 FK は張らない**（リレーション無し、氏名は一覧で解決）。NULL = 記録なし。2026-06-03 追加 (migration `20260611`) |
+| 更新者 | updated_by | UUID | YES | NULL | 最後に編集した管理者の User.id（同上、FK なし）。2026-06-03 追加 |
 | 作成日時 | created_at | TIMESTAMPTZ | NO | now() | |
 | 更新日時 | updated_at | TIMESTAMPTZ | NO | @updatedAt | |
-| 削除日時 | deleted_at | TIMESTAMPTZ | YES | NULL | 論理削除 |
+| 削除日時 | deleted_at | TIMESTAMPTZ | YES | NULL | **論理削除専用**（2026-06-03 以前は「招待中」もここで代用していたが廃止。招待中は invitation_accepted_at=null で表す） |
 
 > timezone / locale は User からは撤去され Tenant に集約 (PR-1)。
+> アカウント状態（招待中/有効/無効）の導出・ライフサイクル・席数(案A)は [USER_MANAGEMENT.md](./USER_MANAGEMENT.md) を参照。
 
 **インデックス**: UNIQUE(tenant_id, email)=`idx_users_tenant_email` / `idx_users_active` (is_active, last_login_at) / `idx_users_tenant` (tenant_id)
 
@@ -446,7 +450,7 @@ erDiagram
 | 工程タグ | process_tags | JSONB | NO | '[]' | |
 | 開始予定日 | planned_start_date | DATE | NO | - | |
 | 終了予定日 | planned_end_date | DATE | NO | - | |
-| 状態 | status | VARCHAR(20) | NO | 'planning' | planning/estimating/scheduling/executing/completed/retrospected/closed (7 状態) |
+| ステータス | status | VARCHAR(20) | NO | 'planning' | planning/estimating/scheduling/executing/closed (5 ステータス、2026-06-03: 旧 completed/retrospected 廃止)。closed=完全読取専用(削除のみ可) |
 | 備考 | notes | TEXT | YES | NULL | |
 | サンプルデータ | is_sample_data | BOOLEAN | NO | false | true は一覧非表示・提案では可視 |
 | embedding | content_embedding | vector(1024) | YES | NULL | purpose+background+scope |
@@ -526,7 +530,9 @@ User × Project の中間テーブル。プロジェクトごとに異なる pro
 | 更新日時 | updated_at | TIMESTAMPTZ | NO | @updatedAt | |
 | 削除日時 | deleted_at | TIMESTAMPTZ | YES | NULL | 論理削除 |
 
-**インデックス**: `idx_tasks_project` (project_id) / `idx_tasks_assignee` (assignee_id, status) / `idx_tasks_parent` (parent_task_id) / `idx_tasks_gantt` (project_id, planned_start_date, planned_end_date) / **部分 UNIQUE** `idx_tasks_project_parent_name_unique` = `(project_id, COALESCE(parent_task_id, '0000...'::uuid), name) WHERE deleted_at IS NULL` (raw SQL migration `20260525_tasks_unique_parent_name`、同一親配下の同名重複を DB レベルでブロック)
+**インデックス**: `idx_tasks_project` (project_id) / `idx_tasks_assignee` (assignee_id, status) / `idx_tasks_parent` (parent_task_id) / `idx_tasks_gantt` (project_id, planned_start_date, planned_end_date)
+
+> **ADR-0032 (2026-06-04)**: 部分 UNIQUE `idx_tasks_project_parent_name_unique` (同一親配下の同名重複ブロック、migration `20260525_tasks_unique_parent_name`) は **撤廃** (migration `20260610_drop_tasks_unique_parent_name`)。タスク突合は ID (UUID) のみで行い、週内に繰り返す学習タスク等の同名は業務上正当なため許容する。app 層の `assertTaskNameUniqueInParent` ガードも撤去済。
 
 ### 8.13 task_progress_logs（進捗・実績ログ）
 
@@ -726,7 +732,7 @@ User × Project の中間テーブル。プロジェクトごとに異なる pro
 | エンティティ種別 | entity_type | VARCHAR(50) | NO | - | |
 | エンティティ ID | entity_id | UUID | NO | - | @db.Uuid (文字列識別子 INSERT は不可) |
 | 変更前 | before_value | JSONB | YES | NULL | |
-| 変更後 | after_value | JSONB | YES | NULL | |
+| 変更後 | after_value | JSONB | YES | NULL | 2026-06-03: 添付 (entity_type='attachment') は `{ parentEntityType, parentEntityId, storageProvider }` を格納し、画面で「どの親 (リスク/ナレッジ等) で リンク/ファイル を追加・削除したか」を導出 (内容自体は非記録)。`risk_issue` は `type` で リスク/課題 を区別 |
 | IP アドレス | ip_address | VARCHAR(45) | YES | NULL | |
 | 作成日時 | created_at | TIMESTAMPTZ | NO | now() | |
 
@@ -794,12 +800,17 @@ tenant_id / user_id を持たない (cron は全テナント横断のシステ�
 | 対象ユーザ | target_user_id | UUID | NO | - | FK→users.id |
 | 変更種別 | change_type | VARCHAR(20) | NO | - | system_role / project_role |
 | プロジェクト | project_id | UUID | YES | NULL | project_role 時のみ |
-| 変更前ロール | before_role | VARCHAR(30) | YES | NULL | |
-| 変更後ロール | after_role | VARCHAR(30) | NO | - | |
-| 理由 | reason | TEXT | YES | NULL | |
+| 変更前ロール | before_role | VARCHAR(30) | YES | NULL | ロール値 (admin/general/super_admin/pm_tl/member) または状態値 (`active`/`inactive`)。初回付与は NULL |
+| 変更後ロール | after_role | VARCHAR(30) | NO | - | ロール値 または `active`/`inactive` (有効/無効切替) / `deleted` (ユーザ削除) / `removed` (メンバー解除) |
+| 理由 | reason | TEXT | YES | NULL | 「ユーザ新規登録」「システムロール変更」「アカウント有効化/無効化」「ユーザ削除」「新規テナント作成」等 |
 | 作成日時 | created_at | TIMESTAMPTZ | NO | now() | |
 
 **インデックス**: `idx_role_change_logs_tenant` (tenant_id, created_at DESC)
+
+**記録されるイベント** (真値: `roleChangeLog.create` 呼出元):
+- `system_role`: ユーザ新規登録 (初期ロール付与) / システムロール変更 (admin⇄general 等) / **有効化・無効化** (before/after = active/inactive) / ユーザ削除 (after=deleted) / 新規テナント作成時の初期 admin。
+- `project_role`: メンバー追加 (after=ロール) / メンバーのロール変更 / メンバー解除・ユーザ削除時のメンバー除去 (after=removed)。
+- 画面 (`/admin/role-changes`) は種別・ロール・状態値をロケール/ラベル表示 (システムロール / プロジェクトロール / テナント管理者 / PM/TL / 有効 / 無効 / 削除 / 解除)。
 
 ### 8.27 attachments（添付ファイル）
 
@@ -1149,7 +1160,7 @@ MVP ではマスタデータをコード内定数 (`src/config/master-data.ts`) 
 | ContractType | quasi_mandate / lump_sum / ses / other | projects.contract_type (null 許容) |
 | TaskCategory | requirements / design / development / testing / review / management / other | tasks.category |
 | KnowledgeType | research / verification / incident / decision / lesson / best_practice / other | knowledges.type |
-| ProjectStatus | planning / estimating / scheduling / executing / completed / retrospected / closed | projects.status |
+| ProjectStatus | planning / estimating / scheduling / executing / closed （2026-06-03: completed/retrospected 廃止） | projects.status |
 | WbsType | work_package / activity | tasks.wbs_type |
 | TaskStatus | not_started / in_progress / completed / on_hold | tasks.status |
 | Priority | high / medium / low / minimal | tasks.priority、risk_issues.priority (リスク/課題は impact × likelihood から自動算出) |
@@ -1192,7 +1203,7 @@ MVP ではマスタデータをコード内定数 (`src/config/master-data.ts`) 
 
 **複合 UNIQUE**:
 - `users`: (tenant_id, email) — tenant-scoped 一意 (ADR-0016)
-- `tasks`: **(project_id, COALESCE(parent_task_id, sentinel), name) WHERE deleted_at IS NULL** — 同一親配下の同名重複を DB レベルでブロック (raw SQL migration `20260525_tasks_unique_parent_name`、Prisma `@@unique` は WHERE 句を表現できないため schema 側はコメントのみ)
+- ~~`tasks`: (project_id, COALESCE(parent_task_id, sentinel), name) WHERE deleted_at IS NULL~~ — **ADR-0032 (2026-06-04) で撤廃** (migration `20260610_drop_tasks_unique_parent_name`)。同一親配下の同名タスクを許容 (タスク突合は ID のみ)。
 - `billing_history`: (tenant_id, year_month)
 - `tenant_monthly_usage_history`: (tenant_id, year_month)
 - `project_members`: (project_id, user_id)

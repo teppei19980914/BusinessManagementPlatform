@@ -91,7 +91,7 @@ export default async function CronHistoryPage() {
                   <th className="px-3 py-2 text-left">cron 名</th>
                   <th className="px-3 py-2 text-left">動作</th>
                   <th className="px-3 py-2 text-left">所要</th>
-                  <th className="px-3 py-2 text-left">状態</th>
+                  <th className="px-3 py-2 text-left">ステータス</th>
                   <th className="px-3 py-2 text-left">詳細</th>
                 </tr>
               </thead>

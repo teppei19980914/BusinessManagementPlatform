@@ -154,6 +154,8 @@ export function ExternalImportWizard({ projects }: { projects: Project[] }) {
   const [knowledgeState, setKnowledgeState] = useState<EntityState>(initialEntityState);
   const [risksIssuesState, setRisksIssuesState] = useState<EntityState>(initialEntityState);
   const [previewResult, setPreviewResult] = useState<PreviewResponse | null>(null);
+  /** プレビュー生成が業務エラー(取り込めるデータなし等)で失敗したときの説明。Step3 で表示する。 */
+  const [previewError, setPreviewError] = useState<string | null>(null);
   const [applyResult, setApplyResult] = useState<{
     knowledgeCreated: number;
     risksIssuesCreated: number;
@@ -245,11 +247,20 @@ export function ExternalImportWizard({ projects }: { projects: Project[] }) {
         method: 'POST',
         body: formData,
       });
-      const json = await res.json();
-      if (!res.ok || !json.ok) {
-        showError(json?.error?.message ?? 'プレビューに失敗しました');
+      const json = await res.json().catch(() => null);
+      // 通信/認可エラー (4xx/5xx) はトーストのまま。業務エラー (取り込めるデータなし等) は
+      // プレビュー画面 (Step3) へ進めて、そこで理由を表示する (ユーザが原因を把握できるように)。
+      if (!res.ok || !json) {
+        showError('プレビューに失敗しました');
         return;
       }
+      if (!json.ok) {
+        setPreviewResult(null);
+        setPreviewError(json?.error?.message ?? 'プレビューを作成できませんでした。入力内容を確認してください。');
+        setStep(3);
+        return;
+      }
+      setPreviewError(null);
       setPreviewResult(json as PreviewResponse);
       setStep(3);
     } finally {
@@ -371,6 +382,19 @@ export function ExternalImportWizard({ projects }: { projects: Project[] }) {
           onApply={callApply}
           submitting={submitting}
         />
+      )}
+
+      {step === 3 && !previewResult && previewError && (
+        <div className="space-y-4">
+          <h2 className="font-semibold">Step 3. プレビュー (まだ取込はされていません)</h2>
+          <div className="rounded-md border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive">
+            <div className="mb-1 font-semibold">取り込めませんでした</div>
+            <p className="whitespace-pre-wrap">{previewError}</p>
+          </div>
+          <Button variant="outline" onClick={() => setStep(2)}>
+            マッピングに戻る
+          </Button>
+        </div>
       )}
 
       {step === 4 && applyResult && <Step4Result summary={applyResult} />}

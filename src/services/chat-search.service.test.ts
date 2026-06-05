@@ -30,7 +30,6 @@ const mockedGenerateEmbedding = vi.mocked(generateEmbedding);
 const INPUT = {
   viewerTenantId: '00000000-0000-0000-0000-000000000001',
   viewerUserId: '00000000-0000-0000-0000-000000000010',
-  viewerSeedDataEnabled: true,
 };
 
 beforeEach(() => {
@@ -162,8 +161,10 @@ describe('chatSemanticSearch — 縮退モード (embedding 失敗)', () => {
   });
 });
 
-describe('chatSemanticSearch — テナント境界', () => {
-  it('seedDataEnabled=true なら MANAGEMENT_TENANT_ID を含む 2 値の tenantId 配列で検索', async () => {
+describe('chatSemanticSearch — テナント境界 (単一テナント化)', () => {
+  // feat/starter-data-import (2026-06-05): チャット検索は常に自テナントのみを参照する。
+  //   旧 seedDataEnabled による管理テナント越境参照は撤去されたため、tenantId は viewerTenantId のみ。
+  it('常に viewerTenantId のみで検索する (越境参照なし)', async () => {
     mockedGenerateEmbedding.mockResolvedValueOnce({
       ok: true,
       embedding: Array.from({ length: 1024 }, () => 0.1),
@@ -172,24 +173,9 @@ describe('chatSemanticSearch — テナント境界', () => {
     });
     mockedQueryRaw.mockResolvedValue([] as never);
 
-    await chatSemanticSearch({ query: 'q', ...INPUT, viewerSeedDataEnabled: true });
+    await chatSemanticSearch({ query: 'q', ...INPUT });
 
-    // $queryRaw が tagged template で呼ばれており、第二引数群に tenantIds 配列が含まれる
-    // 厳密検証は SQL 引数の解析が必要だが、まず呼出回数 = 5 を確認
-    expect(mockedQueryRaw).toHaveBeenCalledTimes(5);
-  });
-
-  it('seedDataEnabled=false なら viewerTenantId のみ', async () => {
-    mockedGenerateEmbedding.mockResolvedValueOnce({
-      ok: true,
-      embedding: Array.from({ length: 1024 }, () => 0.1),
-      costJpy: 10,
-      requestId: 'req-4',
-    });
-    mockedQueryRaw.mockResolvedValue([] as never);
-
-    await chatSemanticSearch({ query: 'q', ...INPUT, viewerSeedDataEnabled: false });
-
+    // $queryRaw が 5 資産 (projects/knowledges/risks_issues/retrospectives/memos) で呼ばれる
     expect(mockedQueryRaw).toHaveBeenCalledTimes(5);
   });
 });

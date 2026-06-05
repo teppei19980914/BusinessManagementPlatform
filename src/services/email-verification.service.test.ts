@@ -335,6 +335,16 @@ describe('setupPassword', () => {
     // 一般ユーザ用 transaction は 3 要素 (token update + user update + recoveryCode)
     expect(Array.isArray(txCall)).toBe(true);
     expect(txCall).toHaveLength(3);
+    // 2026-06-03: 有効化時に invitationAcceptedAt を記録し状態を「招待中」→「有効」にする
+    expect(prisma.user.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          isActive: true,
+          deletedAt: null,
+          invitationAcceptedAt: expect.any(Date),
+        }),
+      }),
+    );
   });
 
   // 2026-05-09 (#11): 強制 MFA を super_admin のみに限定。
@@ -655,15 +665,16 @@ describe('resendVerificationEmail (Phase 1 / signup-email-resend-ux)', () => {
       where?: {
         tenantId?: string;
         email?: string;
-        isActive?: boolean;
+        invitationAcceptedAt?: null;
         deletedAt?: null;
       };
     };
+    // 2026-06-03: 招待中の判定を isActive:false から invitationAcceptedAt:null に変更
     expect(call?.where).toEqual(
       expect.objectContaining({
         tenantId: 'tenant-uuid',
         email: 'admin@customer-a.example',
-        isActive: false,
+        invitationAcceptedAt: null,
         deletedAt: null,
       }),
     );

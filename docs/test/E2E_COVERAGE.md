@@ -80,6 +80,7 @@
 - [ ] `/admin/super/tenants/new` — skip: P-G (2026-05-08) super_admin 専用テナント手動払い出し画面。フォーム + 作成 API 連携は src/services/tenant-onboarding.service.test.ts (11 件) で担保
 - [x] `/admin/super/usage` — e2e/specs/13-super-admin-dashboard.spec.ts (2026-05-11 / 合計課金表示 + プラン別分布)
 - [ ] `/admin/super/cron-history` — skip: PR feat/cron-execution-log (2026-05-18) super_admin 限定 cron 実行履歴ビュー。SSR + Prisma 直接読みのため、ロジック検証はサービス層 (src/lib/cron-execution-log.test.ts 6 件) で担保。実画面の表示確認は手動 (= 日次 cron が蓄積したレコードを目視確認)
+- [ ] `/admin/super/seed-data` — skip: feat/starter-data-import (2026-06-05) super_admin 限定スターターデータ キュレーション画面 (管理テナント Project/Knowledge の isSampleData 切替)。SSR 一覧 + client トグル。越境防御 + 切替ロジックは src/services/sample-curation.service.test.ts (4 件)、認可は layout (super_admin guard) で担保
 - [ ] `/admin/super/stripe-dlq` — skip: PR-V7 #6 (2026-05-19) Stripe DLQ 監視 + 手動再投入。SSR + Prisma 直接読み + 再投入ボタンは client component で API 呼出。ロジック検証はサービス層 (src/services/stripe-dlq.service.test.ts 8 件) で担保。実画面 + 再投入挙動は手動確認 (= Stripe Test Mode で意図的に失敗させて DLQ に積み、再投入動作を確認)
 - [ ] `/admin/super/billing` — skip: PR-V7 #8 (2026-05-19) 請求ダッシュボード (サマリ画面、当月 + 直近 6 ヶ月推移)。SSR + Prisma 集計のみ。ロジック検証はサービス層 (src/services/billing-dashboard.service.test.ts 16 件) で担保
 - [ ] `/admin/super/billing/[yearMonth]` — skip: PR-V7 #8 (2026-05-19) 請求ダッシュボード月次詳細 (テナント別 BillingHistory 一覧 + status/paymentMethod フィルタ + Stripe Dashboard ディープリンク)。SSR + Prisma findMany のみ。同上のサービステストで担保
@@ -106,6 +107,7 @@
 - [x] `/api/auth/signin` — e2e/specs/01-admin-and-member-setup.spec.ts (PR #92 / 複数ステップで使用)
 - [x] `/api/auth/signout` — e2e/specs/05-teardown-and-residuals.spec.ts (PR #95 / Step 9 UI ログアウト経由)
 - [ ] `/api/auth/explicit-signout` — skip: fix/session-clearance (2026-05-20) で導入。Netlify 固有の Set-Cookie 脱落対策のため E2E (Playwright) では再現不能。単体テスト (src/app/api/auth/explicit-signout/route.test.ts 5 ケース) + Netlify Deploy Preview の実機確認で担保 (KDD §5.X+84)
+- [ ] `/api/auth/logout-other-devices` — skip: feat/logout-other-devices (2026-06-03) で導入。現在端末のみ JWT 再署名 (Netlify 固有の Set-Cookie 挙動) + 複数端末セッションの検証は Playwright 単一コンテキストでは再現困難。単体テスト (src/app/api/auth/logout-other-devices/route.test.ts 4 ケース + src/lib/auth-jwt-helper.test.ts の tokenVersion 再署名ケース) で担保
 - [ ] `/api/auth/lock-status` — skip: PR #E (ロック誘発シナリオは非決定的で後回し)
 - [ ] `/api/auth/check-tenant-eligibility` — skip: ADR-0016 Revised (2026-05-22) で 3 値返却 (signupAllowed / beginnerAvailable / reason) に拡張。UI ヒント専用 API (= bypass されても tenant-onboarding.service.ts の 3 層判定が defense-in-depth で動作)。単体テスト (src/app/api/auth/check-tenant-eligibility/route.test.ts 6 ケース) で担保。E2E /signup spec が間接的に API レスポンスを検証
 - [ ] `/api/auth/current-tenant-info` — skip: PR #420 (2026-05-25) login 画面の localStorage 履歴用に slug + name を post-auth 返却 (列挙不可、認証必須)。tenant-history.ts (src/lib/tenant-history.test.ts 15 ケース) と組み合わせ UI 経由で挙動確認。専用 E2E は将来検討
@@ -160,7 +162,7 @@
 - [x] `/api/projects/[projectId]/knowledge/bulk` (PATCH 一括 visibility, PR #162 → PR #165 → UI_PATTERNS §35) — e2e/specs/10-project-list-bulk-update.spec.ts
 
 ### チャット意味検索 (PR #373 仕様 / 本機能で新設)
-- [x] `/api/chat/search` (POST) — 認証・seedDataEnabled・縮退モード・visibility フィルタは単体テスト src/services/chat-search.service.test.ts + route.test.ts で担保 (10 ケース)。E2E 配線は **e2e/specs/23-chat-help.spec.ts** (FAB → 検索タブ → クエリ送信 → ユーザバブル表示)。※ query embedding は CI で EMBEDDING_PROVIDER=stub の決定論的疑似ベクトルを使用 (実 Voyage の関連度は 👤 人間スモークに残る、docs/test/RELEASE_ACCEPTANCE_TEST.md)
+- [x] `/api/chat/search` (POST) — 認証・単一テナント参照 (自テナントのみ)・縮退モード・visibility フィルタは単体テスト src/services/chat-search.service.test.ts + route.test.ts で担保。E2E 配線は **e2e/specs/23-chat-help.spec.ts** (FAB → 検索タブ → クエリ送信 → ユーザバブル表示)。※ query embedding は CI で EMBEDDING_PROVIDER=stub の決定論的疑似ベクトルを使用 (実 Voyage の関連度は 👤 人間スモークに残る、docs/test/RELEASE_ACCEPTANCE_TEST.md)
 
 ### たすきフクロウ AI ヘルプチャット (ADR-0027 / 2026-05-29 PR5 で新設)
 - [x] `/api/help/chat` (POST) — 権限フィルタ (開示 4 段) は src/config/faq-content.test.ts + guide-content.test.ts で担保 (21 ケース)。E2E 配線は **e2e/specs/23-chat-help.spec.ts** (FAB → ヘルプタブ → 質問 → アシスタント回答バブル)。※ LLM は CI で LLM_PROVIDER=stub の定型 JSON 応答を使用 (実 Claude の回答品質は 👤 人間スモークに残る)。faq_embeddings は CI 未 seed のため RAG hits=0 だが LLM 経路自体は通る
@@ -230,6 +232,13 @@
 - [ ] `/api/tenants/me/external-import/apply` (POST) — skip: Phase 1 (2026-05-08) 外部 import の apply API (= ここで Voyage embedding 全件即時生成 + 課金)。PREVIEW_NOT_FOUND / PREVIEW_NOT_OWNED / PREVIEW_EXPIRED / 認可境界 / apply 直前の二重防御は同テストで担保。E2E は V1.x で検討
 - [ ] `/api/tenants/me/external-import/template` (GET) — skip: Phase 1 (2026-05-08) Knowledge / RiskIssue の CSV テンプレートダウンロード。固定列 + サンプル行 + UTF-8 BOM の単純 CSV 生成のため単体テスト不要 (= 静的データ)
 - [ ] `/settings/tenant/external-import` (page) — skip: Phase 1 (2026-05-08) 4 ステップウィザード (file→mapping→preview→result) 画面。ブラウザ側の xlsx パース + マッピング選択 UI が中心、E2E は V1.x で検討
+- [ ] `/api/tenants/me/migration-import/csv-preview` (POST) — skip: ADR-0034 (2026-06-05) 手動CSV経路の 7 種 (顧客/プロジェクト/WBS/リスク・課題/ナレッジ/振り返り) 移行プレビュー API。CSV→NormalizedBatch 変換 + プルダウン/日付/工数の検証 + 種別による列振分 + 不可視データ (未紐づけ下書き) エラーは src/services/import/csv-to-batch.test.ts + batch-preview.test.ts (計 90+ 件) で担保。認可は route の requireAdmin
+- [ ] `/api/tenants/me/migration-import/preview` (POST) — skip: ADR-0034 (2026-06-05) NormalizedBatch を直接受けるプレビュー API (API 連携経路の前段、現状は将来用)。検証ロジックは batch-preview.test.ts で担保
+- [ ] `/api/tenants/me/migration-import/link-check` (POST) — skip: ADR-0034 (2026-06-05) CSV選択段階の軽量リンクチェック (顧客/プロジェクトの未解決を警告)。checkLinkWarnings は src/services/import/batch-preview.test.ts で担保。認可は route の requireAdmin
+- [ ] `/api/tenants/me/migration-import/apply` (POST) — skip: ADR-0034 (2026-06-05) プレビュー確定 → DB 取込 API (新規作成のみ・embedding 非生成)。PREVIEW_NOT_FOUND / NOT_OWNED / EXPIRED / HAS_ERRORS + 越境防御 (findFirst に tenantId 直付与) は migration-import.service + batch-apply で実装、依存解決/トポロジカル取込は batch-preview/batch-apply のテストで担保。E2E は V1.x で検討
+- [ ] `/settings/tenant/migration-import` (page) — skip: ADR-0034 (2026-06-05) 手動CSV移行ウィザード (CSVを選ぶ→マッピング→プレビュー→完了) 画面。マッピング選択 + プレビュー描画が中心の client component。変換/検証ロジックは src/services/import/ のサービステストで担保、E2E は V1.x で検討
+- [ ] `/api/tenants/me/sample-data` (POST/DELETE) — skip: feat/starter-data-import (2026-06-05) スターターデータ一括取込 (管理テナントからクローン) / 一括削除。NO_SAMPLE_DATA / STORAGE_BLOCKED / tenantId 隔離 (isSampleData=false + isSeedSample=true) / embedding raw SQL コピー / 監査ログ / 削除スコープ (tenantId + isSeedSample) は src/services/sample-clone.service.test.ts (4 件) で担保。認可 (admin) は requireAdmin で共通担保
+- [ ] `/api/admin/super/seed-data` (GET/PATCH) — skip: feat/starter-data-import (2026-06-05) super_admin がスターターデータ取込元 (管理テナント) の Project/Knowledge の isSampleData を切替。severity-1 越境防御 (updateMany の where に tenantId=MANAGEMENT_TENANT_ID) + NOT_FOUND は src/services/sample-curation.service.test.ts (4 件) で担保。認可 (super_admin) は isSuperAdmin + layout で担保
 - [ ] `/api/admin/super/recalculate-all` (POST) — skip: 2026-05-14 super_admin ダッシュボード遷移時 + 「全テナント再集計」ボタンで呼ぶ on-demand 再集計 API。認可 (super_admin 限定 401/403/200) + Promise.allSettled 部分失敗 + 監査ログ (entityType=system) は src/app/api/admin/super/recalculate-all/route.test.ts (5 ケース) で担保。E2E は V1.x で検討 (= 全テナント集計の決定論性確保が難しい)
 - [ ] `/api/admin/super/tenants/[id]/recalculate` (POST) — skip: 2026-05-14 super_admin がテナント詳細画面 + ストレージ TOP10 から特定テナントを on-demand 再集計する代行操作 API。認可 (admin → 403) + テナント不在 404 + 監査ログ (target tenant で記録) は src/app/api/admin/super/tenants/[id]/recalculate/route.test.ts (4 ケース) で担保
 - [ ] `/api/admin/super/tenants/[id]/repair-api-usage` (POST) — skip: PR-V8 (2026-05-19) super_admin が drift 検出テナントの counter を ApiCallLog SUM で破壊的上書き。reconciledCallCount で上書き + transaction 内 audit_log 記録 (operation='repair-api-usage') + race ガード方針はサービス層 (src/services/api-usage-recalc.service.test.ts repairTenantApiUsage 系) で担保
@@ -252,6 +261,8 @@
 - [x] `/api/admin/users` — e2e/specs/01-admin-and-member-setup.spec.ts (PR #92 / Step 3 POST + Step 6a GET)
 - [x] `/api/admin/users/[userId]` — e2e/specs/05-teardown-and-residuals.spec.ts (PR #95 / Step 10 DELETE) ※ PATCH は別 PR
 - [ ] `/api/admin/users/[userId]/recovery-codes` — skip: PR #D (リカバリーコード再発行)
+- [ ] `/api/admin/users/[userId]/resend-invitation` — skip: 招待中ユーザの招待メール再送。外部 ESP 送信検証が必要なため service 単体テスト (resendInvitationByAdmin) でカバー
+- [ ] `/api/admin/users/[userId]/cancel-invitation` — skip: 招待中ユーザの物理削除 (席解放)。service 単体テスト (cancelInvitation) でカバー
 - [ ] `/api/admin/users/[userId]/unlock` — skip: ロック誘発が非決定的、手動テスト
 - [ ] `/api/admin/users/lock-inactive` — skip: 時間経過 (30 日以上) が必要、手動テスト (旧 `/api/admin/users/cleanup-inactive`、feat/account-lock で改名 + 論理削除→ロック挙動変更)
 - [ ] `/api/admin/audit-logs` — skip: read-only
@@ -292,16 +303,14 @@
   - sync-import の越境 import 試行
 - [x] chromium project でのみ実行 (mobile viewport で重複実行しない、playwright.config.ts で `testIgnore`)
 
-### 提案機能シードデータ参照 + テナント独立トグル (e2e/specs/12-suggestion-seed-data.spec.ts)
-seedDataEnabled トグルが正しく動作し、他顧客テナントのデータが**toggle 値に関わらず混入しない**
-ことを保証する。
+### 提案機能のテナント分離 (単一テナント化、feat/starter-data-import 2026-06-05)
+旧 e2e/specs/12-suggestion-seed-data.spec.ts (seedDataEnabled トグル) は **撤去**。
+スターターデータを取込で各テナントに複製する方式に変更し、提案/チャットの管理テナント越境参照
+(MANAGEMENT_TENANT_ID) を撤去したため、seedDataEnabled トグル自体が廃止された。
 
-- [x] **5 ケース** — PR feat/tenant-isolation-comprehensive-tests
-  - seedDataEnabled=true で管理テナントのシードが提案候補に含まれる
-  - seedDataEnabled=false で管理テナントのシードが消える
-  - **どちらの場合もテナント B の data は混入しない**
-  - adoptPastIssueAsTemplate でシード採用時、自テナントに新規 create + シード自体は不変
-  - テナント B の toggle 変更がテナント A の挙動に影響しない (テナント独立性)
+- 提案/チャットが **常に自テナントのみ** を参照することは src/services/__tests__/tenant-isolation-invariants.test.ts
+  (越境参照復活防止) + src/services/suggestion.service.test.ts / chat-search.service.test.ts (where=自テナント) で担保。
+- テナント間の data 非混入は e2e/specs/11-tenant-isolation.spec.ts で黒箱検証。
 
 ### Service 層 不変条件テスト (src/services/__tests__/tenant-isolation-invariants.test.ts)
 全 service ファイルが tenant フィルタ (`viewerTenantId` / `tenantId` / `project: { tenantId }`)

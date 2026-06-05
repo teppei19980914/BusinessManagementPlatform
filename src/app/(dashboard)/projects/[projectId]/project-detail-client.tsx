@@ -24,6 +24,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import dynamic from 'next/dynamic';
+import Link from 'next/link';
 // Phase E 要件 1〜3 (2026-04-29): 共通クリッカブルカード部品
 import { ClickableCard } from '@/components/common/clickable-row';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -36,9 +37,6 @@ import { useToast } from '@/components/toast-provider';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from '@/components/ui/select';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
@@ -144,16 +142,6 @@ type Props = {
   tenantLocale: string;
 };
 
-const NEXT_STATUSES: Record<string, string[]> = {
-  planning: ['estimating'],
-  estimating: ['scheduling'],
-  scheduling: ['executing'],
-  executing: ['completed'],
-  completed: ['retrospected'],
-  retrospected: ['closed'],
-  closed: [],
-};
-
 /**
  * 遅延ロードタブの状態に応じて loading / error / content を切り替える表示ラッパー。
  * 外側でタブ可視時に load() を呼び出す設計とセットで使う。
@@ -181,9 +169,17 @@ function LazyTabContent<T>({
 
 export function ProjectDetailClient({
   project, projectRole, systemRole, userId,
-  canEdit, canCreate, canCreateOwnedList, customers, tenantPlan,
+  canEdit: canEditRaw, canCreate: canCreateRaw, canCreateOwnedList: canCreateOwnedListRaw, customers, tenantPlan,
   today, tenantTimeZone, tenantLocale,
 }: Props) {
+  // feat/closed-project-readonly (2026-06-05): クローズ済みプロジェクトは読み取り専用 (project:delete のみ可)。
+  //   サーバ側 STATE_RESTRICTIONS.closed と UI を整合させ、編集・作成・管理系を一律抑止する。
+  //   これにより closed で project:update / member:manage を要求する GET (見積もり/参考/メンバー) が走らず、
+  //   403 の赤エラーも出ない。代わりに読み取り専用の案内バナーを表示する。delete (canDeleteProject) は維持。
+  const isReadOnlyByStatus = project.status === 'closed';
+  const canEdit = canEditRaw && !isReadOnlyByStatus;
+  const canCreate = canCreateRaw && !isReadOnlyByStatus;
+  const canCreateOwnedList = canCreateOwnedListRaw && !isReadOnlyByStatus;
   const t = useTranslations('project');
   const tAction = useTranslations('action');
   const router = useRouter();
@@ -191,20 +187,13 @@ export function ProjectDetailClient({
   const { showSuccess, showError } = useToast();
   // feat/gantt-initial-scroll-and-locale (2026-05-29): date-only 日付の locale 表示用
   const { formatDateOnly } = useFormatters();
-  const [isChangingStatus, setIsChangingStatus] = useState(false);
   // 概要タブ内ヘッダの操作ボタン権限 (PR #58 → fix/quick-ux item 1 で改修):
-  //   状態変更 / 編集: 実際のプロジェクト PM/TL **または** システム管理者
+  //   編集 (ステータス変更含む): 実際のプロジェクト PM/TL **または** システム管理者
   //   削除: システム管理者のみ (pm_tl は除外、プラットフォーム管理責務の分離は維持)
-  //
-  //   2026-04-26 ユーザ報告「状態変更プルダウンがなくなった」を受けて、admin も
-  //   状態変更できるよう緩和。元の設計 (PM/TL のみ) は運用責務分離の意図だったが、
-  //   admin が代行できないと運用が詰まるケースが多発したため。
   //   注: checkMembership が admin を projectRole='pm_tl' にマップする挙動は維持。
   const isActualPmTl = projectRole === 'pm_tl' && systemRole !== 'admin';
   const isSystemAdmin = systemRole === 'admin';
-  const canChangeStatus = isActualPmTl || isSystemAdmin;
   const canDeleteProject = isSystemAdmin;
-  const nextStatuses = NEXT_STATUSES[project.status] || [];
 
   // feat/overview-tab-detail (PR-B item 3+4): 編集 dialog を 11 フィールド全て編集可能に拡張。
   // タグ入力はカンマ区切り文字列で扱い (parseTagsInput を /lib/parse-tags から流用)、
@@ -213,6 +202,8 @@ export function ProjectDetailClient({
   const [editForm, setEditForm] = useState({
     name: project.name,
     customerId: project.customerId,
+    // 2026-06-03: ステータスを編集フォームから任意に選択可能に。
+    status: project.status,
     purpose: project.purpose,
     background: project.background,
     scope: project.scope,
@@ -220,9 +211,10 @@ export function ProjectDetailClient({
     contractType: project.contractType ?? '',
     plannedStartDate: project.plannedStartDate,
     plannedEndDate: project.plannedEndDate,
-    businessDomainTagsInput: project.businessDomainTags.join(', '),
-    techStackTagsInput: project.techStackTags.join(', '),
-    processTagsInput: project.processTags.join(', '),
+    actualStartDate: project.actualStartDate ?? '',
+    actualEndDate: project.actualEndDate ?? '',
+    outOfScope: project.outOfScope ?? '',
+    notes: project.notes ?? '',
   });
   const [editError, setEditError] = useState('');
 
@@ -234,6 +226,7 @@ export function ProjectDetailClient({
     setEditForm({
       name: project.name,
       customerId: project.customerId,
+      status: project.status,
       purpose: project.purpose,
       background: project.background,
       scope: project.scope,
@@ -241,9 +234,10 @@ export function ProjectDetailClient({
       contractType: project.contractType ?? '',
       plannedStartDate: project.plannedStartDate,
       plannedEndDate: project.plannedEndDate,
-      businessDomainTagsInput: project.businessDomainTags.join(', '),
-      techStackTagsInput: project.techStackTags.join(', '),
-      processTagsInput: project.processTags.join(', '),
+      actualStartDate: project.actualStartDate ?? '',
+      actualEndDate: project.actualEndDate ?? '',
+      outOfScope: project.outOfScope ?? '',
+      notes: project.notes ?? '',
     });
     setEditError('');
     setIsEditOpen(true);
@@ -387,18 +381,17 @@ export function ProjectDetailClient({
   async function handleEdit(e: React.FormEvent) {
     e.preventDefault();
     setEditError('');
-    // feat/overview-tab-detail (PR-B): タグ入力欄 (CSV/読点区切り) を string[] に変換して送信。
-    // parseTagsInput は projects-client.tsx と同じ規約 (DEVELOPER_GUIDE §5.10.2 全角読点も受容)。
-    const parseTagsInput = (s: string): string[] =>
-      s.split(/[,、]/).map((t) => t.trim()).filter((t) => t.length > 0);
-    const { businessDomainTagsInput, techStackTagsInput, processTagsInput, contractType, ...rest } = editForm;
+    // タグ (業務ドメイン/技術スタック/工程) は UI 非表示化 (2026-06-02)。
+    //   提案エンジン用の値は project.service の extractTagsAndEmbedForProject が LLM 自動抽出で補完するため、
+    //   本フォームからは送信しない (= 既存値は保持 + 保存時に自動再抽出)。
+    const { contractType, outOfScope, notes, ...rest } = editForm;
     const body = {
       ...rest,
       // PR-β / 項目 14: 契約形態 (空文字は null で送信、validator は nullable)
       contractType: contractType || null,
-      businessDomainTags: parseTagsInput(businessDomainTagsInput),
-      techStackTags: parseTagsInput(techStackTagsInput),
-      processTags: parseTagsInput(processTagsInput),
+      // 概要タブ編集で入力 (2026-06-02 追加)。空文字は null。
+      outOfScope: outOfScope || null,
+      notes: notes || null,
     };
     const res = await withLoading(() =>
       fetch(`/api/projects/${project.id}`, {
@@ -457,25 +450,6 @@ export function ProjectDetailClient({
     router.push('/projects');
   }
 
-  async function handleStatusChange(newStatus: string | null) {
-    if (!newStatus) return;
-    setIsChangingStatus(true);
-    const res = await withLoading(() =>
-      fetch(`/api/projects/${project.id}/status`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: newStatus }),
-      }),
-    );
-    setIsChangingStatus(false);
-    if (res.ok) {
-      showSuccess('プロジェクトの状態を更新しました');
-      router.refresh();
-    } else {
-      showError('プロジェクトの状態更新に失敗しました');
-    }
-  }
-
   return (
     <div className="space-y-6">
       {/* ヘッダー */}
@@ -489,40 +463,15 @@ export function ProjectDetailClient({
           </div>
           <p className="mt-1 text-muted-foreground">{project.customerName}</p>
         </div>
-        {/* fix/quick-ux hotfix: PR-A で admin に状態変更 Select が出るようになった結果、
-            mobile (390px) で flex 子要素 (Select w-44 + 編集 + 削除) が幅不足で重なり、
-            削除ボタンが intercept されて E2E (05-teardown Step 11 chromium-mobile) が click
-            timeout で fail。flex-wrap 許容 + Select 幅を mobile 短縮 (w-36) で解消。
-            PC (md+) では従来通り w-44 の幅を維持。 */}
         <div className="flex flex-wrap items-center gap-2 justify-end">
           {/*
             概要タブ内のみ表示 (PR #58):
-              - 状態変更 (ラベルから "..." を削除): PM/TL or admin (PR-A で緩和)
-              - 編集: PM/TL or admin (PR-A で緩和)
+              - 編集: PM/TL or admin (PR-A で緩和)。ステータス変更は本ダイアログ内に統合 (2026-06-03)
               - 削除: システム管理者のみ
             activeTab === 'overview' で他タブ閲覧時には非表示化する
-          */}
-          {activeTab === 'overview' && canChangeStatus && nextStatuses.length > 0 && (
-            // Phase A 要件 8: 「状態変更」Select はアクション型 (選択即実行) のため、
-            //   value="" で常時 placeholder を表示し、選択後に内部名 (raw value) が
-            //   残らないように制御する。SelectValue children に表示名マッピングを指定し、
-            //   万一の即時表示でも PROJECT_STATUSES の表示名が出るよう二重化。
-            <Select value="" onValueChange={handleStatusChange} disabled={isChangingStatus}>
-              <SelectTrigger className="w-36 md:w-44">
-                <SelectValue placeholder={t('statusChangePlaceholder')}>
-                  {(value) => (value ? PROJECT_STATUSES[value as keyof typeof PROJECT_STATUSES] || value : t('statusChangePlaceholder'))}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                {nextStatuses.map((s) => (
-                  <SelectItem key={s} value={s}>
-                    → {PROJECT_STATUSES[s as keyof typeof PROJECT_STATUSES]}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          )}
-          {activeTab === 'overview' && (isActualPmTl || isSystemAdmin) && (
+            2026-06-03: ヘッダーの「ステータス変更」プルダウン (state-machine の一方向遷移) は廃止し、
+              編集ダイアログ内で任意のステータスを選べるよう統合した。 */}
+          {activeTab === 'overview' && (isActualPmTl || isSystemAdmin) && !isReadOnlyByStatus && (
             <>
               <Dialog open={isEditOpen} onOpenChange={handleEditOpenChange}>
                 <DialogTrigger className="inline-flex shrink-0 items-center justify-center rounded-md border border-input bg-background px-3 py-1.5 text-sm hover:bg-accent">{tAction('edit')}</DialogTrigger>
@@ -555,6 +504,13 @@ export function ProjectDetailClient({
                       </select>
                     </div>
                     <div className="space-y-2">
+                      {/* 2026-06-03: ステータスを任意に選択 (ヘッダーのステータス変更プルダウンは廃止し本フォームに統合) */}
+                      <Label>{t('fieldStatus')}</Label>
+                      <select value={editForm.status} onChange={(e) => setEditForm({ ...editForm, status: e.target.value })} className={nativeSelectClass}>
+                        {Object.entries(PROJECT_STATUSES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                      </select>
+                    </div>
+                    <div className="space-y-2">
                       <Label>{t('fieldPurpose')}</Label>
                       <MarkdownTextarea value={editForm.purpose} onChange={(v) => setEditForm({ ...editForm, purpose: v })} previousValue={project.purpose} rows={3} required />
                     </div>
@@ -566,6 +522,16 @@ export function ProjectDetailClient({
                     <div className="space-y-2">
                       <Label>{t('fieldScope')}</Label>
                       <MarkdownTextarea value={editForm.scope} onChange={(v) => setEditForm({ ...editForm, scope: v })} previousValue={project.scope} rows={3} required />
+                    </div>
+                    {/* 2026-06-02: スコープ外・備考を編集可能に追加 (任意、Embedding 非対象)。スコープ直下に配置。
+                        業務ドメイン/技術スタック/工程タグの入力欄は UI 非表示化 (提案エンジン用に LLM 自動抽出で補完)。 */}
+                    <div className="space-y-2">
+                      <Label>{t('fieldOutOfScope')}</Label>
+                      <MarkdownTextarea value={editForm.outOfScope} onChange={(v) => setEditForm({ ...editForm, outOfScope: v })} previousValue={project.outOfScope ?? ''} rows={2} />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>{t('fieldNotes')}</Label>
+                      <MarkdownTextarea value={editForm.notes} onChange={(v) => setEditForm({ ...editForm, notes: v })} previousValue={project.notes ?? ''} rows={2} />
                     </div>
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2">
@@ -597,30 +563,17 @@ export function ProjectDetailClient({
                         <DateFieldWithActions value={editForm.plannedEndDate} onChange={(v) => setEditForm({ ...editForm, plannedEndDate: v })} required hideClear />
                       </div>
                     </div>
-                    {/*
-                      feat/overview-tab-detail (PR-B): 3 タグ入力 (作成 dialog と同一規約、§5.10.2)
-                      PR #4 (T-03): 任意入力 + アコーディオン折りたたみ。LLM 自動補完が空欄を保存後に補完。
-                    */}
-                    <details className="rounded-md border bg-muted/30 p-3 space-y-2">
-                      <summary className="cursor-pointer select-none text-sm font-medium">
-                        {t('tagsAccordionTitle')}
-                      </summary>
-                      <p className="mt-2 text-xs text-muted-foreground">
-                        {t('tagsAccordionGuidance')}
-                      </p>
-                      <div className="space-y-2 pt-2">
-                        <Label>{t('fieldBusinessDomainTags')} <span className="text-xs text-muted-foreground">{t('tagSeparatorHint')}</span></Label>
-                        <Input value={editForm.businessDomainTagsInput} onChange={(e) => setEditForm({ ...editForm, businessDomainTagsInput: e.target.value })} placeholder={t('tagPlaceholderBusinessDomain')} maxLength={500} />
+                    {/* 2026-06-02: 実績日 (任意)。着手前は未確定のため hideClear なし (クリア可能)。 */}
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label>{t('fieldActualStartDate')}</Label>
+                        <DateFieldWithActions value={editForm.actualStartDate} onChange={(v) => setEditForm({ ...editForm, actualStartDate: v })} />
                       </div>
-                      <div className="space-y-2 pt-2">
-                        <Label>{t('fieldTechStackTags')} <span className="text-xs text-muted-foreground">{t('tagSeparatorHint')}</span></Label>
-                        <Input value={editForm.techStackTagsInput} onChange={(e) => setEditForm({ ...editForm, techStackTagsInput: e.target.value })} placeholder={t('tagPlaceholderTechStack')} maxLength={500} />
+                      <div className="space-y-2">
+                        <Label>{t('fieldActualEndDate')}</Label>
+                        <DateFieldWithActions value={editForm.actualEndDate} onChange={(v) => setEditForm({ ...editForm, actualEndDate: v })} />
                       </div>
-                      <div className="space-y-2 pt-2">
-                        <Label>{t('fieldProcessTags')} <span className="text-xs text-muted-foreground">{t('tagSeparatorHint')}</span></Label>
-                        <Input value={editForm.processTagsInput} onChange={(e) => setEditForm({ ...editForm, processTagsInput: e.target.value })} placeholder={t('tagPlaceholderProcess')} maxLength={500} />
-                      </div>
-                    </details>
+                    </div>
                     <Button type="submit" className="w-full">{t('editSubmit')}</Button>
                   </form>
                 </DialogContent>
@@ -635,6 +588,24 @@ export function ProjectDetailClient({
           </Button>
         </div>
       </div>
+
+      {/* feat/closed-project-readonly (2026-06-05): クローズ済み (= 読み取り専用) の案内。
+          スターターデータ(サンプル)はクローズ済みのため、見積もり・参考(提案)・メンバー管理などの編集機能は
+          利用できない。これらを試すには自分でプロジェクトを作成する旨を案内する。 */}
+      {isReadOnlyByStatus && (
+        <div
+          className="rounded-md border border-info/30 bg-info/5 p-3 text-sm"
+          data-testid="closed-readonly-notice"
+        >
+          <p className="m-0 font-semibold">このプロジェクトはクローズ済み（読み取り専用）です</p>
+          <p className="m-0 mt-1 text-muted-foreground">
+            内容の閲覧のみ可能です。見積もり・参考（提案）・メンバー管理などの編集機能はご利用いただけません。
+            （サンプルのスターターデータはこの状態です。）これらの機能をお試しになるには、
+            <Link href="/projects" className="text-info hover:underline">ご自身でプロジェクトを作成</Link>
+            してください。稼働中のプロジェクトでは、提案エンジンを含むすべての機能をご利用いただけます。
+          </p>
+        </div>
+      )}
 
       {/* タブ - 全機能をタブ内に直接埋め込み */}
       <Tabs value={activeTab} onValueChange={handleTabChange}>
@@ -761,7 +732,7 @@ export function ProjectDetailClient({
               </Menu.Positioner>
             </Menu.Portal>
           </Menu.Root>
-          {(systemRole === 'admin' || projectRole === 'pm_tl') && (
+          {(systemRole === 'admin' || projectRole === 'pm_tl') && !isReadOnlyByStatus && (
             <TabsTrigger value="members">{t('tabMembers')}</TabsTrigger>
           )}
           {/* feat/stakeholder-management: ステークホルダー管理 (PMBOK 13)。
@@ -786,6 +757,13 @@ export function ProjectDetailClient({
             >
               <h3 className="mb-2 font-semibold">{t('overviewBasicInfo')}</h3>
               <dl className="space-y-2 text-sm">
+                {/* 2026-06-03: 状態(ステータス)を概要タブの基本情報にも表示 (ヘッダーのバッジと同じ表記)。 */}
+                <div className="flex items-center justify-between">
+                  <dt className="text-muted-foreground">{t('fieldStatus')}</dt>
+                  <dd>
+                    <Badge>{PROJECT_STATUSES[project.status as keyof typeof PROJECT_STATUSES] || project.status}</Badge>
+                  </dd>
+                </div>
                 <div className="flex justify-between">
                   <dt className="text-muted-foreground">{t('fieldName')}</dt>
                   <dd className="font-medium">{project.name}</dd>
@@ -814,6 +792,15 @@ export function ProjectDetailClient({
                 <div className="flex justify-between">
                   <dt className="text-muted-foreground">{t('fieldPlannedEndDate')}</dt>
                   <dd>{formatDateOnly(project.plannedEndDate)}</dd>
+                </div>
+                {/* 2026-06-02: 実績日 (任意、未入力は ─)。 */}
+                <div className="flex justify-between">
+                  <dt className="text-muted-foreground">{t('fieldActualStartDate')}</dt>
+                  <dd>{project.actualStartDate ? formatDateOnly(project.actualStartDate) : '—'}</dd>
+                </div>
+                <div className="flex justify-between">
+                  <dt className="text-muted-foreground">{t('fieldActualEndDate')}</dt>
+                  <dd>{project.actualEndDate ? formatDateOnly(project.actualEndDate) : '—'}</dd>
                 </div>
               </dl>
             </ClickableCard>
@@ -862,63 +849,8 @@ export function ProjectDetailClient({
               )}
             </ClickableCard>
           </div>
-          {/* feat/overview-tab-detail (PR-B item 3): 業務ドメイン/技術スタック/工程の 3 タグセクション (新設) */}
-          <div className="grid gap-6 md:grid-cols-3">
-            <ClickableCard
-              active={isActualPmTl}
-              subtle
-              className="rounded-lg border p-4"
-              onClick={openEditDialog}
-              title={t('overviewClickToEdit')}
-            >
-              <h3 className="mb-2 font-semibold">{t('fieldBusinessDomainTags')}</h3>
-              {project.businessDomainTags.length > 0 ? (
-                <div className="flex flex-wrap gap-1">
-                  {project.businessDomainTags.map((tag) => (
-                    <Badge key={tag} variant="secondary" className="text-xs">{tag}</Badge>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-xs text-muted-foreground">{t('overviewNotSet')}</p>
-              )}
-            </ClickableCard>
-            <ClickableCard
-              active={isActualPmTl}
-              subtle
-              className="rounded-lg border p-4"
-              onClick={openEditDialog}
-              title={t('overviewClickToEdit')}
-            >
-              <h3 className="mb-2 font-semibold">{t('fieldTechStackTags')}</h3>
-              {project.techStackTags.length > 0 ? (
-                <div className="flex flex-wrap gap-1">
-                  {project.techStackTags.map((tag) => (
-                    <Badge key={tag} variant="secondary" className="text-xs">{tag}</Badge>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-xs text-muted-foreground">{t('overviewNotSet')}</p>
-              )}
-            </ClickableCard>
-            <ClickableCard
-              active={isActualPmTl}
-              subtle
-              className="rounded-lg border p-4"
-              onClick={openEditDialog}
-              title={t('overviewClickToEdit')}
-            >
-              <h3 className="mb-2 font-semibold">{t('fieldProcessTags')}</h3>
-              {project.processTags.length > 0 ? (
-                <div className="flex flex-wrap gap-1">
-                  {project.processTags.map((tag) => (
-                    <Badge key={tag} variant="secondary" className="text-xs">{tag}</Badge>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-xs text-muted-foreground">{t('overviewNotSet')}</p>
-              )}
-            </ClickableCard>
-          </div>
+          {/* 2026-06-02: 業務ドメイン/技術スタック/工程タグの表示は UI 非表示化
+              (提案エンジン用の内部値として保持。LLM 自動抽出で補完)。 */}
           {project.notes && (
             <ClickableCard
               active={isActualPmTl}
@@ -984,6 +916,7 @@ export function ProjectDetailClient({
                     systemRole={systemRole}
                     userId={userId}
                     onReload={reloadTasks}
+                    isReadOnly={isReadOnlyByStatus}
                   />
                 )}
               </LazyTabContent>
@@ -1120,8 +1053,9 @@ export function ProjectDetailClient({
 
         {/* メンバータブ（admin/pm_tl のみ表示、両方 allUsers が必要）
             feat/crud-permission-redesign (2026-05-20): PM/TL もメンバー管理可能になったため、
-            canManage=admin||pm_tl + canManagePmTl=admin の 2 軸で UI を制御。 */}
-        {(isSystemAdmin || projectRole === 'pm_tl') && (
+            canManage=admin||pm_tl + canManagePmTl=admin の 2 軸で UI を制御。
+            feat/closed-project-readonly (2026-06-05): クローズ済みは member:manage が 403 になるため非表示。 */}
+        {(isSystemAdmin || projectRole === 'pm_tl') && !isReadOnlyByStatus && (
           <TabsContent value="members" className="mt-4">
             <LazyTabContent state={members.state}>
               {(membersData) => (
@@ -1157,6 +1091,7 @@ export function ProjectDetailClient({
                       stakeholders={stakeholdersData}
                       members={membersData}
                       onReload={reloadStakeholders}
+                      isReadOnly={isReadOnlyByStatus}
                       /* stakeholderId は URL から useAutoOpenDialog が自前で読む */
                     />
                   )}

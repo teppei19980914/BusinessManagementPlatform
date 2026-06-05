@@ -42,7 +42,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthenticatedUser } from '@/lib/api-helpers';
 import { applyRateLimit } from '@/lib/rate-limit';
-import { prisma } from '@/lib/db';
 import { chatSemanticSearch } from '@/services/chat-search.service';
 import { CHAT_SEARCH_INPUT_MAX_CHARS } from '@/config/suggestion';
 import { recordError } from '@/services/error-log.service';
@@ -133,21 +132,13 @@ export async function POST(req: NextRequest) {
   //  含める場合のクエリ漏洩防止)。
   const queryForRedact = body.query;
   try {
-    // テナントの seedDataEnabled を取得。
-    // fail-closed 方針 (PR fix/chat-search-and-auto-open): tenant lookup が null を
-    // 返す異常系では「シードを参照しない」=より厳しい側に倒す。旧実装の `?? true` は
-    // 管理テナント (MANAGEMENT_TENANT_ID) のシードを漏洩させうるフェイルオープン
-    // だった。正常系では tenant は常に存在するため UX 影響なし。
-    const tenant = await prisma.tenant.findUnique({
-      where: { id: user.tenantId },
-      select: { seedDataEnabled: true },
-    });
-
+    // feat/starter-data-import (2026-06-05): 単一テナント化。チャット検索は自テナントのみを参照するため、
+    //   旧 seedDataEnabled lookup (管理テナントのシード越境参照可否) は不要になった。
+    //   越境参照そのものが撤去されたため、フェイルオープンによるシード漏洩リスクも構造的に消滅した。
     const data = await chatSemanticSearch({
       query: body.query,
       viewerTenantId: user.tenantId,
       viewerUserId: user.id,
-      viewerSeedDataEnabled: tenant?.seedDataEnabled ?? false,
     });
 
     return NextResponse.json({ data });

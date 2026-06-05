@@ -122,6 +122,13 @@ export const config = {
   //   行うため、middleware 除外でも認証要件は維持。
   //   詳細: docs/knowledge/KDD_PATTERNS.md §5.X+72
   //
+  // feat/logout-other-devices (2026-06-03):
+  //   `/api/auth/logout-other-devices` も同じ理由で除外必須。本ルートは tokenVersion を
+  //   increment した上で**呼出端末のみ**新 tokenVersion で JWT を再署名 (Set-Cookie) する。
+  //   middleware の auth() auto-refresh が旧 JWT 値で上書きすると再署名が打ち消され、
+  //   現在端末まで即ログアウトされてしまう。本ルートは `getAuthenticatedUser` で自前認証
+  //   チェック済のため middleware 除外でも認可は維持。
+  //
   // fix/login-mascot-and-layout-fix (2026-05-29, ★severity-1 critical★):
   //   `public/` 配下の静的ファイル群を matcher 除外に追加。理由:
   //     - PR #451 (mascot 導入) 以降、`/mascot-owl.png`, `/mascot-owl-chat.png`,
@@ -139,5 +146,5 @@ export const config = {
   //   セキュリティ: public/ 配下は Next.js の設計上「全公開リソース」なので、middleware
   //   除外しても情報漏洩リスクはない (むしろ middleware redirect の方が異常動作)。
   //   詳細: docs/knowledge/KDD_PATTERNS.md §5.X+177
-  matcher: ['/((?!_next/static|_next/image|favicon.ico|[^?]+\\.(?:png|jpg|jpeg|svg|webp|gif|ico|txt|xml|woff2?|ttf|eot)$|api/auth/mfa/verify|api/tenants/me/i18n|api/auth/explicit-signout).*)'],
+  matcher: ['/((?!_next/static|_next/image|favicon.ico|[^?]+\\.(?:png|jpg|jpeg|svg|webp|gif|ico|txt|xml|woff2?|ttf|eot)$|api/auth/mfa/verify|api/tenants/me/i18n|api/auth/explicit-signout|api/auth/logout-other-devices).*)'],
 };

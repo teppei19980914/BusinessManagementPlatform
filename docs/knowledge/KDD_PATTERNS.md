@@ -19975,3 +19975,50 @@ Lighthouse Diagnostics で LCP element が **`img.h-full.w-full.object-cover` (�
 - 関連設計: [docs/archive/performance/20260417/after/次期プログラム/cold-start-and-data-growth-analysis.md](../archive/performance/20260417/after/次期プログラム/cold-start-and-data-growth-analysis.md) §4.1
 - 関連調査記録: [docs/archive/performance/20260601/investigation-and-fixes-2026-06-01.md](../archive/performance/20260601/investigation-and-fixes-2026-06-01.md) (詳細経緯・計測値・残課題)
 - 関連 cron: [docs/operations/develop/DEPLOYMENT.md](../operations/develop/DEPLOYMENT.md) §6.1 (`/api/health` `*/2 * * * *`)
+
+---
+
+## §5.X+206 ★severity-high (ローカル開発の全機能停止)★ schema 変更 + `prisma generate` 後はローカル DB にも `migrate deploy` が必須 ─ 未適用だと再生成クライアントが「存在しない列」を参照しテーブル全クエリが落ちる (feat/starter-data-import / 2026-06-05)
+
+### 事象
+
+`docs/column-usage-map` ブランチで列追加 (`is_seed_sample` を 5 テーブル) + 列削除 (`seed_data_enabled`) の migration を作成し、`prisma generate` でクライアントを再生成した状態でローカルにログインしたところ、**プロジェクト一覧が「読み込みに失敗しました」** で全滅した (他の一覧系も同様に落ちる)。ブラウザ Console には HMR ログのみで真因が出ない (サーバ側 500)。
+
+### 根本原因
+
+**Prisma クライアント (再生成済) とローカル DB のスキーマが drift** していた。
+
+- `prisma generate` は schema を読んでクライアント (型 + 生成 SQL) を更新する。これにより `findMany` 等が **新スキーマの全スカラ列** (例: `is_seed_sample`) を `SELECT` するようになる。
+- 一方 migration は **適用していない** (`migrate deploy` 未実行) ため、ローカル DB には `is_seed_sample` 列が存在しない。
+- 結果、`prisma.project.findMany()` (select 省略 = 全列取得) が `column "is_seed_sample" does not exist` で throw → サービス層が握って「一覧の読み込みに失敗しました」を返す。
+
+`prisma migrate status` で確認すると未適用 migration が明示される:
+
+```
+Following migrations have not yet been applied:
+  20260612_add_is_seed_sample_marker
+  20260613_drop_seed_data_enabled
+```
+
+### 対処
+
+リポジトリ規約 (§ migration workflow: `migrate dev` 禁止・日付名手書き SQL + `migrate deploy`) に従い **`npx prisma migrate deploy`** を実行 (= 既存データを消さずに未適用分のみ適用)。その後 `prisma migrate status` が `Database schema is up to date!` になればクライアントと DB が一致し復旧する。
+
+> ⚠️ `prisma migrate reset` は使わない (データ全削除 + 自動 seed しない)。ログイン済みでデータがある状態では `migrate deploy` 一択。
+
+### 再発防止 (チェックリスト)
+
+schema を変更したセッションでローカル動作確認する前に、**必ず以下をセットで実施**する:
+
+1. `prisma generate` (クライアント再生成)
+2. **`prisma migrate deploy`** (ローカル DB に migration 適用) ← これを忘れると本事象
+3. `next dev --turbopack` の **再起動** (古い生成クライアントをメモリ保持する罠、[§ feedback_prisma_generate_restart_turbopack] / KDD 既出)
+
+「型 (client) ・ DB ・ dev サーバプロセス」の **3 つを同時に同期** させるのがポイント。1 つでも遅れると、tsc / lint は緑のままローカル runtime だけが落ちる (§5.X+200 「Prisma select 存在しない列は runtime で初めて throw」と同根の罠)。
+
+### 関連
+
+- 関連 KDD: §5.X+200 (Prisma `select` 存在しない列は tsc/lint 素通り → runtime throw)
+- 関連 migration workflow: このリポは `migrate dev` 禁止 (破壊的 drift 生成)・日付名手書き SQL + `migrate deploy` / `reset` 運用
+- 関連 ADR: [ADR-0033](../adr/0033-starter-data-import-and-single-tenant-suggestion.md) (`is_seed_sample` 追加 / `seed_data_enabled` 撤去)
+- 関連 migration: `prisma/migrations/20260612_add_is_seed_sample_marker` / `20260613_drop_seed_data_enabled`

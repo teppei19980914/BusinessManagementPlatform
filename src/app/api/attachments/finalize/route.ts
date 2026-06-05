@@ -186,6 +186,13 @@ export async function POST(req: NextRequest) {
       action: 'CREATE',
       entityType: 'attachment',
       entityId: created.id,
+      // 2026-06-03: どの画面でファイル添付が行われたかを監査ログで示すため親種別 + 添付種別を記録
+      //   (finalize は Supabase 本体保存 = ファイル添付)。ファイル内容自体は記録しない。
+      afterValue: {
+        parentEntityType: created.entityType,
+        parentEntityId: created.entityId,
+        storageProvider: created.storageProvider,
+      },
     });
 
     return NextResponse.json(

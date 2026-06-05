@@ -32,7 +32,7 @@ service 層を読む前に、以下 3 つの横断的な約束事を理解して
 - **論理削除 (`deleted_at`)**: 削除は物理削除ではなく `deletedAt` セットが基本。一覧クエリは `where.deletedAt: null` を付ける (これも `$use` 自動付与は無く、各 service が明示)。
 - **監査ログ**: データ変更 (CREATE/UPDATE/DELETE) は `audit.service.ts` の `recordAuditLog` / `recordBulkAuditLogs` で記録。`entityId` は `@db.Uuid` 型厳守 (文字列識別子は production reject)。
 - **認証イベント**: ログイン成否・パスワード変更等は `auth-event.service.ts` の `recordAuthEvent`。
-- **状態遷移**: プロジェクトの 7 状態 (planning → estimating → scheduling → executing → completed → retrospected → closed) は `state-machine.ts` の `canTransition` / `getNextStatuses` が順序検査を担う (順序のみ検査、ロック条件 enforce は別途)。
+- **状態遷移**: プロジェクトの 5 状態 (planning → estimating → scheduling → executing → closed、2026-06 簡素化で旧 completed/retrospected を廃止) は `state-machine.ts` の `canTransition` / `getNextStatuses` が順序検査を担う (順序のみ検査、ロック条件 enforce は別途)。
 
 ---
 
@@ -117,11 +117,13 @@ service 層を読む前に、以下 3 つの横断的な約束事を理解して
 | ファイル | 責務 | 主要 export | 課金 | テナント分離 |
 |---|---|---|---|---|
 | `tenant-onboarding.service.ts` | 新規テナント作成の単一エントリ (super_admin 手動 + signup) | `createTenantBySuperAdmin` / `createTenantBySignup` / `TenantOnboardingInputSchema` | — | (作成) |
-| `tenant-self.service.ts` | admin が自テナントのプラン/予算/i18n/請求先を self-service 変更 | `getTenantSelfInfo` / `updateTenantI18n` / `updateBillingContact` / `updateTenantSelf` / `cancelScheduledPlanChange` | — | (tenantId 指定) |
+| `tenant-self.service.ts` | admin が自テナントのプラン/予算/i18n/請求先を self-service 変更。**有料化 (Expert/Pro) 時は請求先住所完備を必須 (`BILLING_INFO_INCOMPLETE`)** | `getTenantSelfInfo` / `updateTenantI18n` / `updateBillingContact` / `updateTenantSelf` / `cancelScheduledPlanChange` | — | (tenantId 指定) |
+| `sample-clone.service.ts` | スターターデータ取込/削除 (feat/starter-data-import 2026-06-05)。管理テナントの `isSampleData=true` を自テナントへ `is_seed_sample=true` で複製 (embedding は raw SQL コピー=課金ゼロ)、容量 precheck、`is_seed_sample=true` のみ依存順に物理削除 | `importSampleData` / `deleteSampleData` | — | ○ (越境読込元=管理テナント限定、書込=自テナント) |
+| `sample-curation.service.ts` | super_admin が取込元 (管理テナント) の Project/Knowledge の `isSampleData` を切替。**更新は MANAGEMENT_TENANT_ID 限定 (越境防御)** | `listManagementSeedCandidates` / `setManagementSampleFlag` | — | ○ (管理テナント限定) |
 | `tenant-monthly-reset.service.ts` | 月初カウンタリセット + plan 変更適用 + DB/ファイル容量超過課金 (cron) | `runTenantMonthlyReset` / `resetTenantMonthlyCounters` / `saveMonthlyUsageSnapshots` / `applyScheduledPlanChanges` / `processTenantDbCapacityOverage` / `processTenantFileStorageOverage` | ○ (超過課金) | (全テナント) |
 | `beginner-expiry.service.ts` | Beginner プラン 90 日試用の期限管理・通知 (60/75/150/170/180 日) | `getBeginnerExpiryState` / `getBeginnerDaysRemaining` / `isBeginnerExpired` / `sendBeginnerExpiryNotices` | — | (全テナント) |
 | `super-admin.service.ts` | 全テナント横断の監視・集計・suspend/resume/delete/purge (super_admin 専用) | `listAllTenants` / `getTenantDetail` / `getCrossTenantUsageSummary` / `getVoyageUsageSummary` / `getAnthropicUsageSummary` / `suspendTenant` / `resumeTenant` / `deleteTenant` / `purgeExpiredBeginnerTenants` / `listDormantTenants` | — | (横断, 正当) |
-| `user.service.ts` | システム管理者画面 (/admin/users) からのユーザ CRUD + 座席数 + 非活性ロック | `listUsers` / `createUser` / `updateUser` / `updateUserStatus` / `updateUserRole` / `deleteUser` / `assertSeatAvailableForTenant` / `lockInactiveUsers` | — | ○ |
+| `user.service.ts` | システム管理者画面 (/admin/users) からのユーザ CRUD + 座席数 + 非活性ロック + 招待管理 + アカウント状態導出 | `listUsers` / `createUser` / `updateUser` / `updateUserStatus` / `updateUserRole` / `deleteUser` / `resendInvitationByAdmin` / `cancelInvitation` / `assertSeatAvailableForTenant` / `lockInactiveUsers` / `deriveAccountStatus` | — | ○ |
 | `user-self.service.ts` | ログイン中ユーザが /settings で参照する自己アカウント情報 | `getUserSelfAccountInfo` | — | (user 経由) |
 
 ## 8. 認証 / MFA / パスワード

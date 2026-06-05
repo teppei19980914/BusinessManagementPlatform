@@ -181,4 +181,17 @@ describe('POST /api/attachments/upload', () => {
     const body = await res.json();
     expect(body.data.sanitizedFileName).not.toContain('..');
   });
+
+  // 2026-06-03: memo も他資産同様にファイル本体アップロード対応 (旧「URL 添付のみ」制限を解除)。
+  //   validator (UPLOAD_ATTACHMENT_ENTITY_TYPES) が memo を受理し、認可後に Pre-signed URL を返すことを確認。
+  it('memo も entityType として受理されアップロード URL を発行する', async () => {
+    const res = await POST(makeReq({ ...validBody, entityType: 'memo' }));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.data.uploadUrl).toContain('storage/v1');
+    // memo の write 認可 (memo.userId === viewer) が呼ばれていること
+    expect(vi.mocked(authorizeForAttachmentEntity)).toHaveBeenCalledWith(
+      expect.objectContaining({ entityType: 'memo', mode: 'write' }),
+    );
+  });
 });

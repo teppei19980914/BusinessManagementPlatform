@@ -143,6 +143,22 @@ async function DashboardContent() {
 
   return (
     <>
+      {/* feat/starter-data-import (2026-06-05): スターターデータ キュレーション画面への導線 */}
+      <Link
+        href="/admin/super/seed-data"
+        className="block rounded border p-4 hover:bg-muted/40"
+      >
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="font-semibold">スターターデータ キュレーション</div>
+            <div className="mt-1 text-sm text-muted-foreground">
+              各テナントが取り込む見本データ (管理テナントの Project / Knowledge) のサンプル指定を管理 →
+            </div>
+          </div>
+          <div className="font-mono text-sm text-muted-foreground">/admin/super/seed-data</div>
+        </div>
+      </Link>
+
       {/* PR-V8 (2026-05-19): 診断ダッシュボードへの誘導バナー */}
       {diagnostics.totalAnomalies > 0 && (
         <Link
@@ -1162,7 +1178,7 @@ function NetlifyMetricsCard({ metrics }: { metrics: NetlifyMetricsType }) {
               <span className="ml-3">
                 最新ビルド: {new Date(metrics.latestBuildAt).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })} JST
                 {metrics.latestBuildContext && ` (${metrics.latestBuildContext})`}
-                {' / 状態: '}
+                {' / ステータス: '}
                 <span className={metrics.latestBuildState === 'ready' ? 'text-info' : metrics.latestBuildState === 'error' ? 'text-destructive' : ''}>
                   {metrics.latestBuildState}
                 </span>

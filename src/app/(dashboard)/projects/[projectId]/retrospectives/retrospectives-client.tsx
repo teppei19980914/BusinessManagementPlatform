@@ -33,7 +33,6 @@ import { useToast } from '@/components/toast-provider';
 import { Button } from '@/components/ui/button';
 import { matchesAnyKeyword } from '@/lib/text-search';
 // UI_PATTERNS §35 (2026-05-24): カードから軽量テーブルに移行 (5 一覧 UI 統一)
-import { VisibilityBadge } from '@/components/common/visibility-badge';
 import { ClickableRow } from '@/components/common/clickable-row';
 import { BulkSelectHeader, BulkSelectCell } from '@/components/common/bulk-select';
 import {
@@ -41,6 +40,7 @@ import {
 } from '@/components/ui/table';
 import { ResizableHead } from '@/components/ui/resizable-columns';
 import { ResizableTableShell } from '@/components/common/resizable-table-shell';
+import { useTablePagination, TablePagination } from '@/components/common/table-pagination';
 import { SortableResizableHead } from '@/components/sort/sortable-resizable-head';
 import { useMultiSort } from '@/components/sort/use-multi-sort';
 import { multiSort } from '@/lib/multi-sort';
@@ -64,6 +64,8 @@ import type { RetroDTO } from '@/services/retrospective.service';
 // PR #168: 一覧画面に添付列を表示 (横展開)
 import { useBatchAttachments } from '@/components/attachments/use-batch-attachments';
 import { AttachmentsCell } from '@/components/attachments/attachments-cell';
+// 2026-06-02: 「リンク」列 (url 型添付を縦に複数行表示)。添付列はファイル本体のみに分離。
+import { LinksCell } from '@/components/attachments/links-cell';
 // feat/dialog-fullscreen-toggle: 文字量が多い dialog 向けの全画面トグル
 import { useDialogFullscreen } from '@/components/ui/use-dialog-fullscreen';
 // feat/markdown-textarea: Markdown 入力 + プレビュー (create dialog のため previousValue なし)
@@ -88,9 +90,11 @@ function getProjectRetroSortValue(r: RetroDTO, columnKey: string): unknown {
   switch (columnKey) {
     case 'conductedDate': return r.conductedDate;
     case 'state': return r.state;
-    case 'visibility': return r.visibility;
-    case 'createdBy': return r.createdBy;
+    case 'assigneeName': return r.assigneeName ?? '';
+    case 'createdBy': return r.createdByName ?? '';
     case 'createdAt': return r.createdAt;
+    case 'updatedByName': return r.updatedByName ?? '';
+    case 'updatedAt': return r.updatedAt ?? '';
     default: return null;
   }
 }
@@ -121,16 +125,20 @@ export function RetrospectivesClient({ projectId, retros, members, canCreate, cu
   const router = useRouter();
   const { withLoading } = useLoading();
   const { showSuccess, showError } = useToast();
-  const { formatDate, formatDateOnly } = useFormatters();
+  const { formatDateTimeSeconds, formatDateOnly } = useFormatters();
   // UI_PATTERNS §35: カラムソート (sessionStorage 永続化、複数列対応)
   const { sortState, setSortColumn } = useMultiSort(`sort:project-retrospectives-${projectId}`);
+  // 2026-06-02: 一覧の添付/リンク列を再取得させるトリガ (use-batch-attachments の reloadToken)。
+  const [attachToken, setAttachToken] = useState(0);
+  const bumpAttachToken = useCallback(() => setAttachToken((t) => t + 1), []);
   const reload = useCallback(async () => {
+    bumpAttachToken();
     if (onReload) {
       await onReload();
     } else {
       router.refresh();
     }
-  }, [onReload, router]);
+  }, [onReload, router, bumpAttachToken]);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   // T-22 Phase 22b: 上書きインポート (sync-import) ダイアログ
   const [isSyncImportOpen, setIsSyncImportOpen] = useState(false);
@@ -178,6 +186,11 @@ export function RetrospectivesClient({ projectId, retros, members, canCreate, cu
     return multiSort(xs, sortState, getProjectRetroSortValue);
   })();
 
+  const { pageItems, page, pageCount, setPage } = useTablePagination(
+    filteredRetros,
+    `${bulkFilter.keyword}|${bulkFilter.mineOnly}`,
+  );
+
   // fix/list-export-import-bugs (2026-05-26): チェックボックスは export + bulk visibility 兼用に拡張。
   //   全行選択可とし、bulk visibility は サーバ側で per-row 認可 (createdBy/assigneeId 不一致は silent skip)。
   const selectableRetroIds = filteredRetros.map((r) => r.id);
@@ -185,7 +198,7 @@ export function RetrospectivesClient({ projectId, retros, members, canCreate, cu
     = selectableRetroIds.length > 0 && selectableRetroIds.every((id) => selectedIds.has(id));
 
   // PR #168: 添付バッチ取得 (他エンティティ一覧と同パターン)
-  const attachmentsByEntity = useBatchAttachments('retrospective', filteredRetros.map((r) => r.id));
+  const attachmentsByEntity = useBatchAttachments('retrospective', filteredRetros.map((r) => r.id), 'general', attachToken);
 
   function toggleOneRetro(id: string) {
     setSelectedIds((prev) => {
@@ -329,27 +342,29 @@ export function RetrospectivesClient({ projectId, retros, members, canCreate, cu
               </DialogHeader>
               <form onSubmit={handleCreate} className="space-y-4">
                 {error && <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
-                {/* PR #63: 公開範囲を最上位に配置 (設定忘れ防止) */}
-                <div className="space-y-2">
-                  <Label>{tRetro('visibility')}</Label>
-                  <select value={form.visibility} onChange={(e) => setForm({ ...form, visibility: e.target.value })} className={nativeSelectClass}>
-                    {Object.entries(VISIBILITIES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-                  </select>
-                </div>
-                <div className="space-y-2">
-                  <Label>
-                    {tRetro('conductedDate')}
-                    {/* 2026-05-11: 公開範囲 = 自分のみ (draft) なら任意 (サーバ側で当日日付を default 補完) */}
-                    {form.visibility === 'draft' && (
-                      <span className="ml-2 text-xs text-muted-foreground">{tRetro('optional')}</span>
-                    )}
-                  </Label>
-                  <DateFieldWithActions
-                    value={form.conductedDate}
-                    onChange={(v) => setForm({ ...form, conductedDate: v })}
-                    required={form.visibility === 'public'}
-                    hideClear
-                  />
+                {/* PR #63: 公開範囲を最上位に配置 (設定忘れ防止)。2026-06-02: 公開範囲・実施日を 2 列構成に。 */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>{tRetro('visibility')}</Label>
+                    <select value={form.visibility} onChange={(e) => setForm({ ...form, visibility: e.target.value })} className={nativeSelectClass}>
+                      {Object.entries(VISIBILITIES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>
+                      {tRetro('conductedDate')}
+                      {/* 2026-05-11: 公開範囲 = 自分のみ (draft) なら任意 (サーバ側で当日日付を default 補完) */}
+                      {form.visibility === 'draft' && (
+                        <span className="ml-2 text-xs text-muted-foreground">{tRetro('optional')}</span>
+                      )}
+                    </Label>
+                    <DateFieldWithActions
+                      value={form.conductedDate}
+                      onChange={(v) => setForm({ ...form, conductedDate: v })}
+                      required={form.visibility === 'public'}
+                      hideClear
+                    />
+                  </div>
                 </div>
                 {/* refactor/list-create-content-optional (2026-04-27 #6): 5 セクションは全て任意 (実施日のみ必須) */}
                 <div className="space-y-2">
@@ -423,9 +438,14 @@ export function RetrospectivesClient({ projectId, retros, members, canCreate, cu
             </ResizableHead>
             <SortableResizableHead columnKey="conductedDate" defaultWidth={130} label={tRetro('conductedDate')} sortState={sortState} onSortChange={setSortColumn} />
             <SortableResizableHead columnKey="state" defaultWidth={100} label={tRetro('state')} sortState={sortState} onSortChange={setSortColumn} />
-            <SortableResizableHead columnKey="visibility" defaultWidth={90} label={tRetro('visibility')} sortState={sortState} onSortChange={setSortColumn} />
+            {/* 2026-06-02: 担当者列を 状態 と 作成者 の間に追加 (リスク/課題一覧と同パターン)。 */}
+            <SortableResizableHead columnKey="assigneeName" defaultWidth={120} label={tRetro('assignee')} sortState={sortState} onSortChange={setSortColumn} />
             <SortableResizableHead columnKey="createdBy" defaultWidth={120} label={tRetro('createdBy')} sortState={sortState} onSortChange={setSortColumn} />
-            <SortableResizableHead columnKey="createdAt" defaultWidth={130} label={tRetro('createdAt')} sortState={sortState} onSortChange={setSortColumn} />
+            <SortableResizableHead columnKey="createdAt" defaultWidth={150} label={tRetro('createdAt')} sortState={sortState} onSortChange={setSortColumn} />
+            <SortableResizableHead columnKey="updatedByName" defaultWidth={120} label={tRetro('updatedBy')} sortState={sortState} onSortChange={setSortColumn} />
+            <SortableResizableHead columnKey="updatedAt" defaultWidth={150} label={tRetro('updatedAt')} sortState={sortState} onSortChange={setSortColumn} />
+            {/* 2026-06-02: リンク列 (作成日時〜添付の間)。url 型添付を縦に複数行表示。 */}
+            <ResizableHead columnKey="links" defaultWidth={200}>{tRetro('links')}</ResizableHead>
             <ResizableHead columnKey="attachments" defaultWidth={180}>{tRetro('attachment')}</ResizableHead>
             {/* 2026-04-24 / §35: 作成者本人だけが操作ボタンを使うので、自分の行が 1 つでもあれば列を出す。
                 feat/asset-assignee-expansion (2026-05-26): 担当者も操作可能なので OR で拡張。 */}
@@ -438,14 +458,14 @@ export function RetrospectivesClient({ projectId, retros, members, canCreate, cu
           {filteredRetros.length === 0 ? (
             <TableRow>
               <TableCell
-                colSpan={filteredRetros.some((r) => r.createdBy === currentUserId || r.assigneeId === currentUserId) ? 8 : 7}
+                colSpan={filteredRetros.some((r) => r.createdBy === currentUserId || r.assigneeId === currentUserId) ? 11 : 10}
                 className="py-8 text-center text-muted-foreground"
               >
                 {tRetro('noneInList')}
               </TableCell>
             </TableRow>
           ) : (
-            filteredRetros.map((retro) => {
+            pageItems.map((retro) => {
               // feat/asset-assignee-expansion (2026-05-26): 作成者 OR 担当者で編集/確定/削除可
               const isOwner = retro.createdBy === currentUserId || retro.assigneeId === currentUserId;
               return (
@@ -467,17 +487,18 @@ export function RetrospectivesClient({ projectId, retros, members, canCreate, cu
                       {retro.state === 'confirmed' ? tRetro('confirmAction') : tRetro('draftBadge')}
                     </Badge>
                   </TableCell>
-                  <TableCell>
-                    <VisibilityBadge
-                      visibility={retro.visibility}
-                      label={VISIBILITIES[retro.visibility as keyof typeof VISIBILITIES] || retro.visibility}
-                      className="text-xs"
-                    />
-                  </TableCell>
-                  <TableCell className="text-sm text-muted-foreground">{retro.createdBy}</TableCell>
-                  <TableCell className="text-sm text-muted-foreground">{formatDate(retro.createdAt)}</TableCell>
+                  <TableCell className="text-sm text-muted-foreground">{retro.assigneeName || '—'}</TableCell>
+                  <TableCell className="text-sm text-muted-foreground">{retro.createdByName || '—'}</TableCell>
+                  <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{formatDateTimeSeconds(retro.createdAt)}</TableCell>
+                  <TableCell className="text-sm text-muted-foreground">{retro.updatedAt && retro.updatedAt !== retro.createdAt ? (retro.updatedByName || '—') : '—'}</TableCell>
+                  <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{retro.updatedAt && retro.updatedAt !== retro.createdAt ? formatDateTimeSeconds(retro.updatedAt) : '—'}</TableCell>
+                  {/* 2026-06-02: リンク列 (url 型添付を縦に複数行表示) */}
                   <TableCell onClick={(e) => e.stopPropagation()}>
-                    <AttachmentsCell items={attachmentsByEntity[retro.id] ?? []} />
+                    <LinksCell items={attachmentsByEntity[retro.id] ?? []} />
+                  </TableCell>
+                  {/* 添付列 → 2026-06-02 ファイル本体 (supabase 型) のみ表示 */}
+                  <TableCell onClick={(e) => e.stopPropagation()}>
+                    <AttachmentsCell items={(attachmentsByEntity[retro.id] ?? []).filter((a) => a.storageProvider === 'supabase')} />
                   </TableCell>
                   {filteredRetros.some((x) => x.createdBy === currentUserId || x.assigneeId === currentUserId) && (
                     <TableCell onClick={(e) => e.stopPropagation()}>
@@ -507,6 +528,8 @@ export function RetrospectivesClient({ projectId, retros, members, canCreate, cu
         </TableBody>
       </ResizableTableShell>
 
+      <TablePagination page={page} pageCount={pageCount} onPageChange={setPage} />
+
       {/* §35 件数表示は table 下部 */}
       <div className="flex justify-end text-xs text-muted-foreground">
         {tCommon('itemCount', { count: filteredRetros.length })}
@@ -520,7 +543,7 @@ export function RetrospectivesClient({ projectId, retros, members, canCreate, cu
         members={members}
         currentProjectId={projectId}
         open={editingRetro != null}
-        onOpenChange={(v) => { if (!v) setEditingRetro(null); }}
+        onOpenChange={(v) => { if (!v) { setEditingRetro(null); bumpAttachToken(); } }}
         onSaved={reload}
         readOnly={
           editingRetro != null &&

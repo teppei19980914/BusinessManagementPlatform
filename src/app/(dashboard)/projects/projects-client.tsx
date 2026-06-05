@@ -32,7 +32,6 @@ import { nativeSelectClass } from '@/components/ui/native-select-style';
 // PR #126: 顧客件数が増える想定のため SearchableSelect を使用
 import { SearchableSelect } from '@/components/ui/searchable-select';
 // fix/project-create-customer-validation: 重複定義を集約、全角読点 (、) 対応追加
-import { parseTagsInput } from '@/lib/parse-tags';
 // feat/gantt-initial-scroll-and-locale (2026-05-29): date-only 日付の locale 表示
 import { useFormatters } from '@/lib/use-formatters';
 import {
@@ -45,6 +44,7 @@ import { SortableResizableHead } from '@/components/sort/sortable-resizable-head
 import { useMultiSort } from '@/components/sort/use-multi-sort';
 import { multiSort } from '@/lib/multi-sort';
 import { ResizableTableShell } from '@/components/common/resizable-table-shell';
+import { useTablePagination, TablePagination } from '@/components/common/table-pagination';
 import {
   Select,
   SelectContent,
@@ -91,11 +91,15 @@ type Props = {
 function getProjectSortValue(p: ProjectDTO, columnKey: string): unknown {
   switch (columnKey) {
     case 'name': return p.name;
-    case 'customer': return p.customerName ?? '';
-    case 'devMethod': return p.devMethod;
     case 'status': return p.status;
     case 'plannedStartDate': return p.plannedStartDate ?? '';
     case 'plannedEndDate': return p.plannedEndDate ?? '';
+    case 'actualStartDate': return p.actualStartDate ?? '';
+    case 'actualEndDate': return p.actualEndDate ?? '';
+    case 'createdByName': return p.createdByName ?? '';
+    case 'updatedByName': return p.updatedByName ?? '';
+    case 'createdAt': return p.createdAt;
+    case 'updatedAt': return p.updatedAt;
     default: return null;
   }
 }
@@ -105,8 +109,6 @@ const statusColors: Record<string, 'default' | 'secondary' | 'destructive' | 'ou
   estimating: 'outline',
   scheduling: 'secondary',
   executing: 'default',
-  completed: 'secondary',
-  retrospected: 'secondary',
   closed: 'destructive',
 };
 
@@ -121,9 +123,10 @@ export function ProjectsClient({
 }: Props) {
   const router = useRouter();
   const t = useTranslations('project');
+  const tCommon = useTranslations('common');
   const { withLoading } = useLoading();
   const { showSuccess, showError } = useToast();
-  const { formatDateOnly } = useFormatters();
+  const { formatDateOnly, formatDateTimeSeconds } = useFormatters();
   // PR #425 (2026-05-22): URL params から初期化 (検索後リロード/共有時の input 復元)
   const [keyword, setKeyword] = useState(initialKeyword);
   const [statusFilter, setStatusFilter] = useState<string>(initialStatusFilter);
@@ -142,16 +145,13 @@ export function ProjectsClient({
     purpose: '',
     background: '',
     scope: '',
+    // 2026-06-03: ステータスを新規作成フォームで選択 (既定=企画中)。
+    status: 'planning',
     devMethod: 'scratch',
     // PR-β / 項目 14: 契約形態 (新設、新規作成時は空 = 後で編集して設定)
     contractType: '' as '' | 'quasi_mandate' | 'lump_sum' | 'ses' | 'other',
     plannedStartDate: '',
     plannedEndDate: '',
-    // PR #65: 核心機能 (提案型サービス) のタグ入力。カンマ区切り文字列で受け取り、
-    // 送信時に string[] へ変換する。空要素は除外。
-    businessDomainTagsInput: '',
-    techStackTagsInput: '',
-    processTagsInput: '',
   });
 
   // fix/project-create-customer-validation: 重複定義を `@/lib/parse-tags` に集約。
@@ -203,6 +203,12 @@ export function ProjectsClient({
   }, [initialProjects, keyword, statusFilter]);
   // filter 適用後にソート (= 表示順序の最終確定)
   const sortedProjects = multiSort(filteredProjects, sortState, getProjectSortValue);
+  // クライアント側ページング (共通部品)。検索/絞り込み変更で先頭ページに戻す。
+  // PC テーブルとモバイルカードで同一ページを表示するため、両方 pageItems を参照する。
+  const { pageItems, page, pageCount, setPage } = useTablePagination(
+    sortedProjects,
+    `${keyword}|${statusFilter}`,
+  );
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -217,21 +223,21 @@ export function ProjectsClient({
       return;
     }
 
-    // タグは入力欄の生文字列 (form.*TagsInput) をカンマ分割して送信する
+    // タグ (業務ドメイン/技術スタック/工程) は UI 非表示化 (2026-06-02)。
+    //   提案エンジン用の値は project.service の extractTagsAndEmbedForProject が LLM 自動抽出で補完するため送信しない。
     const payload = {
       name: form.name,
       customerId: form.customerId,
       purpose: form.purpose,
       background: form.background,
       scope: form.scope,
+      // 2026-06-03: 新規作成フォームで選択したステータス。
+      status: form.status,
       devMethod: form.devMethod,
       // PR-β / 項目 14: 契約形態 (空文字は null で送信、validator は nullable)
       contractType: form.contractType || null,
       plannedStartDate: form.plannedStartDate,
       plannedEndDate: form.plannedEndDate,
-      businessDomainTags: parseTagsInput(form.businessDomainTagsInput),
-      techStackTags: parseTagsInput(form.techStackTagsInput),
-      processTags: parseTagsInput(form.processTagsInput),
     };
 
     const res = await withLoading(() =>
@@ -270,13 +276,11 @@ export function ProjectsClient({
       purpose: '',
       background: '',
       scope: '',
+      status: 'planning',
       devMethod: 'scratch',
       contractType: '' as '' | 'quasi_mandate' | 'lump_sum' | 'ses' | 'other',
       plannedStartDate: '',
       plannedEndDate: '',
-      businessDomainTagsInput: '',
-      techStackTagsInput: '',
-      processTagsInput: '',
     });
     // PR #65: 新規作成直後は ?suggestions=1 を付けて遷移、詳細画面側で提案モーダルを表示
     router.push(`/projects/${json.data.id}?suggestions=1`);
@@ -345,6 +349,18 @@ export function ProjectsClient({
                       {t('customerEmptyHintSuffix')}
                     </p>
                   )}
+                </div>
+                <div className="space-y-2">
+                  {/* 2026-06-03: ステータスを任意に選択 (専用の状態遷移 プルダウンは廃止し、本フォームに統合) */}
+                  <Label htmlFor="project-create-status">{t('fieldStatus')}</Label>
+                  <select
+                    id="project-create-status"
+                    value={form.status}
+                    onChange={(e) => updateField('status', e.target.value)}
+                    className={nativeSelectClass}
+                  >
+                    {Object.entries(PROJECT_STATUSES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                  </select>
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="project-create-purpose">{t('fieldPurpose')}</Label>
@@ -427,50 +443,8 @@ export function ProjectsClient({
                     />
                   </div>
                 </div>
-                {/*
-                  PR #65: 提案型サービス (核心機能) のためのタグ入力。
-                  PR #4 (T-03): 任意入力に変更 + アコーディオン折りたたみで負担軽減。
-                    LLM 自動タグ抽出 (PR #220 / #223) が空欄を保存後に自動補完するため、
-                    手動入力は「自分のドメイン知識を反映したい場合」のみ推奨。
-                */}
-                <details className="rounded-md border bg-muted/30 p-3 space-y-2">
-                  <summary className="cursor-pointer select-none text-sm font-medium">
-                    {t('tagsAccordionTitle')}
-                  </summary>
-                  <p className="mt-2 text-xs text-muted-foreground">
-                    {t('tagsAccordionGuidance')}
-                  </p>
-                  <div className="space-y-2 pt-2">
-                    <Label htmlFor="project-create-business-domain-tags">{t('fieldBusinessDomainTags')} <span className="text-xs text-muted-foreground">{t('tagSeparatorHintSuggestion')}</span></Label>
-                    <Input
-                      id="project-create-business-domain-tags"
-                      value={form.businessDomainTagsInput}
-                      onChange={(e) => updateField('businessDomainTagsInput', e.target.value)}
-                      placeholder={t('tagPlaceholderBusinessDomain')}
-                      maxLength={500}
-                    />
-                  </div>
-                  <div className="space-y-2 pt-2">
-                    <Label htmlFor="project-create-tech-stack-tags">{t('fieldTechStackTags')} <span className="text-xs text-muted-foreground">{t('tagSeparatorHintSuggestion')}</span></Label>
-                    <Input
-                      id="project-create-tech-stack-tags"
-                      value={form.techStackTagsInput}
-                      onChange={(e) => updateField('techStackTagsInput', e.target.value)}
-                      placeholder={t('tagPlaceholderTechStackFull')}
-                      maxLength={500}
-                    />
-                  </div>
-                  <div className="space-y-2 pt-2">
-                    <Label htmlFor="project-create-process-tags">{t('fieldProcessTags')} <span className="text-xs text-muted-foreground">{t('tagSeparatorHintSuggestion')}</span></Label>
-                    <Input
-                      id="project-create-process-tags"
-                      value={form.processTagsInput}
-                      onChange={(e) => updateField('processTagsInput', e.target.value)}
-                      placeholder={t('tagPlaceholderProcessFull')}
-                      maxLength={500}
-                    />
-                  </div>
-                </details>
+                {/* 2026-06-02: 業務ドメイン/技術スタック/工程タグの入力欄は UI 非表示化
+                    (提案エンジン用の値は LLM 自動抽出で補完するため手動入力欄は廃止)。 */}
                 {/* PR #67: 作成と同時に関連 URL を登録可能 */}
                 <StagedAttachmentsInput
                   value={stagedAttachments}
@@ -518,16 +492,21 @@ export function ProjectsClient({
         <ResizableTableShell tableKey="projects">
             <TableHeader>
               <TableRow>
+                {/* 2026-06-03: 列順を プロジェクト名・ステータス・予定日・実績日・監査列 に変更 (顧客/開発方式 列は削除)。 */}
                 <SortableResizableHead columnKey="name" defaultWidth={220} label={t('fieldName')} sortState={sortState} onSortChange={setSortColumn} />
-                <SortableResizableHead columnKey="customer" defaultWidth={160} label={t('fieldCustomer')} sortState={sortState} onSortChange={setSortColumn} />
-                <SortableResizableHead columnKey="devMethod" defaultWidth={140} label={t('fieldDevMethod')} sortState={sortState} onSortChange={setSortColumn} />
                 <SortableResizableHead columnKey="status" defaultWidth={110} label={t('fieldStatus')} sortState={sortState} onSortChange={setSortColumn} />
                 <SortableResizableHead columnKey="plannedStartDate" defaultWidth={120} label={t('fieldPlannedStartDate')} sortState={sortState} onSortChange={setSortColumn} />
                 <SortableResizableHead columnKey="plannedEndDate" defaultWidth={120} label={t('fieldPlannedEndDate')} sortState={sortState} onSortChange={setSortColumn} />
+                <SortableResizableHead columnKey="actualStartDate" defaultWidth={120} label={t('fieldActualStartDate')} sortState={sortState} onSortChange={setSortColumn} />
+                <SortableResizableHead columnKey="actualEndDate" defaultWidth={120} label={t('fieldActualEndDate')} sortState={sortState} onSortChange={setSortColumn} />
+                <SortableResizableHead columnKey="createdByName" defaultWidth={110} label={tCommon('auditCreatedBy')} sortState={sortState} onSortChange={setSortColumn} />
+                <SortableResizableHead columnKey="createdAt" defaultWidth={130} label={tCommon('auditCreatedAt')} sortState={sortState} onSortChange={setSortColumn} />
+                <SortableResizableHead columnKey="updatedByName" defaultWidth={110} label={tCommon('auditUpdatedBy')} sortState={sortState} onSortChange={setSortColumn} />
+                <SortableResizableHead columnKey="updatedAt" defaultWidth={130} label={tCommon('auditUpdatedAt')} sortState={sortState} onSortChange={setSortColumn} />
               </TableRow>
             </TableHeader>
             <TableBody>
-              {sortedProjects.map((project) => (
+              {pageItems.map((project) => (
                 <TableRow key={project.id}>
                   <TableCell>
                     {/*
@@ -546,10 +525,6 @@ export function ProjectsClient({
                       {project.name}
                     </Link>
                   </TableCell>
-                  <TableCell>{project.customerName}</TableCell>
-                  <TableCell>
-                    {DEV_METHODS[project.devMethod as keyof typeof DEV_METHODS] || project.devMethod}
-                  </TableCell>
                   <TableCell>
                     <Badge variant={statusColors[project.status] || 'secondary'}>
                       {PROJECT_STATUSES[project.status as keyof typeof PROJECT_STATUSES] ||
@@ -558,12 +533,27 @@ export function ProjectsClient({
                   </TableCell>
                   <TableCell>{formatDateOnly(project.plannedStartDate)}</TableCell>
                   <TableCell>{formatDateOnly(project.plannedEndDate)}</TableCell>
+                  <TableCell>{project.actualStartDate ? formatDateOnly(project.actualStartDate) : '—'}</TableCell>
+                  <TableCell>{project.actualEndDate ? formatDateOnly(project.actualEndDate) : '—'}</TableCell>
+                  <TableCell>{project.createdByName || '—'}</TableCell>
+                  <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{formatDateTimeSeconds(project.createdAt)}</TableCell>
+                  <TableCell>{project.updatedAt !== project.createdAt ? (project.updatedByName || '—') : '—'}</TableCell>
+                  <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{project.updatedAt !== project.createdAt ? formatDateTimeSeconds(project.updatedAt) : '—'}</TableCell>
                 </TableRow>
               ))}
               {sortedProjects.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={6} className="py-8 text-center text-muted-foreground">
-                    {t('listEmpty')}
+                  <TableCell colSpan={10} className="py-8 text-center text-muted-foreground">
+                    <p className="m-0">{t('listEmpty')}</p>
+                    {/* feat/starter-data-import (2026-06-05): 空状態でも試せる導線。
+                        取込ボタン本体はテナント設定 (admin 限定) にある。 */}
+                    <Link
+                      href="/settings/tenant"
+                      className="mt-2 inline-block text-sm text-info hover:underline"
+                      data-testid="empty-state-sample-import-cta"
+                    >
+                      データが無くても試せます。スターターデータを取り込む →
+                    </Link>
                   </TableCell>
                 </TableRow>
               )}
@@ -573,12 +563,16 @@ export function ProjectsClient({
 
       {/* PR #128a: モバイル (md 未満) 専用のカードビュー */}
       <div className="space-y-2 md:hidden" role="list" aria-label={t('listTitle')}>
-        {initialProjects.length === 0 ? (
-          <p className="py-8 text-center text-sm text-muted-foreground">
-            {t('listEmpty')}
-          </p>
+        {sortedProjects.length === 0 ? (
+          <div className="py-8 text-center text-sm text-muted-foreground">
+            <p className="m-0">{t('listEmpty')}</p>
+            {/* feat/starter-data-import (2026-06-05): 空状態の取込導線 (モバイル) */}
+            <Link href="/settings/tenant" className="mt-2 inline-block text-info hover:underline">
+              データが無くても試せます。スターターデータを取り込む →
+            </Link>
+          </div>
         ) : (
-          initialProjects.map((project) => (
+          pageItems.map((project) => (
             // perf/phase-5 (2026-06-01): モバイル card view も同じ理由で prefetch=false
             <Link
               key={project.id}
@@ -594,22 +588,24 @@ export function ProjectsClient({
                     project.status}
                 </Badge>
               </div>
+              {/* 2026-06-03: 一覧の列変更に合わせ、顧客/開発方式を外し予定期間・実績期間を表示。 */}
               <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
-                <dt className="text-xs text-muted-foreground">{t('fieldCustomer')}</dt>
-                <dd className="text-foreground">{project.customerName || '-'}</dd>
-                <dt className="text-xs text-muted-foreground">{t('fieldDevMethod')}</dt>
-                <dd className="text-foreground">
-                  {DEV_METHODS[project.devMethod as keyof typeof DEV_METHODS] || project.devMethod}
-                </dd>
-                <dt className="text-xs text-muted-foreground">{t('fieldPeriod')}</dt>
+                <dt className="text-xs text-muted-foreground">{t('fieldPlannedPeriod')}</dt>
                 <dd className="text-foreground">
                   {project.plannedStartDate || '-'} 〜 {project.plannedEndDate || '-'}
+                </dd>
+                <dt className="text-xs text-muted-foreground">{t('fieldActualPeriod')}</dt>
+                <dd className="text-foreground">
+                  {project.actualStartDate || '-'} 〜 {project.actualEndDate || '-'}
                 </dd>
               </dl>
             </Link>
           ))
         )}
       </div>
+
+      <TablePagination page={page} pageCount={pageCount} onPageChange={setPage} />
+
       {initialTotal > 20 && (
         <p className="text-sm text-muted-foreground">{t('totalCountHint', { total: initialTotal, shown: 20 })}</p>
       )}

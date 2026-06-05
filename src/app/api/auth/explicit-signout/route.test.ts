@@ -17,7 +17,8 @@ vi.mock('@/lib/auth', () => ({
 vi.mock('@/lib/db', () => ({
   prisma: {
     user: {
-      update: vi.fn(),
+      // 2026-06-02: 残留 JWT (user 不在) でも P2025 で 500 に倒れないよう update → updateMany に変更
+      updateMany: vi.fn(),
     },
   },
 }));
@@ -61,13 +62,13 @@ describe('POST /api/auth/explicit-signout', () => {
 
   it('認証済 POST → 200 + tokenVersion increment + session 2 種 + theme cookie に Max-Age=0', async () => {
     vi.mocked(auth).mockResolvedValue(authedSession as never);
-    vi.mocked(prisma.user.update).mockResolvedValue({} as never);
+    vi.mocked(prisma.user.updateMany).mockResolvedValue({ count: 1 } as never);
     vi.mocked(recordAuthEvent).mockResolvedValue(undefined as never);
 
     const res = await POST();
 
     expect(res.status).toBe(200);
-    expect(prisma.user.update).toHaveBeenCalledWith({
+    expect(prisma.user.updateMany).toHaveBeenCalledWith({
       where: { id: 'user-1' },
       data: { tokenVersion: { increment: 1 } },
     });
@@ -91,7 +92,7 @@ describe('POST /api/auth/explicit-signout', () => {
     const res = await POST();
 
     expect(res.status).toBe(200);
-    expect(prisma.user.update).not.toHaveBeenCalled();
+    expect(prisma.user.updateMany).not.toHaveBeenCalled();
     expect(recordAuthEvent).not.toHaveBeenCalled();
 
     // 未認証でも cookie 削除 Set-Cookie は付与する (旧 cookie 残留シナリオを想定)
@@ -104,7 +105,7 @@ describe('POST /api/auth/explicit-signout', () => {
 
   it('監査ログ (auth_event_logs) に logout イベントが記録される', async () => {
     vi.mocked(auth).mockResolvedValue(authedSession as never);
-    vi.mocked(prisma.user.update).mockResolvedValue({} as never);
+    vi.mocked(prisma.user.updateMany).mockResolvedValue({ count: 1 } as never);
     vi.mocked(recordAuthEvent).mockResolvedValue(undefined as never);
 
     await POST();
@@ -119,13 +120,31 @@ describe('POST /api/auth/explicit-signout', () => {
 
   it('tokenVersion increment が失敗 (DB 一時障害等) → 500 で明示エラー (silent fail を避ける)', async () => {
     vi.mocked(auth).mockResolvedValue(authedSession as never);
-    vi.mocked(prisma.user.update).mockRejectedValue(new Error('Prisma timeout'));
+    vi.mocked(prisma.user.updateMany).mockRejectedValue(new Error('Prisma timeout'));
 
     const res = await POST();
 
     expect(res.status).toBe(500);
     const body = await res.json();
     expect(body.error.code).toBe('LOGOUT_FAILED');
+  });
+
+  it('JWT 有効だが user 不在 (アカウント削除 / DB リセット後の残留 cookie) → 200 + 監査ログ skip + cookie 削除', async () => {
+    // 2026-06-02: updateMany は 0 件でも throw せず count:0。user 不在 = 既に実質無効なので
+    //   signout 成功扱いにして「ログアウト＝再ログイン」を可能にする (旧 update は P2025 で 500)。
+    vi.mocked(auth).mockResolvedValue(authedSession as never);
+    vi.mocked(prisma.user.updateMany).mockResolvedValue({ count: 0 } as never);
+
+    const res = await POST();
+
+    expect(res.status).toBe(200);
+    // 不在 user への logout 監査記録は行わない (FK 不整合防止)
+    expect(recordAuthEvent).not.toHaveBeenCalled();
+    // cookie 削除は必ず実施
+    const setCookie = res.headers.get('set-cookie');
+    expectCookieCleared(setCookie, '__Secure-authjs.session-token');
+    expectCookieCleared(setCookie, 'authjs.session-token');
+    expectCookieCleared(setCookie, THEME_COOKIE_NAME);
   });
 
   it('session token cookie 属性: __Secure- prefix は Secure=true、無 prefix は Secure=false', async () => {

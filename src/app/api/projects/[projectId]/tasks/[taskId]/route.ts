@@ -118,24 +118,8 @@ export async function PATCH(
   );
   if (quotaErr) return quotaErr;
 
-  let task;
-  try {
-    task = await updateTask(taskId, parsed.data, user.id, user.tenantId);
-  } catch (e) {
-    // 2026-05-25 (PR #420 #C3): 親変更 + name 変更で同一親配下に同名タスクが既存 → 400 で返す
-    if (e instanceof Error && e.message === 'TASK_NAME_DUPLICATE_IN_PARENT') {
-      return NextResponse.json(
-        {
-          error: {
-            code: 'TASK_NAME_DUPLICATE_IN_PARENT',
-            message: '同じ親 WP の配下に同じ名称のタスクが既に存在します。名称を変えるか、別の親 WP を選択してください。',
-          },
-        },
-        { status: 400 },
-      );
-    }
-    throw e;
-  }
+  // ADR-0032 (2026-06-04): 名称一意性ガードは撤廃したため TASK_NAME_DUPLICATE_IN_PARENT は発生しない。
+  const task = await updateTask(taskId, parsed.data, user.id, user.tenantId);
 
   await recordAuditLog({
     tenantId: user.tenantId,

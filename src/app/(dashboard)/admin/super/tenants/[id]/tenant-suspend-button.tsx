@@ -270,7 +270,7 @@ function ResumeDialog({
       <ul className="ml-4 list-disc space-y-1 text-amber-900 dark:text-amber-200">
         <li>停止日時: {suspendedAtLocal}</li>
         <li>停止理由: {reasonLabel}</li>
-        <li>状態: write 系 HTTP method (POST/PATCH/PUT/DELETE) は 403 遮断中</li>
+        <li>ステータス: write 系 HTTP method (POST/PATCH/PUT/DELETE) は 403 遮断中</li>
       </ul>
 
       <Dialog

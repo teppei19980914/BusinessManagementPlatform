@@ -70,6 +70,9 @@ export type StakeholderDTO = {
   strategy: string | null;
   createdAt: string;
   updatedAt: string;
+  // 2026-06-02: 一覧で作成者/更新者を表示するため名前解決 (list 経路のみ非null)。
+  createdByName: string | null;
+  updatedByName: string | null;
 };
 
 type StakeholderRow = {
@@ -126,6 +129,8 @@ function toStakeholderDTO(s: StakeholderRow): StakeholderDTO {
     strategy: s.strategy,
     createdAt: s.createdAt.toISOString(),
     updatedAt: s.updatedAt.toISOString(),
+    createdByName: null,
+    updatedByName: null,
   };
 }
 
@@ -159,7 +164,19 @@ export async function listStakeholders(
       { createdAt: 'desc' },
     ],
   });
-  const dtos = rows.map(toStakeholderDTO);
+  // 2026-06-02: 一覧表示用に作成者/更新者名をバルク取得 (氏名のみ select、N+1 回避)。
+  //   tenantId フィルタを明示し自テナントの User のみ解決 = 越境した createdBy/updatedBy は
+  //   null フォールバックされ氏名漏えいしない (User は 1 ユーザ 1 テナント、@@unique([tenantId,email]))。
+  const audUserIds = Array.from(new Set(rows.flatMap((s) => [s.createdBy, s.updatedBy])));
+  const audUsers = audUserIds.length > 0
+    ? await prisma.user.findMany({ where: { id: { in: audUserIds }, tenantId: viewerTenantId }, select: { id: true, name: true } })
+    : [];
+  const audUserNameById = new Map(audUsers.map((u) => [u.id, u.name]));
+  const dtos = rows.map((s) => ({
+    ...toStakeholderDTO(s),
+    createdByName: audUserNameById.get(s.createdBy) ?? null,
+    updatedByName: audUserNameById.get(s.updatedBy) ?? null,
+  }));
   // priority asc (high → medium → low) で安定ソート (元順序を維持)
   dtos.sort(
     (a, b) =>

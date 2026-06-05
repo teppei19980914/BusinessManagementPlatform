@@ -120,6 +120,9 @@ export type TenantSelfInfo = {
   scheduledPlanChangeAt: Date | null;
   scheduledNextPlan: string | null;
   activeUserCount: number;
+  // 2026-06-03 (案A): Beginner 席数の使用数 = 有効 + 招待中 (予約)。
+  //   課金スナップショット用の activeUserCount (有効のみ) とは別概念。席数上限 UI で使う。
+  seatUsageCount: number;
   // P-G (2026-05-08): 請求先情報 / PR C (2026-05-09 #5/#8/#10) で個人法人 + 住所構造化を追加
   billingType: string;
   billingCompanyName: string | null;
@@ -138,8 +141,6 @@ export type TenantSelfInfo = {
   beginnerExpiryState: BeginnerExpiryState;
   /** Beginner プランの残り日数。plan != beginner なら null */
   beginnerDaysRemaining: number | null;
-  // 2026-05-09 (PR G / #24): シードデータ参照 toggle
-  seedDataEnabled: boolean;
   // PR-1 (2026-05-15): テナント単位の TZ / locale (旧 User.timezone/locale の集約先)
   timezone: string;
   locale: string;
@@ -176,6 +177,16 @@ export async function getTenantSelfInfo(tenantId: string): Promise<TenantSelfInf
 
   const activeUserCount = await prisma.user.count({
     where: { tenantId, isActive: true, deletedAt: null },
+  });
+
+  // 2026-06-03 (案A): 席数の使用数 = 有効 (isActive:true) + 招待中 (invitationAcceptedAt:null)。
+  //   招待を予約席として数えるため、招待中も席数 UI / 上限判定に含める (assertSeatAvailableForTenant と一致)。
+  const seatUsageCount = await prisma.user.count({
+    where: {
+      tenantId,
+      deletedAt: null,
+      OR: [{ isActive: true }, { invitationAcceptedAt: null }],
+    },
   });
 
   // ★ PR-V8.2 (2026-05-19) 請求 invariant: 関数返却値も ApiCallLog SUM (真値) ベースに統一。
@@ -229,6 +240,7 @@ export async function getTenantSelfInfo(tenantId: string): Promise<TenantSelfInf
     scheduledPlanChangeAt: t.scheduledPlanChangeAt,
     scheduledNextPlan: t.scheduledNextPlan,
     activeUserCount,
+    seatUsageCount,
     billingType: t.billingType,
     billingCompanyName: t.billingCompanyName,
     billingContactName: t.billingContactName,
@@ -243,7 +255,6 @@ export async function getTenantSelfInfo(tenantId: string): Promise<TenantSelfInf
     paymentMethod: t.paymentMethod,
     beginnerExpiryState,
     beginnerDaysRemaining,
-    seedDataEnabled: t.seedDataEnabled,
     // PR-1 (2026-05-15): テナント単位 TZ / locale
     timezone: t.timezone,
     locale: t.locale,
@@ -445,8 +456,6 @@ export type UpdateTenantSelfInput = {
    * Beginner では cost=0 のため意味を持たず、BEGINNER_EMBEDDING_BUDGET_NOT_ALLOWED で拒否。
    */
   monthlyEmbeddingBudgetCapJpy?: number | null;
-  // 2026-05-09 (PR G / #24): シードデータ参照 toggle (即時反映)
-  seedDataEnabled?: boolean;
 };
 
 export type UpdateTenantSelfResult =
@@ -463,7 +472,11 @@ export type UpdateTenantSelfResult =
         | 'BEGINNER_BUDGET_NOT_ALLOWED'
         // ADR-0030 (2026-05-30): Beginner Embedding は cost=0 のため金額上限が意味を持たない。
         //   UI でフォーム非表示だが、API 直叩きの迂回防止として明示的に拒否する。
-        | 'BEGINNER_EMBEDDING_BUDGET_NOT_ALLOWED';
+        | 'BEGINNER_EMBEDDING_BUDGET_NOT_ALLOWED'
+        // feat/billing-conditional-by-plan (2026-06-05): 有料プラン (Expert/Pro) への変更時は
+        //   請求先住所が揃っていることを必須化する。Beginner はサインアップ時に請求先を省略できる
+        //   ため、有料化 (昇格 / Expert↔Pro 切替) の瞬間に未入力なら拒否し、設定画面での入力へ誘導する。
+        | 'BILLING_INFO_INCOMPLETE';
     }
   // PR-S3 (2026-05-14): credit_card 払いテナントのプラン変更時カード検証失敗
   | {
@@ -530,13 +543,11 @@ export async function updateTenantSelf(
     return { ok: false, error: 'BEGINNER_EMBEDDING_BUDGET_NOT_ALLOWED' };
   }
 
-  // 予算上限 / seedDataEnabled のみの変更 (プランは変えない)
+  // 予算上限のみの変更 (プランは変えない)
   if (input.plan === undefined) {
     const data: Record<string, unknown> = {};
     if (input.monthlyBudgetCapJpy !== undefined) data.monthlyBudgetCapJpy = input.monthlyBudgetCapJpy;
     if (input.monthlyEmbeddingBudgetCapJpy !== undefined) data.monthlyEmbeddingBudgetCapJpy = input.monthlyEmbeddingBudgetCapJpy;
-    // 2026-05-09 (PR G / #24): seedDataEnabled toggle (即時反映)
-    if (input.seedDataEnabled !== undefined) data.seedDataEnabled = input.seedDataEnabled;
     if (Object.keys(data).length > 0) {
       await prisma.tenant.update({ where: { id: tenantId }, data });
     }
@@ -564,6 +575,21 @@ export async function updateTenantSelf(
   //   本ガードは「ダウングレードの中で Beginner だけは禁止」を表す唯一の入口になった。
   if (nextPlan === 'beginner') {
     return { ok: false, error: 'BEGINNER_DOWNGRADE_FORBIDDEN' };
+  }
+
+  // feat/billing-conditional-by-plan (2026-06-05): 有料プラン (Expert/Pro) への変更時は請求先住所を必須化。
+  //   ここに到達する時点で nextPlan は 'expert' | 'pro' (Beginner ダウングレードは上で弾き済) かつ実変更。
+  //   Beginner はサインアップ時に請求先を省略できるため、昇格 / Expert↔Pro 切替の瞬間に未入力なら拒否し、
+  //   設定画面の請求先入力へ誘導する (= 請求書送付先のない有料テナントを生まない)。
+  const billingComplete =
+    !!tenant.billingPostalCode?.trim() &&
+    !!tenant.billingPrefecture?.trim() &&
+    !!tenant.billingCity?.trim() &&
+    !!tenant.billingStreetAddress?.trim() &&
+    // 法人は会社名も必須 (個人は不要)
+    (tenant.billingType !== 'corporate' || !!tenant.billingCompanyName?.trim());
+  if (!billingComplete) {
+    return { ok: false, error: 'BILLING_INFO_INCOMPLETE' };
   }
 
   // PR-S3 (2026-05-14): credit_card 払いテナントはプラン変更前にカードを検証する。

@@ -122,7 +122,7 @@ export type RemoveMode = 'keep' | 'warn' | 'delete';
  *  旧 17 列 / 16 列 CSV も後方互換で parse 可能 (parser で列数判定)。 */
 export const RISK_CSV_HEADERS = [
   'ID', '種別', '件名', '発生事象', '内容', '原因', '影響度', '発生確率',
-  '対応方針', '担当者氏名', '期限', '状態',
+  '対応方針', '担当者氏名', '期限', '状態', '結果',
   '公開範囲', 'リスク性質',
 ] as const;
 
@@ -187,8 +187,16 @@ export function parseRiskSyncImportCsv(csvText: string): RiskSyncImportRow[] {
       assigneeName: 10, deadline: 11, state: 12, result: 13,
       lessonLearned: 14, visibility: 15, riskNature: 16,
     };
+  } else if (colCount === 15) {
+    // 2026-06-02: 新形式 (結果列を再追加。事象/原因/対応策/結果 を含む往復編集形式)。
+    COL = {
+      id: 0, type: 1, title: 2, occurrence: 3, content: 4, cause: 5,
+      impact: 6, likelihood: 7, responsePolicy: 8, responseDetail: -1,
+      assigneeName: 9, deadline: 10, state: 11, result: 12,
+      lessonLearned: -1, visibility: 13, riskNature: 14,
+    };
   } else if (colCount === 14) {
-    // 新形式 (fix/list-export-import-bugs)
+    // 旧新形式 (結果列なし、後方互換)
     COL = {
       id: 0, type: 1, title: 2, occurrence: 3, content: 4, cause: 5,
       impact: 6, likelihood: 7, responsePolicy: 8, responseDetail: -1,
@@ -846,6 +854,7 @@ export async function exportRisksSync(
       escapeCsv(r.assignee?.name ?? null),
       r.deadline ? r.deadline.toISOString().split('T')[0] : '',
       r.state,
+      escapeCsv(r.result),
       r.visibility,
       r.riskNature ?? '',
     ].join(',');

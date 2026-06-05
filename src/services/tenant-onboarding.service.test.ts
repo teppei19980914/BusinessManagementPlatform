@@ -134,6 +134,74 @@ describe('TenantOnboardingInputSchema', () => {
     expect(r.success).toBe(true);
   });
 
+  // feat/billing-conditional-by-plan (2026-06-05): プラン別の請求先必須/任意を両方向で固定する。
+  //   この describe が壊れたら「Beginner で住所必須化された」or「Expert で住所任意化された」デグレ。
+  describe('プラン別の請求先住所の必須/任意 (両方向)', () => {
+    // 住所 4 項目 + 会社名を欠いた入力 (= Beginner が省略できる状態)
+    const withoutAddress = {
+      ...VALID_INPUT,
+      billingCompanyName: undefined,
+      billingPostalCode: undefined,
+      billingPrefecture: undefined,
+      billingCity: undefined,
+      billingStreetAddress: undefined,
+      billingBuildingName: undefined,
+    };
+
+    it('Beginner: 住所・会社名が無くても parse 成功 (任意)', () => {
+      const r = TenantOnboardingInputSchema.safeParse({
+        ...withoutAddress,
+        plan: 'beginner',
+        billingType: 'individual',
+      });
+      expect(r.success).toBe(true);
+    });
+
+    it('Expert: 住所が無いと parse 失敗 (必須)', () => {
+      const r = TenantOnboardingInputSchema.safeParse({
+        ...withoutAddress,
+        plan: 'expert',
+        billingType: 'individual',
+      });
+      expect(r.success).toBe(false);
+      if (!r.success) {
+        const paths = r.error.issues.map((i) => i.path.join('.'));
+        expect(paths).toContain('billingPostalCode');
+        expect(paths).toContain('billingPrefecture');
+        expect(paths).toContain('billingCity');
+        expect(paths).toContain('billingStreetAddress');
+      }
+    });
+
+    it('Pro: 住所が揃っていれば parse 成功', () => {
+      const r = TenantOnboardingInputSchema.safeParse({ ...VALID_INPUT, plan: 'pro' });
+      expect(r.success).toBe(true);
+    });
+
+    it('Expert 法人: 会社名が無いと parse 失敗', () => {
+      const r = TenantOnboardingInputSchema.safeParse({
+        ...VALID_INPUT,
+        plan: 'expert',
+        billingType: 'corporate',
+        billingCompanyName: undefined,
+      });
+      expect(r.success).toBe(false);
+      if (!r.success) {
+        expect(r.error.issues.map((i) => i.path.join('.'))).toContain('billingCompanyName');
+      }
+    });
+
+    it('Expert 個人: 会社名が無くても住所が揃えば parse 成功', () => {
+      const r = TenantOnboardingInputSchema.safeParse({
+        ...VALID_INPUT,
+        plan: 'expert',
+        billingType: 'individual',
+        billingCompanyName: undefined,
+      });
+      expect(r.success).toBe(true);
+    });
+  });
+
   it('slug 形式不正は reject', () => {
     const bad = { ...VALID_INPUT, slug: 'INVALID UPPERCASE' };
     expect(TenantOnboardingInputSchema.safeParse(bad).success).toBe(false);
@@ -166,9 +234,11 @@ describe('TenantOnboardingInputSchema', () => {
     if (r.success) expect(r.data.plan).toBe('beginner');
   });
 
-  // 2026-05-09 (PR C / #5): 法人プランは会社名必須
-  it('法人プランで会社名空は reject (#5)', () => {
-    const bad = { ...VALID_INPUT, billingCompanyName: '' };
+  // 2026-05-09 (PR C / #5): 法人は会社名必須。
+  // feat/billing-conditional-by-plan (2026-06-05): この必須は Expert/Pro のみ (Beginner は請求先任意)。
+  //   そのため plan を expert にして「法人 × 会社名空 → reject」を固定する。
+  it('法人 Expert プランで会社名空は reject (#5)', () => {
+    const bad = { ...VALID_INPUT, plan: 'expert' as const, billingCompanyName: '' };
     expect(TenantOnboardingInputSchema.safeParse(bad).success).toBe(false);
   });
 

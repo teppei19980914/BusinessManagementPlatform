@@ -115,7 +115,7 @@ describe('POST /api/customers — 認可', () => {
     vi.mocked(createCustomer).mockResolvedValue({
       id: 'new-c', name: 'X 商事', department: null, contactPerson: null,
       contactEmail: null, notes: null, createdAt: '2026-05-14T00:00:00Z',
-      updatedAt: '2026-05-14T00:00:00Z', activeProjectCount: 0,
+      updatedAt: '2026-05-14T00:00:00Z', createdByName: null, updatedByName: null, activeProjectCount: 0,
     });
     const res = await POST(buildPostReq(validBody));
     expect(res.status).toBe(201);
@@ -133,7 +133,7 @@ describe('POST /api/customers — 認可', () => {
     vi.mocked(createCustomer).mockResolvedValue({
       id: 'new-c', name: 'X 商事', department: null, contactPerson: null,
       contactEmail: null, notes: null, createdAt: '2026-05-14T00:00:00Z',
-      updatedAt: '2026-05-14T00:00:00Z', activeProjectCount: 0,
+      updatedAt: '2026-05-14T00:00:00Z', createdByName: null, updatedByName: null, activeProjectCount: 0,
     });
     const res = await POST(buildPostReq(validBody));
     expect(res.status).toBe(201);

@@ -104,10 +104,9 @@ describe('suggestForProject', () => {
     expect(r.retrospectives[0].snippet).toContain('問題点');
   });
 
-  // 2026-05-09 (PR G / #24): seedDataEnabled=false なら管理テナントを除外する
-  // 2026-05-10 Phase 2-7: テナント越境遮断のため、seedDataEnabled=false は **自テナントのみ** に絞る
-  //   (旧仕様の `{ not: MANAGEMENT_TENANT_ID }` は他顧客テナントの提案候補が混入する severity-1 バグ)。
-  it('seedDataEnabled=false なら自テナント (viewerTenantId) のみを where 節で許容する (#24 / Phase 2-7)', async () => {
+  // feat/starter-data-import (2026-06-05): 単一テナント化。提案候補は **常に自テナントのみ** を参照する。
+  //   旧 seedDataEnabled による管理テナント越境参照は撤去された。この検証が壊れたら越境参照の復活デグレ。
+  it('提案候補は常に自テナント (viewerTenantId) のみを where 節で許容する (単一テナント化)', async () => {
     vi.mocked(prisma.project.findFirst).mockResolvedValue({
       id: 'p-1',
       tenantId: 'tenant-customer',
@@ -118,8 +117,6 @@ describe('suggestForProject', () => {
       techStackTags: [],
       processTags: [],
     } as never);
-    // 自テナントの seedDataEnabled = false
-    vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({ seedDataEnabled: false } as never);
     vi.mocked(prisma.knowledge.findMany).mockResolvedValue([]);
     vi.mocked(prisma.riskIssue.findMany).mockResolvedValue([]);
     vi.mocked(prisma.retrospective.findMany).mockResolvedValue([]);
@@ -127,64 +124,8 @@ describe('suggestForProject', () => {
 
     await suggestForProject('p-1', 'tenant-customer');
 
-    // knowledge.findMany の where に tenantId === 'tenant-customer' が含まれること
-    const knowledgeCall = vi.mocked(prisma.knowledge.findMany).mock.calls[0][0];
-    expect(knowledgeCall?.where?.tenantId).toBe('tenant-customer');
-  });
-
-  // 2026-05-09 (PR G / #24): seedDataEnabled=true ならテナント除外フィルタは付かない
-  // 2026-05-10 Phase 2-7: 旧仕様 (where に tenantId フィルタなし = 全テナント混入) は severity-1 バグ。
-  //   現仕様: 自テナント + 管理テナント (シード) のみ許容。
-  it('seedDataEnabled=true (default) なら自テナント + 管理テナントのみ許容する (#24 / Phase 2-7)', async () => {
-    vi.mocked(prisma.project.findFirst).mockResolvedValue({
-      id: 'p-1',
-      tenantId: 'tenant-customer',
-      purpose: 'p',
-      background: 'b',
-      scope: 's',
-      businessDomainTags: [],
-      techStackTags: [],
-      processTags: [],
-    } as never);
-    vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({ seedDataEnabled: true } as never);
-    vi.mocked(prisma.knowledge.findMany).mockResolvedValue([]);
-    vi.mocked(prisma.riskIssue.findMany).mockResolvedValue([]);
-    vi.mocked(prisma.retrospective.findMany).mockResolvedValue([]);
-    vi.mocked(prisma.$queryRaw).mockResolvedValue([] as never);
-
-    await suggestForProject('p-1', 'tenant-customer');
-
-    const knowledgeCall = vi.mocked(prisma.knowledge.findMany).mock.calls[0][0];
-    expect(knowledgeCall?.where?.tenantId).toEqual({
-      in: ['tenant-customer', '00000000-0000-0000-0000-ffffffffffff'],
-    });
-  });
-
-  // 2026-05-24 (PR fix/chat-search-and-auto-open): tenant lookup が null を返す異常系で
-  // fail-closed = 自テナントのみで動作。旧仕様の `?? true` は MANAGEMENT_TENANT_ID のシード
-  // を漏洩させうるフェイルオープンだったため修正。
-  it('tenant lookup が null のとき seedDataEnabled=false 扱いで自テナントのみに絞る (fail-closed)', async () => {
-    vi.mocked(prisma.project.findFirst).mockResolvedValue({
-      id: 'p-1',
-      tenantId: 'tenant-customer',
-      purpose: 'p',
-      background: 'b',
-      scope: 's',
-      businessDomainTags: [],
-      techStackTags: [],
-      processTags: [],
-    } as never);
-    // tenant 自体が見つからない (削除中 race / DB 異常等)
-    vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce(null);
-    vi.mocked(prisma.knowledge.findMany).mockResolvedValue([]);
-    vi.mocked(prisma.riskIssue.findMany).mockResolvedValue([]);
-    vi.mocked(prisma.retrospective.findMany).mockResolvedValue([]);
-    vi.mocked(prisma.$queryRaw).mockResolvedValue([] as never);
-
-    await suggestForProject('p-1', 'tenant-customer');
-
-    // 旧仕様なら `{ in: ['tenant-customer', MANAGEMENT_TENANT_ID] }` だが、
-    // fail-closed では自テナントのみ
+    // knowledge.findMany の where に tenantId === 'tenant-customer' (= 自テナントのみ) が含まれること。
+    // 管理テナント ('...ffffffffffff') を含む配列形式 ({ in: [...] }) では **ない** こと。
     const knowledgeCall = vi.mocked(prisma.knowledge.findMany).mock.calls[0][0];
     expect(knowledgeCall?.where?.tenantId).toBe('tenant-customer');
   });
@@ -627,12 +568,12 @@ describe('suggestForProject', () => {
 
     // findMany の where 句に NOT: { knowledgeProjects: { some: { projectId: 'p-1' } } } が
     // 含まれているかを検証 (regression防止: alreadyLinked 戻し対策)
-    // 2026-05-10 Phase 2-7: テナント越境遮断のため tenantId フィルタも併存する
+    // feat/starter-data-import (2026-06-05): 単一テナント化により tenantId は自テナントのみ。
     const call = vi.mocked(prisma.knowledge.findMany).mock.calls[0][0];
     expect(call?.where).toEqual({
       deletedAt: null,
       visibility: 'public',
-      tenantId: { in: ['tenant-customer', '00000000-0000-0000-0000-ffffffffffff'] },
+      tenantId: 'tenant-customer',
       NOT: {
         knowledgeProjects: { some: { projectId: 'p-1' } },
       },

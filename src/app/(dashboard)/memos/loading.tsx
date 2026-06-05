@@ -7,9 +7,9 @@ import { Skeleton } from '@/components/ui/skeleton';
 export default function MemosLoading() {
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <Skeleton className="h-7 w-32" />
-        <Skeleton className="h-9 w-32" />
+      {/* 2026-06-03: 画面見出し (メモ一覧) を撤去し、ボタン行を右寄せに統一した本体レイアウトに合わせる */}
+      <div className="flex items-center justify-end">
+        <Skeleton className="h-9 w-80" />
       </div>
       <div className="flex gap-4">
         <Skeleton className="h-9 w-64" />

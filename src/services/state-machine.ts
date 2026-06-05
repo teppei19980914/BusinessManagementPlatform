@@ -1,8 +1,11 @@
 /**
  * プロジェクト状態遷移（設計書: DESIGN.md セクション 6）
  *
- * 状態遷移図:
- * planning → estimating → scheduling → executing → completed → retrospected → closed
+ * 状態遷移図 (2026-06-03: 完了/振り返り完了を廃止し 5 ステータスに簡素化):
+ * planning → estimating → scheduling → executing → closed
+ *
+ * 注: 2026-06-03 以降、ステータスは新規作成/編集フォームから任意に選択する方式に移行したため、
+ *     本 state-machine (一方向遷移) は dormant (新 UI からは未使用)。正準的な順序の記録として残置。
  */
 
 import type { ProjectStatus } from '@/types';
@@ -16,9 +19,7 @@ const ALLOWED_TRANSITIONS: TransitionRule[] = [
   { from: 'planning', to: 'estimating' },
   { from: 'estimating', to: 'scheduling' },
   { from: 'scheduling', to: 'executing' },
-  { from: 'executing', to: 'completed' },
-  { from: 'completed', to: 'retrospected' },
-  { from: 'retrospected', to: 'closed' },
+  { from: 'executing', to: 'closed' },
 ];
 
 export function canTransition(

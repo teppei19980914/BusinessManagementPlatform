@@ -515,6 +515,7 @@ PR #416 で新たに `$transaction` 化した service 経路一覧。
 | 同時セッション | 制限なし（初期）。本格運用時に最大 3 デバイスに制限検討 | 初期は実装コストを削減 |
 | Cookie 属性 | HttpOnly, Secure, SameSite=Lax, Path=/ | 盗聴・XSS・CSRF の緩和 |
 | 個別ユーザの即時失効 | **`users.tokenVersion` を increment** し、各リクエスト入口の `getAuthenticatedUser` で JWT claim と DB 最新値を照合 (`auth.config.ts:207-210` で JWT に格納、`:268-270` で session に伝播)。admin が increment した瞬間に既存 JWT は全て 401 になる (強制ログアウト)。ログアウトも cookie 削除に依存せず tokenVersion increment + layout DB 照合で実質失効させる (`/api/auth/explicit-signout`、KDD §5.X+72) | 権限昇格/失効の即時反映。Netlify で Set-Cookie が脱落しても DB 側で確実に無効化 |
+| 他の端末からログアウト (本人操作) | **`POST /api/auth/logout-other-devices`** (feat/logout-other-devices 2026-06-03)。`tokenVersion` を increment して全端末の JWT を失効させた上で、**呼出端末のみ**新 tokenVersion で JWT を再署名 (`auth-jwt-helper`) し現在端末はログイン維持。他端末は次回リクエストで 401。設定画面 `/settings` の「他の端末からログアウト」ボタンから本人が実行 (認可=本人のみ、`authEventLog.eventType='logout_other_devices'` 記録)。再署名失敗時は現在端末も失効する安全側設計 | 端末紛失/共用 PC 置き忘れ時の自己防衛。通常ログアウトと違い現在端末は継続利用可 |
 | 無効化ユーザの遮断 | isActive フラグを DB 照合で即時反映 | 退職者/無効化アカウントの継続アクセス防止 |
 
 ##### 9.4.4.1 セッション中の JWT claim 更新 — 再署名方式 (NextAuth `update()` 不使用)
@@ -1211,8 +1212,9 @@ Console にも画面にも出さず、必ず DB (system_error_logs) に保存す
 | コード桁数 | 6 桁 |
 | 時間ステップ | 30 秒 |
 | 対応アプリ | Google Authenticator / Microsoft Authenticator / Authy 等 |
-| 管理者 | MFA 必須（MFA 未設定の管理者はシステム管理機能にアクセス不可） |
-| 一般ユーザ | オプトイン（将来的に必須化を検討） |
+| サービス運営者 (super_admin) | **MFA 必須**（初期セットアップで強制有効化、設定画面から無効化不可）。強制範囲は #11 (2026-05-09) で旧「admin」判定から **super_admin 限定** に narrowing 済 (実装: `setup-password` / `email-verification` の `requiresMfa` は super_admin のみ true) |
+| テナント管理者 (admin) | **任意** (オプトイン)。MFA 未設定でも管理機能にアクセス可 (専用ゲートは無し)。設定画面の「多要素認証 (MFA)」で本人が有効化/無効化できる |
+| 一般ユーザ (general) | **任意** (オプトイン)。設定画面で本人が有効化/無効化できる |
 
 #### 9.17.2 MFA 有効化フロー
 

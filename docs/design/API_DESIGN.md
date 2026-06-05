@@ -241,12 +241,12 @@
 | /api/chat/search | POST | 認証 | 5 資産横断の意味検索 (embedding cosine + keyword filter)。§16 参照 |
 | /api/help/chat | POST | 認証 | たすきフクロウ AI ヘルプチャット (FaqEmbedding/GuideEmbedding RAG、ADR-0028)。viewer の systemRole から isTenantAdmin 判定 |
 
-#### テナント (自己, tenants/me) — 11 route
+#### テナント (自己, tenants/me) — 12 route
 
 | パス | メソッド | 認可 | 概要 |
 |---|---|---|---|
 | /api/tenants/me | GET | 認証 | 自テナント情報取得 |
-| /api/tenants/me | PATCH | admin | 自テナント更新 |
+| /api/tenants/me | PATCH | admin | 自テナント更新 (プラン変更時、有料化は請求先住所完備が必須) |
 | /api/tenants/me | DELETE | admin | 自テナント削除 |
 | /api/tenants/me/i18n | PATCH | 認証 | locale/timezone 設定 |
 | /api/tenants/me/export | GET | 認証 | テナントデータ一括エクスポート |
@@ -257,6 +257,8 @@
 | /api/tenants/me/external-import/template | GET | admin | 外部インポート用テンプレート取得 |
 | /api/tenants/me/external-import/preview | POST | admin | 外部インポートのプレビュー (precheck) |
 | /api/tenants/me/external-import/apply | POST | admin | 外部インポート適用 (withStorageGuard) |
+| /api/tenants/me/sample-data | POST | admin | スターターデータ取込 (管理テナントからクローン、容量 precheck) |
+| /api/tenants/me/sample-data | DELETE | admin | スターターデータ一括削除 (is_seed_sample=true のみ) |
 
 #### テナント課金 (Stripe, tenants/me/billing) — 7 route
 
@@ -277,14 +279,16 @@
 | /api/admin/users | POST | admin | ユーザ登録 |
 | /api/admin/users/[userId] | PATCH | admin | ユーザ更新 (ロール/有効無効含む。自己ロール変更は CANNOT_CHANGE_OWN_ROLE) |
 | /api/admin/users/[userId] | DELETE | admin | ユーザ削除 (論理削除 + ProjectMember 物理カスケード) |
-| /api/admin/users/[userId]/unlock | POST | admin | ロック解除 |
-| /api/admin/users/[userId]/recovery-codes | POST | admin | リカバリコード再発行 |
+| /api/admin/users/[userId]/unlock | POST | admin | ロック解除 (PW + MFA 一括) |
+| /api/admin/users/[userId]/recovery-codes | POST | admin | リカバリコード再発行 (10 個を 1 回返却) |
+| /api/admin/users/[userId]/resend-invitation | POST | admin | 招待メール再送 (招待中ユーザのみ。2026-06-03 追加) |
+| /api/admin/users/[userId]/cancel-invitation | POST | admin | 招待取消 (招待中を物理削除し席を解放。2026-06-03 追加) |
 | /api/admin/users/lock-inactive | POST | admin/cron | 非アクティブユーザ一括ロック (日次 cron + 手動) |
 | /api/admin/audit-logs | GET | admin | 監査ログ一覧 |
 | /api/admin/role-change-logs | GET | admin | 権限変更履歴 |
 | /api/admin/usage-summary | GET | admin | 利用量サマリ |
 
-#### super-admin (admin/super) — 17 route
+#### super-admin (admin/super) — 18 route
 
 | パス | メソッド | 認可 | 概要 |
 |---|---|---|---|
@@ -299,6 +303,8 @@
 | /api/admin/super/tenants/[id]/storage-guard-reset | POST | super_admin | ストレージガードのリセット |
 | /api/admin/super/recalculate-all | POST | super_admin | 全テナント横断再集計 |
 | /api/admin/super/cron-history | GET | super_admin | cron 実行履歴 |
+| /api/admin/super/seed-data | GET | super_admin | スターターデータ取込元 (管理テナント) の Project/Knowledge 一覧 |
+| /api/admin/super/seed-data | PATCH | super_admin | 上記の isSampleData 切替 (取込対象キュレーション、MANAGEMENT_TENANT_ID 限定) |
 | /api/admin/super/usage/export | GET | super_admin | 月次利用量 CSV エクスポート |
 | /api/admin/super/billing/export/[yearMonth] | GET | super_admin | 月次請求 CSV エクスポート |
 | /api/admin/super/billing/[id]/confirm-payment | POST | super_admin | 入金確認 (請求ステータス更新) |
@@ -409,7 +415,7 @@
 | **METHOD_NOT_ALLOWED** | **405** | 未対応メソッド (例: cron route への GET アクセス) |
 | STATE_CONFLICT | 409 | 状態遷移条件を満たさない |
 | IMPORT_CONCURRENT_EDIT | 409 | sync-import の OCC 並行編集検出 (`x-import-snapshot-at` 不一致) |
-| TASK_NAME_DUPLICATE_IN_PARENT | 400 | 同一親 WP 配下に同名タスク既存 (部分 UNIQUE 制約の app 層ガード) |
+| CSV_ROW_COUNT_EXCEEDED | 413 | sync-import の行数が DoS 安全弁を超過 (タスクは `TASK_SYNC_IMPORT_MAX_ROWS`=2000、他 entity は `CSV_MAX_ROWS`=500)。※ ADR-0032 でタスクの業務上限は撤廃し、目安超過は dry-run の `globalWarnings` で案内 |
 | IMPORT_VALIDATION_ERROR / IMPORT_REMOVE_BLOCKED | 400 | sync-import 本実行での blocker 再検出 / 進捗ありタスク削除要求 |
 | TASKS_OUT_OF_RANGE / TASKS_NOT_FOUND / TARGET_PARENT_NOT_FOUND / TARGET_PARENT_NOT_WP / ACT_CANNOT_BE_ROOT | 400/404 | bulk-duplicate のガード群 |
 | DANGEROUS_FILE_TYPE / INVALID_OBJECT_KEY | 400 | 添付: 危険拡張子 / objectKey の越境 prefix |

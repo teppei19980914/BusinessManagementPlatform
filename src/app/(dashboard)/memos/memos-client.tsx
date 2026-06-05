@@ -36,6 +36,7 @@ import { useMultiSort } from '@/components/sort/use-multi-sort';
 import { multiSort } from '@/lib/multi-sort';
 import { ResizableTableShell } from '@/components/common/resizable-table-shell';
 import { useListSearchParams } from '@/components/common/use-list-search-params';
+import { useTablePagination, TablePagination } from '@/components/common/table-pagination';
 import { AttachmentList } from '@/components/attachments/attachment-list';
 // PR #213 (2026-05-01): 個人メモ画面にもコメント機能を追加
 import { CommentSection } from '@/components/comments/comment-section';
@@ -46,11 +47,12 @@ import {
 } from '@/components/attachments/staged-attachments-input';
 import { useBatchAttachments } from '@/components/attachments/use-batch-attachments';
 import { AttachmentsCell } from '@/components/attachments/attachments-cell';
+// 2026-06-03: 他「○○一覧」と列構成を統一 — リンク列 (url 型) と添付列 (ファイル本体) を分離。
+import { LinksCell } from '@/components/attachments/links-cell';
 // PR #119: session 連携フォーマッタ
 import { useFormatters } from '@/lib/use-formatters';
 import { matchesAnyKeyword } from '@/lib/text-search';
-// Phase E 要件 1〜3 (2026-04-29): 共通バッジ + 行クリック + 一括選択部品
-import { VisibilityBadge } from '@/components/common/visibility-badge';
+// Phase E 要件 1〜3 (2026-04-29): 共通行クリック + 一括選択部品
 import { ClickableRow } from '@/components/common/clickable-row';
 import { BulkSelectHeader, BulkSelectCell } from '@/components/common/bulk-select';
 // feat/dialog-fullscreen-toggle: 文字量が多い dialog 向けの全画面トグル
@@ -72,8 +74,7 @@ function getMemoSortValue(m: MemoDTO, columnKey: string): unknown {
   switch (columnKey) {
     case 'title': return m.title;
     case 'content': return m.content;
-    case 'visibility': return m.visibility;
-    case 'author': return m.authorName ?? '';
+    case 'createdAt': return m.createdAt;
     case 'updatedAt': return m.updatedAt;
     default: return null;
   }
@@ -116,7 +117,8 @@ export function MemosClient({
   const { withLoading } = useLoading();
   const { showSuccess, showError } = useToast();
   // PR #119: session 連携フォーマッタ
-  const { formatDateTime } = useFormatters();
+  // 作成日時/更新日時は監査列のため秒まで表示 (formatDateTimeSeconds = 全画面共通の設計)
+  const { formatDateTimeSeconds } = useFormatters();
   const [memos, setMemos] = useState(initialMemos);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   // T-22 Phase 22d: 上書きインポート (sync-import) ダイアログ
@@ -178,6 +180,11 @@ export function MemosClient({
     }
     return multiSort(xs, sortState, getMemoSortValue);
   }, [memos, bulkFilter, sortState]);
+
+  const { pageItems, page, pageCount, setPage } = useTablePagination(
+    filteredMemos,
+    `${kwState}|${bulkFilters.mineOnly}`,
+  );
 
   // fix/list-export-import-bugs (2026-05-26): チェックボックスは export + bulk visibility 兼用に拡張。
   //   全行選択可とし、bulk visibility は サーバ側で per-row 認可 (canEdit=false は silent skip)。
@@ -368,23 +375,11 @@ export function MemosClient({
           </p>
         </div>
       )}
-      {/* PR #165: 個人「メモ一覧」での一括 visibility 変更 */}
-      <CrossListBulkVisibilityToolbar
-        endpoint="/api/memos/bulk"
-        formIdPrefix="memos-personal"
-        filter={bulkFilter}
-        onFilterChange={setBulkFilter}
-        selectedIds={selectedIds}
-        onSelectionClear={() => setSelectedIds(new Set())}
-        visibilityOptions={MEMO_VISIBILITY_OPTIONS}
-        entityLabel={tMemo('entityLabel')}
-        onApplied={async () => { await reload(); }}
-        // メモ一覧は対象が自分作成のみ編集可能なため、mineOnly フィルターは冗長 (項目 17)
-        hideMineOnlyFilter
-      />
-
-      <div className="flex items-center justify-between">
-        <h2 className="text-xl font-semibold">{tMemo('listTitle')}</h2>
+      {/* 2026-06-03: 他「○○一覧」と UI 配置を統一。順序を
+          ① 件数 + エクスポート/インポート/作成ボタン (最上部・右寄せ) → ② フィルター + 一括編集ツールバー
+          → ③ 列幅リセット + テーブル に揃える (旧実装はツールバーが最上部 + 画面見出しがあり他一覧と不一致だった)。
+          画面見出し (h2「メモ一覧」) は他「○○一覧」に合わせて撤去。 */}
+      <div className="flex items-center justify-end">
         <div className="flex items-center gap-2">
           <span className="text-sm text-muted-foreground">{tCommon('itemCount', { count: filteredMemos.length })}</span>
           {/* T-22 Phase 22d: sync-import (往復編集) — 自分のメモのみ */}
@@ -459,6 +454,22 @@ export function MemosClient({
         </div>
       </div>
 
+      {/* PR #165: 個人「メモ一覧」での一括 visibility 変更。
+          他「○○一覧」と同じく タイトル/ボタン行の下・テーブルの上に配置 (2026-06-03 位置統一)。 */}
+      <CrossListBulkVisibilityToolbar
+        endpoint="/api/memos/bulk"
+        formIdPrefix="memos-personal"
+        filter={bulkFilter}
+        onFilterChange={setBulkFilter}
+        selectedIds={selectedIds}
+        onSelectionClear={() => setSelectedIds(new Set())}
+        visibilityOptions={MEMO_VISIBILITY_OPTIONS}
+        entityLabel={tMemo('entityLabel')}
+        onApplied={async () => { await reload(); }}
+        // メモ一覧は対象が自分作成のみ編集可能なため、mineOnly フィルターは冗長 (項目 17)
+        hideMineOnlyFilter
+      />
+
       <ResizableTableShell tableKey="all-memos">
           <TableHeader>
             <TableRow>
@@ -472,15 +483,15 @@ export function MemosClient({
               </ResizableHead>
               <SortableResizableHead columnKey="title" defaultWidth={220} label={tField('title')} sortState={sortState} onSortChange={setSortColumn} />
               <SortableResizableHead columnKey="content" defaultWidth={300} label={tField('body')} sortState={sortState} onSortChange={setSortColumn} />
-              <SortableResizableHead columnKey="visibility" defaultWidth={110} label={tField('visibility')} sortState={sortState} onSortChange={setSortColumn} />
-              <SortableResizableHead columnKey="author" defaultWidth={120} label={tMemo('colAuthor')} sortState={sortState} onSortChange={setSortColumn} />
-              <SortableResizableHead columnKey="updatedAt" defaultWidth={140} label={tMemo('colUpdatedAt')} sortState={sortState} onSortChange={setSortColumn} />
-              <ResizableHead columnKey="attachments" defaultWidth={200}>{tMemo('colAttachments')}</ResizableHead>
+              <SortableResizableHead columnKey="createdAt" defaultWidth={150} label={tMemo('colCreatedAt')} sortState={sortState} onSortChange={setSortColumn} />
+              <SortableResizableHead columnKey="updatedAt" defaultWidth={150} label={tMemo('colUpdatedAt')} sortState={sortState} onSortChange={setSortColumn} />
+              <ResizableHead columnKey="links" defaultWidth={200}>{tMemo('colLinks')}</ResizableHead>
+              <ResizableHead columnKey="attachments" defaultWidth={180}>{tMemo('colAttachments')}</ResizableHead>
               <ResizableHead columnKey="actions" defaultWidth={80}>{tMemo('colActions')}</ResizableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {filteredMemos.map((m) => (
+            {pageItems.map((m) => (
               <ClickableRow
                 key={m.id}
                 active={m.canEdit}
@@ -499,17 +510,18 @@ export function MemosClient({
                 <TableCell className="max-w-[min(90vw,28rem)] truncate text-sm text-foreground" title={m.content}>
                   {m.content.slice(0, 80)}
                 </TableCell>
-                <TableCell>
-                  <VisibilityBadge
-                    visibility={m.visibility}
-                    label={VISIBILITY_LABELS[m.visibility] ?? m.visibility}
-                  />
+                {/* PR #71: /memos 画面は常に自分のメモのみ表示されるため作成者列は省略。
+                    公開範囲は上部の一括変更ツールバーで操作するため列からは撤去 (2026-06-03)。 */}
+                <TableCell className="whitespace-nowrap text-sm text-muted-foreground">{formatDateTimeSeconds(m.createdAt)}</TableCell>
+                <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
+                  {m.updatedAt !== m.createdAt ? formatDateTimeSeconds(m.updatedAt) : '—'}
                 </TableCell>
-                {/* PR #71: /memos 画面は常に自分のメモのみ表示されるため (自分) バッジは省略 */}
-                <TableCell className="text-sm text-muted-foreground">{m.authorName ?? '-'}</TableCell>
-                <TableCell className="whitespace-nowrap text-sm text-muted-foreground">{formatDateTime(m.updatedAt)}</TableCell>
+                {/* リンク列 (url 型添付を縦に複数行) / 添付列 (ファイル本体のみ) */}
                 <TableCell onClick={(e) => e.stopPropagation()}>
-                  <AttachmentsCell items={attachmentsByEntity[m.id] ?? []} />
+                  <LinksCell items={attachmentsByEntity[m.id] ?? []} />
+                </TableCell>
+                <TableCell onClick={(e) => e.stopPropagation()}>
+                  <AttachmentsCell items={(attachmentsByEntity[m.id] ?? []).filter((a) => a.storageProvider === 'supabase')} />
                 </TableCell>
                 {/* fix/quick-ux item 5: 編集は行クリックで実行 (line 266 の onClick={setEditing(m)})。
                     旧仕様では「編集」ボタンが冗長だったため削除し、削除のみアクション列に残す。 */}
@@ -529,6 +541,8 @@ export function MemosClient({
             )}
           </TableBody>
       </ResizableTableShell>
+
+      <TablePagination page={page} pageCount={pageCount} onPageChange={setPage} />
 
       {/* 編集ダイアログ (自分のメモのみ開く) */}
       <Dialog open={editing != null} onOpenChange={(o) => { if (!o) setEditing(null); }}>

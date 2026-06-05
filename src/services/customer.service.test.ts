@@ -14,6 +14,8 @@ vi.mock('@/lib/db', () => ({
     project: {
       findMany: vi.fn(),
     },
+    // 2026-06-02: 一覧の作成者/更新者名解決 (cross-tenant 氏名 lookup) 用
+    user: { findMany: vi.fn().mockResolvedValue([]) },
     // PR fix/visibility-auth-matrix: deleteCustomer も comment cascade
     comment: { updateMany: vi.fn() },
     $transaction: vi.fn((ops: unknown[]) => Promise.all(ops)),

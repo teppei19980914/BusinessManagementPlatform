@@ -171,27 +171,29 @@ export function RetrospectiveEditDialog({
         <form onSubmit={handleSubmit} className="space-y-4">
           {error && <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
           <fieldset disabled={readOnly} className="space-y-4 disabled:opacity-90">
-          {/* PR #63: 公開範囲を最上位に配置 */}
-          <div className="space-y-2">
-            <Label>{tField('visibility')}</Label>
-            <select value={form.visibility} onChange={(e) => setForm({ ...form, visibility: e.target.value })} className={nativeSelectClass}>
-              {Object.entries(VISIBILITIES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-            </select>
-          </div>
-          <div className="space-y-2">
-            <Label>
-              {tField('conductedDate')}
-              {/* 2026-05-11: 公開範囲 = 自分のみ (draft) なら任意。空のまま draft 保存可 (= サーバ側で当日日付が default 補完される) */}
-              {form.visibility === 'draft' && (
-                <span className="ml-2 text-xs text-muted-foreground">(任意)</span>
-              )}
-            </Label>
-            <DateFieldWithActions
-              value={form.conductedDate}
-              onChange={(v) => setForm({ ...form, conductedDate: v })}
-              required={form.visibility === 'public'}
-              hideClear
-            />
+          {/* PR #63: 公開範囲を最上位に配置。2026-06-02: 公開範囲・実施日を 2 列構成に。 */}
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label>{tField('visibility')}</Label>
+              <select value={form.visibility} onChange={(e) => setForm({ ...form, visibility: e.target.value })} className={nativeSelectClass}>
+                {Object.entries(VISIBILITIES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+              </select>
+            </div>
+            <div className="space-y-2">
+              <Label>
+                {tField('conductedDate')}
+                {/* 2026-05-11: 公開範囲 = 自分のみ (draft) なら任意。空のまま draft 保存可 (= サーバ側で当日日付が default 補完される) */}
+                {form.visibility === 'draft' && (
+                  <span className="ml-2 text-xs text-muted-foreground">(任意)</span>
+                )}
+              </Label>
+              <DateFieldWithActions
+                value={form.conductedDate}
+                onChange={(v) => setForm({ ...form, conductedDate: v })}
+                required={form.visibility === 'public'}
+                hideClear
+              />
+            </div>
           </div>
           {/* feat/asset-assignee-expansion (2026-05-26): 担当者 selector (members 受領時のみ表示)。
               作成者と並ぶ編集権限保持者で、引継ぎ完了後の運用者向け。 */}

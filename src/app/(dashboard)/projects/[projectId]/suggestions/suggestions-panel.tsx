@@ -749,7 +749,8 @@ export function SuggestionsPanel({
   return (
     <div className="space-y-6">
       <div className="rounded-md bg-info/10 p-3 text-sm text-info">
-        <strong>{t('coreFeaturePrefix')}</strong> {t('coreFeatureDescription')}
+        {/* 2026-06-02: 「核心機能 (提案型サービス):」prefix を削除し、説明文のみ表示 */}
+        {t('coreFeatureDescription')}
       </div>
 
       {error && <div className="rounded-md bg-destructive/10 p-2 text-sm text-destructive">{error}</div>}

@@ -95,8 +95,6 @@ type TenantSelfInfo = {
   // P-B (2026-05-08): Beginner プラン期限ステータス
   beginnerExpiryState: 'active' | 'warning_60' | 'warning_75' | 'expired';
   beginnerDaysRemaining: number | null;
-  // 2026-05-09 (PR G / #24): シードデータ参照 toggle
-  seedDataEnabled: boolean;
   // PR-1 (2026-05-15): テナント単位 TZ / locale (旧 User.timezone/locale の集約先)
   timezone: string;
   locale: string;
@@ -364,7 +362,9 @@ export function TenantSettingsClient({
           ============================================================ */}
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
-          <h1 className="text-2xl font-bold">テナント設定</h1>
+          {/* feat/collapsed-nav-screen-title (2026-06-05): 画面名「テナント設定」の見出しは撤去。
+              ナビ折りたたみ幅でのみ CollapsedNavScreenTitle (layout) が表示する (他画面と統一)。
+              テナント名 / 組織 ID の識別情報はここに残す。 */}
           <p className="text-sm text-muted-foreground">
             テナント名: {info.name}
             {info.tenantSeq != null && <span className="ml-2">(テナント #{info.tenantSeq})</span>}
@@ -510,19 +510,19 @@ export function TenantSettingsClient({
             }}
           />
 
-          {/* 2026-05-09 (PR G / #24): シードデータ参照 toggle */}
-          <SeedDataToggleSection
-            initialEnabled={info.seedDataEnabled}
-            onUpdate={async () => {
-              await refreshInfo();
-            }}
-          />
-
           {/* P-C (2026-05-08): データエクスポート */}
           <DataExportSection />
 
           {/* P-D (2026-05-08): データインポート */}
           <DataImportSection />
+
+          {/* feat/starter-data-import (2026-06-05): スターターデータ一括取込/削除 */}
+          <SampleDataSection
+            plan={info.plan}
+            onUpdate={async () => {
+              await refreshInfo();
+            }}
+          />
 
           {/* feat/settings-tenant-identity (2026-05-21): 詳細識別情報 (折りたたみ)。 */}
           <TenantIdentityDetailsSection info={info} />
@@ -1493,162 +1493,61 @@ function DataImportSection() {
 
   return (
     <section className="mt-8 space-y-3 rounded border p-4">
-      <h2 className="text-lg font-semibold">データインポート (バックアップ復元 / テナント間移行用)</h2>
-      <p className="text-sm text-muted-foreground">
-        <strong>本機能は本サービスから出力した ZIP の取込専用です。</strong>{' '}
-        「データエクスポート」セクションでダウンロードした ZIP ファイルを、このセクションでアップロードして取り込みます。
-      </p>
-
-      {/* fix/list-export-import-bugs (2026-05-26): 非エンジニアでも分かるよう Step 形式の動作手順を明示 */}
-      <div className="rounded border-l-4 border-info bg-info/5 p-3 text-sm">
-        <p className="mb-2 font-semibold">操作手順 (はじめての方向け)</p>
-        <ol className="ml-4 list-decimal space-y-1 text-xs">
-          <li>
-            <strong>事前準備</strong>: 取り込みたい ZIP ファイルを用意します。
-            {' '}このページ上部の「データエクスポート」セクションから「📦 全データを ZIP でダウンロード」で取得した ZIP のみ受け付けます。
-          </li>
-          <li>
-            <strong>ファイル選択</strong>: 下の「ZIP ファイル」欄の「ファイルを選択」ボタンを押し、用意した ZIP を選びます。
-            {' '}選んだ後にファイル名が表示されます。
-          </li>
-          <li>
-            <strong>取り込み実行</strong>: 「📥 取り込みを実行」ボタンを押します。
-            {' '}確認ダイアログが出るので、内容を確認して「OK」を押すと取り込みが始まります。
-          </li>
-          <li>
-            <strong>結果確認</strong>: 取り込みが終わると下に件数 (プロジェクト・ナレッジ等) が表示されます。
-            {' '}画面左上の「ホーム」リンクから普段の画面に戻り、データが反映されているか確認してください。
-          </li>
-        </ol>
-      </div>
-
-      <div className="rounded bg-muted/40 p-3 text-xs text-muted-foreground">
-        <p className="font-semibold text-foreground">想定する利用シーン</p>
-        <ul className="ml-4 mt-1 list-disc">
-          <li>退会前にエクスポートしたデータを別テナント (社内分社化など) に取り込む</li>
-          <li>誤削除・障害時のバックアップ復元</li>
-          <li>本番テナントの一部を検証用テナントに同期する</li>
-        </ul>
-        <p className="mt-2 font-semibold text-foreground">対象外の利用シーン</p>
-        <ul className="ml-4 mt-1 list-disc">
-          <li>
-            外部システム (社内 wiki / Excel / 旧プロジェクト管理ツール) からの初回データ移行
-            <br />→ 独自フォーマットの取込は本機能では受け付けません (誤データ混入防止のため)
-          </li>
-        </ul>
-      </div>
+      <h2 className="text-lg font-semibold">データインポート</h2>
 
       <details className="rounded border bg-muted/20 p-3 text-xs text-muted-foreground">
         <summary className="cursor-pointer font-semibold text-foreground">⚠ 取り込み前に必ずご確認ください</summary>
         <ul className="ml-4 mt-2 list-disc space-y-1">
-          <li>受付できるファイル: 本サービスから出力した ZIP のみ。Excel ファイル / 独自フォーマットの ZIP は拒否されます</li>
-          <li>動作: すべての行が <strong>「新規作成」</strong> されます。既存データの上書きやマージは行われません (同じ名前のプロジェクト等が二重に作成される可能性があります)</li>
-          <li>ユーザの扱い: 同じメールアドレスのユーザが既に居れば既存ユーザに再マップされ、新規メールアドレスは新規ユーザとして作成されます (初回ログイン時にパスワード再設定が必要)</li>
-          <li>Beginner プランの制限: 合計 5 席を超える取り込みはエラーになります (席数を確保してから再実行してください)</li>
-          <li>同時実行制限: 同じテナントで別のインポートが進行中の場合は受け付けられません (進行中の処理が終わるまでお待ちください)</li>
+          <li>取り込んだデータは<strong>すべて「新規作成」</strong>されます。既存データの上書き・マージは行われません (同名のプロジェクト等が二重に作成される場合があります)</li>
+          <li>③ ZIP 復元で受付できるのは本サービスから出力した ZIP のみ (Excel / 独自フォーマットの ZIP は拒否されます)</li>
+          <li>③ ZIP の中身 (<code>csv/</code>・<code>data/</code>) を手で編集しても取り込みには反映されません (復元は <code>data/</code> の JSON を読みます)。新しくデータを入れるときは「① CSVファイルをインポートしたい方へ」をご利用ください</li>
+          <li>③ ZIP 復元のユーザ扱い: 同じメールは既存ユーザに再マップ、新規メールは新規ユーザ作成 (初回ログイン時にパスワード再設定)。Beginner は合計 5 席を超える取り込みはエラー</li>
+          <li>同じテナントで別のインポートが進行中の場合は受け付けられません (完了までお待ちください)</li>
         </ul>
       </details>
 
-      <div className="mt-3 rounded border-l-4 border-amber-400 bg-amber-50 p-3 text-xs dark:bg-amber-900/20">
-        <p className="font-semibold">📝 外部システム (Excel / 旧 PM ツール 等) から初回データを取り込みたい方へ</p>
-        <p className="mt-1 text-muted-foreground">
-          このセクション (ZIP 取込) ではなく、
-          {' '}<a href="/settings/tenant/external-import" className="text-info underline">外部データ移行ウィザード</a>
-          {' '}をご利用ください。CSV ファイル (UTF-8) をアップロード → カラムをマッピング → プレビュー → 取込 の 4 ステップでナレッジ + 過去課題を取り込めます。
-          {' '}Excel をお使いの場合は Excel で「名前を付けて保存」→ ファイル種類で「CSV UTF-8 (コンマ区切り)」を選んで変換してください。
-        </p>
+      <p className="text-sm text-muted-foreground">目的に合わせて選んでください（下に各手順があります）。</p>
+      <ul className="ml-4 list-disc space-y-1 text-sm text-muted-foreground">
+        <li><strong>① 📄 CSVファイルをインポートしたい方へ</strong> … 手元の CSV から新しく取り込む（多くの方はこちら）</li>
+        <li><strong>② 🔗 外部データを直接インポートしたい方へ</strong> … 他ツールから直接つないで取り込む（API 連携）</li>
+        <li><strong>③ 📦 別テナントからエクスポートしたデータをインポートしたい方へ</strong> … 本サービスで書き出した ZIP を取り込む（テナント間移行・バックアップ復元）</li>
+      </ul>
 
-        {/* 2026-05-28: 取込操作直前に「形式・よくあるエラー・対処」へ即座に到達できるよう、
-            ウィザード入口バナー直下に FAQ アコーディオンを設置する。詳細手順は /help の
-            「外部データの取込・移行について」セクションを参照。 */}
-        <details className="mt-3 rounded border bg-background p-2">
-          <summary className="cursor-pointer text-xs font-semibold">
-            ❓ CSV インポートのよくあるご質問 (形式 / エラー対処)
-          </summary>
-          <div className="mt-2 space-y-3 text-xs text-muted-foreground">
-            <div>
-              <p className="font-semibold text-foreground">受付フォーマット</p>
-              <ul className="ml-4 list-disc">
-                <li>文字コード: <strong>UTF-8</strong> (Excel は「CSV UTF-8 (コンマ区切り)」で保存)</li>
-                <li>区切り: カンマ (タブ / セミコロン不可)、1 行目はヘッダ行</li>
-                <li>
-                  改行を含む長文セル (本文・背景・原因等) は{' '}
-                  <strong>必ず <code>&quot;...&quot;</code> で囲む</strong>
-                  {' '}(Excel でのセル内改行は Alt + Enter)
-                </li>
-                <li>日付: <code>YYYY-MM-DD</code> 形式 (<code>2026/12/31</code> 不可)</li>
-                <li>選択値は <strong>半角小文字</strong> (例: <code>high</code> / <code>low</code>)</li>
-                <li>ファイル上限: 50 MB</li>
-              </ul>
-            </div>
-            <div>
-              <p className="font-semibold text-foreground">取り込めるデータ種別 (Phase 1)</p>
-              <p>
-                <strong>ナレッジ + リスク / 課題</strong>{' '}
-                の 2 種類のみ。振り返り・メモ・WBS (タスク) は本ウィザードでは対象外で、各一覧画面の「インポート」ボタンから個別に CSV 取込する経路があります。
-              </p>
-            </div>
-            <div>
-              <p className="font-semibold text-foreground">プレビューでエラー行が出たら</p>
-              <ul className="ml-4 list-disc">
-                <li>取込前のため未反映。CSV を修正して再アップロードすれば OK</li>
-                <li>
-                  必須欄が空 / 値の制限違反 (
-                  <code>knowledgeType=failure/success/lesson/template/general</code>、
-                  <code>impact=low/medium/high</code> 等) / 日付形式 / 半角全角の取り違え が代表的
-                </li>
-                <li>
-                  取込後に本文の <strong>2 行目以降</strong> が消えている場合は、改行セルが{' '}
-                  <code>&quot;...&quot;</code> で囲まれていなかった可能性。
-                  メモ帳や VS Code で CSV を直接開いて確認してください
-                </li>
-              </ul>
-            </div>
-            <div>
-              <p className="font-semibold text-foreground">料金とプラン別の挙動 (2026-05-28 改修)</p>
-              <p>
-                CSV インポート操作自体は <strong>全プラン無料</strong> (embedding 生成費用も発生しません / ADR-0019)。
-              </p>
-              <p className="mt-1">
-                ただし取込により DB 容量が <strong>50 MB の無料枠</strong> を超えると、
-                <strong>プランごとに異なる挙動</strong> になります (ADR-0020 §11):
-              </p>
-              <ul className="ml-4 list-disc">
-                <li>
-                  <strong>Beginner プラン</strong>: 50 MB を超える取込は{' '}
-                  <strong className="text-destructive">取込前に自動でブロック</strong>{' '}
-                  (preview で警告表示 + 取込ボタン無効化)。意図せず課金が発生することはありません
-                </li>
-                <li>
-                  <strong>Expert / Pro プラン</strong>: 50 MB 超過分は{' '}
-                  <strong>¥50/GB tier の従量課金</strong>。preview で「取込後の予測使用量」と「予測月次課金額」が表示されます
-                </li>
-                <li>
-                  <strong>共通</strong>: 1 回の登録で扱える容量は最大 5MB (DB) / 50MB (ファイル 1 件)。
-                  累積容量による書込み拒否はありません (2026-05-31 ADR-0030、Expert / Pro は上限なし従量課金)
-                </li>
-              </ul>
-            </div>
-            <div>
-              <p className="font-semibold text-foreground">1 ファイルあたりの行数上限</p>
-              <ul className="ml-4 list-disc">
-                <li>本画面の外部データ移行ウィザード: <strong>合計 5,000 行</strong> (Knowledge + RiskIssue)</li>
-                <li>各エンティティ一覧画面のインポート (sync-import): <strong>500 行</strong></li>
-              </ul>
-              <p className="mt-1">超過すると 413 エラーで弾かれます。大量取込はウィザード経路をご利用ください。</p>
-            </div>
-            <p className="text-foreground">
-              より詳しい手順 (テンプレート活用 / カラムマッピング / 取込後確認) は{' '}
-              <a href="/help" className="text-info underline">
-                ヘルプ画面の「外部データの取込・移行について」セクション
-              </a>{' '}
-              を参照してください。
-            </p>
-          </div>
-        </details>
+      <div className="mt-3 rounded border-l-4 border-amber-400 bg-amber-50 p-3 text-xs dark:bg-amber-900/20">
+        <p className="font-semibold">① 📄 CSVファイルをインポートしたい方へ</p>
+        <p className="mt-1 text-muted-foreground">
+          手元の CSV から<strong>顧客・プロジェクト・WBS・リスク・課題・ナレッジ・振り返り</strong>を新規取り込みできます。
+        </p>
+        <ol className="ml-4 mt-1 list-decimal space-y-1 text-muted-foreground">
+          <li>
+            <a href="/settings/tenant/migration-import" className="text-info underline">CSVインポート画面</a>にアクセスします。
+          </li>
+          <li>以後は上記 CSV インポート画面で操作します（テンプレCSV のダウンロード・列の割り当て・プレビュー・取り込み）。</li>
+        </ol>
       </div>
 
-      <form onSubmit={handleSubmit} className="mt-3 space-y-3">
+      <div className="mt-3 rounded border-l-4 border-emerald-400 bg-emerald-50 p-3 text-xs dark:bg-emerald-900/20">
+        <p className="font-semibold">② 🔗 外部データを直接インポートしたい方へ</p>
+        <p className="mt-1 text-muted-foreground">
+          Notion / Backlog / kintone / Pleasanter / Google スプレッドシート などから、ファイルを使わずに
+          <strong>直接つないで自動取り込み</strong>する機能です（API 連携）。
+          {' '}現在開発中で、近日提供予定です。提供後はこの画面から操作できるようになります。
+        </p>
+      </div>
+
+      <div className="mt-3 rounded border-l-4 border-info bg-info/5 p-3 text-sm">
+        <p className="mb-1 font-semibold">③ 📦 別テナントからエクスポートしたデータをインポートしたい方へ（ZIP 復元・テナント間移行）</p>
+        <p className="mb-2 text-xs text-muted-foreground">
+          本サービスで書き出した ZIP を、<strong>下のフォーム</strong>で取り込みます。途中で止めても（「キャンセル」を押せば）データは変わりません。
+        </p>
+        <ol className="ml-4 list-decimal space-y-1.5 text-xs">
+          <li><strong>① ZIP を用意する</strong>: 上部「データエクスポート」の「📦 全データを ZIP でダウンロード」で作成（たすきばで書き出した ZIP のみ取り込めます）。</li>
+          <li><strong>② ファイルを選ぶ</strong>: 下の「ZIP ファイル」で選択（選べていればファイル名が表示されます）。</li>
+          <li><strong>③ 取り込みを実行</strong>: 「📥 取り込みを実行」→ 確認で「OK」。取り込み中は画面を閉じずにお待ちください。</li>
+          <li><strong>④ 結果を確認</strong>: 取り込んだ件数が下に表示されます。</li>
+        </ol>
+
+        <form onSubmit={handleSubmit} className="mt-3 space-y-3">
         <div>
           <label htmlFor="import-zip" className="text-sm font-medium">
             ZIP ファイル
@@ -1690,6 +1589,7 @@ function DataImportSection() {
           </ul>
         </div>
       )}
+      </div>
     </section>
   );
 }
@@ -1698,31 +1598,71 @@ function DataImportSection() {
 // 2026-05-09 (PR G / #24): シードデータ参照 toggle セクション
 // ================================================================
 
-function SeedDataToggleSection({
-  initialEnabled,
+// ================================================================
+// feat/starter-data-import (2026-06-05): スターターデータ一括取込/削除セクション
+// ================================================================
+
+function SampleDataSection({
+  plan,
   onUpdate,
 }: {
-  initialEnabled: boolean;
+  plan: 'beginner' | 'expert' | 'pro';
   onUpdate: () => Promise<void>;
 }) {
   const { showSuccess, showError } = useToast();
-  const [enabled, setEnabled] = useState(initialEnabled);
   const [submitting, setSubmitting] = useState(false);
 
-  async function handleToggle(next: boolean) {
+  async function handleImport() {
+    // Expert/Pro は取込データ分の DB 容量が従量課金対象になるため、確認ダイアログで承認を取る。
+    //   Beginner は 50MB 無料枠を超える場合のみサーバ側でブロックされる (確認は不要)。
+    if (plan !== 'beginner') {
+      const ok = window.confirm(
+        'スターターデータを取り込みます。Expert / Pro プランでは取り込んだデータ分だけ DB 使用量が増え、' +
+          '容量に応じた従量課金の対象になります。取り込みますか?',
+      );
+      if (!ok) return;
+    }
     setSubmitting(true);
     try {
-      const res = await fetch('/api/tenants/me', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ seedDataEnabled: next }),
-      });
+      const res = await fetch('/api/tenants/me/sample-data', { method: 'POST' });
+      const json = (await res.json().catch(() => null)) as {
+        summary?: { customers: number; projects: number; knowledge: number; risksIssues: number; retrospectives: number };
+        error?: { message?: string };
+      } | null;
       if (!res.ok) {
-        showError('シードデータ参照の切替に失敗しました');
+        showError(json?.error?.message ?? 'スターターデータの取り込みに失敗しました');
         return;
       }
-      setEnabled(next);
-      showSuccess(next ? 'シードデータ参照を有効化しました' : 'シードデータ参照を無効化しました');
+      const s = json?.summary;
+      showSuccess(
+        s
+          ? `スターターデータを取り込みました (顧客 ${s.customers} / プロジェクト ${s.projects} / ナレッジ ${s.knowledge} / 課題・リスク ${s.risksIssues} / 振り返り ${s.retrospectives} 件)`
+          : 'スターターデータを取り込みました',
+      );
+      await onUpdate();
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleDelete() {
+    const ok = window.confirm(
+      '取り込んだスターターデータをすべて削除します。よろしいですか? (手動で追加・編集した通常データは削除されません)',
+    );
+    if (!ok) return;
+    setSubmitting(true);
+    try {
+      const res = await fetch('/api/tenants/me/sample-data', { method: 'DELETE' });
+      const json = (await res.json().catch(() => null)) as {
+        summary?: { customers: number; projects: number; knowledge: number; risksIssues: number; retrospectives: number };
+      } | null;
+      if (!res.ok) {
+        showError('スターターデータの削除に失敗しました');
+        return;
+      }
+      const s = json?.summary;
+      const total = s ? s.customers + s.projects + s.knowledge + s.risksIssues + s.retrospectives : 0;
+      showSuccess(`スターターデータを削除しました (${total} 件)`);
       await onUpdate();
     } finally {
       setSubmitting(false);
@@ -1730,31 +1670,27 @@ function SeedDataToggleSection({
   }
 
   return (
-    <section className="mt-8 rounded border p-4">
-      <h2 className="text-lg font-semibold">提案エンジン: シードデータ参照</h2>
+    <section className="mt-8 rounded border p-4" data-testid="sample-data-section">
+      <h2 className="text-lg font-semibold">スターターデータ</h2>
       <p className="mt-1 text-xs text-muted-foreground">
-        プラットフォーム運営者が用意した <strong>サンプルナレッジ・サンプル過去案件</strong> を、
-        提案エンジンの候補に含めるかを切替えます。契約直後でデータが少ない時期にサンプルから
-        雛形採用するのに有効ですが、業務固有の文脈に集中したい場合は無効化してください。
+        運営が用意したサンプルの<strong>顧客・プロジェクト・課題/リスク・ナレッジ・振り返り</strong>を自テナントに取り込み、
+        データが無い状態でも提案機能やチャット検索を体験できます。取り込んだデータは通常データとして一覧表示・編集・削除でき、
+        試用後は下のボタンで一括削除できます。複数回取り込むと、その回数分だけ増えます。
       </p>
-      <p className="mt-1 text-xs text-muted-foreground">
-        ※ <strong>テナント分離 (Phase 2 完了)</strong> により、他テナント (他顧客) のデータは
-        本トグル設定に関わらず一切参照されません。本トグルは「管理テナントのシードデータ参照」のみを制御します。
-      </p>
-      <div className="mt-3 flex items-center gap-3">
-        <label className="flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
-            checked={enabled}
-            disabled={submitting}
-            onChange={(e) => handleToggle(e.target.checked)}
-          />
-          シードデータを提案候補に含める (default: 有効)
-        </label>
+      <div className="mt-3 flex flex-wrap gap-3">
+        <Button type="button" onClick={handleImport} disabled={submitting} data-testid="sample-data-import">
+          スターターデータを取り込む
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          onClick={handleDelete}
+          disabled={submitting}
+          data-testid="sample-data-delete"
+        >
+          取り込んだスターターデータを削除
+        </Button>
       </div>
-      <p className="mt-2 text-xs text-muted-foreground">
-        現在: <strong>{enabled ? '有効 (自テナント + 管理テナントのシード)' : '無効 (自テナントのみ)'}</strong>
-      </p>
     </section>
   );
 }

@@ -12,6 +12,9 @@ export type AuthEventType =
   | 'login_success'
   | 'login_failure'
   | 'logout'
+  // 2026-06-03 (feat/logout-other-devices): 「他の端末からログアウト」操作。
+  //   呼出端末以外の全セッションを tokenVersion increment で無効化したイベント。
+  | 'logout_other_devices'
   | 'lock'
   | 'password_change'
   | 'account_created'

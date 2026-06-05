@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatDateTime, formatDate, formatDateTimeFull, formatDateOnly } from './format';
+import { formatDateTime, formatDate, formatDateTimeFull, formatDateTimeSeconds, formatDateOnly } from './format';
 
 /**
  * PR #117 → PR #118 (2026-04-24):
@@ -78,6 +78,20 @@ describe('formatDate (locale 指定)', () => {
 describe('formatDateTimeFull (引数なし = DEFAULT)', () => {
   it('ja-JP locale で / 区切り', () => {
     expect(formatDateTimeFull('2026-04-23T00:00:00Z')).toBe('2026/04/23 09:00');
+  });
+});
+
+describe('formatDateTimeSeconds (秒まで / 監査列用)', () => {
+  it('ja-JP のデフォルト (Asia/Tokyo +9h) で秒まで含む / 区切り', () => {
+    // 00:00:00 UTC → 09:00:00 JST。formatDateTimeFull (分まで) との差は秒の有無のみ。
+    expect(formatDateTimeSeconds('2026-04-23T00:00:00Z')).toBe('2026/04/23 09:00:00');
+  });
+  it('秒成分も反映される', () => {
+    expect(formatDateTimeSeconds('2026-04-23T00:00:45Z')).toBe('2026/04/23 09:00:45');
+  });
+  it('明示的な timeZone/locale 指定 (UTC / en-US)', () => {
+    expect(formatDateTimeSeconds('2026-04-23T13:05:09Z', { timeZone: 'UTC', locale: 'en-US' }))
+      .toBe('04/23/2026, 13:05:09');
   });
 });
 

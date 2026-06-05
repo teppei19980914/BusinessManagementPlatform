@@ -29,6 +29,8 @@ vi.mock('@/lib/db', () => {
       deleteMany: vi.fn(),
     },
     comment: { deleteMany: vi.fn() },
+    // 2026-06-02: 一覧の作成者/更新者名解決 (cross-tenant 氏名 lookup) 用
+    user: { findMany: vi.fn().mockResolvedValue([]) },
     knowledgeProject: {
       findMany: vi.fn(),
       count: vi.fn(),
@@ -292,6 +294,22 @@ describe('createProject / getProject / updateProject / deleteProject', () => {
     expect(call.include).toEqual({ customer: { select: { name: true } } });
   });
 
+  // 2026-06-03: 新規作成フォームでステータスを任意選択可能に。
+  it('createProject: status 指定時はその値で保存 (未指定は planning 補完)', async () => {
+    vi.mocked(prisma.project.create).mockResolvedValue(pRow() as never);
+    await createProject(
+      {
+        name: 'x', customerId: 'cust-1', purpose: '', background: '', scope: '',
+        devMethod: 'scratch', plannedStartDate: '2026-04-01', plannedEndDate: '2026-12-31',
+        status: 'executing',
+      },
+      'u-1',
+      TEST_TENANT_ID,
+    );
+    const call = getMockCallArg(vi.mocked(prisma.project.create));
+    expect(call.data.status).toBe('executing');
+  });
+
   it('updateProject: customerId 変更は customer.connect() に変換 (PR #111-2)', async () => {
     // 2026-05-09 feedback Phase 2-2: tenant 検証用の所有確認 mock
     vi.mocked(prisma.project.findFirst).mockResolvedValue({
@@ -329,6 +347,18 @@ describe('createProject / getProject / updateProject / deleteProject', () => {
     const call = getMockCallArg(vi.mocked(prisma.project.update));
     expect(call.data.name).toBe('new');
     expect(call.data.purpose).toBeUndefined();
+  });
+
+  // 2026-06-03: 編集フォームから任意ステータス更新可能 (一方向遷移の制限なし)。
+  it('updateProject: status を直接 set する (例: closed → planning も可能)', async () => {
+    vi.mocked(prisma.project.findFirst).mockResolvedValue({
+      purpose: 'p', background: 'b', scope: 's',
+      businessDomainTags: [], techStackTags: [], processTags: [],
+    } as never);
+    vi.mocked(prisma.project.update).mockResolvedValue(pRow() as never);
+    await updateProject('p-1', { status: 'planning' }, 'u-1', TEST_TENANT_ID);
+    const call = getMockCallArg(vi.mocked(prisma.project.update));
+    expect(call.data.status).toBe('planning');
   });
 
   // ========================================================

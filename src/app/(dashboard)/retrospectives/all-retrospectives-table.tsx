@@ -36,8 +36,11 @@ import { matchesAnyKeyword } from '@/lib/text-search';
 // Phase E 要件 1〜3 (2026-04-29): 共通行クリック + フィルタバー部品
 import { ClickableRow } from '@/components/common/clickable-row';
 import { FilterBar } from '@/components/common/filter-bar';
+import { useTablePagination, TablePagination } from '@/components/common/table-pagination';
 import { useBatchAttachments } from '@/components/attachments/use-batch-attachments';
 import { AttachmentsCell } from '@/components/attachments/attachments-cell';
+// 2026-06-03: ○○一覧と列構成を統一 (リンク列 / 担当者列 / ステータス列、本文列は撤去)。
+import { LinksCell } from '@/components/attachments/links-cell';
 import { ResizableHead } from '@/components/ui/resizable-columns';
 import { ResizableTableShell } from '@/components/common/resizable-table-shell';
 import { SortableResizableHead } from '@/components/sort/sortable-resizable-head';
@@ -50,10 +53,8 @@ function getRetroSortValue(r: AllRetroDTO, columnKey: string): unknown {
   switch (columnKey) {
     case 'project': return r.projectName ?? '';
     case 'conductedDate': return r.conductedDate;
-    case 'planSummary': return r.planSummary;
-    case 'actualSummary': return r.actualSummary;
-    case 'goodPoints': return r.goodPoints;
-    case 'improvements': return r.improvements;
+    case 'state': return r.state;
+    case 'assigneeName': return r.assigneeName ?? '';
     case 'createdAt': return r.createdAt;
     case 'createdBy': return r.createdByName ?? '';
     case 'updatedAt': return r.updatedAt;
@@ -75,7 +76,7 @@ export function AllRetrospectivesTable({
   const router = useRouter();
   const tRetro = useTranslations('retro');
   const tCommon = useTranslations('common');
-  const { formatDateTime, formatDateOnly } = useFormatters();
+  const { formatDateTimeSeconds, formatDateOnly } = useFormatters();
   const [editingRetro, setEditingRetro] = useState<AllRetroDTO | null>(null);
 
   // PR-δ / 項目 12: 全振り返りに検索 (keyword) フィルタを追加。
@@ -101,6 +102,8 @@ export function AllRetrospectivesTable({
     return multiSort(xs, sortState, getRetroSortValue);
   }, [retros, keyword, sortState]);
 
+  const { pageItems, page, pageCount, setPage } = useTablePagination(filteredRetros, keyword);
+
   const attachmentsByEntity = useBatchAttachments(
     'retrospective',
     filteredRetros.map((r) => r.id),
@@ -115,14 +118,7 @@ export function AllRetrospectivesTable({
 
   return (
     <div className="space-y-6">
-      {/* feat/all-list-section-unification (2026-05-24): 全○○ 5 画面共通レイアウト規約
-          1. 件数行 (justify-end / フィルタ後件数 / common.itemCount)
-          2. FilterBar (検索・フィルタ、軸数は画面固有)
-          3. ResizableTableShell (テーブル本体)
-          4. 詳細ダイアログ (read-only) */}
-      <div className="flex justify-end">
-        <span className="text-sm text-muted-foreground">{tCommon('itemCount', { count: filteredRetros.length })}</span>
-      </div>
+      {/* 2026-06-03: フィルター位置をプロジェクト一覧に統一。FilterBar を先頭に置き、件数は表の下部へ移動。 */}
       {/* PR-δ / 項目 12: 検索フィルタ (○○一覧と同 UX に揃える) */}
       <FilterBar>
         <div>
@@ -139,22 +135,23 @@ export function AllRetrospectivesTable({
       <ResizableTableShell tableKey="all-retrospectives">
         <TableHeader>
           <TableRow>
+            {/* 2026-06-03: 振り返り一覧(タブ)と列構成を統一 — プロジェクト + 実施日・ステータス・担当者・監査4・リンク・添付・操作。
+                本文列(計画総括/実績総括/良かった点/次回改善事項)は詳細ダイアログでのみ表示するため一覧からは撤去。 */}
             <SortableResizableHead columnKey="project" defaultWidth={140} label={tRetro('project')} sortState={sortState} onSortChange={setSortColumn} />
             <SortableResizableHead columnKey="conductedDate" defaultWidth={110} label={tRetro('conductedDate')} sortState={sortState} onSortChange={setSortColumn} />
-            <SortableResizableHead columnKey="planSummary" defaultWidth={180} label={tRetro('planSummary')} sortState={sortState} onSortChange={setSortColumn} />
-            <SortableResizableHead columnKey="actualSummary" defaultWidth={180} label={tRetro('actualSummary')} sortState={sortState} onSortChange={setSortColumn} />
-            <SortableResizableHead columnKey="goodPoints" defaultWidth={180} label={tRetro('goodPoints')} sortState={sortState} onSortChange={setSortColumn} />
-            <SortableResizableHead columnKey="improvements" defaultWidth={180} label={tRetro('improvementsTable')} sortState={sortState} onSortChange={setSortColumn} />
-            <SortableResizableHead columnKey="createdAt" defaultWidth={130} label={tRetro('createdAt')} sortState={sortState} onSortChange={setSortColumn} />
+            <SortableResizableHead columnKey="state" defaultWidth={100} label={tRetro('state')} sortState={sortState} onSortChange={setSortColumn} />
+            <SortableResizableHead columnKey="assigneeName" defaultWidth={120} label={tRetro('assignee')} sortState={sortState} onSortChange={setSortColumn} />
             <SortableResizableHead columnKey="createdBy" defaultWidth={120} label={tRetro('createdBy')} sortState={sortState} onSortChange={setSortColumn} />
-            <SortableResizableHead columnKey="updatedAt" defaultWidth={130} label={tRetro('updatedAt')} sortState={sortState} onSortChange={setSortColumn} />
+            <SortableResizableHead columnKey="createdAt" defaultWidth={150} label={tRetro('createdAt')} sortState={sortState} onSortChange={setSortColumn} />
             <SortableResizableHead columnKey="updatedBy" defaultWidth={120} label={tRetro('updatedBy')} sortState={sortState} onSortChange={setSortColumn} />
-            <ResizableHead columnKey="attachments" defaultWidth={200}>{tRetro('attachment')}</ResizableHead>
+            <SortableResizableHead columnKey="updatedAt" defaultWidth={150} label={tRetro('updatedAt')} sortState={sortState} onSortChange={setSortColumn} />
+            <ResizableHead columnKey="links" defaultWidth={200}>{tRetro('links')}</ResizableHead>
+            <ResizableHead columnKey="attachments" defaultWidth={180}>{tRetro('attachment')}</ResizableHead>
             {isAdmin && <ResizableHead columnKey="actions" defaultWidth={80}>{tRetro('actions')}</ResizableHead>}
           </TableRow>
         </TableHeader>
         <TableBody>
-          {filteredRetros.map((r) => (
+          {pageItems.map((r) => (
             <ClickableRow
               key={r.id}
               onClick={() => setEditingRetro(r)}
@@ -194,20 +191,26 @@ export function AllRetrospectivesTable({
                 </div>
               </TableCell>
               <TableCell className="whitespace-nowrap font-medium">{formatDateOnly(r.conductedDate)}</TableCell>
-              <TableCell className="max-w-xs truncate text-sm">{r.planSummary || '-'}</TableCell>
-              <TableCell className="max-w-xs truncate text-sm">{r.actualSummary || '-'}</TableCell>
-              <TableCell className="max-w-xs truncate text-sm">{r.goodPoints || '-'}</TableCell>
-              <TableCell className="max-w-xs truncate text-sm">{r.improvements || '-'}</TableCell>
-              <TableCell className="whitespace-nowrap text-sm text-muted-foreground">{formatDateTime(r.createdAt)}</TableCell>
+              <TableCell>
+                <Badge variant={r.state === 'confirmed' ? 'default' : 'outline'}>
+                  {r.state === 'confirmed' ? tRetro('confirmAction') : tRetro('draftBadge')}
+                </Badge>
+              </TableCell>
+              <TableCell className="text-sm text-muted-foreground">{r.assigneeName || '—'}</TableCell>
               <TableCell className="text-sm text-muted-foreground">
                 {r.createdByName ?? <span className="text-muted-foreground">-</span>}
               </TableCell>
-              <TableCell className="whitespace-nowrap text-sm text-muted-foreground">{formatDateTime(r.updatedAt)}</TableCell>
+              <TableCell className="whitespace-nowrap text-sm text-muted-foreground">{formatDateTimeSeconds(r.createdAt)}</TableCell>
               <TableCell className="text-sm text-muted-foreground">
-                {r.updatedByName ?? <span className="text-muted-foreground">-</span>}
+                {r.updatedAt !== r.createdAt ? (r.updatedByName ?? <span className="text-muted-foreground">-</span>) : <span className="text-muted-foreground">—</span>}
+              </TableCell>
+              <TableCell className="whitespace-nowrap text-sm text-muted-foreground">{r.updatedAt !== r.createdAt ? formatDateTimeSeconds(r.updatedAt) : '—'}</TableCell>
+              {/* リンク列 (url 型添付を縦に複数行) / 添付列 (ファイル本体のみ) */}
+              <TableCell onClick={(e) => e.stopPropagation()}>
+                <LinksCell items={attachmentsByEntity[r.id] ?? []} />
               </TableCell>
               <TableCell onClick={(e) => e.stopPropagation()}>
-                <AttachmentsCell items={attachmentsByEntity[r.id] ?? []} />
+                <AttachmentsCell items={(attachmentsByEntity[r.id] ?? []).filter((a) => a.storageProvider === 'supabase')} />
               </TableCell>
               {isAdmin && (
                 <TableCell onClick={(e) => e.stopPropagation()}>
@@ -223,13 +226,20 @@ export function AllRetrospectivesTable({
           ))}
           {filteredRetros.length === 0 && (
             <TableRow>
-              <TableCell colSpan={isAdmin ? 12 : 11} className="py-8 text-center text-muted-foreground">
+              <TableCell colSpan={isAdmin ? 11 : 10} className="py-8 text-center text-muted-foreground">
                 {tRetro('noneInList')}
               </TableCell>
             </TableRow>
           )}
         </TableBody>
       </ResizableTableShell>
+
+      <TablePagination page={page} pageCount={pageCount} onPageChange={setPage} />
+
+      {/* 2026-06-03: 件数は表の下部に表示 (フィルター位置統一に伴い上部から移動) */}
+      <div className="flex justify-end">
+        <span className="text-sm text-muted-foreground">{tCommon('itemCount', { count: filteredRetros.length })}</span>
+      </div>
 
       <RetrospectiveEditDialog
         retro={editingRetro}

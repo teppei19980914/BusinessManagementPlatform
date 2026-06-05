@@ -167,8 +167,8 @@ export type ResendVerificationResult =
  *   - **Rate Limit は呼出側 (route) で実施**: 本サービスはビジネスロジックのみに集中
  *
  * 制約:
- *   - User.isActive=false (= まだメール検証していない) ユーザのみが対象
- *   - 既に isActive=true のユーザは silent_skip (= サインアップ完了済として何もしない)
+ *   - 招待中 (invitationAcceptedAt=null = まだパスワード未設定) のユーザのみが対象
+ *   - 既に受諾済み (invitationAcceptedAt 設定済) のユーザは silent_skip (= 何もしない)
  */
 export async function resendVerificationEmail(
   email: string,
@@ -185,17 +185,19 @@ export async function resendVerificationEmail(
     return { ok: true, reason: 'silent_skip' };
   }
 
-  // 2. user 解決 (tenant-scoped + isActive=false の pending verification ユーザに限定)
+  // 2. user 解決 (tenant-scoped + 招待中 = invitationAcceptedAt:null のユーザに限定)
+  //   2026-06-03: 招待中の判定を deletedAt から invitationAcceptedAt に変更。
+  //   受諾済みで無効化されたユーザ (invitationAcceptedAt 設定済 / isActive:false) には再送しない。
   const user = await prisma.user.findFirst({
     where: {
       tenantId: tenant.id,
       email,
-      isActive: false,
+      invitationAcceptedAt: null,
       deletedAt: null,
     },
     select: { id: true },
   });
-  // enumeration 防止: user 不在 / 既に isActive=true は silent_skip
+  // enumeration 防止: user 不在 / 既に受諾済みは silent_skip
   if (!user) {
     return { ok: true, reason: 'silent_skip' };
   }
@@ -378,6 +380,8 @@ export async function setupPassword(
         passwordHash,
         isActive: true,
         deletedAt: null,
+        // 2026-06-03: 招待受諾 = パスワード設定完了の瞬間。これで状態が「招待中」→「有効」になる。
+        invitationAcceptedAt: new Date(),
         forcePasswordChange: false,
       },
     }),
@@ -453,6 +457,8 @@ export async function setupInitialMfa(
       data: {
         isActive: true,
         deletedAt: null,
+        // 2026-06-03: 運営者 (super_admin) は MFA 設定完了の瞬間が受諾 = 有効化。
+        invitationAcceptedAt: now,
         mfaEnabled: true,
         mfaEnabledAt: now,
       },
@@ -489,7 +495,8 @@ export async function verifyEmail(
     }),
     prisma.user.update({
       where: { id: record.userId },
-      data: { isActive: true, deletedAt: null },
+      // 2026-06-03: 後方互換経路でも受諾日時を記録し状態を「有効」にする。
+      data: { isActive: true, deletedAt: null, invitationAcceptedAt: new Date() },
     }),
   ]);
 

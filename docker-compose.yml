@@ -2,7 +2,10 @@ name: tasukiba
 
 services:
   db:
-    image: postgres:16-alpine
+    # 本アプリは pgvector 拡張 (vector(1024) 列・提案/チャット検索) が必須のため、
+    # pgvector 同梱の公式イメージを使う (標準 postgres:16-alpine には pgvector が無く、
+    # `could not access file "$libdir/vector"` で embedding 書込が失敗する)。PG16 で data 互換。
+    image: pgvector/pgvector:pg16
     container_name: tasukiba-db
     ports:
       - "${DB_PORT:-5433}:5432"

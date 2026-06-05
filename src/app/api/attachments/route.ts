@@ -250,6 +250,14 @@ export async function POST(req: NextRequest) {
     action: 'CREATE',
     entityType: 'attachment',
     entityId: created.id,
+    // 2026-06-03: 監査ログで「どの画面 (リスク/ナレッジ等) で リンク/ファイルの添付が行われたか」を
+    //   分かるよう、親エンティティ種別と添付種別 (storageProvider: url=リンク / supabase=ファイル) を記録。
+    //   リンク/ファイルの内容自体 (url/displayName) は記録しない。
+    afterValue: {
+      parentEntityType: created.entityType,
+      parentEntityId: created.entityId,
+      storageProvider: created.storageProvider,
+    },
   });
 
   return NextResponse.json({ data: created }, { status: 201 });

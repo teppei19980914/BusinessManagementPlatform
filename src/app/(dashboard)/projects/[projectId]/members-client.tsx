@@ -38,6 +38,7 @@ import {
 } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
 import { nativeSelectClass } from '@/components/ui/native-select-style';
+import { useTablePagination, TablePagination } from '@/components/common/table-pagination';
 // PR #126: 件数が多くなる想定 (組織成長に追従) の Select には SearchableSelect を使う
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { PROJECT_ROLES } from '@/types';
@@ -64,10 +65,11 @@ type Props = {
 export function MembersClient({ projectId, members, allUsers, canManage, canManagePmTl, onReload, currentUserId }: Props) {
   const router = useRouter();
   const t = useTranslations('member');
+  const tCommon = useTranslations('common');
   const { withLoading } = useLoading();
   const { showSuccess, showError } = useToast();
   // PR #119: session 連携フォーマッタ
-  const { formatDate } = useFormatters();
+  const { formatDateTimeSeconds } = useFormatters();
   const reload = useCallback(async () => {
     if (onReload) {
       await onReload();
@@ -92,6 +94,8 @@ export function MembersClient({ projectId, members, allUsers, canManage, canMana
     })),
     [availableUsers, t],
   );
+
+  const { pageItems, page, pageCount, setPage } = useTablePagination(members, '');
 
   async function handleAdd(e: React.FormEvent) {
     e.preventDefault();
@@ -213,12 +217,16 @@ export function MembersClient({ projectId, members, allUsers, canManage, canMana
             <TableHead>{t('colUserName')}</TableHead>
             <TableHead>{t('colEmail')}</TableHead>
             <TableHead>{t('colRole')}</TableHead>
-            <TableHead>{t('colAddedAt')}</TableHead>
+            {/* 2026-06-02: 追加日 (=createdAt) は「作成日時」に統合。作成者/作成日時/更新者/更新日時 の 4 監査列に置換。 */}
+            <TableHead>{tCommon('auditCreatedBy')}</TableHead>
+            <TableHead>{tCommon('auditCreatedAt')}</TableHead>
+            <TableHead>{tCommon('auditUpdatedBy')}</TableHead>
+            <TableHead>{tCommon('auditUpdatedAt')}</TableHead>
             {canManage && <TableHead className="w-24">{t('colActions')}</TableHead>}
           </TableRow>
         </TableHeader>
         <TableBody>
-          {members.map((m) => {
+          {pageItems.map((m) => {
             // feat/crud-permission-redesign (2026-05-20): 行ごとの「PM/TL 操作可否」を判定。
             //   - 対象行が pm_tl → ロール変更・削除とも admin のみ可
             //   - 対象行が member/viewer → PM/TL も操作可
@@ -258,7 +266,10 @@ export function MembersClient({ projectId, members, allUsers, canManage, canMana
                     </Badge>
                   )}
                 </TableCell>
-                <TableCell>{formatDate(m.createdAt)}</TableCell>
+                <TableCell className="text-sm text-muted-foreground">{m.createdByName || '—'}</TableCell>
+                <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{formatDateTimeSeconds(m.createdAt)}</TableCell>
+                <TableCell className="text-sm text-muted-foreground">{m.updatedAt && m.updatedAt !== m.createdAt ? (m.updatedByName || '—') : '—'}</TableCell>
+                <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{m.updatedAt && m.updatedAt !== m.createdAt ? formatDateTimeSeconds(m.updatedAt) : '—'}</TableCell>
                 {canManage && (
                   <TableCell>
                     {canEditThisRow && (
@@ -278,13 +289,15 @@ export function MembersClient({ projectId, members, allUsers, canManage, canMana
           })}
           {members.length === 0 && (
             <TableRow>
-              <TableCell colSpan={canManage ? 5 : 4} className="py-8 text-center text-muted-foreground">
+              <TableCell colSpan={canManage ? 8 : 7} className="py-8 text-center text-muted-foreground">
                 {t('listEmpty')}
               </TableCell>
             </TableRow>
           )}
         </TableBody>
       </Table>
+
+      <TablePagination page={page} pageCount={pageCount} onPageChange={setPage} />
     </div>
   );
 }

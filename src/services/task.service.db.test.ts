@@ -231,27 +231,28 @@ describe('createTask', () => {
     expect(call.data.priority).toBe(null);
   });
 
-  it('[FIX] 同一親配下に同名タスクが既存 → TASK_NAME_DUPLICATE_IN_PARENT を throw', async () => {
-    // 2026-05-25 (PR #420 #C3): DB UNIQUE 制約適用後、createTask が DB error 500 にならず
-    //   app 層で 400 相当のエラーを投げる挙動を検証
+  it('[ADR-0032] 同一親配下に同名タスクがあっても作成できる (名称一意性ガード撤廃)', async () => {
+    // ADR-0032 (2026-06-04): 旧 (PR #420 #C3) は同名を TASK_NAME_DUPLICATE_IN_PARENT で弾いていたが、
+    //   業務上「同一 WP 配下の同名タスク」は正当なため一意性ガードを撤廃。count による事前検査も廃止。
     vi.mocked(prisma.project.findFirst).mockResolvedValue({ id: 'p-1' } as never);
-    // 名称衝突あり (count=1)。**Once 版**で次テストに leak しないよう注意。
-    vi.mocked(prisma.task.count).mockResolvedValueOnce(1 as never);
+    vi.mocked(prisma.task.create).mockResolvedValue(
+      rowTask({ type: 'work_package', assigneeId: null }) as never,
+    );
 
-    await expect(
-      createTask(
-        'p-1',
-        {
-          type: 'work_package',
-          name: '設計',
-          parentTaskId: null,
-        } as unknown as Parameters<typeof createTask>[1],
-        'u-1',
-        't-1',
-      ),
-    ).rejects.toThrow('TASK_NAME_DUPLICATE_IN_PARENT');
-    // create は呼ばれていない (事前に弾かれている)
-    expect(prisma.task.create).not.toHaveBeenCalled();
+    await createTask(
+      'p-1',
+      {
+        type: 'work_package',
+        name: '設計',
+        parentTaskId: null,
+      } as unknown as Parameters<typeof createTask>[1],
+      'u-1',
+      't-1',
+    );
+
+    // 一意性チェック (count) は呼ばれず、そのまま作成される
+    expect(prisma.task.count).not.toHaveBeenCalled();
+    expect(prisma.task.create).toHaveBeenCalled();
   });
 });
 
@@ -449,41 +450,16 @@ describe('updateTask (主要分岐)', () => {
     expect(updateCall.data.actualEndDate).toBe(null);
   });
 
-  it('[FIX] name 変更で同一親配下に同名が既存 → TASK_NAME_DUPLICATE_IN_PARENT を throw', async () => {
-    // 2026-05-25 (PR #420 #C3): UNIQUE 制約適用後の DB error 500 を防ぐ事前チェック
+  it('[ADR-0032] name を既存と同名へ変更しても更新できる (名称一意性ガード撤廃)', async () => {
+    // ADR-0032 (2026-06-04): 旧 (PR #420 #C3) は同名変更を TASK_NAME_DUPLICATE_IN_PARENT で弾いていたが、
+    //   同一 WP 配下の同名は正当なため一意性ガードを撤廃。count による事前検査も廃止。
     vi.mocked(prisma.task.findFirst).mockResolvedValue({ id: 't-1' } as never);
-    vi.mocked(prisma.task.findUnique).mockResolvedValue({
-      projectId: 'p-1',
-      parentTaskId: null,
-      name: '元の名前',
-    } as never);
-    // 衝突あり (count=1)。**Once 版**で次テストに leak しないよう注意。
-    vi.mocked(prisma.task.count).mockResolvedValueOnce(1 as never);
-
-    await expect(
-      updateTask('t-1', { name: '既存名' } as never, 'u-1', 'tenant-A'),
-    ).rejects.toThrow('TASK_NAME_DUPLICATE_IN_PARENT');
-    // update は呼ばれない
-    expect(prisma.task.update).not.toHaveBeenCalled();
-  });
-
-  it('[FIX] name を「現在の名前と同じ」に編集すると uniqueness check はスキップされる (自身は除外)', async () => {
-    vi.mocked(prisma.task.findFirst).mockResolvedValue({ id: 't-1' } as never);
-    vi.mocked(prisma.task.findUnique).mockResolvedValue({
-      projectId: 'p-1',
-      parentTaskId: null,
-      name: '元の名前',
-    } as never);
-    // 衝突があっても自身を除外しているので count 0 のはずだが、敢えて 0 を返す
-    vi.mocked(prisma.task.count).mockResolvedValue(0 as never);
     vi.mocked(prisma.task.update).mockResolvedValue(rowTask() as never);
 
-    // 名前そのまま (= 何も変わらない) で update
-    await updateTask('t-1', { name: '元の名前' } as never, 'u-1', 'tenant-A');
+    await updateTask('t-1', { name: '既存名' } as never, 'u-1', 'tenant-A');
 
-    // count は呼ばれない (isSamePosition で skip)
+    // 一意性チェック (count) は呼ばれず、そのまま更新される
     expect(prisma.task.count).not.toHaveBeenCalled();
-    // update は呼ばれる
     expect(prisma.task.update).toHaveBeenCalled();
   });
 
