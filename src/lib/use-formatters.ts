@@ -24,6 +24,7 @@ import {
   formatDate as formatDateCore,
   formatDateTime as formatDateTimeCore,
   formatDateTimeFull as formatDateTimeFullCore,
+  formatDateTimeSeconds as formatDateTimeSecondsCore,
   formatDateOnly as formatDateOnlyCore,
 } from '@/lib/format';
 
@@ -31,6 +32,8 @@ export type Formatters = {
   formatDate: (iso: string) => string;
   formatDateTime: (iso: string) => string;
   formatDateTimeFull: (iso: string) => string;
+  /** ISO 日時を秒まで含む locale 形式に整形する (例 ja: `2026/06/02 12:34:56`)。監査列用。 */
+  formatDateTimeSeconds: (iso: string) => string;
   /**
    * 'YYYY-MM-DD' 形式の date-only 値を locale 表記に整形する (TZ シフトなし)。
    * 「実施日」「期限」など datetime ではなく calendar day を表す値に使用する。
@@ -48,6 +51,7 @@ export function useFormatters(): Formatters {
       formatDate: (iso) => formatDateCore(iso, { timeZone, locale }),
       formatDateTime: (iso) => formatDateTimeCore(iso, { timeZone, locale }),
       formatDateTimeFull: (iso) => formatDateTimeFullCore(iso, { timeZone, locale }),
+      formatDateTimeSeconds: (iso) => formatDateTimeSecondsCore(iso, { timeZone, locale }),
       formatDateOnly: (ymd) => formatDateOnlyCore(ymd, { locale }),
     }),
     [timeZone, locale],

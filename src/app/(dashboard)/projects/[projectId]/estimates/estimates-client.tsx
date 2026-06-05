@@ -22,6 +22,7 @@
 import { useCallback, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
+import { useFormatters } from '@/lib/use-formatters';
 import { useLoading } from '@/components/loading-overlay';
 import { useToast } from '@/components/toast-provider';
 import { Button } from '@/components/ui/button';
@@ -36,7 +37,8 @@ import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger,
 } from '@/components/ui/dialog';
 import { nativeSelectClass } from '@/components/ui/native-select-style';
-import { TASK_CATEGORIES, DEV_METHODS, EFFORT_UNITS } from '@/types';
+import { useTablePagination, TablePagination } from '@/components/common/table-pagination';
+import { TASK_CATEGORIES, EFFORT_UNITS } from '@/types';
 import type { EstimateDTO } from '@/services/estimate.service';
 
 type Props = {
@@ -50,6 +52,8 @@ type Props = {
 export function EstimatesClient({ projectId, estimates, canEdit, onReload }: Props) {
   const router = useRouter();
   const t = useTranslations('estimate');
+  const tCommon = useTranslations('common');
+  const { formatDateTimeSeconds } = useFormatters();
   const { withLoading } = useLoading();
   const { showSuccess, showError } = useToast();
 
@@ -65,10 +69,10 @@ export function EstimatesClient({ projectId, estimates, canEdit, onReload }: Pro
   const [form, setForm] = useState({
     itemName: '',
     category: 'development',
-    devMethod: 'scratch',
     estimatedEffort: 0,
     effortUnit: 'person_hour',
-    rationale: '',
+    // 2026-06-02: 見積根拠 → 備考 に置換 (一覧の「備考」列と一致させる)
+    notes: '',
   });
 
   async function handleCreate(e: React.FormEvent) {
@@ -89,7 +93,7 @@ export function EstimatesClient({ projectId, estimates, canEdit, onReload }: Pro
       return;
     }
     setIsCreateOpen(false);
-    setForm({ itemName: '', category: 'development', devMethod: 'scratch', estimatedEffort: 0, effortUnit: 'person_hour', rationale: '' });
+    setForm({ itemName: '', category: 'development', estimatedEffort: 0, effortUnit: 'person_hour', notes: '' });
     showSuccess('見積もりを作成しました');
     await reload();
   }
@@ -111,6 +115,7 @@ export function EstimatesClient({ projectId, estimates, canEdit, onReload }: Pro
   }
 
   const totalEffort = estimates.reduce((sum, e) => sum + e.estimatedEffort, 0);
+  const { pageItems, page, pageCount, setPage } = useTablePagination(estimates, '');
 
   return (
     <div className="space-y-6">
@@ -131,19 +136,12 @@ export function EstimatesClient({ projectId, estimates, canEdit, onReload }: Pro
                   <Label>{t('itemName')}</Label>
                   <Input value={form.itemName} onChange={(e) => setForm({ ...form, itemName: e.target.value })} maxLength={100} required />
                 </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>{t('category')}</Label>
-                    <select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} className={nativeSelectClass}>
-                      {Object.entries(TASK_CATEGORIES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-                    </select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>{t('devMethod')}</Label>
-                    <select value={form.devMethod} onChange={(e) => setForm({ ...form, devMethod: e.target.value })} className={nativeSelectClass}>
-                      {Object.entries(DEV_METHODS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-                    </select>
-                  </div>
+                {/* 2026-06-02: 開発方式 (devMethod) は不要のためフォームから撤去。区分のみ残す。 */}
+                <div className="space-y-2">
+                  <Label>{t('category')}</Label>
+                  <select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} className={nativeSelectClass}>
+                    {Object.entries(TASK_CATEGORIES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                  </select>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
@@ -158,8 +156,8 @@ export function EstimatesClient({ projectId, estimates, canEdit, onReload }: Pro
                   </div>
                 </div>
                 <div className="space-y-2">
-                  <Label>{t('rationale')}</Label>
-                  <textarea className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={form.rationale} onChange={(e) => setForm({ ...form, rationale: e.target.value })} rows={4} maxLength={3000} required />
+                  <Label>{t('columnNotes')}</Label>
+                  <textarea className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} rows={4} maxLength={1000} />
                 </div>
                 <Button type="submit" className="w-full">{t('add')}</Button>
               </form>
@@ -174,23 +172,31 @@ export function EstimatesClient({ projectId, estimates, canEdit, onReload }: Pro
             <TableHead>{t('columnItemName')}</TableHead>
             <TableHead>{t('columnCategory')}</TableHead>
             <TableHead>{t('columnEffort')}</TableHead>
-            <TableHead>{t('columnRationale')}</TableHead>
+            <TableHead>{t('columnNotes')}</TableHead>
             <TableHead>{t('columnState')}</TableHead>
+            <TableHead>{tCommon('auditCreatedBy')}</TableHead>
+            <TableHead>{tCommon('auditCreatedAt')}</TableHead>
+            <TableHead>{tCommon('auditUpdatedBy')}</TableHead>
+            <TableHead>{tCommon('auditUpdatedAt')}</TableHead>
             {canEdit && <TableHead>{t('columnActions')}</TableHead>}
           </TableRow>
         </TableHeader>
         <TableBody>
-          {estimates.map((e) => (
+          {pageItems.map((e) => (
             <TableRow key={e.id}>
               <TableCell className="font-medium">{e.itemName}</TableCell>
               <TableCell>{TASK_CATEGORIES[e.category as keyof typeof TASK_CATEGORIES] || e.category}</TableCell>
               <TableCell>{e.estimatedEffort} {EFFORT_UNITS[e.effortUnit as keyof typeof EFFORT_UNITS] || e.effortUnit}</TableCell>
-              <TableCell className="max-w-xs truncate">{e.rationale}</TableCell>
+              <TableCell className="max-w-xs truncate">{e.notes || '—'}</TableCell>
               <TableCell>
                 <Badge variant={e.isConfirmed ? 'default' : 'outline'}>
                   {e.isConfirmed ? t('stateConfirmed') : t('stateUnconfirmed')}
                 </Badge>
               </TableCell>
+              <TableCell>{e.createdByName || '—'}</TableCell>
+              <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{formatDateTimeSeconds(e.createdAt)}</TableCell>
+              <TableCell>{e.updatedAt !== e.createdAt ? (e.updatedByName || '—') : '—'}</TableCell>
+              <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{e.updatedAt !== e.createdAt ? formatDateTimeSeconds(e.updatedAt) : '—'}</TableCell>
               {canEdit && (
                 <TableCell>
                   <div className="flex gap-1">
@@ -225,11 +231,13 @@ export function EstimatesClient({ projectId, estimates, canEdit, onReload }: Pro
           ))}
           {estimates.length === 0 && (
             <TableRow>
-              <TableCell colSpan={canEdit ? 6 : 5} className="py-8 text-center text-muted-foreground">{t('noItems')}</TableCell>
+              <TableCell colSpan={canEdit ? 10 : 9} className="py-8 text-center text-muted-foreground">{t('noItems')}</TableCell>
             </TableRow>
           )}
         </TableBody>
       </Table>
+
+      <TablePagination page={page} pageCount={pageCount} onPageChange={setPage} />
     </div>
   );
 }

@@ -22,8 +22,23 @@
  *   - 認可: PM/TL + admin (呼出側 API ルートで task:update + task:delete を確認済の前提)
  */
 
+import { randomUUID } from 'node:crypto';
 import { prisma } from '@/lib/db';
-import { parseCsvText, recalculateAncestorsPublic } from './task.service';
+import { parseCsvText, recalculateAllProjectWps } from './task.service';
+
+/**
+ * タスク sync-import の DoS ハード上限 (route の checkCsvRowCount で 413)。
+ * 業務上の上限ではなく安全弁。ADR-0032 で旧 500 件業務上限 (CSV_MAX_ROWS) を廃止し、
+ * 大量取込は「ブロックせず警告」へ方針転換したため、タスクのみ高い安全弁を別途設ける。
+ */
+export const TASK_SYNC_IMPORT_MAX_ROWS = 2000;
+
+/**
+ * この件数を超えると「確定実行に時間がかかる場合がある」警告を globalWarnings に出す。
+ * ブロックはしない (canExecute に影響させない)。閾値は applySyncImport のバッチ最適化後の
+ * 実測 (TODO) で必要に応じ調整する。
+ */
+export const TASK_SYNC_IMPORT_WARN_ROWS = 300;
 
 // ============================================================
 // 型定義
@@ -115,6 +130,11 @@ export type SyncDiffResult = {
   canExecute: boolean;
   /** 行に紐付かないグローバルなエラー (ヘッダー不正など) */
   globalErrors: string[];
+  /**
+   * ADR-0032 (2026-06-04): 行に紐付かないグローバルな警告 (ブロックしない)。
+   * 大量取込時の「処理に時間がかかる場合がある」案内などに使う。canExecute には影響しない。
+   */
+  globalWarnings: string[];
   /**
    * 2026-05-21 [C2] OCC: dry-run 時点での影響範囲 (project 配下 task 最大 updatedAt)。
    * apply 時に再取得した値と比較し、ずれていれば「並行編集検出」で blocker 化する。
@@ -306,6 +326,7 @@ export async function computeSyncDiff(
     rows: [],
     canExecute: true,
     globalErrors: [],
+    globalWarnings: [],
     snapshotAt: null,
   };
 
@@ -335,10 +356,14 @@ export async function computeSyncDiff(
     return result;
   }
 
-  if (csvRows.length > 500) {
-    result.globalErrors.push('1 回のインポートは 500 件までです');
-    result.canExecute = false;
-    return result;
+  // ADR-0032 (2026-06-04): 旧「500 件ハード上限 (ブロック)」を撤廃。
+  //   applySyncImport を createMany バッチ化したことで大量取込でも現実的な時間で完走できるため、
+  //   業務上の件数制限は設けず、目安件数を超える場合は「時間がかかる場合がある」警告に留める。
+  //   (DoS に対する安全弁は route 層の checkCsvRowCount(TASK_SYNC_IMPORT_MAX_ROWS) が担う)
+  if (csvRows.length > TASK_SYNC_IMPORT_WARN_ROWS) {
+    result.globalWarnings.push(
+      `インポート件数が多いため (${csvRows.length} 件)、確定実行に時間がかかる場合があります。`,
+    );
   }
 
   // DB 既存タスクを取得 (T-19: 担当者は CSV で扱わないので member lookup 不要)
@@ -721,113 +746,116 @@ export async function applySyncImport(
   });
   const snapshotById = new Map(snapshot.map((t) => [t.id, t]));
 
-  // 親解決のためのテンポラリ id マッピング (新規作成タスクの DB id を保持)
-  const tempIdToDbId = new Map<string, string>();
+  // 各 CSV 行の「最終的な DB id」を事前採番する (ADR-0032 / 504 対策)。
+  //   - 既存 (id あり): その id
+  //   - 新規 (id 空欄): app 側で UUID 採番 (Task.id は DB default だが明示指定可)
+  // 親 id を DB 書込前に全行解決できるため、新規作成を level ごとに createMany でバッチ化できる。
+  //   旧実装は 1 行ずつ create + 後段で id ごとに findUnique しており、~100 行で逐次往復が
+  //   Netlify 関数の 10 秒上限を超えて 504 になっていた (KDD: WBS sync-import timeout)。
+  const resolvedIdByTempIndex = new Map<number, string>();
+  for (const row of csvRows) {
+    resolvedIdByTempIndex.set(row.tempRowIndex, row.id ?? randomUUID());
+  }
+  const requireResolvedId = (tempRowIndex: number): string => {
+    const id = resolvedIdByTempIndex.get(tempRowIndex);
+    if (!id) throw new Error('IMPORT_VALIDATION_ERROR:内部エラー: タスク ID を解決できませんでした');
+    return id;
+  };
+  // CSV 構造 (parser が決定済みの parentRowIndex) から親 DB id を解決する。root は null。
+  const parentIdOf = (row: SyncImportRow): string | null =>
+    row.parentRowIndex == null ? null : (resolvedIdByTempIndex.get(row.parentRowIndex) ?? null);
 
   // 実行中に変更したタスク id を追跡 (rollback 用)
   const createdIds: string[] = [];
   const updatedIds: string[] = [];
   const softDeletedIds: string[] = [];
 
-  // 親決定用に csvRows の level スタックを再構築
-  const parentStackById = new Map<number, { tempId: string; csvId: string | null }>();
+  // 新規作成を 1 度に流す createMany のチャンクサイズ (payload と round-trip のバランス)
+  const CREATE_CHUNK = 200;
 
   try {
-    // CSV を level 順に処理 (親→子の順、computeSyncDiff と同じ走査)
-    // T-19: 担当者 / 優先度 / マイルストーン / 備考 / WBS 番号は CSV で扱わない。
-    //   UPDATE 時は DB 既存値を保持、CREATE 時はデフォルト値を設定。
-    for (let i = 0; i < csvRows.length; i++) {
-      const row = csvRows[i];
-      const tempId = `csv_${row.tempRowIndex}`;
-
-      // 親 ID 決定
-      let parentTaskId: string | null = null;
-      if (row.level > 1) {
-        const parent = parentStackById.get(row.level - 1);
-        if (parent) {
-          // 親が既存 DB タスクなら csvId を使う、新規なら tempIdToDbId 経由
-          parentTaskId = parent.csvId ?? tempIdToDbId.get(parent.tempId) ?? null;
-        }
+    // ---- CREATE: level 昇順に createMany でバッチ作成 ----
+    //   親 (level=N-1) を子 (level=N) より先に INSERT して FK 制約を満たす。
+    //   担当者 / 優先度 / マイルストーン / 備考 / WBS 番号は CSV で扱わずデフォルト値。
+    const newRowsByLevel = new Map<number, SyncImportRow[]>();
+    for (const row of csvRows) {
+      if (row.id) continue; // 既存行は UPDATE 側で処理
+      const arr = newRowsByLevel.get(row.level) ?? [];
+      arr.push(row);
+      newRowsByLevel.set(row.level, arr);
+    }
+    const levelsAsc = [...newRowsByLevel.keys()].sort((a, b) => a - b);
+    for (const level of levelsAsc) {
+      const rowsAtLevel = newRowsByLevel.get(level) ?? [];
+      for (let i = 0; i < rowsAtLevel.length; i += CREATE_CHUNK) {
+        const chunk = rowsAtLevel.slice(i, i + CREATE_CHUNK);
+        await prisma.task.createMany({
+          data: chunk.map((row) => {
+            const isActivity = row.type === 'activity';
+            return {
+              id: requireResolvedId(row.tempRowIndex),
+              projectId,
+              parentTaskId: parentIdOf(row),
+              type: row.type,
+              name: row.name,
+              category: 'other',
+              assigneeId: null,
+              plannedStartDate: isActivity && row.plannedStartDate ? new Date(row.plannedStartDate) : null,
+              plannedEndDate: isActivity && row.plannedEndDate ? new Date(row.plannedEndDate) : null,
+              plannedEffort: isActivity ? (row.plannedEffort ?? 0) : 0,
+              priority: isActivity ? 'medium' : null,
+              isMilestone: false,
+              status: 'not_started',
+              progressRate: 0,
+              createdBy: userId,
+              updatedBy: userId,
+            };
+          }),
+        });
+        for (const row of chunk) createdIds.push(requireResolvedId(row.tempRowIndex));
       }
-      parentStackById.set(row.level, { tempId, csvId: row.id });
-      // 深いレベルのスタックをクリア
-      for (const k of Array.from(parentStackById.keys())) {
-        if (k > row.level) parentStackById.delete(k);
-      }
+    }
 
+    // ---- UPDATE: 既存行は値が行ごとに異なるため per-row update ----
+    //   新規作成後に実行する (既存 ACT を新規 WP 配下へ移動するケースの FK を満たすため)。
+    for (const row of csvRows) {
+      if (!row.id) continue;
       const isActivity = row.type === 'activity';
-
-      if (row.id) {
-        // UPDATE: 7 列分のみ更新 (担当者/優先度等は DB 既存値を保持)
-        const updateData: Record<string, unknown> = {
-          parentTaskId,
-          type: row.type,
-          name: row.name,
-          updatedBy: userId,
-        };
-        if (isActivity) {
-          updateData.plannedStartDate = row.plannedStartDate ? new Date(row.plannedStartDate) : null;
-          updateData.plannedEndDate = row.plannedEndDate ? new Date(row.plannedEndDate) : null;
-          updateData.plannedEffort = row.plannedEffort ?? 0;
-        }
-        await prisma.task.update({ where: { id: row.id }, data: updateData });
-        updatedIds.push(row.id);
-        tempIdToDbId.set(tempId, row.id);
-      } else {
-        // CREATE: 7 列 + デフォルト値で作成 (担当者/優先度/マイルストーン/備考は UI で個別設定)
-        const created = await prisma.task.create({
-          data: {
-            projectId,
-            parentTaskId,
-            type: row.type,
-            name: row.name,
-            category: 'other',
-            assigneeId: null,
-            plannedStartDate: isActivity && row.plannedStartDate ? new Date(row.plannedStartDate) : null,
-            plannedEndDate: isActivity && row.plannedEndDate ? new Date(row.plannedEndDate) : null,
-            plannedEffort: isActivity ? (row.plannedEffort ?? 0) : 0,
-            priority: isActivity ? 'medium' : null,
-            isMilestone: false,
-            status: 'not_started',
-            progressRate: 0,
-            createdBy: userId,
-            updatedBy: userId,
-          },
-        });
-        createdIds.push(created.id);
-        tempIdToDbId.set(tempId, created.id);
+      const updateData: Record<string, unknown> = {
+        parentTaskId: parentIdOf(row),
+        type: row.type,
+        name: row.name,
+        updatedBy: userId,
+      };
+      if (isActivity) {
+        updateData.plannedStartDate = row.plannedStartDate ? new Date(row.plannedStartDate) : null;
+        updateData.plannedEndDate = row.plannedEndDate ? new Date(row.plannedEndDate) : null;
+        updateData.plannedEffort = row.plannedEffort ?? 0;
       }
+      await prisma.task.update({ where: { id: row.id }, data: updateData });
+      updatedIds.push(row.id);
     }
 
-    // 削除モード処理 (REMOVE_CANDIDATE)
+    // ---- DELETE (removeMode='delete'): 進捗なし REMOVE_CANDIDATE を一括論理削除 ----
     if (removeMode === 'delete') {
+      const toDeleteIds: string[] = [];
       for (const r of diff.rows) {
-        if (r.action === 'REMOVE_CANDIDATE' && r.id && !r.hasProgress) {
-          await prisma.task.update({
-            where: { id: r.id },
-            data: { deletedAt: new Date(), updatedBy: userId },
-          });
-          softDeletedIds.push(r.id);
-        }
+        if (r.action === 'REMOVE_CANDIDATE' && r.id && !r.hasProgress) toDeleteIds.push(r.id);
+      }
+      if (toDeleteIds.length > 0) {
+        await prisma.task.updateMany({
+          where: { id: { in: toDeleteIds }, projectId },
+          data: { deletedAt: new Date(), updatedBy: userId },
+        });
+        softDeletedIds.push(...toDeleteIds);
       }
     }
 
-    // 成功時: WP 集計を再計算 (深い順、子→親で伝播)
-    const wpIdsAffected = new Set<string>();
-    for (const id of [...createdIds, ...updatedIds]) {
-      const t = await prisma.task.findUnique({ where: { id }, select: { type: true, parentTaskId: true } });
-      if (t?.type === 'work_package') wpIdsAffected.add(id);
-      if (t?.parentTaskId) {
-        const parent = await prisma.task.findUnique({
-          where: { id: t.parentTaskId },
-          select: { type: true },
-        });
-        if (parent?.type === 'work_package') wpIdsAffected.add(t.parentTaskId);
-      }
-    }
-    for (const wpId of wpIdsAffected) {
-      await recalculateAncestorsPublic(wpId);
-    }
+    // ---- WP 集計再計算 ----
+    //   旧実装は「影響 WP ごとに recalculateAncestorsPublic を再帰呼出」+ 対象 WP 検出のため
+    //   id ごとに findUnique しており O(N) 逐次往復になっていた。プロジェクト全 WP を深度降順で
+    //   1 パス再計算する recalculateAllProjectWps に置換し (一致時 skip)、O(WP 数) に削減する。
+    await recalculateAllProjectWps(projectId, viewerTenantId);
 
     return {
       added: createdIds.length,

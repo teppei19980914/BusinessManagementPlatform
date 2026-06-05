@@ -89,8 +89,9 @@ test.describe('@feature:personal Step 8 個人機能', () => {
     const page = sharedPage;
     await page.goto('/my-tasks');
     await page.waitForLoadState('networkidle');
-    // 実 <h2 className="text-xl font-semibold">マイタスク</h2>
-    await expect(page.getByRole('heading', { name: 'マイタスク' })).toBeVisible({
+    // 2026-06-05: 画面名「マイタスク」見出しは撤去 (ナビ折りたたみ幅でのみ CollapsedNavScreenTitle が表示)。
+    //   画面ロード確認は画面ルート要素の testid で行う (担当タスクの有無に依らず常時存在)。
+    await expect(page.getByTestId('my-tasks-screen')).toBeVisible({
       timeout: 10_000,
     });
     await snapshotStep(page, 'my-tasks-list');
@@ -106,8 +107,9 @@ test.describe('@feature:personal Step 8 個人機能', () => {
     });
     await page.goto('/memos');
     await page.waitForLoadState('networkidle');
-    // 2026-04-24: 見出しを「メモ」→「メモ一覧」に改称 (dashboard-header の命名統一と揃える)
-    await expect(page.getByRole('heading', { name: 'メモ一覧', exact: true })).toBeVisible({
+    // 2026-06-03: 画面見出し (h2「メモ一覧」) は他「○○一覧」と揃えて撤去したため、
+    //   画面ロード確認は「メモ作成」ボタンの可視で行う。
+    await expect(page.getByRole('button', { name: 'メモ作成' })).toBeVisible({
       timeout: 10_000,
     });
     // 一覧内の行要素は tbody tr + .first() でスコープ (LESSONS_LEARNED §4.11)
@@ -184,7 +186,8 @@ test.describe('@feature:personal Step 8 個人機能', () => {
     const page = sharedPage;
     await page.goto('/settings');
     await page.waitForLoadState('networkidle');
-    await expect(page.getByRole('heading', { name: '設定' })).toBeVisible({ timeout: 10_000 });
+    // 2026-06-05: 画面名「設定」見出しは撤去。画面ロード確認はアカウント情報セクション testid で行う。
+    await expect(page.getByTestId('account-info-section')).toBeVisible({ timeout: 10_000 });
 
     // PATCH /api/settings/theme のレスポンスを明示的に待つ
     const themeRes = page.waitForResponse(

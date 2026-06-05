@@ -32,7 +32,6 @@
 
 import { prisma } from '@/lib/db';
 import { generateEmbedding } from './embedding.service';
-import { MANAGEMENT_TENANT_ID } from '@/lib/tenant';
 import {
   SUGGESTION_DEFAULT_LIMIT,
   SUGGESTION_SCORE_THRESHOLD,
@@ -116,7 +115,6 @@ export interface ChatSearchInput {
   query: string;
   viewerTenantId: string;
   viewerUserId: string;
-  viewerSeedDataEnabled: boolean;
   /** 各資産あたりの上限件数。default SUGGESTION_DEFAULT_LIMIT (= 50)。 */
   limit?: number;
 }
@@ -143,13 +141,8 @@ interface RawHit {
   score: number;
 }
 
-/**
- * tenantId IN (viewerTenantId, MANAGEMENT_TENANT_ID?) の SQL 値配列を組み立てる。
- * seedDataEnabled=true なら管理テナントも含める (既存提案機能と整合)。
- */
-function buildTenantIdList(viewerTenantId: string, seedDataEnabled: boolean): string[] {
-  return seedDataEnabled ? [viewerTenantId, MANAGEMENT_TENANT_ID] : [viewerTenantId];
-}
+// feat/starter-data-import (2026-06-05): 単一テナント化。チャット検索は自テナントのみを参照する
+//   (旧 buildTenantIdList による管理テナント越境参照は撤去)。
 
 /**
  * pgvector Cosine 類似度で検索し、上位 limit 件を取得する。
@@ -560,7 +553,7 @@ export async function chatSemanticSearch(
 ): Promise<ChatSearchResult> {
   const trimmed = input.query.trim();
   const limit = input.limit ?? SUGGESTION_DEFAULT_LIMIT;
-  const tenantIds = buildTenantIdList(input.viewerTenantId, input.viewerSeedDataEnabled);
+  const tenantIds = [input.viewerTenantId];
 
   // ADR-0021 (2026-05-26): file scope query 検出 (= 「ファイル」「添付」「PDF」等)
   //   true: 添付ファイルのみ検索、他資産は空

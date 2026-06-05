@@ -158,6 +158,21 @@ export function KnowledgeEditDialog({
         <form onSubmit={handleSubmit} className="space-y-4">
           {error && <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
           <fieldset disabled={readOnly} className="space-y-4 disabled:opacity-90">
+          {/* 2026-06-02: 「公開範囲・種別」を 1 行目、タイトルを 2 行目に並べ替え (公開範囲を左) */}
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label>{tKnowledge('visibility')}</Label>
+              <select value={form.visibility} onChange={(e) => setForm({ ...form, visibility: e.target.value })} className={nativeSelectClass}>
+                {Object.entries(VISIBILITIES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+              </select>
+            </div>
+            <div className="space-y-2">
+              <Label>{tKnowledge('kind')}</Label>
+              <select value={form.knowledgeType} onChange={(e) => setForm({ ...form, knowledgeType: e.target.value })} className={nativeSelectClass}>
+                {Object.entries(KNOWLEDGE_TYPES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+              </select>
+            </div>
+          </div>
           <div className="space-y-2">
             <Label>
               {tKnowledge('fieldTitle')}
@@ -172,20 +187,6 @@ export function KnowledgeEditDialog({
               maxLength={150}
               required={form.visibility === 'public'}
             />
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label>{tKnowledge('kind')}</Label>
-              <select value={form.knowledgeType} onChange={(e) => setForm({ ...form, knowledgeType: e.target.value })} className={nativeSelectClass}>
-                {Object.entries(KNOWLEDGE_TYPES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-              </select>
-            </div>
-            <div className="space-y-2">
-              <Label>{tKnowledge('visibility')}</Label>
-              <select value={form.visibility} onChange={(e) => setForm({ ...form, visibility: e.target.value })} className={nativeSelectClass}>
-                {Object.entries(VISIBILITIES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-              </select>
-            </div>
           </div>
           {/* feat/asset-assignee-expansion (2026-05-26): 担当者 selector (members 受領時のみ表示)。
               作成者と並ぶ編集権限保持者で、引継ぎ完了後の運用者向け。 */}

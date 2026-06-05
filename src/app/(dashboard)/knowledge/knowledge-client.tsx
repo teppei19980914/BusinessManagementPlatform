@@ -53,8 +53,11 @@ import { matchesAnyKeyword } from '@/lib/text-search';
 // Phase E 要件 1〜3 (2026-04-29): 共通行クリック + フィルタバー部品
 import { ClickableRow } from '@/components/common/clickable-row';
 import { FilterBar } from '@/components/common/filter-bar';
+import { useTablePagination, TablePagination } from '@/components/common/table-pagination';
 import { useBatchAttachments } from '@/components/attachments/use-batch-attachments';
 import { AttachmentsCell } from '@/components/attachments/attachments-cell';
+// 2026-06-03: ○○一覧と列構成を統一 (リンク列 / 担当者列 / タイトル列、本文列は撤去)。
+import { LinksCell } from '@/components/attachments/links-cell';
 import { ResizableHead } from '@/components/ui/resizable-columns';
 import { ResizableTableShell } from '@/components/common/resizable-table-shell';
 import { SortableResizableHead } from '@/components/sort/sortable-resizable-head';
@@ -67,10 +70,9 @@ import { AdminKnowledgeDeleteButton } from './admin-delete-button';
 function getKnowledgeSortValue(k: AllKnowledgeDTO, columnKey: string): unknown {
   switch (columnKey) {
     case 'project': return k.projectName ?? '';
+    case 'title': return k.title;
     case 'type': return k.knowledgeType;
-    case 'background': return k.background;
-    case 'content': return k.content;
-    case 'result': return k.result;
+    case 'assigneeName': return k.assigneeName ?? '';
     case 'createdAt': return k.createdAt;
     case 'createdBy': return k.creatorName ?? '';
     case 'updatedAt': return k.updatedAt;
@@ -91,7 +93,7 @@ export function KnowledgeClient({ initialKnowledge, systemRole, initialKeyword =
   const router = useRouter();
   const tKnowledge = useTranslations('knowledge');
   const tCommon = useTranslations('common');
-  const { formatDateTime } = useFormatters();
+  const { formatDateTimeSeconds } = useFormatters();
   const isAdmin = systemRole === 'admin';
   // PR #425 (2026-05-22) KDD §5.X+102: 入力即フィルタ + URL ?keyword=&type= 永続化
   const { keyword, setKeyword, filters, setFilter } = useListSearchParams<{ type: string }>({
@@ -112,6 +114,7 @@ export function KnowledgeClient({ initialKnowledge, systemRole, initialKeyword =
     return true;
   });
   const filtered = multiSort(baseFiltered, sortState, getKnowledgeSortValue);
+  const { pageItems, page, pageCount, setPage } = useTablePagination(filtered, `${keyword}|${typeFilter}`);
 
   const attachmentsByEntity = useBatchAttachments(
     'knowledge',
@@ -127,15 +130,7 @@ export function KnowledgeClient({ initialKnowledge, systemRole, initialKeyword =
 
   return (
     <div className="space-y-6">
-      {/* feat/all-list-section-unification (2026-05-24): 全○○ 5 画面共通レイアウト規約
-          1. 件数行 (justify-end / フィルタ後件数 / common.itemCount)
-          2. FilterBar (検索・フィルタ、軸数は画面固有)
-          3. ResizableTableShell (テーブル本体)
-          4. 詳細ダイアログ (read-only) */}
-      <div className="flex justify-end">
-        <span className="text-sm text-muted-foreground">{tCommon('itemCount', { count: filtered.length })}</span>
-      </div>
-
+      {/* 2026-06-03: フィルター位置をプロジェクト一覧に統一。FilterBar を先頭に置き、件数は表の下部へ移動。 */}
       <FilterBar>
         <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
           <div className="md:col-span-2">
@@ -175,21 +170,23 @@ export function KnowledgeClient({ initialKnowledge, systemRole, initialKeyword =
       <ResizableTableShell tableKey="all-knowledge">
           <TableHeader>
             <TableRow>
+              {/* 2026-06-03: ナレッジ一覧(タブ)と列構成を統一 — プロジェクト + タイトル・種別・担当者・監査4・リンク・添付・操作。
+                  本文列(背景/内容/結果)は詳細ダイアログでのみ表示するため一覧からは撤去。 */}
               <SortableResizableHead columnKey="project" defaultWidth={140} label={tKnowledge('project')} sortState={sortState} onSortChange={setSortColumn} />
+              <SortableResizableHead columnKey="title" defaultWidth={240} label={tKnowledge('fieldTitle')} sortState={sortState} onSortChange={setSortColumn} />
               <SortableResizableHead columnKey="type" defaultWidth={100} label={tKnowledge('kind')} sortState={sortState} onSortChange={setSortColumn} />
-              <SortableResizableHead columnKey="background" defaultWidth={200} label={tKnowledge('background')} sortState={sortState} onSortChange={setSortColumn} />
-              <SortableResizableHead columnKey="content" defaultWidth={200} label={tKnowledge('content')} sortState={sortState} onSortChange={setSortColumn} />
-              <SortableResizableHead columnKey="result" defaultWidth={200} label={tKnowledge('result')} sortState={sortState} onSortChange={setSortColumn} />
-              <SortableResizableHead columnKey="createdAt" defaultWidth={130} label={tKnowledge('createdAt')} sortState={sortState} onSortChange={setSortColumn} />
+              <SortableResizableHead columnKey="assigneeName" defaultWidth={120} label={tKnowledge('assignee')} sortState={sortState} onSortChange={setSortColumn} />
               <SortableResizableHead columnKey="createdBy" defaultWidth={120} label={tKnowledge('createdBy')} sortState={sortState} onSortChange={setSortColumn} />
-              <SortableResizableHead columnKey="updatedAt" defaultWidth={130} label={tKnowledge('updatedAt')} sortState={sortState} onSortChange={setSortColumn} />
+              <SortableResizableHead columnKey="createdAt" defaultWidth={150} label={tKnowledge('createdAt')} sortState={sortState} onSortChange={setSortColumn} />
               <SortableResizableHead columnKey="updatedBy" defaultWidth={120} label={tKnowledge('updatedBy')} sortState={sortState} onSortChange={setSortColumn} />
-              <ResizableHead columnKey="attachments" defaultWidth={200}>{tKnowledge('attachment')}</ResizableHead>
+              <SortableResizableHead columnKey="updatedAt" defaultWidth={150} label={tKnowledge('updatedAt')} sortState={sortState} onSortChange={setSortColumn} />
+              <ResizableHead columnKey="links" defaultWidth={200}>{tKnowledge('links')}</ResizableHead>
+              <ResizableHead columnKey="attachments" defaultWidth={180}>{tKnowledge('attachment')}</ResizableHead>
               {isAdmin && <ResizableHead columnKey="actions" defaultWidth={80}>{tKnowledge('actions')}</ResizableHead>}
             </TableRow>
           </TableHeader>
           <TableBody>
-            {filtered.map((k) => (
+            {pageItems.map((k) => (
               <ClickableRow
                 key={k.id}
                 onClick={() => setEditingKnowledge(k)}
@@ -221,28 +218,31 @@ export function KnowledgeClient({ initialKnowledge, systemRole, initialKeyword =
                     </span>
                   )}
                 </TableCell>
+                <TableCell className="font-medium">{k.title}</TableCell>
                 <TableCell>
                   <Badge variant="secondary">
                     {KNOWLEDGE_TYPES[k.knowledgeType as keyof typeof KNOWLEDGE_TYPES] || k.knowledgeType}
                   </Badge>
                 </TableCell>
-                <TableCell className="max-w-xs truncate text-sm">{k.background || '-'}</TableCell>
-                <TableCell className="max-w-xs truncate text-sm">{k.content || '-'}</TableCell>
-                <TableCell className="max-w-xs truncate text-sm">{k.result || '-'}</TableCell>
-                <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
-                  {formatDateTime(k.createdAt)}
-                </TableCell>
+                <TableCell className="text-sm text-muted-foreground">{k.assigneeName || '—'}</TableCell>
                 <TableCell className="text-sm text-muted-foreground">
                   {k.creatorName ?? <span className="text-muted-foreground">-</span>}
                 </TableCell>
                 <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
-                  {formatDateTime(k.updatedAt)}
+                  {formatDateTimeSeconds(k.createdAt)}
                 </TableCell>
                 <TableCell className="text-sm text-muted-foreground">
-                  {k.updatedByName ?? <span className="text-muted-foreground">-</span>}
+                  {k.updatedAt !== k.createdAt ? (k.updatedByName ?? <span className="text-muted-foreground">-</span>) : <span className="text-muted-foreground">—</span>}
+                </TableCell>
+                <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
+                  {k.updatedAt !== k.createdAt ? formatDateTimeSeconds(k.updatedAt) : '—'}
+                </TableCell>
+                {/* リンク列 (url 型添付を縦に複数行) / 添付列 (ファイル本体のみ) */}
+                <TableCell onClick={(e) => e.stopPropagation()}>
+                  <LinksCell items={attachmentsByEntity[k.id] ?? []} />
                 </TableCell>
                 <TableCell onClick={(e) => e.stopPropagation()}>
-                  <AttachmentsCell items={attachmentsByEntity[k.id] ?? []} />
+                  <AttachmentsCell items={(attachmentsByEntity[k.id] ?? []).filter((a) => a.storageProvider === 'supabase')} />
                 </TableCell>
                 {isAdmin && (
                   <TableCell onClick={(e) => e.stopPropagation()}>
@@ -260,6 +260,13 @@ export function KnowledgeClient({ initialKnowledge, systemRole, initialKeyword =
             )}
           </TableBody>
       </ResizableTableShell>
+
+      <TablePagination page={page} pageCount={pageCount} onPageChange={setPage} />
+
+      {/* 2026-06-03: 件数は表の下部に表示 (フィルター位置統一に伴い上部から移動) */}
+      <div className="flex justify-end">
+        <span className="text-sm text-muted-foreground">{tCommon('itemCount', { count: filtered.length })}</span>
+      </div>
 
       <KnowledgeEditDialog
         knowledge={editingKnowledge}

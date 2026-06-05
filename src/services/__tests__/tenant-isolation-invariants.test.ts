@@ -157,6 +157,20 @@ const CROSS_TENANT_ALLOWED_FILES = new Set([
   //   かつ呼出元の upload API が tenant 認可を実施済)。
   //   呼出側で tenantId 確保 + Stripe Invariant のため許可リスト入り。
   'attachment-embedding.service.ts',
+  // ADR-0034 (2026-06-05): 外部移行インポート基盤。以下は **DB アクセスを持たない純粋関数**
+  //   (CSV/外部API → 共通中間形式 NormalizedBatch への正規化・検証・値マッピングのみ)。
+  //   テナント分離は呼出元の migration-import.service.ts が buildExistingIndex / previewMigration /
+  //   applyMigration で tenantId を引数として確保する (= 本体 service は I-2 で検査済)。
+  //   pure logic ゆえ tenant 概念と無関係 (state-machine.ts と同じ扱い)。
+  'normalized-batch.ts', // 中間形式の型 + emptyBatch ファクトリ
+  'csv-to-batch.ts', // 手動CSV → NormalizedBatch
+  'batch-preview.ts', // 依存解決 + 検証 (純関数)
+  'value-mapping.ts', // 選択値の内部値化
+  'date-normalize.ts', // 日付正規化
+  'wbs-hierarchy.ts', // WBS 階層 (前順序 + レベル) 変換
+  'wbs-sync-rows.ts', // WBS 行の sync 変換
+  'import-field-catalog.ts', // インポート対象項目カタログ (定数)
+  'backlog.ts', // Backlog コネクタ (外部API → SourceWbsNode 正規化)
 ]);
 
 /**
@@ -199,18 +213,26 @@ describe('★テナント分離 リグレッション防止 — Service 層★',
 //   黒箱的に検証する (= ふるまいで保証)。
 
 // ============================================================================
-// I-3: 提案エンジンの tenant scope filter が「自テナント + 管理テナント」または「自テナントのみ」
-//      の 2 形式しか取らないこと
+// I-3: 提案エンジンの tenant scope filter が「自テナントのみ」であること (単一テナント化)
+//   feat/starter-data-import (2026-06-05): スターターデータを取込で各テナントに複製する方式に変更し、
+//   提案/チャットの管理テナント越境参照 (MANAGEMENT_TENANT_ID) を撤去した。本テストは旧
+//   「自テナント + 管理テナント」許容の検証を反転し、**越境参照が二度と復活しないこと** を固定する。
 // ============================================================================
 
-describe('★提案エンジン tenant scope filter — リグレッション防止★', () => {
-  it('suggestion.service.ts は MANAGEMENT_TENANT_ID を import して tenantScopeFilter を構築している', () => {
+describe('★提案エンジン tenant scope filter — 単一テナント化リグレッション防止★', () => {
+  it('suggestion.service.ts は MANAGEMENT_TENANT_ID を一切参照せず tenantScopeFilter は自テナントのみ', () => {
     const content = readFileSync(join(SERVICE_DIR, 'suggestion.service.ts'), 'utf-8');
-    expect(content).toContain('MANAGEMENT_TENANT_ID');
     expect(content).toContain('tenantScopeFilter');
-    // 「seedDataEnabled なら自テナント + 管理、false なら自テナントのみ」が明文化されている
-    expect(content).toMatch(/in:\s*\[\s*viewerTenantId\s*,\s*MANAGEMENT_TENANT_ID\s*\]/);
-    expect(content).toMatch(/tenantId:\s*viewerTenantId\s*\}/);
+    // 単一テナント参照: tenantScopeFilter は { tenantId: viewerTenantId } のみ
+    expect(content).toMatch(/tenantScopeFilter\s*=\s*\{\s*tenantId:\s*viewerTenantId\s*\}/);
+    // 越境参照 ([viewerTenantId, MANAGEMENT_TENANT_ID]) が復活していないこと
+    expect(content).not.toMatch(/\[\s*viewerTenantId\s*,\s*MANAGEMENT_TENANT_ID\s*\]/);
+    // MANAGEMENT_TENANT_ID の import / 使用がコード上に無いこと (コメントを除く実コード)
+    const codeWithoutComments = content
+      .split('\n')
+      .filter((l) => !l.trim().startsWith('//') && !l.trim().startsWith('*'))
+      .join('\n');
+    expect(codeWithoutComments).not.toContain('MANAGEMENT_TENANT_ID');
   });
 
   it('suggestion.service.ts は他顧客テナントを許容する pattern を含まない (= severity-1 攻撃経路の永久遮断)', () => {

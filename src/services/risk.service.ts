@@ -110,6 +110,9 @@ export type RiskDTO = {
   riskNature: string | null;
   createdAt: string;
   updatedAt: string;
+  // 2026-06-02: 一覧で作成者/更新者を表示するため名前解決 (listRisks / listAllRisksForViewer 経路で非null)。
+  createdByName?: string | null;
+  updatedByName?: string | null;
   /** PR #165: プロジェクト「リスク/課題一覧」での一括編集対象判定。viewer が作成者本人なら true。
    * undefined の場合は viewerUserId を渡さなかった内部呼び出し経路 (cascade 削除確認等)。
    * feat/asset-assignee-expansion (2026-05-26): 後方互換のため残置。新規 UI は viewerCanEdit を使う。 */
@@ -262,6 +265,15 @@ export async function listRisks(
       })) ?? [];
   const memberProjectIds = new Set(memberships.map((m) => m.projectId));
 
+  // 2026-06-02: 一覧表示用に作成者/更新者名をバルク取得 (氏名のみ select、N+1 回避)。
+  //   tenantId フィルタを明示し自テナントの User のみ解決 = 越境した createdBy/updatedBy は
+  //   null フォールバックされ氏名漏えいしない (User は 1 ユーザ 1 テナント、@@unique([tenantId,email]))。
+  const audUserIds = Array.from(new Set(risks.flatMap((r) => [r.createdBy, r.updatedBy])));
+  const audUsers = audUserIds.length > 0
+    ? await prisma.user.findMany({ where: { id: { in: audUserIds }, tenantId: viewerTenantId }, select: { id: true, name: true } })
+    : [];
+  const audUserNameById = new Map(audUsers.map((u) => [u.id, u.name]));
+
   // PR #165 + feat/asset-assignee-expansion (2026-05-26): viewerIsCreator は後方互換のため残置、
   //   新規 UI 経路は viewerCanEdit (作成者 OR 担当者) を使う。
   return risks.map((r) => {
@@ -270,6 +282,8 @@ export async function listRisks(
     const isAssignee = r.assigneeId === viewerUserId;
     return {
       ...dto,
+      createdByName: audUserNameById.get(r.createdBy) ?? null,
+      updatedByName: audUserNameById.get(r.updatedBy) ?? null,
       linkedProjects: gateLinkedProjectsName(dto.linkedProjects, memberProjectIds, isAdmin),
       viewerIsCreator: isCreator,
       viewerCanEdit: isCreator || isAssignee,

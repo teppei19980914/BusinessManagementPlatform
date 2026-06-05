@@ -9,6 +9,8 @@ import { LOGIN_ROUTE } from '@/config';
 // feat/app-header-footer-unification (2026-05-24): DashboardHeader を AppHeader に統合。
 // 同一コンポーネントを (public) / (auth) でも user=null で再利用し「同じ役割は同じ UI」を担保。
 import { AppHeader } from '@/components/app-header';
+// feat/collapsed-nav-screen-title (2026-06-05): ナビ折りたたみ幅 (xl: 未満) で現在の画面名を表示。
+import { CollapsedNavScreenTitle } from '@/components/collapsed-nav-screen-title';
 import { LoadingProvider } from '@/components/loading-overlay';
 // 2026-04-30 (Task 2): リクエスト成功/失敗を画面下部の帯で通知する共通基盤
 import { ToastProvider } from '@/components/toast-provider';
@@ -72,7 +74,12 @@ export default async function DashboardLayout({ children }: { children: React.Re
             画面いっぱいまで広げて収まるデータを増やし、それでも溢れる分だけ
             テーブル側の overflow-x-auto でスクロールさせる運用。
           */}
-          <main className="px-4 py-6 sm:px-6 lg:px-8">{children}</main>
+          <main className="px-4 py-6 sm:px-6 lg:px-8">
+            {/* feat/collapsed-nav-screen-title: ナビ折りたたみ幅 (xl: 未満) のみ画面名を表示。
+                全画面で <main> 先頭に置き、UI 配置を統一する。 */}
+            <CollapsedNavScreenTitle />
+            {children}
+          </main>
         </div>
         <ChatSemanticSearchFab />
         {/* G2-e-3: 初回ログイン (たすきば未利用) ユーザにウェルカム案内を 1 回だけ自動表示。

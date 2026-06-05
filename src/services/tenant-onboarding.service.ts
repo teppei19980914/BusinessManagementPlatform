@@ -79,13 +79,21 @@ export const TenantOnboardingInputSchema = z
 
     // 2026-05-09 (PR C / #8): 住所サブフィールド化。新規入力は構造化した個別フィールドで受ける。
     //   - 旧 billingAddress (単一 Text) は legacy として schema 上残置 (既存データ保護)。
-    //   - 構造化フィールドはすべて required (#10 で billingBuildingName のみ optional)。
-    billingPostalCode: z.string().trim().regex(/^\d{3}-?\d{4}$/, {
-      message: '郵便番号は 7 桁 (例 100-0001) で入力してください',
-    }),
-    billingPrefecture: z.string().trim().min(1).max(20),
-    billingCity: z.string().trim().min(1).max(100),
-    billingStreetAddress: z.string().trim().min(1).max(200),
+    // feat/billing-conditional-by-plan (2026-06-05): プラン別に住所の必須/任意を出し分ける。
+    //   - field レベルでは全て optional にし (= 値があれば形式検証はする)、
+    //   - Expert/Pro のときだけ superRefine で「未入力なら必須エラー」を出す。
+    //   - Beginner は課金が発生しないため住所は任意 (UI でも非表示)。後から設定画面で入力可。
+    //   regex は「値があるとき」のみ検証されるよう optional の前段に置く。
+    billingPostalCode: z
+      .string()
+      .trim()
+      .regex(/^\d{3}-?\d{4}$/, {
+        message: '郵便番号は 7 桁 (例 100-0001) で入力してください',
+      })
+      .optional(),
+    billingPrefecture: z.string().trim().max(20).optional(),
+    billingCity: z.string().trim().max(100).optional(),
+    billingStreetAddress: z.string().trim().max(200).optional(),
     billingBuildingName: z.string().trim().max(200).optional(),
 
     /** 任意 */
@@ -115,16 +123,44 @@ export const TenantOnboardingInputSchema = z
       message: 'プライバシーポリシーへの同意が必要です',
     }),
   })
-  // 2026-05-09 (PR C / #5): 法人プランのみ会社名必須。
-  //   個人プランで誤入力された会社名は許容 (UI 非表示なので通常は空) し、
-  //   サーバ側で sanitize する (UI へ渡す表示は法人 ↔ 個人切替で動的)。
-  .refine(
-    (d) => d.billingType !== 'corporate' || (d.billingCompanyName != null && d.billingCompanyName.length > 0),
-    {
-      path: ['billingCompanyName'],
-      message: '法人プランでは会社名 / 法人名は必須です',
-    },
-  );
+  // feat/billing-conditional-by-plan (2026-06-05): プラン別の請求先必須判定 (defense-in-depth)。
+  //   - Expert/Pro: 住所 4 項目 (郵便番号/都道府県/市区町村/番地) + 法人なら会社名を必須化。
+  //     => 課金が発生する有料プランは請求書送付のため請求先を厳格に揃える。
+  //   - Beginner: 住所・会社名とも任意 (= 課金が発生しないため。UI でも請求先セクションを非表示にし、
+  //     billingContactName/Email は初期管理者の値を流用する。後から /settings/tenant で入力可)。
+  //   旧 .refine (法人のみ会社名必須) はこの superRefine に統合した。
+  .superRefine((d, ctx) => {
+    if (d.plan === 'beginner') return; // Beginner は請求先任意 (課金なし)
+
+    const addressFields: Array<[keyof typeof d, string]> = [
+      ['billingPostalCode', '郵便番号'],
+      ['billingPrefecture', '都道府県'],
+      ['billingCity', '市区町村'],
+      ['billingStreetAddress', '番地・町名'],
+    ];
+    for (const [field, label] of addressFields) {
+      const value = d[field];
+      if (value == null || String(value).trim().length === 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [field as string],
+          message: `${label}は必須です`,
+        });
+      }
+    }
+
+    // 法人プランは会社名 / 法人名を必須 (個人は不要)
+    if (
+      d.billingType === 'corporate' &&
+      (d.billingCompanyName == null || d.billingCompanyName.length === 0)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['billingCompanyName'],
+        message: '法人プランでは会社名 / 法人名は必須です',
+      });
+    }
+  });
 
 export type TenantOnboardingInput = z.infer<typeof TenantOnboardingInputSchema>;
 
@@ -335,10 +371,12 @@ async function createTenantInternal(
         // 2026-05-09 (PR C / #8): 住所サブフィールド化。
         //   新規 onboarding は legacy billingAddress を null で保存し、構造化フィールドのみ使う。
         billingAddress: null,
-        billingPostalCode: input.billingPostalCode,
-        billingPrefecture: input.billingPrefecture,
-        billingCity: input.billingCity,
-        billingStreetAddress: input.billingStreetAddress,
+        // feat/billing-conditional-by-plan (2026-06-05): Beginner は住所が任意 (undefined) のため
+        //   ?? null で明示的に NULL 保存する (Expert/Pro は superRefine で値が保証される)。
+        billingPostalCode: input.billingPostalCode ?? null,
+        billingPrefecture: input.billingPrefecture ?? null,
+        billingCity: input.billingCity ?? null,
+        billingStreetAddress: input.billingStreetAddress ?? null,
         // 2026-05-09 (PR C / #10): building は optional。空文字は null に正規化。
         billingBuildingName: input.billingBuildingName?.trim() || null,
         billingPhoneNumber: input.billingPhoneNumber ?? null,

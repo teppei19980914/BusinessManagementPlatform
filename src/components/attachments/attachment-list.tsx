@@ -31,6 +31,8 @@ const UPLOADABLE_ENTITY_TYPES = new Set<AttachmentEntityType>([
   'risk',
   'retrospective',
   'knowledge',
+  // 2026-06-03: memo も他資産同様にファイル本体アップロード対応 (旧「URL 添付のみ」制限を解除)
+  'memo',
 ]);
 const FILE_MAX_BYTES = 50 * 1_000_000; // 50MB SI (file-storage-pricing.ts と一致)
 

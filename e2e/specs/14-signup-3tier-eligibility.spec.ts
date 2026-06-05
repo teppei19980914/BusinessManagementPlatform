@@ -77,7 +77,8 @@ test.describe('@feature:auth:signup ADR-0016 Revised 3 層判定', () => {
     await page.waitForLoadState('networkidle');
 
     // RUN_ID 接頭辞の email は DB に存在しないため層 3 と判定される
-    await page.getByLabel('請求先メール *').fill(LAYER3_EMAIL);
+    // feat/billing-conditional-by-plan (2026-06-05): Beginner 既定では請求先セクションが
+    //   非表示のため、層判定は初期管理者の「メールアドレス」入力のみで行う (請求先メールは入力しない)。
     await page.getByLabel('メールアドレス *').last().fill(LAYER3_EMAIL);
 
     // debounce 300ms + API 往復後の state change を待つ (固定 sleep より flaky 耐性高い)
@@ -93,7 +94,7 @@ test.describe('@feature:auth:signup ADR-0016 Revised 3 層判定', () => {
     await page.goto('/signup');
     await page.waitForLoadState('networkidle');
 
-    await page.getByLabel('請求先メール *').fill(ADMIN_EMAIL);
+    // Beginner 既定では請求先セクション非表示のため、層判定は初期管理者メールのみで行う
     await page.getByLabel('メールアドレス *').last().fill(ADMIN_EMAIL);
 
     // 層 1 警告が表示されるまで toBeVisible で auto-retry 待機 (固定 sleep 排除)

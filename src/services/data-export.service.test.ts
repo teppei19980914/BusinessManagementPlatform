@@ -196,6 +196,7 @@ describe('exportTenantData', () => {
         id: 'p1',
         name: 'プロジェクトA',
         purpose: '日本語データ',
+        status: 'planning',
         createdAt: new Date('2026-01-01'),
       } as never,
     ] as never);
@@ -208,6 +209,14 @@ describe('exportTenantData', () => {
     expect(projectsCsv?.charCodeAt(0)).toBe(0xfeff);
     expect(projectsCsv).toContain('プロジェクトA');
     expect(projectsCsv).toContain('日本語データ');
+    // 2026-06-04: CSV ヘッダは画面に合わせた日本語ラベル (英語フィールド名でない)
+    const header = projectsCsv?.replace(/^﻿/, '').split('\r\n')[0];
+    expect(header).toContain('プロジェクト名');
+    expect(header).toContain('開始予定日');
+    expect(header).not.toContain('plannedStartDate');
+    // 2026-06-04: 選択値も画面の日本語表示 (内部コードでない)
+    expect(projectsCsv).toContain('企画中');
+    expect(projectsCsv).not.toContain('planning');
   });
 
   it('Date は ISO 8601 文字列に変換される (JSON 内)', async () => {

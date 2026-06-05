@@ -43,6 +43,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 // Phase E 要件 1〜3 (2026-04-29): 共通行クリック部品
 import { ClickableRow } from '@/components/common/clickable-row';
+import { useTablePagination, TablePagination } from '@/components/common/table-pagination';
 import { nativeSelectClass } from '@/components/ui/native-select-style';
 import { UserEditDialog } from '@/components/dialogs/user-edit-dialog';
 import { SYSTEM_ROLES } from '@/types';
@@ -58,7 +59,8 @@ type Props = {
   initialUsers: UserDTO[];
   // P-2 (2026-05-08): Beginner プラン席数上限の UI ガード
   tenantPlan: TenantPlan;
-  activeUserCount: number;
+  // 2026-06-03 (案A): 席数の使用数 = 有効 + 招待中 (予約)。課金用 activeUserCount とは別概念。
+  seatUsageCount: number;
   beginnerMaxSeats: number;
   // fix/admin-users-defensive-render (2026-05-15): server 側 data 取得が失敗した時に
   //   表示する警告バナーの可否。デフォルト false (= 正常)。
@@ -75,20 +77,26 @@ function getUserSortValue(u: UserDTO, columnKey: string): unknown {
     case 'name': return u.name;
     case 'email': return u.email;
     case 'role': return u.systemRole;
-    case 'status': return u.isActive ? 1 : 0;
+    // 2026-06-03: アカウント状態順 (有効→招待中→無効)
+    case 'status': return u.accountStatus === 'active' ? 0 : u.accountStatus === 'invited' ? 1 : 2;
+    // 2026-06-03: 前回ログイン日時。null (未ログイン) は最小値扱いでソートされる
+    case 'lastLogin': return u.lastLoginAt;
+    case 'createdByName': return u.createdByName;
     case 'createdAt': return u.createdAt;
+    case 'updatedByName': return u.updatedByName;
+    case 'updatedAt': return u.updatedAt;
     default: return null;
   }
 }
 
-export function UsersClient({ initialUsers, tenantPlan, activeUserCount, beginnerMaxSeats, dataLoadError = false, currentUserId, initialKeyword = '' }: Props) {
+export function UsersClient({ initialUsers, tenantPlan, seatUsageCount, beginnerMaxSeats, dataLoadError = false, currentUserId, initialKeyword = '' }: Props) {
   const tAction = useTranslations('action');
   const t = useTranslations('admin.users');
   const router = useRouter();
   const { withLoading } = useLoading();
   const { showSuccess, showError } = useToast();
-  // PR #119: session 連携フォーマッタ
-  const { formatDate, formatDateTimeFull } = useFormatters();
+  // PR #119: session 連携フォーマッタ。作成日時/更新日時は監査列のため秒まで (formatDateTimeSeconds)。
+  const { formatDateTimeFull, formatDateTimeSeconds } = useFormatters();
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState('');
@@ -112,6 +120,7 @@ export function UsersClient({ initialUsers, tenantPlan, activeUserCount, beginne
     );
   }, [initialUsers, keyword]);
   const sortedUsers = multiSort(filteredUsers, sortState, getUserSortValue);
+  const { pageItems, page, pageCount, setPage } = useTablePagination(sortedUsers, keyword);
 
   const [form, setForm] = useState({
     name: '',
@@ -120,8 +129,8 @@ export function UsersClient({ initialUsers, tenantPlan, activeUserCount, beginne
   });
 
   // P-2 (2026-05-08): Beginner プラン席数上限の UI ガード
-  // Beginner プラン契約テナントで activeUserCount >= beginnerMaxSeats なら新規招待ボタンを disabled
-  const isSeatLimitReached = tenantPlan === 'beginner' && activeUserCount >= beginnerMaxSeats;
+  // Beginner プラン契約テナントで「有効+招待中」が上限に達したら新規招待ボタンを disabled (案A)
+  const isSeatLimitReached = tenantPlan === 'beginner' && seatUsageCount >= beginnerMaxSeats;
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -200,8 +209,8 @@ export function UsersClient({ initialUsers, tenantPlan, activeUserCount, beginne
           </p>
         </div>
       )}
-      <div className="flex items-center justify-between">
-        <h2 className="text-xl font-semibold">{t('title')}</h2>
+      {/* 2026-06-03: 画面見出し (ユーザ管理) は削除。操作ボタンは右寄せのまま維持 (justify-end)。 */}
+      <div className="flex items-center justify-end">
         <div className="flex items-center gap-2">
         {/*
           P-2 (2026-05-08): Beginner プランのみ席数表示 (席埋まり状況の可視化)。
@@ -209,7 +218,7 @@ export function UsersClient({ initialUsers, tenantPlan, activeUserCount, beginne
         */}
         {tenantPlan === 'beginner' && (
           <span className="text-sm text-muted-foreground">
-            {t('seatUsageLabel', { current: activeUserCount, max: beginnerMaxSeats })}
+            {t('seatUsageLabel', { current: seatUsageCount, max: beginnerMaxSeats })}
           </span>
         )}
         <Button variant="outline" size="sm" onClick={handleManualLockInactive}>
@@ -335,13 +344,27 @@ export function UsersClient({ initialUsers, tenantPlan, activeUserCount, beginne
               - 1 列集約: tooltip で内訳 (原因・解除予定・失敗回数) を表示
             */}
             <TableHead>{t('columnAuthLock')}</TableHead>
+            {/* 2026-06-03: 前回ログイン日時 (休眠ユーザの把握 / ロック解除判断の材料) */}
+            <TableHead>
+              <SortableHeader columnKey="lastLogin" label={t('columnLastLogin')} sortState={sortState} onSortChange={setSortColumn} />
+            </TableHead>
+            {/* 2026-06-03: 作成者・作成日時・更新者・更新日時 (他一覧と監査列を統一) */}
+            <TableHead>
+              <SortableHeader columnKey="createdByName" label={t('columnCreatedBy')} sortState={sortState} onSortChange={setSortColumn} />
+            </TableHead>
             <TableHead>
               <SortableHeader columnKey="createdAt" label={t('columnCreatedAt')} sortState={sortState} onSortChange={setSortColumn} />
+            </TableHead>
+            <TableHead>
+              <SortableHeader columnKey="updatedByName" label={t('columnUpdatedBy')} sortState={sortState} onSortChange={setSortColumn} />
+            </TableHead>
+            <TableHead>
+              <SortableHeader columnKey="updatedAt" label={t('columnUpdatedAt')} sortState={sortState} onSortChange={setSortColumn} />
             </TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
-          {sortedUsers.map((user) => {
+          {pageItems.map((user) => {
             const pwTemporaryLocked
               = !!user.lockedUntil && new Date(user.lockedUntil).getTime() > nowAtMount;
             // PR #116: MFA ロック (パスワードロックとは別系統)
@@ -407,8 +430,21 @@ export function UsersClient({ initialUsers, tenantPlan, activeUserCount, beginne
                   </Badge>
                 </TableCell>
                 <TableCell>
-                  <Badge variant={user.isActive ? 'default' : 'destructive'}>
-                    {user.isActive ? t('statusActive') : t('statusInactive')}
+                  {/* 2026-06-03: アカウント状態 (招待中/有効/無効)。ロック状態は別列で表示。 */}
+                  <Badge
+                    variant={
+                      user.accountStatus === 'active'
+                        ? 'default'
+                        : user.accountStatus === 'invited'
+                          ? 'secondary'
+                          : 'destructive'
+                    }
+                  >
+                    {user.accountStatus === 'active'
+                      ? t('statusActive')
+                      : user.accountStatus === 'invited'
+                        ? t('statusInvited')
+                        : t('statusInactive')}
                   </Badge>
                 </TableCell>
                 <TableCell>
@@ -420,19 +456,35 @@ export function UsersClient({ initialUsers, tenantPlan, activeUserCount, beginne
                     <span className="text-xs text-muted-foreground">—</span>
                   )}
                 </TableCell>
-                <TableCell>{formatDate(user.createdAt)}</TableCell>
+                <TableCell>
+                  {user.lastLoginAt
+                    ? formatDateTimeFull(user.lastLoginAt)
+                    : <span className="text-xs text-muted-foreground">{t('neverLoggedIn')}</span>}
+                </TableCell>
+                {/* 2026-06-03: 作成者・作成日時・更新者・更新日時。操作者の記録が無い場合は「—」 */}
+                {/*   作成日時/更新日時は監査列のため秒まで表示 (formatDateTimeSeconds = 全画面共通の設計) */}
+                <TableCell>
+                  {user.createdByName ?? <span className="text-xs text-muted-foreground">—</span>}
+                </TableCell>
+                <TableCell className="whitespace-nowrap">{formatDateTimeSeconds(user.createdAt)}</TableCell>
+                <TableCell>
+                  {user.updatedByName ?? <span className="text-xs text-muted-foreground">—</span>}
+                </TableCell>
+                <TableCell className="whitespace-nowrap">{formatDateTimeSeconds(user.updatedAt)}</TableCell>
               </ClickableRow>
             );
           })}
           {sortedUsers.length === 0 && (
             <TableRow>
-              <TableCell colSpan={6} className="py-8 text-center text-muted-foreground">
+              <TableCell colSpan={10} className="py-8 text-center text-muted-foreground">
                 {t('noUsers')}
               </TableCell>
             </TableRow>
           )}
         </TableBody>
       </Table>
+
+      <TablePagination page={page} pageCount={pageCount} onPageChange={setPage} />
 
       <UserEditDialog
         user={editingUser}

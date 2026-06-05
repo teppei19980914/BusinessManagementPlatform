@@ -106,6 +106,12 @@ type Props = {
    * 未指定時は従来の router.refresh() フォールバック（後方互換）。
    */
   onReload?: () => Promise<void> | void;
+  /**
+   * feat/closed-project-readonly (2026-06-05): クローズ済み (= 読み取り専用) プロジェクトでは
+   * WBS の作成・編集・進捗更新を一律抑止する (サーバ側 STATE_RESTRICTIONS.closed と整合)。
+   * 既定 false (後方互換)。
+   */
+  isReadOnly?: boolean;
 };
 
 // 旧ローカル statusColors は lib/task-tree-utils.ts の taskStatusColors に集約 (PR #63 DRY)
@@ -604,7 +610,7 @@ const TaskMobileCard = memo(TaskMobileCardImpl, (prev, next) =>
   && prev.attachmentsByEntity === next.attachmentsByEntity,
 );
 
-export function TasksClient({ projectId, tasks, members, projectRole, systemRole, userId, onReload }: Props) {
+export function TasksClient({ projectId, tasks, members, projectRole, systemRole, userId, onReload, isReadOnly = false }: Props) {
   const tAction = useTranslations('action');
   const tAttachment = useTranslations('attachment');
   const t = useTranslations('wbs');
@@ -625,7 +631,8 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     }
   }, [onReload, router]);
 
-  const canEditPmTl = systemRole === 'admin' || projectRole === 'pm_tl';
+  // feat/closed-project-readonly (2026-06-05): クローズ済みは読み取り専用 (task:create/update を抑止)。
+  const canEditPmTl = (systemRole === 'admin' || projectRole === 'pm_tl') && !isReadOnly;
   // PR #361 (2026-05-14): 日次工数プレビュー (= タスクを設定できる PM/TL ロールのみに表示)
   //   edit dialog / create dialog 両方で使うため、トップレベルで 2 つの hook を呼ぶ
   //   (条件付き呼出禁止、enabled flag で skip 制御)。
@@ -634,10 +641,10 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
   // 表示し、操作できるボタンだけ絞り込む (pm_tl: 全機能 / member: 実績更新のみ)。
   // 旧実装は canEditPmTl ゲートで member には何も表示していなかったため、
   // PR #85 で緩和した API 側の権限判定が UI からは使えない状態になっていた。
-  const canSelectForProgress = canEditPmTl || projectRole === 'member';
+  const canSelectForProgress = (canEditPmTl || projectRole === 'member') && !isReadOnly;
   // 2026-05-09 (#6): 新規 WBS タスク作成は member にも開放。Export/Import や 一括編集は
   //   引き続き pm_tl 以上。check-permission.ts の ROLE_PERMISSIONS と整合させる。
-  const canCreateTask = canEditPmTl || projectRole === 'member';
+  const canCreateTask = (canEditPmTl || projectRole === 'member') && !isReadOnly;
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
   // PR #361 (2026-05-14): 編集 dialog / 作成 dialog 用の日次工数プレビュー hook 呼び出し。

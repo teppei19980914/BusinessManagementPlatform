@@ -1,8 +1,10 @@
 # ADR-0017: WBS sync-import の親スコープ重複判定 + OCC + DB UNIQUE + タスク一括複製 + ログイン UX (PR #420)
 
-- **Status**: Accepted
+- **Status**: Accepted (一部 **Superseded by [ADR-0032](./0032-task-name-uniqueness-removal-and-wbs-import-batching.md)**)
 - **Date**: 2026-05-25
 - **Deciders**: PM (teppei) + Claude Code
+
+> ⚠️ **2026-06-04 補足**: 本 ADR の決定 **#4 (DB 部分 UNIQUE インデックス)** と **#6 (createTask/updateTask の名称一意性ガード)** は [ADR-0032](./0032-task-name-uniqueness-removal-and-wbs-import-batching.md) で **撤廃**されました。同一 WP 配下の同名タスクは現在は許容されます (タスク突合は ID のみ)。決定 #1 (親スコープ重複判定の警告化) / #3 (OCC) / #5 (一括複製) は有効です。
 
 ---
 

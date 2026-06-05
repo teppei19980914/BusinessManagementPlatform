@@ -54,6 +54,8 @@ type RiskLike = {
   deadline: string | null;
   visibility: string;
   riskNature: string | null;
+  // 2026-06-02: 結果を編集可能に追加
+  result: string | null;
   // PR feat/asset-multi-linking-ui (Phase 2): 紐付け済プロジェクト一覧
   // feat/crud-permission-redesign (2026-05-20): 横断ビューで非 ProjectMember は name=null
   linkedProjects?: { id: string; name: string | null; deleted: boolean }[];
@@ -111,6 +113,8 @@ export function RiskEditDialog({
     deadline: '',
     visibility: 'draft',
     riskNature: 'threat',
+    // 2026-06-02: 結果を編集可能に追加 (公開後の結果記録)。
+    result: '',
   });
   const [error, setError] = useState('');
   // PR #88: 編集ダイアログを開くたびに DB データを初期表示する。
@@ -133,6 +137,7 @@ export function RiskEditDialog({
       deadline: risk.deadline ?? '',
       visibility: risk.visibility,
       riskNature: risk.riskNature ?? 'threat',
+      result: risk.result ?? '',
     });
     setError('');
   }
@@ -160,6 +165,7 @@ export function RiskEditDialog({
       assigneeId: form.assigneeId || null,
       deadline: form.deadline || null,
       visibility: form.visibility,
+      result: form.result.trim() || null,
     };
     if (risk.type === 'risk') {
       body.likelihood = form.likelihood;
@@ -290,6 +296,8 @@ export function RiskEditDialog({
                 {renderSection(labels.cause, form.cause, risk.cause ?? '', (v) => setForm({ ...form, cause: v }))}
                 {renderSection(labels.countermeasure, form.responsePolicy, risk.responsePolicy ?? '', (v) => setForm({ ...form, responsePolicy: v }))}
                 {renderSection('memo', form.content, risk.content, (v) => setForm({ ...form, content: v }))}
+                {/* 2026-06-02: 結果を編集可能に追加 */}
+                {renderSection('result', form.result, risk.result ?? '', (v) => setForm({ ...form, result: v }))}
               </>
             );
           })()}

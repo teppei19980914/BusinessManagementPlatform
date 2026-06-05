@@ -39,6 +39,7 @@ export type FormatOptions = {
  */
 const dateTimeCache = new Map<string, Intl.DateTimeFormat>();
 const dateCache = new Map<string, Intl.DateTimeFormat>();
+const dateTimeSecCache = new Map<string, Intl.DateTimeFormat>();
 
 function getDateTimeFormatter(locale: string, timeZone: string): Intl.DateTimeFormat {
   const key = `${locale}|${timeZone}`;
@@ -155,6 +156,39 @@ export function formatDateTimeFull(iso: string, opts: FormatOptions = {}): strin
   const loc = resolveLocale(opts.locale);
   return getDateTimeFormatter(loc, tz).format(new Date(iso));
 }
+
+function getDateTimeSecFormatter(locale: string, timeZone: string): Intl.DateTimeFormat {
+  const key = `${locale}|${timeZone}`;
+  let fmt = dateTimeSecCache.get(key);
+  if (!fmt) {
+    fmt = new Intl.DateTimeFormat(locale, {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    });
+    dateTimeSecCache.set(key, fmt);
+  }
+  return fmt;
+}
+
+/**
+ * ISO 日時文字列を「秒まで」含む locale 形式で整形する (監査列など厳密な時刻表示用)。
+ *
+ * 例: ja-JP なら `2026/06/02 12:34:56`。
+ * `formatDateTimeFull` (分まで) との違いは秒の有無のみ。作成/更新日時のような
+ * 監査ログ的な値で「いつ操作されたか」を秒精度で示したい場合に使う。
+ */
+export function formatDateTimeSeconds(iso: string, opts: FormatOptions = {}): string {
+  const tz = resolveTimezone(opts.timeZone);
+  const loc = resolveLocale(opts.locale);
+  return getDateTimeSecFormatter(loc, tz).format(new Date(iso));
+}
+
 
 // PR #118: テスト / デバッグ用途で現在の解決済みデフォルト値を参照できるようにする。
 export { DEFAULT_TIMEZONE, DEFAULT_LOCALE };

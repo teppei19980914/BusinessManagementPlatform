@@ -106,15 +106,12 @@ const ROLE_PERMISSIONS: Record<string, Set<Action>> = {
 };
 
 // プロジェクト状態別の許可アクション
+// 2026-06-03: 完了/振り返り完了を廃止。クローズのみ制限対象。
+//   クローズ = 完全な読み取り専用。ただし **削除 (project:delete) は許可** (ユーザ要望)。
 const STATE_RESTRICTIONS: Partial<Record<ProjectStatus, Set<Action>>> = {
-  closed: new Set(['project:read', 'task:read', 'knowledge:read', 'risk:read', 'stakeholder:read']),
-  retrospected: new Set([
-    'project:read', 'project:change_status',
-    'task:read',
-    'knowledge:read', 'knowledge:update',
-    'risk:read',
-    // 振り返り完了後もステークホルダーは参照のみ可 (教訓の保全)
-    'stakeholder:read',
+  closed: new Set([
+    'project:read', 'project:delete',
+    'task:read', 'knowledge:read', 'risk:read', 'stakeholder:read',
   ]),
 };
 

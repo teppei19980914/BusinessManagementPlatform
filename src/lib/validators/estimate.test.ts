@@ -19,8 +19,15 @@ describe('createEstimateSchema', () => {
     expect(createEstimateSchema.safeParse({ ...validInput, itemName: '' }).success).toBe(false);
   });
 
-  it('見積根拠が空の場合を拒否する', () => {
-    expect(createEstimateSchema.safeParse({ ...validInput, rationale: '' }).success).toBe(false);
+  // 2026-06-02: 見積根拠はフォームを「備考」入力に変更したため任意化（空文字・省略を許容）。
+  it('見積根拠は任意（空文字・省略を許容）', () => {
+    expect(createEstimateSchema.safeParse({ ...validInput, rationale: '' }).success).toBe(true);
+    expect(createEstimateSchema.safeParse({
+      itemName: '基本設計', category: 'design', estimatedEffort: 40, effortUnit: 'person_hour',
+    }).success).toBe(true);
+  });
+  it('備考(notes)を受け入れる', () => {
+    expect(createEstimateSchema.safeParse({ ...validInput, notes: '補足メモ' }).success).toBe(true);
   });
 
   it('見積工数が0以下の場合を拒否する', () => {

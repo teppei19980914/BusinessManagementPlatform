@@ -208,11 +208,27 @@ export default function SignupPage() {
     try {
       // 2026-05-09 (PR C / #5): 個人プラン時は会社名を送らない (= サーバ側で null 保存)。
       //   (#10) 建物名は空文字 → undefined に正規化。
+      // feat/billing-conditional-by-plan (2026-06-05): Beginner は請求先セクション非表示のため、
+      //   請求先担当者名・メールは初期管理者の値を流用し、billingType は individual 固定、
+      //   住所サブフィールドは未送信 (undefined) にする。空文字 '' を送ると postalCode の regex
+      //   検証に引っかかるため、必ず undefined にする (zod 側は optional)。
+      const isBeginner = form.plan === 'beginner';
       const payload = {
         ...form,
-        billingCompanyName: form.billingType === 'individual' ? undefined : form.billingCompanyName,
-        billingBuildingName: form.billingBuildingName.trim() || undefined,
-        billingPhoneNumber: form.billingPhoneNumber.trim() || undefined,
+        billingType: isBeginner ? 'individual' : form.billingType,
+        billingCompanyName: isBeginner
+          ? undefined
+          : form.billingType === 'individual'
+            ? undefined
+            : form.billingCompanyName,
+        billingContactName: isBeginner ? form.initialAdminName : form.billingContactName,
+        billingContactEmail: isBeginner ? form.initialAdminEmail : form.billingContactEmail,
+        billingPostalCode: isBeginner ? undefined : form.billingPostalCode,
+        billingPrefecture: isBeginner ? undefined : form.billingPrefecture,
+        billingCity: isBeginner ? undefined : form.billingCity,
+        billingStreetAddress: isBeginner ? undefined : form.billingStreetAddress,
+        billingBuildingName: isBeginner ? undefined : form.billingBuildingName.trim() || undefined,
+        billingPhoneNumber: isBeginner ? undefined : form.billingPhoneNumber.trim() || undefined,
       };
 
       const res = await fetch('/api/auth/signup', {
@@ -504,8 +520,22 @@ export default function SignupPage() {
               </div>
             </fieldset>
 
+            {/* feat/billing-conditional-by-plan (2026-06-05): Beginner は課金が発生しないため請求先セクションを
+                非表示にし、心理的ハードルを下げる。請求先担当者名・メールは送信時に初期管理者の値を流用し、
+                billingType は individual 固定で送る (handleSubmit 参照)。Expert/Pro のみ請求先を入力・必須化する。 */}
+            {form.plan !== 'beginner' && (
             <fieldset className="space-y-3 rounded border p-4">
               <legend className="px-1 text-sm font-semibold">請求先情報</legend>
+
+              {/* 既登録メールで Beginner → Expert に自動切替された場合 (層 2)、請求先が必要になった理由を明示。 */}
+              {beginnerAvailable === false && (
+                <p
+                  className="rounded-md bg-info/10 p-2 text-xs text-info"
+                  data-testid="billing-required-on-upgrade-hint"
+                >
+                  ℹ このメールアドレスは登録履歴があるため Expert / Pro プランでの開設となり、請求先情報の入力が必要です。
+                </p>
+              )}
 
               {/* 2026-05-09 (PR C / #5): 個人 / 法人 切替 */}
               <div className="space-y-1.5">
@@ -591,6 +621,7 @@ export default function SignupPage() {
                 <Input id="billingPhoneNumber" value={form.billingPhoneNumber} onChange={(e) => setForm({ ...form, billingPhoneNumber: e.target.value })} maxLength={20} placeholder="例: 03-1234-5678" />
               </div>
             </fieldset>
+            )}
 
             <fieldset className="space-y-3 rounded border p-4">
               <legend className="px-1 text-sm font-semibold">初期管理者 (ログイン用)</legend>

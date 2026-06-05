@@ -85,16 +85,25 @@ export async function POST() {
   // 【P0】 認証済の場合のみ tokenVersion increment + 監査ログ記録 (未認証はべき等にスルー)
   if (session?.user?.id) {
     try {
-      await prisma.user.update({
+      // 2026-06-02: `update` ではなく `updateMany` を使う。
+      //   JWT 署名は有効だが該当 user が DB に存在しない (アカウント削除後 / DB リセット後の
+      //   残留 cookie) 場合、`update` は P2025 (Record not found) を throw し signout が 500 に
+      //   倒れて「ログアウト＝再ログイン」が不能になる。`updateMany` は 0 件でも throw せず
+      //   count:0 を返すため、「ユーザが既に居ない = 実質無効」を signout 成功として扱える。
+      const result = await prisma.user.updateMany({
         where: { id: session.user.id },
         data: { tokenVersion: { increment: 1 } },
       });
-      await recordAuthEvent({
-        eventType: 'logout',
-        tenantId: session.user.tenantId,
-        userId: session.user.id,
-        email: session.user.email ?? undefined,
-      });
+      // 実在ユーザを無効化できた場合のみ監査ログを残す (存在しない user への logout 記録は
+      //   FK 不整合になり得るため skip。cookie 削除は下で必ず実施する)。
+      if (result.count > 0) {
+        await recordAuthEvent({
+          eventType: 'logout',
+          tenantId: session.user.tenantId,
+          userId: session.user.id,
+          email: session.user.email ?? undefined,
+        });
+      }
     } catch (e) {
       // DB 一時障害等で increment 失敗時はサーバ側で旧 JWT を無効化できていないので、
       // ユーザに 500 を返して再試行を促す (cookie 削除は実施しない設計判断: 失敗で UX を

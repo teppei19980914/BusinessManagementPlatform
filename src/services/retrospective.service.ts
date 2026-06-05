@@ -64,6 +64,10 @@ export type RetroDTO = {
   assigneeId: string | null;
   assigneeName: string | null;
   createdAt: string;
+  // 2026-06-02: 一覧で作成者/更新者/更新日時を表示するため解決 (list 経路で非null)。
+  createdByName?: string | null;
+  updatedAt?: string;
+  updatedByName?: string | null;
   // PR #199: コメントは polymorphic comments テーブルへ移管。本 DTO には含めない。
   //   UI 側は edit dialog 内の <CommentSection> が /api/comments?entityType=retrospective
   //   経由で直接取得する。
@@ -271,12 +275,18 @@ export async function listRetrospectives(
       })) ?? [];
   const memberProjectIds = new Set(memberships.map((m) => m.projectId));
 
-  // feat/asset-assignee-expansion (2026-05-26): 担当者氏名解決 (cross-tenant lookup 許容、name のみ)
-  const assigneeIds = [...new Set(retros.map((r) => r.assigneeId).filter((id): id is string => id != null))];
-  const assigneeUsers = assigneeIds.length > 0
-    ? await prisma.user.findMany({ where: { id: { in: assigneeIds } }, select: { id: true, name: true } })
-    : [];
-  const assigneeMap = new Map(assigneeUsers.map((u) => [u.id, u.name]));
+  // feat/asset-assignee-expansion (2026-05-26): 担当者氏名解決。
+  //   2026-06-02: 作成者/更新者名もまとめて解決 (氏名のみ select、N+1 回避)。
+  //   tenantId フィルタを明示し自テナントの User のみ解決 = 越境した id は null フォールバックで氏名漏えいしない。
+  const userIds = [...new Set(
+    retros.flatMap((r) => [r.assigneeId, r.createdBy, r.updatedBy]).filter((id): id is string => id != null),
+  )];
+  const userMap = new Map(
+    (userIds.length > 0
+      ? await prisma.user.findMany({ where: { id: { in: userIds }, tenantId: viewerTenantId }, select: { id: true, name: true } })
+      : []
+    ).map((u) => [u.id, u.name]),
+  );
 
   return retros.map((r) => {
     const rawLinks = r.retrospectiveProjects
@@ -300,9 +310,12 @@ export async function listRetrospectives(
       state: r.state,
       visibility: r.visibility,
       createdBy: r.createdBy,
+      createdByName: userMap.get(r.createdBy) ?? null,
       assigneeId: r.assigneeId,
-      assigneeName: r.assigneeId ? assigneeMap.get(r.assigneeId) ?? null : null,
+      assigneeName: r.assigneeId ? userMap.get(r.assigneeId) ?? null : null,
       createdAt: r.createdAt.toISOString(),
+      updatedAt: r.updatedAt.toISOString(),
+      updatedByName: userMap.get(r.updatedBy) ?? null,
     };
   });
 }

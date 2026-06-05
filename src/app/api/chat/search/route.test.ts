@@ -129,37 +129,16 @@ describe('POST /api/chat/search — 入力バリデーション', () => {
 });
 
 describe('POST /api/chat/search — 正常系', () => {
-  it('chatSemanticSearch にユーザ情報 + seedDataEnabled を渡す', async () => {
-    mockedTenantFind.mockResolvedValueOnce({ seedDataEnabled: true } as never);
+  // feat/starter-data-import (2026-06-05): 単一テナント化。チャット検索は自テナントのみを参照するため、
+  //   旧 seedDataEnabled lookup / 受け渡しは撤去された (viewerSeedDataEnabled は service 引数から消滅)。
+  it('chatSemanticSearch に自テナントのユーザ情報のみを渡す (seedDataEnabled なし)', async () => {
     await POST(postReq({ query: '工数膨張への対策' }));
 
     expect(mockedChatSearch).toHaveBeenCalledWith({
       query: '工数膨張への対策',
       viewerTenantId: VALID_USER.tenantId,
       viewerUserId: VALID_USER.id,
-      viewerSeedDataEnabled: true,
     });
-  });
-
-  it('seedDataEnabled=false テナントは無効化を service に伝える', async () => {
-    mockedTenantFind.mockResolvedValueOnce({ seedDataEnabled: false } as never);
-    await POST(postReq({ query: '工数膨張への対策' }));
-
-    expect(mockedChatSearch).toHaveBeenCalledWith(
-      expect.objectContaining({ viewerSeedDataEnabled: false }),
-    );
-  });
-
-  it('Tenant が見つからない場合は seedDataEnabled=false 扱い (fail-closed: PR fix/chat-search-and-auto-open)', async () => {
-    // 旧仕様: `?? true` で fail-open (管理テナント MANAGEMENT_TENANT_ID のシード漏洩リスク)
-    // 新仕様: `?? false` で fail-closed (異常系では「シード参照しない」=より厳しい側に倒す)
-    // 正常系では tenant は常に存在するため UX 影響なし
-    mockedTenantFind.mockResolvedValueOnce(null);
-    await POST(postReq({ query: 'q' }));
-
-    expect(mockedChatSearch).toHaveBeenCalledWith(
-      expect.objectContaining({ viewerSeedDataEnabled: false }),
-    );
   });
 
   it('結果を data フィールドに包んで返す', async () => {
@@ -221,17 +200,6 @@ describe('POST /api/chat/search — 正常系', () => {
     // クエリ文字列は context に含まれない (機微情報の漏れ込み防止)
     const recordCallArg = mockedRecordError.mock.calls[0]?.[0];
     expect(recordCallArg?.context).not.toHaveProperty('query');
-  });
-
-  it('prisma.tenant.findUnique が失敗しても 500 で stack を漏らさない', async () => {
-    mockedTenantFind.mockRejectedValueOnce(new Error('connection refused at postgresql://user:pw@host'));
-
-    const res = await POST(postReq({ query: 'q' }));
-    expect(res.status).toBe(500);
-    const body = await res.json();
-    const serialized = JSON.stringify(body);
-    expect(serialized).not.toContain('postgresql://');
-    expect(serialized).not.toContain('pw');
   });
 
   it('縮退モード時は degraded=true と degradeReason を返す', async () => {

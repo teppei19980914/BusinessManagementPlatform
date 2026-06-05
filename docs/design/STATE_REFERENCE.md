@@ -18,7 +18,7 @@
 
 | # | フィールド | 対象 | 取り得る値 | 状態機械図 |
 |---|---|---|---|---|
-| 1 | `projects.status` | Project | planning / estimating / scheduling / executing / completed / retrospected / closed | あり |
+| 1 | `projects.status` | Project | planning / estimating / scheduling / executing / closed | あり |
 | 2 | `tasks.status` | Task | not_started / in_progress / completed / on_hold | — |
 | 3 | `risks.state` | RiskIssue | open / in_progress / monitoring / resolved | — |
 | 4 | `*.visibility` (state=draft 系) | Knowledge / Risk / Retrospective | draft / public | — |
@@ -34,18 +34,37 @@
 | 14 | `billing_history.status` | BillingHistory | pending / paid / failed / refunded / canceled / replaced_by_stripe | — |
 | 15 | `cron_execution_logs.status` | CronExecutionLog | running / success / failure | — |
 | 16 | MFA / ログインロック (派生) | User (locked_until / mfa_locked_until) | unlocked / locked | — |
+| 17 | アカウント状態 (派生) | User (invitation_accepted_at + is_active) | invited(招待中) / active(有効) / inactive(無効) | — |
+
+---
+
+## アカウント状態 (User、2026-06-03)
+
+`deriveAccountStatus({ isActive, invitationAcceptedAt })`（真値: `src/services/user.service.ts`）で導出する派生状態。
+
+| 状態 | 条件 | 意味 |
+|---|---|---|
+| invited（招待中） | `invitationAcceptedAt == null` | 招待メール送信〜パスワード設定まで |
+| active（有効） | 受諾済 かつ `isActive == true` | ログイン可能 |
+| inactive（無効） | 受諾済 かつ `isActive == false` | 管理者が席を停止 |
+
+- 有効化トリガ = パスワード設定完了（`setupPassword` / super_admin は `setupInitialMfa`）で `invitationAcceptedAt=now`。
+- **ロック（#16）はこの状態とは別軸**。有効なユーザにも一時ロックは掛かる。
+- 論理削除（`deletedAt`）は一覧から除外し状態導出の対象外。
+- 詳細: [USER_MANAGEMENT.md](./USER_MANAGEMENT.md)。
 
 ---
 
 ## 1. Project status (プロジェクト状態)
 
 - **対象**: `projects.status` — `prisma/schema.prisma:635`
-- **取り得る値** (`PROJECT_STATUSES`, `src/config/master-data.ts:76-84`):
-  `planning` 企画中 / `estimating` 見積中 / `scheduling` 計画中 / `executing` 実行中 / `completed` 完了 / `retrospected` 振り返り完了 / `closed` クローズ
-- **既定値**: `planning` (`schema.prisma:635` `@default("planning")`)
-- **遷移ルール** (`src/services/state-machine.ts:15-22`): 隣接する 1 段階のみの一方向遷移。`canTransition(from, to)` が許可リストに無い遷移を拒否し、`getNextStatuses(current)` が次状態を返す。
+- **取り得る値** (`PROJECT_STATUSES`, `src/config/master-data.ts:78-84`):
+  `planning` 企画中 / `estimating` 見積中 / `scheduling` 計画中 / `executing` 実行中 / `closed` クローズ
+  - 2026-06 簡素化: 旧 `completed` 完了 / `retrospected` 振り返り完了 を廃止し、`executing` から直接 `closed` へ遷移する 5 区分に変更。
+- **既定値**: `planning` (`schema.prisma` `@default("planning")`)
+- **遷移ルール** (`src/services/state-machine.ts`): 隣接する 1 段階のみの一方向遷移。`canTransition(from, to)` が許可リストに無い遷移を拒否し、`getNextStatuses(current)` が次状態を返す。
 - **トリガ**: PM/TL 権限ユーザによる手動の状態更新操作。
-- **制約**: 逆戻り・スキップ不可。詳細なビジネスルール (各状態での操作制限・健全性定義) は二重管理を避けるため別書に集約。
+- **制約**: 逆戻り・スキップ不可。**`closed`（クローズ）は完全に読み取り専用**（`STATE_RESTRICTIONS`：read 系のみ許可）**だが、プロジェクトの削除（`project:delete`）は可能**。詳細なビジネスルールは別書に集約。
 - **詳細**: [docs/business/PROJECT_LIFECYCLE.md](../business/PROJECT_LIFECYCLE.md)
 
 ```mermaid
@@ -54,9 +73,7 @@ stateDiagram-v2
     planning --> estimating
     estimating --> scheduling
     scheduling --> executing
-    executing --> completed
-    completed --> retrospected
-    retrospected --> closed
+    executing --> closed
     closed --> [*]
 ```
 

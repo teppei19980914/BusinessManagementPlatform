@@ -27,6 +27,7 @@ import {
   parseSyncImportCsv,
   computeSyncDiff,
   applySyncImport,
+  TASK_SYNC_IMPORT_MAX_ROWS,
   type RemoveMode,
 } from '@/services/task-sync-import.service';
 import { recordAuditLog } from '@/services/audit.service';
@@ -130,8 +131,10 @@ export async function POST(
     if (parseErr) return parseErr;
     throw e;
   }
-  // 2026-05-28 フルスキャン 2 巡目: parse 後の行数を明示的に上限判定 (DoS 緩和 + UX)
-  const rowCountError = checkCsvRowCount(csvRows.length, t);
+  // 2026-05-28 フルスキャン 2 巡目: parse 後の行数を明示的に上限判定 (DoS 緩和)。
+  //   ADR-0032 (2026-06-04): 業務上限 (旧 500 件) は撤廃し、ここでは DoS 安全弁としての
+  //   高め上限 (TASK_SYNC_IMPORT_MAX_ROWS) のみ適用。目安超過は dry-run の globalWarnings で案内。
+  const rowCountError = checkCsvRowCount(csvRows.length, t, TASK_SYNC_IMPORT_MAX_ROWS);
   if (rowCountError) return rowCountError;
 
   // 4 巡目フルスキャン: DB 容量事前判定 (Beginner block / Expert-Pro warning)

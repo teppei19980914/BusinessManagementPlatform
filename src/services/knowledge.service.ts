@@ -57,6 +57,8 @@ export type KnowledgeDTO = {
   visibility: string;
   createdBy: string;
   creatorName?: string;
+  // 2026-06-02: 一覧で更新者を表示するため updater リレーションから解決 (list 経路で非null)。
+  updaterName?: string | null;
   // feat/asset-assignee-expansion (2026-05-26): 担当者 (作成者と並ぶ編集権限保持者)
   assigneeId: string | null;
   assigneeName: string | null;
@@ -82,6 +84,7 @@ function toKnowledgeDTO(k: {
   visibility: string;
   createdBy: string;
   creator?: { name: string };
+  updater?: { name: string };
   // feat/asset-assignee-expansion (2026-05-26)
   assigneeId: string | null;
   assignee?: { name: string } | null;
@@ -106,6 +109,7 @@ function toKnowledgeDTO(k: {
     visibility: k.visibility,
     createdBy: k.createdBy,
     creatorName: k.creator?.name,
+    updaterName: k.updater?.name ?? null,
     assigneeId: k.assigneeId,
     assigneeName: k.assignee?.name ?? null,
     createdAt: k.createdAt.toISOString(),
@@ -184,6 +188,8 @@ export async function listKnowledge(
       where,
       include: {
         creator: { select: { name: true } },
+        // 2026-06-02: 更新者氏名表示用 (一覧の「更新者」列)
+        updater: { select: { name: true } },
         // feat/asset-assignee-expansion (2026-05-26): 担当者氏名表示用
         assignee: { select: { name: true } },
         knowledgeProjects: { select: { projectId: true } },

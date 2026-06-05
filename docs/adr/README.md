@@ -49,8 +49,11 @@
 | [0029](./0029-embedding-price-revision-5jpy.md) | Embedding 従量課金の単価改定 — Expert/Pro ¥1 → ¥5/call (2026-05-30 採択、ADR-0022 を部分 supersede) | Accepted | ビジネス・課金 |
 | [0030](./0030-embedding-monthly-budget-cap.md) | Embedding 月次予算上限の導入 + Beginner Embedding 100 件試用上限 + 請求タブ「今月請求金額」セクション (2026-05-30 採択、ADR-0022 「Embedding は予算上限と独立」判断を一部上書き。§6 で DB/Storage 累積ハードキャップ撤廃を追記) | Accepted | ビジネス・課金・UX |
 | [0031](./0031-footer-auth-aware-and-about-removal.md) | フッター認証出し分け (2 層) + `/settings/about` 廃止 + 共通情報 (規約/プライバシー/運営者/特定商取引法) の外部 LP 集約 (2026-05-31 採択) | Accepted | UX・情報設計 |
+| [0032](./0032-task-name-uniqueness-removal-and-wbs-import-batching.md) | タスク名称一意性の撤廃 (同一 WP 配下の同名許容) + WBS sync-import の createMany バッチ化による 504 解消 + 行数ハード上限撤廃と処理時間警告 (2026-06-04 採択、ADR-0017 #4/#6 を supersede) | Accepted | 設計・UX・性能 |
+| [0033](./0033-starter-data-import-and-single-tenant-suggestion.md) | スターターデータ取込 (管理テナントからクローン) + 一括削除 + super_admin キュレーション + 提案/チャットの単一テナント化 (seedDataEnabled 撤去) + 請求先のプラン別出し分け (Beginner 任意化・有料化ガード) (2026-06-05 採択) | Accepted | 設計・UX・課金・テナント分離 |
+| [0034](./0034-external-tool-migration-import.md) | 外部PMツールからの初回データ移行インポート (手動CSV + API連携 / 新規作成のみ・重複制御なし) — 6エンティティ + 依存解決 + 画面項目限定 + 値マッピング/日付正規化 + 汎用APIコネクタ (第1弾5サービス) (2026-06-04 草案) | Proposed | 設計・UX・課金 |
 
-> 主要設計判断を時系列で ADR 化しています (現在 31 件)。
+> 主要設計判断を時系列で ADR 化しています (現在 33 件)。
 > 設計変更を検討する際は新規 ADR を追加し、変更が確定したら旧 ADR の Status を Deprecated / Superseded に更新します。
 
 ---

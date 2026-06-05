@@ -3,13 +3,12 @@ import { canTransition, getNextStatuses } from './state-machine';
 import type { ProjectStatus } from '@/types';
 
 describe('canTransition', () => {
+  // 2026-06-03: 完了/振り返り完了を廃止。executing → closed に簡素化。
   const validTransitions: [ProjectStatus, ProjectStatus][] = [
     ['planning', 'estimating'],
     ['estimating', 'scheduling'],
     ['scheduling', 'executing'],
-    ['executing', 'completed'],
-    ['completed', 'retrospected'],
-    ['retrospected', 'closed'],
+    ['executing', 'closed'],
   ];
 
   for (const [from, to] of validTransitions) {
@@ -37,7 +36,7 @@ describe('canTransition', () => {
 
   it('closed からの遷移は全て拒否される', () => {
     const statuses: ProjectStatus[] = [
-      'planning', 'estimating', 'scheduling', 'executing', 'completed', 'retrospected',
+      'planning', 'estimating', 'scheduling', 'executing',
     ];
     for (const to of statuses) {
       const result = canTransition('closed', to);
@@ -56,8 +55,8 @@ describe('getNextStatuses', () => {
     expect(getNextStatuses('planning')).toEqual(['estimating']);
   });
 
-  it('executing の次は completed のみ', () => {
-    expect(getNextStatuses('executing')).toEqual(['completed']);
+  it('executing の次は closed のみ', () => {
+    expect(getNextStatuses('executing')).toEqual(['closed']);
   });
 
   it('closed の次はなし', () => {
@@ -67,7 +66,5 @@ describe('getNextStatuses', () => {
   it('各状態に正しい遷移先が設定されている', () => {
     expect(getNextStatuses('estimating')).toEqual(['scheduling']);
     expect(getNextStatuses('scheduling')).toEqual(['executing']);
-    expect(getNextStatuses('completed')).toEqual(['retrospected']);
-    expect(getNextStatuses('retrospected')).toEqual(['closed']);
   });
 });

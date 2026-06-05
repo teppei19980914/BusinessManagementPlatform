@@ -19,7 +19,8 @@ import {
 
 /**
  * ADR-0021 §10.3 のアップロード対応 entity 種別。
- * memo は URL 添付のみ (PR #70 仕様) のため Pre-signed URL アップロードからは除外。
+ * 2026-06-03: memo も他資産と同様にファイル本体アップロード対応 (旧 PR #70 の「URL 添付のみ」制限を解除)。
+ *   書込認可は authorizeMemoAttachment (memo.userId === viewer) で本人のみ。
  */
 export const UPLOAD_ATTACHMENT_ENTITY_TYPES = [
   'project',
@@ -28,6 +29,7 @@ export const UPLOAD_ATTACHMENT_ENTITY_TYPES = [
   'risk',
   'retrospective',
   'knowledge',
+  'memo',
 ] as const;
 
 export type UploadAttachmentEntityType = (typeof UPLOAD_ATTACHMENT_ENTITY_TYPES)[number];

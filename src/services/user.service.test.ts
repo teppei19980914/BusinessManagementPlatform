@@ -70,6 +70,9 @@ import {
   deleteUser,
   lockInactiveUsers,
   assertSeatAvailableForTenant,
+  deriveAccountStatus,
+  resendInvitationByAdmin,
+  cancelInvitation,
 } from './user.service';
 import { prisma } from '@/lib/db';
 import { getMockCallArg } from '@/lib/test-mock-helpers';
@@ -161,6 +164,27 @@ describe('createUser', () => {
       'tenant-A',
       validInput.email,
       'https://example.com',
+    );
+  });
+
+  it('2026-06-03: 招待中として作成する (deletedAt:null + invitationAcceptedAt:null)', async () => {
+    await createUser(validInput, creatorId, {
+      baseUrl: 'https://example.com',
+      tenantId: DEFAULT_TEST_TENANT_ID,
+    });
+
+    // 旧設計は deletedAt を立てて一覧から隠していたが、招待中は deletedAt:null で一覧に出す。
+    // 招待した管理者を作成者/更新者として記録する。
+    expect(prisma.user.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          isActive: false,
+          deletedAt: null,
+          invitationAcceptedAt: null,
+          createdBy: creatorId,
+          updatedBy: creatorId,
+        }),
+      }),
     );
   });
 
@@ -385,7 +409,7 @@ describe('assertSeatAvailableForTenant (P-2 / 2026-05-08)', () => {
     expect(prisma.user.count).not.toHaveBeenCalled();
   });
 
-  it('isActive=false および deletedAt!=null は席数カウント対象外 (tenant-self.service と統一)', async () => {
+  it('案A: 席数は「有効 + 招待中」をカウントする (無効・論理削除は対象外)', async () => {
     vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({
       plan: 'beginner',
       beginnerMaxSeats: 5,
@@ -394,16 +418,27 @@ describe('assertSeatAvailableForTenant (P-2 / 2026-05-08)', () => {
 
     await assertSeatAvailableForTenant(tenantId);
 
-    // count の where 句に isActive: true, deletedAt: null が含まれることを確認
+    // 2026-06-03 (案A): count の where に deletedAt:null + OR[isActive:true, invitationAcceptedAt:null]
     expect(prisma.user.count).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
           tenantId,
-          isActive: true,
           deletedAt: null,
+          OR: [{ isActive: true }, { invitationAcceptedAt: null }],
         }),
       }),
     );
+  });
+
+  it('案A: 有効4 + 招待中1 で上限5なら、次の招待 (6人目) は SEAT_LIMIT_EXCEEDED', async () => {
+    vi.mocked(prisma.tenant.findUnique).mockResolvedValueOnce({
+      plan: 'beginner',
+      beginnerMaxSeats: 5,
+    } as never);
+    // 有効4 + 招待中1 = 席使用5
+    vi.mocked(prisma.user.count).mockResolvedValueOnce(5);
+
+    await expect(assertSeatAvailableForTenant(tenantId)).rejects.toThrow('SEAT_LIMIT_EXCEEDED');
   });
 });
 
@@ -422,6 +457,14 @@ const baseUserRow = {
   lockedUntil: null as Date | null,
   permanentLock: false,
   temporaryLockCount: 0,
+  // 2026-06-03: 前回ログイン日時 / MFA 有無 (UserDTO 拡張)
+  mfaFailedCount: 0,
+  mfaLockedUntil: null as Date | null,
+  lastLoginAt: null as Date | null,
+  mfaEnabled: false,
+  invitationAcceptedAt: new Date('2026-04-01') as Date | null,
+  createdBy: null as string | null,
+  updatedBy: null as string | null,
 };
 
 describe('listUsers', () => {
@@ -443,6 +486,174 @@ describe('listUsers', () => {
     await listUsers('tenant-A');
     const call = getMockCallArg(vi.mocked(prisma.user.findMany));
     expect((call.where as unknown as { tenantId: string }).tenantId).toBe('tenant-A');
+  });
+
+  // 2026-06-03: 前回ログイン日時 / MFA 有無を DTO に載せる (admin 一覧/編集で表示)
+  it('lastLoginAt を ISO 文字列に変換し mfaEnabled を載せる', async () => {
+    vi.mocked(prisma.user.findMany).mockResolvedValue([
+      { ...baseUserRow, lastLoginAt: new Date('2026-06-02T03:04:05.000Z'), mfaEnabled: true },
+    ] as never);
+
+    const r = await listUsers('tenant-A');
+
+    expect(r[0].lastLoginAt).toBe('2026-06-02T03:04:05.000Z');
+    expect(r[0].mfaEnabled).toBe(true);
+  });
+
+  it('一度もログインしていない user は lastLoginAt=null', async () => {
+    vi.mocked(prisma.user.findMany).mockResolvedValue([
+      { ...baseUserRow, lastLoginAt: null, mfaEnabled: false },
+    ] as never);
+
+    const r = await listUsers('tenant-A');
+
+    expect(r[0].lastLoginAt).toBeNull();
+    expect(r[0].mfaEnabled).toBe(false);
+  });
+
+  // 2026-06-03: アカウント状態 (招待中/有効/無効) の導出を DTO に載せる
+  it('invitationAcceptedAt:null は accountStatus=invited (招待中)', async () => {
+    vi.mocked(prisma.user.findMany).mockResolvedValue([
+      { ...baseUserRow, isActive: false, invitationAcceptedAt: null },
+    ] as never);
+
+    const r = await listUsers('tenant-A');
+
+    expect(r[0].accountStatus).toBe('invited');
+    expect(r[0].invitationAcceptedAt).toBeNull();
+  });
+
+  it('受諾済 + isActive:true は accountStatus=active (有効)', async () => {
+    vi.mocked(prisma.user.findMany).mockResolvedValue([
+      { ...baseUserRow, isActive: true, invitationAcceptedAt: new Date('2026-05-01') },
+    ] as never);
+
+    const r = await listUsers('tenant-A');
+
+    expect(r[0].accountStatus).toBe('active');
+  });
+
+  it('受諾済 + isActive:false は accountStatus=inactive (無効)', async () => {
+    vi.mocked(prisma.user.findMany).mockResolvedValue([
+      { ...baseUserRow, isActive: false, invitationAcceptedAt: new Date('2026-05-01') },
+    ] as never);
+
+    const r = await listUsers('tenant-A');
+
+    expect(r[0].accountStatus).toBe('inactive');
+  });
+
+  // 2026-06-03: 作成者/更新者の氏名を自テナント内でバルク解決する
+  it('createdBy/updatedBy の氏名を解決して createdByName/updatedByName に載せる', async () => {
+    vi.mocked(prisma.user.findMany)
+      // 1 回目: 本体の一覧
+      .mockResolvedValueOnce([
+        { ...baseUserRow, id: 'u-1', createdBy: 'admin-9', updatedBy: 'admin-9' },
+      ] as never)
+      // 2 回目: operator 氏名のバルク解決
+      .mockResolvedValueOnce([{ id: 'admin-9', name: '管理者花子' }] as never);
+
+    const r = await listUsers('tenant-A');
+
+    expect(r[0].createdBy).toBe('admin-9');
+    expect(r[0].createdByName).toBe('管理者花子');
+    expect(r[0].updatedByName).toBe('管理者花子');
+    // operator 解決クエリが自テナント限定であること (越境氏名漏えい防止)
+    const secondCall = vi.mocked(prisma.user.findMany).mock.calls[1]?.[0] as { where?: { tenantId?: string } };
+    expect(secondCall?.where?.tenantId).toBe('tenant-A');
+  });
+
+  it('createdBy が null のユーザは氏名解決クエリを呼ばず createdByName=null', async () => {
+    vi.mocked(prisma.user.findMany).mockResolvedValueOnce([
+      { ...baseUserRow, createdBy: null, updatedBy: null },
+    ] as never);
+
+    const r = await listUsers('tenant-A');
+
+    expect(r[0].createdByName).toBeNull();
+    expect(r[0].updatedByName).toBeNull();
+    // operator が居ないので findMany は 1 回のみ
+    expect(vi.mocked(prisma.user.findMany)).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('deriveAccountStatus (2026-06-03)', () => {
+  it('invitationAcceptedAt=null は招待中 (isActive を問わない)', () => {
+    expect(deriveAccountStatus({ isActive: false, invitationAcceptedAt: null })).toBe('invited');
+    expect(deriveAccountStatus({ isActive: true, invitationAcceptedAt: null })).toBe('invited');
+  });
+
+  it('受諾済 + isActive で有効/無効を分ける', () => {
+    const accepted = new Date('2026-05-01');
+    expect(deriveAccountStatus({ isActive: true, invitationAcceptedAt: accepted })).toBe('active');
+    expect(deriveAccountStatus({ isActive: false, invitationAcceptedAt: accepted })).toBe('inactive');
+  });
+});
+
+describe('resendInvitationByAdmin (2026-06-03)', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('招待中ユーザに sendVerificationEmail を再送し監査ログを残す', async () => {
+    vi.mocked(prisma.user.findFirst).mockResolvedValue({ id: 'u-1', email: 'a@b.co' } as never);
+    vi.mocked(sendVerificationEmail).mockResolvedValue();
+
+    await resendInvitationByAdmin('u-1', 'admin-1', 'tenant-A', 'https://example.com');
+
+    // 招待中限定 (invitationAcceptedAt:null) で抽出していること
+    const call = getMockCallArg(vi.mocked(prisma.user.findFirst));
+    expect(call.where).toMatchObject({
+      id: 'u-1',
+      tenantId: 'tenant-A',
+      invitationAcceptedAt: null,
+      deletedAt: null,
+    });
+    expect(sendVerificationEmail).toHaveBeenCalledWith('u-1', 'tenant-A', 'a@b.co', 'https://example.com');
+  });
+
+  it('対象が招待中でない (見つからない) 場合は USER_NOT_FOUND', async () => {
+    vi.mocked(prisma.user.findFirst).mockResolvedValue(null);
+
+    await expect(
+      resendInvitationByAdmin('u-x', 'admin-1', 'tenant-A', 'https://example.com'),
+    ).rejects.toThrow('USER_NOT_FOUND');
+    expect(sendVerificationEmail).not.toHaveBeenCalled();
+  });
+
+  it('メール送信失敗は EMAIL_SEND_FAILED に変換する', async () => {
+    vi.mocked(prisma.user.findFirst).mockResolvedValue({ id: 'u-1', email: 'a@b.co' } as never);
+    vi.mocked(sendVerificationEmail).mockRejectedValue(new EmailSendError('送信失敗'));
+
+    await expect(
+      resendInvitationByAdmin('u-1', 'admin-1', 'tenant-A', 'https://example.com'),
+    ).rejects.toThrow('EMAIL_SEND_FAILED');
+  });
+});
+
+describe('cancelInvitation (2026-06-03)', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('招待中ユーザを付随レコードごと物理削除して席を解放する', async () => {
+    vi.mocked(prisma.user.findFirst).mockResolvedValue({ id: 'u-1', email: 'a@b.co' } as never);
+
+    await cancelInvitation('u-1', 'admin-1', 'tenant-A');
+
+    const call = getMockCallArg(vi.mocked(prisma.user.findFirst));
+    expect(call.where).toMatchObject({
+      id: 'u-1',
+      tenantId: 'tenant-A',
+      invitationAcceptedAt: null,
+      deletedAt: null,
+    });
+    // user.delete (物理削除) を含む transaction が実行される
+    expect(prisma.$transaction).toHaveBeenCalled();
+    expect(prisma.user.delete).toHaveBeenCalledWith({ where: { id: 'u-1' } });
+  });
+
+  it('対象が招待中でない場合は USER_NOT_FOUND で何も削除しない', async () => {
+    vi.mocked(prisma.user.findFirst).mockResolvedValue(null);
+
+    await expect(cancelInvitation('u-x', 'admin-1', 'tenant-A')).rejects.toThrow('USER_NOT_FOUND');
+    expect(prisma.user.delete).not.toHaveBeenCalled();
   });
 });
 

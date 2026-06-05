@@ -255,7 +255,7 @@ export function HelpClient({ isTenantAdmin, viewer }: Props) {
                 課題・リスクは次の <strong>2 つの条件を両方</strong> 満たしたときだけ提案候補になります:
               </p>
               <ul className="mt-2 ml-4 list-disc space-y-1">
-                <li><strong>状態が「解消」</strong> (解消前のものは対象外)</li>
+                <li><strong>ステータスが「解消」</strong> (解消前のものは対象外)</li>
                 <li><strong>公開範囲が「全メンバー (公開)」</strong></li>
               </ul>
               <p className="mt-2">

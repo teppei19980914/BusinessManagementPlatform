@@ -49,6 +49,8 @@ const customerDTO = {
   notes: null,
   createdAt: '2026-05-14T00:00:00Z',
   updatedAt: '2026-05-14T00:00:00Z',
+  createdByName: null,
+  updatedByName: null,
   activeProjectCount: 0,
 };
 

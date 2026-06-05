@@ -29,8 +29,6 @@ const updateBodySchema = z.object({
   monthlyBudgetCapJpy: z.number().int().nonnegative().nullable().optional(),
   // ADR-0030 (2026-05-30): Embedding 専用の月次予算上限。null = 無制限、undefined = 変更なし
   monthlyEmbeddingBudgetCapJpy: z.number().int().nonnegative().nullable().optional(),
-  // 2026-05-09 (PR G / #24): シードデータ参照 toggle
-  seedDataEnabled: z.boolean().optional(),
 });
 
 export async function GET() {
@@ -109,6 +107,19 @@ export async function PATCH(req: NextRequest) {
             code: 'BEGINNER_EMBEDDING_BUDGET_NOT_ALLOWED',
             message:
               'Beginner プランは固定の Embedding 月 100 件まで無料で運用されるため (ADR-0030)、月次予算上限は設定できません。Expert または Pro プランへのアップグレード後に設定してください。',
+          },
+        },
+        { status: 400 },
+      );
+    }
+    // feat/billing-conditional-by-plan (2026-06-05): 有料プラン化時に請求先住所が未入力
+    if (result.error === 'BILLING_INFO_INCOMPLETE') {
+      return NextResponse.json(
+        {
+          error: {
+            code: 'BILLING_INFO_INCOMPLETE',
+            message:
+              'Expert / Pro プランへの変更には請求先情報 (郵便番号・都道府県・市区町村・番地、法人の場合は会社名) が必要です。請求先セクションで入力・保存してから再度お試しください。',
           },
         },
         { status: 400 },

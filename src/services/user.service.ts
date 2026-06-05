@@ -59,7 +59,41 @@ export type UserDTO = {
   // PR #116: MFA verify 専用のロック状態 (パスワードロックとは別系統)
   mfaFailedCount: number;
   mfaLockedUntil: string | null;
+  // 2026-06-03: 前回ログイン日時 (admin 一覧/編集で表示)。null = 一度もログインしていない。
+  lastLoginAt: string | null;
+  // 2026-06-03: MFA (二段階認証) が有効か (admin 編集画面で表示)。
+  mfaEnabled: boolean;
+  // 2026-06-03: 招待受諾日時。null = 招待中 (パスワード未設定)。値あり = 受諾済。
+  invitationAcceptedAt: string | null;
+  // 2026-06-03: アカウント状態 (招待中 / 有効 / 無効)。invitationAcceptedAt と isActive から導出。
+  //   ロック (failedLoginCount / permanentLock / mfaLockedUntil) はこれとは別軸で、有効なまま一時ロックも起こる。
+  accountStatus: AccountStatus;
+  // 2026-06-03: 作成者/更新者 (admin 一覧の監査列)。createdBy/updatedBy は操作者 UUID、
+  //   *Name は listUsers が自テナント User をバルク解決した氏名 (単体 DTO 経路では null)。
+  createdBy: string | null;
+  updatedBy: string | null;
+  createdByName: string | null;
+  updatedByName: string | null;
 };
+
+/** 2026-06-03: アカウント状態。ロック (別軸) とは独立。 */
+export type AccountStatus = 'invited' | 'active' | 'inactive';
+
+/**
+ * 2026-06-03: アカウント状態を「招待受諾済みか」と「有効フラグ」から導出する単一ソース。
+ *   - invitationAcceptedAt == null            -> 'invited' (招待中: パスワード未設定)
+ *   - invitationAcceptedAt != null && isActive -> 'active'  (有効: ログイン可能)
+ *   - invitationAcceptedAt != null && !isActive -> 'inactive' (無効: 管理者が席を停止)
+ * 論理削除 (deletedAt) されたユーザは一覧クエリ側で除外されるため本関数の対象外。
+ * ロック状態 (連続失敗の自動保護) はこの 3 状態とは別軸で、有効なユーザにも掛かる。
+ */
+export function deriveAccountStatus(user: {
+  isActive: boolean;
+  invitationAcceptedAt: Date | null;
+}): AccountStatus {
+  if (user.invitationAcceptedAt == null) return 'invited';
+  return user.isActive ? 'active' : 'inactive';
+}
 
 function toUserDTO(user: {
   id: string;
@@ -75,6 +109,11 @@ function toUserDTO(user: {
   temporaryLockCount: number;
   mfaFailedCount: number;
   mfaLockedUntil: Date | null;
+  lastLoginAt: Date | null;
+  mfaEnabled: boolean;
+  invitationAcceptedAt: Date | null;
+  createdBy: string | null;
+  updatedBy: string | null;
 }): UserDTO {
   return {
     id: user.id,
@@ -90,6 +129,15 @@ function toUserDTO(user: {
     temporaryLockCount: user.temporaryLockCount,
     mfaFailedCount: user.mfaFailedCount,
     mfaLockedUntil: user.mfaLockedUntil?.toISOString() ?? null,
+    lastLoginAt: user.lastLoginAt?.toISOString() ?? null,
+    mfaEnabled: user.mfaEnabled,
+    invitationAcceptedAt: user.invitationAcceptedAt?.toISOString() ?? null,
+    accountStatus: deriveAccountStatus(user),
+    createdBy: user.createdBy,
+    updatedBy: user.updatedBy,
+    // 氏名は listUsers がバルク解決して上書きする (単体 DTO 経路では null)。
+    createdByName: null,
+    updatedByName: null,
   };
 }
 
@@ -103,7 +151,23 @@ export async function listUsers(viewerTenantId: string): Promise<UserDTO[]> {
     where: { deletedAt: null, tenantId: viewerTenantId },
     orderBy: { createdAt: 'desc' },
   });
-  return users.map(toUserDTO);
+  // 2026-06-03: 作成者/更新者の氏名を自テナント内でバルク解決 (N+1 回避、customer.service と同方式)。
+  //   tenantId フィルタで越境した operator (例: super_admin) は null フォールバックし氏名漏えいしない。
+  const operatorIds = Array.from(
+    new Set(users.flatMap((u) => [u.createdBy, u.updatedBy]).filter((v): v is string => v != null)),
+  );
+  const operators = operatorIds.length > 0
+    ? await prisma.user.findMany({
+        where: { id: { in: operatorIds }, tenantId: viewerTenantId },
+        select: { id: true, name: true },
+      })
+    : [];
+  const nameById = new Map(operators.map((o) => [o.id, o.name]));
+  return users.map((u) => ({
+    ...toUserDTO(u),
+    createdByName: u.createdBy ? nameById.get(u.createdBy) ?? null : null,
+    updatedByName: u.updatedBy ? nameById.get(u.updatedBy) ?? null : null,
+  }));
 }
 
 /**
@@ -112,9 +176,11 @@ export async function listUsers(viewerTenantId: string): Promise<UserDTO[]> {
  * Beginner プラン契約テナントが `beginnerMaxSeats` (DB 値、既定 5) を超えて
  * ユーザ招待しようとした場合に SEAT_LIMIT_EXCEEDED を投げる。
  *
- * 「アクティブユーザ」の定義は tenant-self.service.ts の `getTenantSelfInfo` と統一:
- *   `isActive: true && deletedAt: null` (= 検証済 + 有効化済 + 論理削除なし)。
- * 招待中の未検証ユーザ (deletedAt: not null, isActive: false) はカウント対象外。
+ * 2026-06-03 (案A): 席数は「有効 (isActive:true) + 招待中 (invitationAcceptedAt:null)」を
+ *   予約として数える。招待を出した時点で 1 席確保し、受諾時に席が無い破綻を防ぐ。
+ *   無効 (受諾済かつ isActive:false) は席を解放するためカウント対象外。論理削除も対象外。
+ *   ※ 課金スナップショット用の activeUserCount (isActive:true のみ) とは別概念
+ *      (tenant-self.service.ts: activeUserCount は据え置き / seatUsageCount を別途追加)。
  *
  * Beginner 以外 (Expert / Pro) は無制限のため何もしない。
  *
@@ -128,11 +194,16 @@ export async function assertSeatAvailableForTenant(tenantId: string): Promise<vo
   if (!tenant) return; // テナント不在は他経路で 404 になる前提
   if (tenant.plan !== 'beginner') return; // Beginner 以外は無制限
 
-  const activeUserCount = await prisma.user.count({
-    where: { tenantId, isActive: true, deletedAt: null },
+  // 案A: 有効 + 招待中 を席使用としてカウント (deletedAt:null 前提)
+  const seatUsageCount = await prisma.user.count({
+    where: {
+      tenantId,
+      deletedAt: null,
+      OR: [{ isActive: true }, { invitationAcceptedAt: null }],
+    },
   });
 
-  if (activeUserCount + 1 > tenant.beginnerMaxSeats) {
+  if (seatUsageCount + 1 > tenant.beginnerMaxSeats) {
     throw new Error('SEAT_LIMIT_EXCEEDED');
   }
 }
@@ -152,39 +223,52 @@ export async function createUser(
   //         招待時 (= ユーザ作成時) の上限チェックが未実装。Beginner で 6 人目の招待が
   //         拒否されない構造的欠陥を補完する。
   //   仕様: 当該テナントが Beginner プランの場合、
-  //         activeUserCount + 1 <= beginnerMaxSeats でない限り SEAT_LIMIT_EXCEEDED を投げる。
-  await assertSeatAvailableForTenant(options.tenantId);
+  //         有効 + 招待中 + 1 <= beginnerMaxSeats でない限り SEAT_LIMIT_EXCEEDED を投げる (案A)。
+  //   2026-06-03: 席数チェックは下の「招待中の重複掃除」の後に移動した
+  //     (再招待で旧・招待中レコードを消した後の正しい席数で判定するため)。
 
   // 2026-05-09 feedback Phase 2-6: 越境ユーザ作成を遮断するため、メール重複チェックは
   //   tenant 内で実施 (テナント間で同じメールアドレスは別ユーザとして許容する設計)。
   const tenantScope = { tenantId: options.tenantId };
-  // メールアドレス重複チェック（有効なユーザ）
-  const existingActive = await prisma.user.findFirst({
-    where: { email: input.email, deletedAt: null, ...tenantScope },
+  // メールアドレス重複チェック（受諾済み = 有効/無効のユーザ）。
+  //   2026-06-03: 「受諾済み」= deletedAt:null かつ invitationAcceptedAt 設定済み。
+  //   無効 (isActive:false の受諾済み) も既存アカウントなので重複として弾く。
+  const existingAccepted = await prisma.user.findFirst({
+    where: {
+      email: input.email,
+      deletedAt: null,
+      invitationAcceptedAt: { not: null },
+      ...tenantScope,
+    },
   });
-  if (existingActive) {
+  if (existingAccepted) {
     throw new Error('DUPLICATE_EMAIL');
   }
 
-  // 未有効化（deletedAt 付き）の既存ユーザがあれば削除して再登録を許可
-  // Phase 2-10: tenantId フィルタで二重防御 (existingInactive.tenantId を明示的に使用)
-  const existingInactive = await prisma.user.findFirst({
-    where: { email: input.email, deletedAt: { not: null }, isActive: false, ...tenantScope },
+  // 招待中（未受諾）の既存ユーザがあれば掃除して再招待を許可。
+  //   2026-06-03: 招待中 = invitationAcceptedAt:null。新設計では deletedAt:null だが、
+  //   移行前の旧レコード (deletedAt 付きの保留招待) も同条件で掃除対象に含める。
+  // Phase 2-10: tenantId フィルタで二重防御 (existingInvited.tenantId を明示的に使用)
+  const existingInvited = await prisma.user.findFirst({
+    where: { email: input.email, invitationAcceptedAt: null, isActive: false, ...tenantScope },
   });
-  if (existingInactive) {
+  if (existingInvited) {
     await prisma.$transaction([
       prisma.emailVerificationToken.deleteMany({
-        where: { userId: existingInactive.id, tenantId: existingInactive.tenantId },
+        where: { userId: existingInvited.id, tenantId: existingInvited.tenantId },
       }),
       prisma.recoveryCode.deleteMany({
-        where: { userId: existingInactive.id, tenantId: existingInactive.tenantId },
+        where: { userId: existingInvited.id, tenantId: existingInvited.tenantId },
       }),
       prisma.roleChangeLog.deleteMany({
-        where: { targetUserId: existingInactive.id, tenantId: existingInactive.tenantId },
+        where: { targetUserId: existingInvited.id, tenantId: existingInvited.tenantId },
       }),
-      prisma.user.delete({ where: { id: existingInactive.id } }),
+      prisma.user.delete({ where: { id: existingInvited.id } }),
     ]);
   }
+
+  // P-2 / 案A: 重複掃除の後に席数上限を判定する。
+  await assertSeatAvailableForTenant(options.tenantId);
 
   // パスワードなしで仮登録（ユーザ自身がパスワード設定画面で設定する）
   const placeholderHash = await hash(randomBytes(32).toString('hex'), BCRYPT_COST);
@@ -199,8 +283,15 @@ export async function createUser(
       passwordHash: placeholderHash,
       systemRole: input.systemRole,
       isActive: false,
-      deletedAt: new Date(),
+      // 2026-06-03: 招待中は invitationAcceptedAt:null で表す。旧設計は deletedAt を立てて
+      //   一覧から隠していたが、本設計では deletedAt は論理削除専用に戻し、招待中も一覧に出す
+      //   (招待メール再送・招待取消の導線を置けるようにするため)。
+      invitationAcceptedAt: null,
+      deletedAt: null,
       forcePasswordChange: false,
+      // 2026-06-03: 招待した管理者を作成者/更新者として記録 (admin 一覧の監査列)
+      createdBy: creatorId,
+      updatedBy: creatorId,
     },
   });
 
@@ -244,6 +335,82 @@ export async function createUser(
   return { user: toUserDTO(user) };
 }
 
+/**
+ * 2026-06-03: テナント管理者による招待メールの再送。
+ *   対象は招待中 (invitationAcceptedAt:null) のユーザのみ。受諾済みには再送しない。
+ *   既存 sendVerificationEmail を再利用 (旧 token を無効化し新 token を発行する)。
+ *   呼び出し元 (route) で requireAdmin + requireSameTenantUser 済みの前提。
+ * @throws Error('USER_NOT_FOUND') 招待中ユーザが見つからない (= 既に受諾済み / 不在)
+ * @throws Error('EMAIL_SEND_FAILED') メール送信失敗
+ */
+export async function resendInvitationByAdmin(
+  userId: string,
+  adminId: string,
+  tenantId: string,
+  baseUrl: string,
+): Promise<void> {
+  const target = await prisma.user.findFirst({
+    where: { id: userId, tenantId, invitationAcceptedAt: null, deletedAt: null },
+    select: { id: true, email: true },
+  });
+  if (!target) {
+    throw new Error('USER_NOT_FOUND');
+  }
+  try {
+    await sendVerificationEmail(target.id, tenantId, target.email, baseUrl);
+  } catch (e) {
+    if (e instanceof EmailSendError) {
+      throw new Error('EMAIL_SEND_FAILED');
+    }
+    throw e;
+  }
+  await recordAuditLog({
+    tenantId,
+    userId: adminId,
+    action: 'UPDATE',
+    entityType: 'user',
+    entityId: userId,
+    afterValue: { operation: 'resend_invitation' },
+  });
+}
+
+/**
+ * 2026-06-03: テナント管理者による招待の取消 (案A の席解放手段)。
+ *   対象は招待中 (invitationAcceptedAt:null) のユーザのみ。受諾済みユーザは対象外
+ *   (退職等で席を止める場合は updateUserStatus(無効) / deleteUser を使う)。
+ *   未受諾の招待は業務履歴を持たないため、付随レコードごと物理削除する (席が即時解放される)。
+ *   呼び出し元 (route) で requireAdmin + requireSameTenantUser 済みの前提。
+ * @throws Error('USER_NOT_FOUND') 招待中ユーザが見つからない (= 既に受諾済み / 不在)
+ */
+export async function cancelInvitation(
+  userId: string,
+  adminId: string,
+  tenantId: string,
+): Promise<void> {
+  const target = await prisma.user.findFirst({
+    where: { id: userId, tenantId, invitationAcceptedAt: null, deletedAt: null },
+    select: { id: true, email: true },
+  });
+  if (!target) {
+    throw new Error('USER_NOT_FOUND');
+  }
+  // Phase 2-10: tenantId フィルタで二重防御。未受諾のため監査本体の履歴は無い。
+  await prisma.$transaction([
+    prisma.emailVerificationToken.deleteMany({ where: { userId, tenantId } }),
+    prisma.recoveryCode.deleteMany({ where: { userId, tenantId } }),
+    prisma.roleChangeLog.deleteMany({ where: { targetUserId: userId, tenantId } }),
+    prisma.user.delete({ where: { id: userId } }),
+  ]);
+  await recordAuditLog({
+    tenantId,
+    userId: adminId,
+    action: 'DELETE',
+    entityType: 'user',
+    entityId: userId,
+    afterValue: { operation: 'cancel_invitation', email: target.email },
+  });
+}
+
 export async function updateUserStatus(
   userId: string,
   isActive: boolean,
@@ -262,6 +429,8 @@ export async function updateUserStatus(
     where: { id: userId },
     data: {
       isActive,
+      // 2026-06-03: 最後に編集した管理者を更新者として記録 (admin 一覧の監査列)
+      updatedBy: updaterId,
       // 2026-05-13 (security/jwt-invalidation, L-1): isActive 切替で既存 JWT を失効。
       //   無効化されたユーザは即時ログアウト、再有効化後も再ログイン強制。
       tokenVersion: { increment: 1 },
@@ -320,7 +489,8 @@ export async function updateUser(
   if (input.name !== undefined) {
     const user = await prisma.user.update({
       where: { id: userId },
-      data: { name: input.name },
+      // 2026-06-03: 氏名更新も更新者を記録
+      data: { name: input.name, updatedBy: updaterId },
     });
     latest = toUserDTO(user);
   }
@@ -354,6 +524,8 @@ export async function updateUserRole(
     where: { id: userId },
     data: {
       systemRole: newRole,
+      // 2026-06-03: 最後に編集した管理者を更新者として記録 (admin 一覧の監査列)
+      updatedBy: updaterId,
       // 2026-05-13 (security/jwt-invalidation, L-1): ロール変更で既存 JWT を失効。
       //   権限降格直後に旧 JWT で admin 操作されるリスクを排除。
       tokenVersion: { increment: 1 },

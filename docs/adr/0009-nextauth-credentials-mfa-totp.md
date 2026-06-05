@@ -29,7 +29,7 @@ MVP 着手時点で検討した制約:
 | 認証ライブラリ | NextAuth.js v5 (Auth.js) |
 | 第一要素 (パスワード) | Credentials Provider (email + password、bcrypt cost 12) |
 | 第二要素 (MFA) | TOTP (Time-based One-Time Password、Google Authenticator 互換) |
-| MFA 必須化 | admin ロールは必須、一般ユーザは任意 |
+| MFA 必須化 | admin ロールは必須、一般ユーザは任意 ※**後日改定**: #11 (2026-05-09) で強制範囲を **super_admin (運営者) 限定** に narrowing。テナント管理者 (admin)・一般ユーザはともに任意 (設定画面で本人が有効化/無効化)。現行仕様は [SECURITY.md §9.17](../design/SECURITY.md) を正とする |
 | セッション保持 | Cookie ベース (HttpOnly + Secure + SameSite=Strict) |
 | パスワードリセット | リカバリーコード方式 (期限付きトークン経由) |
 

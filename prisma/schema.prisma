@@ -173,14 +173,9 @@ model Tenant {
   beginnerAutoDeleteNoticeDay150SentAt DateTime? @map("beginner_auto_delete_notice_day150_sent_at") @db.Timestamptz
   /// 2026-05-11: 自動物理削除予告メール (170 日経過 = 削除 10 日前、最終警告)
   beginnerAutoDeleteNoticeDay170SentAt DateTime? @map("beginner_auto_delete_notice_day170_sent_at") @db.Timestamptz
-  /// PR G (#24 / 2026-05-09): 提案エンジンに **管理テナントのシードデータ** を含めるか。
-  ///   - true (default): 提案候補に管理テナントの isSampleData=true なデータを横断検索
-  ///   - false:          管理テナントを除外し、自テナント + 他顧客テナントのデータのみで提案
-  ///
-  /// 設計合意 B (2026-05-09): シード実データは管理テナント (MANAGEMENT_TENANT_ID) に集中。
-  ///   このフラグはテナント管理者が「契約直後の宇宙人感を抑える」「業務に近いシードを使いたくない」
-  ///   等のニーズに応じてシード参照を遮断するための toggle。
-  seedDataEnabled                      Boolean   @default(true) @map("seed_data_enabled")
+  /// feat/starter-data-import (2026-06-05): 旧 seedDataEnabled (提案エンジンの管理テナント越境参照 toggle)
+  ///   は撤去した。スターターデータは「取込ボタン」で各テナントに複製する方式に変更し、提案/チャットは
+  ///   常に自テナントのみを参照する (単一テナント化)。撤去 migration: 20260613_drop_seed_data_enabled。
   /// P-D (2026-05-08): データインポート進行中の in-flight ロック。
   ///   - 開始時 NOW() / 終了時 NULL に戻す。クラッシュ残留対策のためタイムスタンプ型。
   ///   - 30 分 (IMPORT_LOCK_STALE_MINUTES) 以上経過した値は自動失効扱い。
@@ -419,6 +414,11 @@ model User {
   mfaFailedCount      Int       @default(0) @map("mfa_failed_count")
   mfaLockedUntil      DateTime? @map("mfa_locked_until") @db.Timestamptz
   lastLoginAt         DateTime? @map("last_login_at") @db.Timestamptz
+  // 2026-06-03: 招待受諾日時。NULL = まだパスワード未設定の「招待中」、値あり = 受諾済 (有効/無効は isActive で区別)。
+  //   旧設計では「招待中」を deletedAt(論理削除) で代用していたため一覧から除外され再送導線を置けなかった。
+  //   本カラム導入で deletedAt は論理削除専用に戻し、アカウント状態 = 招待中/有効/無効 を導出可能にする
+  //   (deriveAccountStatus / user.service.ts)。Beginner 席数は「有効 + 招待中」を予約として数える (案A)。
+  invitationAcceptedAt DateTime? @map("invitation_accepted_at") @db.Timestamptz
   forcePasswordChange Boolean   @default(false) @map("force_password_change")
   // 2026-05-13 (security/jwt-invalidation, L-1): JWT 失効カウンタ。
   //   ログイン時に JWT に格納し、API route 経由のリクエスト時に DB の最新値と比較。
@@ -433,6 +433,12 @@ model User {
   themePreference     String    @default("light") @map("theme_preference") @db.VarChar(30)
   // PR-1 (2026-05-15): timezone / locale はテナント単位 (Tenant.timezone / Tenant.locale) に
   //   集約されたため User からは撤去。同一テナント内のユーザは同じ TZ/locale で運用する。
+  // 2026-06-03: 作成者/更新者 (admin 一覧の監査列で表示)。他エンティティと違い User は
+  //   自己参照 FK を避ける設計のため、リレーションは張らず操作者の UUID のみ保持する
+  //   (氏名は listUsers が自テナント User をバルク参照して解決)。NULL = 記録なし
+  //   (既存ユーザ / 本人によるセルフ有効化 / システム作成)。
+  createdBy           String?   @map("created_by") @db.Uuid
+  updatedBy           String?   @map("updated_by") @db.Uuid
   createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz
   updatedAt           DateTime  @updatedAt @map("updated_at") @db.Timestamptz
   deletedAt           DateTime? @map("deleted_at") @db.Timestamptz
@@ -587,6 +593,10 @@ model Customer {
   contactPerson String?  @map("contact_person") @db.VarChar(100)
   contactEmail  String?  @map("contact_email") @db.VarChar(255)
   notes         String?  @db.Text
+  // feat/starter-data-import (2026-06-05): スターターデータ一括取込で投入された行の識別マーカー。
+  //   一覧には通常データとして表示される (isSampleData とは別軸)。テナント管理者の
+  //   「サンプル一括削除」で対象を正確に特定するためだけに使う。default false で既存行に影響なし。
+  isSeedSample  Boolean  @default(false) @map("is_seed_sample")
   createdBy     String   @map("created_by") @db.Uuid
   updatedBy     String   @map("updated_by") @db.Uuid
   createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz
@@ -597,6 +607,8 @@ model Customer {
 
   @@index([name], map: "idx_customers_name")
   @@index([tenantId], map: "idx_customers_tenant")
+  // feat/starter-data-import: 一括削除クエリ用 partial index (true の行のみ)
+  @@index([isSeedSample], map: "idx_customers_is_seed_sample")
   @@map("customers")
 }
 
@@ -632,6 +644,10 @@ model Project {
   processTags        Json                         @default("[]") @map("process_tags") @db.JsonB
   plannedStartDate   DateTime                     @map("planned_start_date") @db.Date
   plannedEndDate     DateTime                     @map("planned_end_date") @db.Date
+  // 2026-06-02 (COLUMN_USAGE_MAP ToBe → 実装): プロジェクト実績日。担当者が進捗編集時に入力する任意項目。
+  //   予定日 (planned*) は必須だが、実績日は着手前は未確定のため nullable。
+  actualStartDate    DateTime?                    @map("actual_start_date") @db.Date
+  actualEndDate      DateTime?                    @map("actual_end_date") @db.Date
   status             String                       @default("planning") @db.VarChar(20)
   notes              String?                      @db.Text
   // PR-X5 (2026-05-07): シードデータ用のサンプルプロジェクト識別フラグ。
@@ -641,6 +657,10 @@ model Project {
   //     - **提案エンジン (参考タブ / 提案モーダル) では候補として可視** (= 設計目的)
   //   default false で既存プロジェクトに影響なし。新規シーディング時のみ true で投入される。
   isSampleData       Boolean                      @default(false) @map("is_sample_data")
+  // feat/starter-data-import (2026-06-05): スターターデータ一括取込で投入された行の識別マーカー。
+  //   isSampleData (= 提案用シード/一覧非表示) とは別軸。本マーカーは isSampleData=false (一覧表示)
+  //   のまま、テナント管理者の「サンプル一括削除」で対象を正確に特定するために使う。default false。
+  isSeedSample       Boolean                      @default(false) @map("is_seed_sample")
   // PR #4 (T-03 Phase 2): purpose / background / scope を結合した text の Voyage AI
   //   embedding (1024 次元、voyage-4-lite)。Cosine Similarity による意味検索の基盤。
   //   生成失敗時 NULL を許容 (本体 INSERT/UPDATE は成功させる fail-safe)。
@@ -677,6 +697,8 @@ model Project {
   @@index([tenantId, status], map: "idx_projects_tenant_status")
   // PR-X5: サンプルデータの非表示フィルタを高速化する partial index (true の行のみ index)
   @@index([isSampleData], map: "idx_projects_is_sample_data")
+  // feat/starter-data-import: 一括削除クエリ用 partial index (true の行のみ)
+  @@index([isSeedSample], map: "idx_projects_is_seed_sample")
   @@map("projects")
 }
 
@@ -714,6 +736,9 @@ model ProjectMember {
   userId      String   @map("user_id") @db.Uuid
   projectRole String   @map("project_role") @db.VarChar(20)
   assignedBy  String   @map("assigned_by") @db.Uuid
+  // 2026-06-02: 一覧の「更新者」表示用。ロール変更時 (updateMemberRole) に変更実行者を記録する。
+  //   追加時点では未更新のため null (assignedBy = 作成者 として既存)。
+  updatedBy   String?  @map("updated_by") @db.Uuid
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz
 
@@ -836,6 +861,8 @@ model RiskIssue {
   lessonLearned    String?                      @map("lesson_learned") @db.Text
   visibility       String                       @default("draft") @db.VarChar(20) // draft | public (PR #60)
   riskNature       String?                      @map("risk_nature") @db.VarChar(20) // threat | opportunity (type=risk のみ)
+  // feat/starter-data-import (2026-06-05): スターターデータ一括取込の識別マーカー (一覧表示は通常通り)。
+  isSeedSample     Boolean                      @default(false) @map("is_seed_sample")
   // PR #4 (T-03 Phase 2): title + content + cause + lessonLearned 等を結合した text の embedding
   contentEmbedding Unsupported("vector(1024)")? @map("content_embedding")
   createdBy        String                       @map("created_by") @db.Uuid
@@ -860,6 +887,8 @@ model RiskIssue {
   @@index([state, priority], map: "idx_risks_state")
   @@index([assigneeId], map: "idx_risks_assignee")
   @@index([tenantId], map: "idx_risks_tenant")
+  // feat/starter-data-import: 一括削除クエリ用 partial index (true の行のみ)
+  @@index([isSeedSample], map: "idx_risks_is_seed_sample")
   @@map("risks_issues")
 }
 
@@ -970,6 +999,9 @@ model Knowledge {
   //   全ナレッジ画面 (`/knowledge`) では非表示にする (super_admin role は bypass で表示・編集可)。
   //   提案エンジンでは `isSampleData=true` も候補として表示される (= デモデータの目的)。
   isSampleData       Boolean                      @default(false) @map("is_sample_data")
+  // feat/starter-data-import (2026-06-05): スターターデータ一括取込の識別マーカー (isSampleData とは別軸、
+  //   isSampleData=false=一覧表示のまま、一括削除の対象特定用)。default false。
+  isSeedSample       Boolean                      @default(false) @map("is_seed_sample")
   // PR #4 (T-03 Phase 2): title + background + content + result + conclusion を結合した text の embedding
   contentEmbedding   Unsupported("vector(1024)")? @map("content_embedding")
   createdBy          String                       @map("created_by") @db.Uuid
@@ -1000,6 +1032,8 @@ model Knowledge {
   @@index([tenantId, visibility, createdAt], map: "idx_knowledges_tenant_visibility_created")
   // partial index: シードフィルタ用 (true の行のみ index、Project と同じ最適化)
   @@index([isSampleData], map: "idx_knowledges_is_sample_data")
+  // feat/starter-data-import: 一括削除クエリ用 partial index (true の行のみ)
+  @@index([isSeedSample], map: "idx_knowledges_is_seed_sample")
   // feat/asset-assignee-expansion (2026-05-26): 担当者引き受け一覧画面用 index
   @@index([assigneeId], map: "idx_knowledges_assignee")
   @@map("knowledges")
@@ -1053,6 +1087,8 @@ model Retrospective {
   knowledgeToShare       String?                      @map("knowledge_to_share") @db.Text
   state                  String                       @default("draft") @db.VarChar(20)
   visibility             String                       @default("draft") @db.VarChar(20) // draft | public (PR #60)
+  // feat/starter-data-import (2026-06-05): スターターデータ一括取込の識別マーカー (一覧表示は通常通り、一括削除用)。
+  isSeedSample           Boolean                      @default(false) @map("is_seed_sample")
   // PR #4 (T-03 Phase 2): planSummary + actualSummary + goodPoints + improvements 等を結合した text の embedding
   contentEmbedding       Unsupported("vector(1024)")? @map("content_embedding")
   createdBy              String                       @map("created_by") @db.Uuid
@@ -1075,6 +1111,8 @@ model Retrospective {
   @@index([projectId], map: "idx_retro_project")
   @@index([tenantId], map: "idx_retro_tenant")
   @@index([assigneeId], map: "idx_retro_assignee")
+  // feat/starter-data-import: 一括削除クエリ用 partial index (true の行のみ)
+  @@index([isSeedSample], map: "idx_retro_is_seed_sample")
   @@map("retrospectives")
 }
 

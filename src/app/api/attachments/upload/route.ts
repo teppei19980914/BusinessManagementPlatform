@@ -14,7 +14,9 @@
  *  10. レスポンス: { uploadUrl, token, objectKey, sanitizedFileName, expiresIn }
  *
  * 認可:
- *   memo entity は Pre-signed URL アップロード対象外 (= URL 添付のみ仕様)。
+ *   全 entity (project/task/estimate/risk/retrospective/knowledge/memo) が対象。
+ *   2026-06-03: memo も他資産同様にアップロード対応 (旧「URL 添付のみ」制限を解除)。書込認可は
+ *   authorizeForAttachmentEntity → authorizeMemoAttachment (memo.userId === viewer 本人のみ)。
  *
  * 関連:
  *   - ADR: docs/adr/0021-file-storage-usage-based-billing.md §10

@@ -6,6 +6,7 @@ vi.mock('@/lib/db', () => ({
       findMany: vi.fn(),
       findUnique: vi.fn(),
       create: vi.fn(),
+      createMany: vi.fn(),
       update: vi.fn(),
       updateMany: vi.fn(),
       deleteMany: vi.fn(),
@@ -17,13 +18,13 @@ vi.mock('@/lib/db', () => ({
   },
 }));
 
-// task.service の recalculateAncestorsPublic は applySyncImport の最後で呼ばれる。
+// ADR-0032 (2026-06-04): applySyncImport の WP 集計再計算は最後に recalculateAllProjectWps を 1 回呼ぶ。
 // 単体テストでは実 DB を伴わない no-op に差し替える。
 vi.mock('./task.service', async () => {
   const actual = await vi.importActual<typeof import('./task.service')>('./task.service');
   return {
     ...actual,
-    recalculateAncestorsPublic: vi.fn().mockResolvedValue(undefined),
+    recalculateAllProjectWps: vi.fn().mockResolvedValue({ total: 0, updated: 0 }),
   };
 });
 
@@ -220,12 +221,21 @@ describe('computeSyncDiff (T-19)', () => {
     expect(r.globalErrors.length).toBeGreaterThan(0);
   });
 
-  it('500 件超は globalError', async () => {
+  it('[ADR-0032] 目安件数を超えても block せず globalWarning を返す (ハード上限撤廃)', async () => {
+    // ADR-0032 (2026-06-04): 旧「500 件ハード上限 (canExecute=false)」を撤廃。
+    //   createMany バッチ化で大量取込も完走できるため、目安超過は「時間がかかる場合がある」警告に留める。
     vi.mocked(prisma.task.findMany).mockResolvedValue([] as never);
     const rows = Array.from({ length: 501 }, (_, i) => csvRow({ tempRowIndex: i + 2, name: `t${i}` }));
-    const r = await computeSyncDiff(projectId,rows, 'tenant-A');
-    expect(r.canExecute).toBe(false);
-    expect(r.globalErrors[0]).toContain('500 件');
+    const r = await computeSyncDiff(projectId, rows, 'tenant-A');
+    expect(r.canExecute).toBe(true);
+    expect(r.globalErrors).toEqual([]);
+    expect(r.globalWarnings.some((w) => w.includes('時間がかかる'))).toBe(true);
+  });
+
+  it('[ADR-0032] 目安件数以下では globalWarning は出ない', async () => {
+    vi.mocked(prisma.task.findMany).mockResolvedValue([] as never);
+    const r = await computeSyncDiff(projectId, [csvRow({ name: '少数' })], 'tenant-A');
+    expect(r.globalWarnings).toEqual([]);
   });
 
   it('ID 空欄 + DB に同名タスクなし → CREATE 扱い (エラーなし)', async () => {
@@ -551,5 +561,85 @@ describe('applySyncImport [C2] OCC', () => {
     );
     // NO_CHANGE 扱いになるが、OCC throw されないことが本テストの主目的
     expect(result).toBeDefined();
+  });
+});
+
+// ============================================================
+// applySyncImport — ADR-0032 createMany バッチ化 (504 タイムアウト対策)
+// ============================================================
+
+describe('applySyncImport [ADR-0032] createMany バッチ', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(prisma.project.findFirst).mockResolvedValue({ id: projectId } as never);
+    vi.mocked(prisma.task.createMany).mockResolvedValue({ count: 1 } as never);
+    vi.mocked(prisma.task.update).mockResolvedValue({ id: 'x' } as never);
+    vi.mocked(prisma.task.updateMany).mockResolvedValue({ count: 0 } as never);
+  });
+
+  it('全 CREATE: createMany を level ごとに呼び、同一親配下の同名 ACT も両方作成される', async () => {
+    // DB は空 (computeSyncDiff の既存タスク取得 + rollback 用 snapshot の両方)
+    vi.mocked(prisma.task.findMany).mockResolvedValue([] as never);
+
+    const result = await applySyncImport(
+      projectId,
+      [
+        csvRow({ tempRowIndex: 2, level: 1, type: 'work_package', name: 'WP' }),
+        csvRow({
+          tempRowIndex: 3, level: 2, type: 'activity', name: 'SC午後1問', parentRowIndex: 2,
+          plannedStartDate: '2026-06-07', plannedEndDate: '2026-06-07', plannedEffort: 2,
+        }),
+        // 同一 WP 配下に同名 ACT (旧実装は P2002 で 500 になっていたケース)
+        csvRow({
+          tempRowIndex: 4, level: 2, type: 'activity', name: 'SC午後1問', parentRowIndex: 2,
+          plannedStartDate: '2026-06-13', plannedEndDate: '2026-06-13', plannedEffort: 2,
+        }),
+      ],
+      'keep',
+      'user-1',
+      'tenant-A',
+    );
+
+    expect(result.added).toBe(3);
+    // 逐次 create は使わない (バッチ化されている)
+    expect(prisma.task.create).not.toHaveBeenCalled();
+    // level 1 と level 2 で 1 回ずつ = 2 回
+    expect(prisma.task.createMany).toHaveBeenCalledTimes(2);
+
+    // level 2 のバッチに同名 ACT が 2 件、ID は別 (= 別タスクとして取り込まれる)
+    const calls = vi.mocked(prisma.task.createMany).mock.calls;
+    const level2Call = calls.find((c) => (c[0] as { data: unknown[] }).data.length === 2);
+    expect(level2Call).toBeDefined();
+    const data = (level2Call![0] as { data: Array<{ id: string; name: string; parentTaskId: string | null }> }).data;
+    expect(data.every((d) => d.name === 'SC午後1問')).toBe(true);
+    expect(data[0].id).not.toBe(data[1].id);
+    // 親 (level 1 の WP) の id が両方の parentTaskId に一致する
+    expect(data[0].parentTaskId).toBe(data[1].parentTaskId);
+    expect(data[0].parentTaskId).not.toBeNull();
+  });
+
+  it('removeMode=delete: 進捗なし REMOVE_CANDIDATE を updateMany で一括論理削除する', async () => {
+    // CSV には db-1 のみ。db-2 (進捗なし) は CSV に無い → REMOVE_CANDIDATE。
+    vi.mocked(prisma.task.findMany).mockResolvedValue([
+      { ...baseDbTask, id: 'db-1', name: '残す', updatedAt: new Date('2026-05-01T00:00:00Z') },
+      { ...baseDbTask, id: 'db-2', name: '消す', progressRate: 0, actualStartDate: null, updatedAt: new Date('2026-05-01T00:00:00Z') },
+    ] as never);
+
+    const result = await applySyncImport(
+      projectId,
+      [csvRow({ id: 'db-1', name: '残す' })],
+      'delete',
+      'user-1',
+      'tenant-A',
+    );
+
+    expect(result.removed).toBe(1);
+    expect(prisma.task.updateMany).toHaveBeenCalledTimes(1);
+    const call = vi.mocked(prisma.task.updateMany).mock.calls[0][0] as {
+      where: { id: { in: string[] } };
+      data: { deletedAt: Date };
+    };
+    expect(call.where.id.in).toEqual(['db-2']);
+    expect(call.data.deletedAt).toBeInstanceOf(Date);
   });
 });

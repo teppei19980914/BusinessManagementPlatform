@@ -23,7 +23,7 @@ import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { TASK_STATUSES, PRIORITIES } from '@/types';
+import { TASK_STATUSES } from '@/types';
 import type { TaskDTO } from '@/services/task.service';
 import { useSessionStringSet } from '@/lib/use-session-state';
 import { MultiSelectFilter } from '@/components/multi-select-filter';
@@ -35,6 +35,7 @@ import {
 import { SortableResizableHead } from '@/components/sort/sortable-resizable-head';
 import { useMultiSort } from '@/components/sort/use-multi-sort';
 import { multiSort } from '@/lib/multi-sort';
+import { useTablePagination, TablePagination } from '@/components/common/table-pagination';
 // feat/gantt-tab-restructure (PR-C item 7): マイタスクに横断 Gantt 表示
 import { GanttClient } from '@/app/(dashboard)/projects/[projectId]/gantt/gantt-client';
 // feat/gantt-initial-scroll-and-locale (2026-05-29): WBS / Gantt と表示形式を統一する
@@ -77,7 +78,6 @@ function getMyTaskSortValue(t: TaskDTO, columnKey: string): unknown {
     case 'progress': return t.progressRate;
     case 'plannedRange': return t.plannedStartDate ?? '';
     case 'actualRange': return t.actualStartDate ?? '';
-    case 'priority': return t.priority ?? '';
     default: return null;
   }
 }
@@ -176,10 +176,19 @@ export function MyTasksClient({ projectGroups, today, tenantTimeZone, tenantLoca
     }));
   }, [projectGroups, selectedStatuses, isAllStatusesSelected, sortState]);
 
+  // クライアント側ページング (共通部品)。プロジェクトグループ単位でページ分割する
+  // (各グループは内部にタスクツリーを持つため、ページング単位は「プロジェクト」)。
+  // 状況フィルタ変更で先頭ページに戻す。
+  const { pageItems: pagedGroups, page, pageCount, setPage } = useTablePagination(
+    filteredGroups,
+    [...selectedStatuses].sort().join('|'),
+  );
+
   if (projectGroups.length === 0) {
+    // feat/collapsed-nav-screen-title (2026-06-05): 画面名「マイタスク」見出しは撤去。
+    //   ナビ折りたたみ幅でのみ CollapsedNavScreenTitle (layout) が表示する (他画面と統一)。
     return (
-      <div className="space-y-6">
-        <h2 className="text-xl font-semibold">{tMyTask('title')}</h2>
+      <div className="space-y-6" data-testid="my-tasks-screen">
         <p className="py-8 text-center text-muted-foreground">{tMyTask('noAssigned')}</p>
       </div>
     );
@@ -187,7 +196,7 @@ export function MyTasksClient({ projectGroups, today, tenantTimeZone, tenantLoca
 
   return (
     <ResizableColumnsProvider tableKey="my-tasks">
-    <div className="space-y-4">
+    <div className="space-y-4" data-testid="my-tasks-screen">
       {/* fix/admin-users-defensive-render 横展開 (2026-05-15): server data load 失敗時のバナー。
           listMyTaskProjects が throw した場合、画面は空表示になるが他画面への遷移は維持。 */}
       {dataLoadError && (
@@ -199,8 +208,9 @@ export function MyTasksClient({ projectGroups, today, tenantTimeZone, tenantLoca
           </p>
         </div>
       )}
-      <div className="flex items-center justify-between gap-3">
-        <h2 className="text-xl font-semibold">{tMyTask('title')}</h2>
+      {/* feat/collapsed-nav-screen-title (2026-06-05): 画面名「マイタスク」見出しは撤去し、
+          操作ボタン列を右寄せに統一。画面名はナビ折りたたみ幅でのみ CollapsedNavScreenTitle が表示。 */}
+      <div className="flex items-center justify-end gap-3">
         <div className="flex items-center gap-2">
           {/* feat/gantt-tab-restructure (PR-C item 7): 横断 Gantt 表示トグル */}
           <Button variant="outline" size="sm" onClick={() => setShowGantt((v) => !v)}>
@@ -229,7 +239,7 @@ export function MyTasksClient({ projectGroups, today, tenantTimeZone, tenantLoca
           プロジェクト単位で順次描画する)。 */}
       {showGantt && (
         <div className="space-y-4">
-          {filteredGroups.map((pg) => (
+          {pagedGroups.map((pg) => (
             <div key={`gantt-${pg.projectId}`} className="rounded-lg border p-2">
               <Link
                 href={`/projects/${pg.projectId}`}
@@ -255,7 +265,7 @@ export function MyTasksClient({ projectGroups, today, tenantTimeZone, tenantLoca
         <p className="py-8 text-center text-muted-foreground">{tMyTask('noMatch')}</p>
       )}
 
-      {filteredGroups.map((pg) => {
+      {pagedGroups.map((pg) => {
         const isProjectExpanded = expandedProjects.has(pg.projectId);
         return (
           <div key={pg.projectId} className="rounded-lg border overflow-x-auto">
@@ -292,7 +302,6 @@ export function MyTasksClient({ projectGroups, today, tenantTimeZone, tenantLoca
                     <SortableResizableHead columnKey="progress" defaultWidth={140} label={tMyTask('colProgressEffort')} sortState={sortState} onSortChange={setSortColumn} />
                     <SortableResizableHead columnKey="plannedRange" defaultWidth={180} label={tMyTask('colPlannedRange')} sortState={sortState} onSortChange={setSortColumn} />
                     <SortableResizableHead columnKey="actualRange" defaultWidth={180} label={tMyTask('colActualRange')} sortState={sortState} onSortChange={setSortColumn} />
-                    <SortableResizableHead columnKey="priority" defaultWidth={80} label={tMyTask('colPriority')} sortState={sortState} onSortChange={setSortColumn} />
                   </tr>
                 </thead>
                 <tbody>
@@ -312,6 +321,8 @@ export function MyTasksClient({ projectGroups, today, tenantTimeZone, tenantLoca
           </div>
         );
       })}
+
+      <TablePagination page={page} pageCount={pageCount} onPageChange={setPage} />
     </div>
     </ResizableColumnsProvider>
   );
@@ -406,11 +417,6 @@ function TaskRow({
         </td>
         <td className="px-1.5 py-1.5 md:px-3 md:py-2 whitespace-nowrap">{plannedRangeText}</td>
         <td className="px-1.5 py-1.5 md:px-3 md:py-2 whitespace-nowrap">{actualRangeText}</td>
-        <td className="px-1.5 py-1.5 md:px-3 md:py-2 whitespace-nowrap">
-          {task.priority
-            ? PRIORITIES[task.priority as keyof typeof PRIORITIES] || task.priority
-            : '-'}
-        </td>
       </tr>
       {isExpanded && task.children?.map((child) => (
         <TaskRow

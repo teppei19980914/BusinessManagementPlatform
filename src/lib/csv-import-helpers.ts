@@ -69,13 +69,14 @@ export function checkCsvSize(csvText: string, t: (k: string, p?: Record<string, 
 export function checkCsvRowCount(
   rowCount: number,
   t: (k: string, p?: Record<string, string | number | Date>) => string,
+  maxRows: number = CSV_MAX_ROWS,
 ): NextResponse | null {
-  if (rowCount > CSV_MAX_ROWS) {
+  if (rowCount > maxRows) {
     return NextResponse.json(
       {
         error: {
           code: 'CSV_ROW_COUNT_EXCEEDED',
-          message: t('csvRowCountExceeded', { maxRows: CSV_MAX_ROWS }),
+          message: t('csvRowCountExceeded', { maxRows }),
         },
       },
       { status: 413 },

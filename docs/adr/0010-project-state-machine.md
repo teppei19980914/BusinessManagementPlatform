@@ -1,8 +1,10 @@
 # ADR-0010: プロジェクト状態マシン (7 状態 + 一方向遷移) を業務ロジックの中核に据える
 
-- **Status**: Accepted
+- **Status**: Accepted（**2026-06 に一部改定: 7 状態 → 5 状態に簡素化**）
 - **Date**: 2026-04 (MVP 設計時)
 - **Deciders**: teppei
+
+> **★2026-06 改定★**: 旧「完了 (completed)」「振り返り完了 (retrospected)」を廃止し、`executing` から直接 `closed` へ遷移する **5 状態**（planning → estimating → scheduling → executing → closed）に簡素化した。`closed` は読み取り専用だが、プロジェクトの削除は可能。一方向遷移という本 ADR の核は維持。本文以下は当時（7 状態）の記録として保全する（真値は `src/config/master-data.ts` / `src/services/state-machine.ts`、最新の状態仕様は [STATE_REFERENCE.md](../design/STATE_REFERENCE.md) / [PROJECT_LIFECYCLE.md](../business/PROJECT_LIFECYCLE.md)）。
 
 ---
 

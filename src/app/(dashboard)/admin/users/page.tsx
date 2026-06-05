@@ -64,7 +64,8 @@ export default async function UsersPage({ searchParams }: { searchParams: Search
     <UsersClient
       initialUsers={users}
       tenantPlan={tenantInfo?.plan ?? 'beginner'}
-      activeUserCount={tenantInfo?.activeUserCount ?? 0}
+      // 2026-06-03 (案A): 席数 UI は「有効 + 招待中」の使用数で判定する
+      seatUsageCount={tenantInfo?.seatUsageCount ?? 0}
       beginnerMaxSeats={tenantInfo?.beginnerMaxSeats ?? 5}
       dataLoadError={dataLoadError}
       // feat/crud-permission-redesign (2026-05-20 追加要件): 自分自身のロール変更禁止のため

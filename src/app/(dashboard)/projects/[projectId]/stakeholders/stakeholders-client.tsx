@@ -18,6 +18,7 @@
 
 import { useCallback, useState } from 'react';
 import { useTranslations } from 'next-intl';
+import { useFormatters } from '@/lib/use-formatters';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { useLoading } from '@/components/loading-overlay';
@@ -31,6 +32,7 @@ import { useMultiSort } from '@/components/sort/use-multi-sort';
 import { multiSort } from '@/lib/multi-sort';
 import { useAutoOpenDialog } from '@/components/common/use-auto-open-dialog';
 import { ResizableTableShell } from '@/components/common/resizable-table-shell';
+import { useTablePagination, TablePagination } from '@/components/common/table-pagination';
 import { StakeholderEditDialog } from '@/components/dialogs/stakeholder-edit-dialog';
 import {
   STAKEHOLDER_ATTITUDES,
@@ -106,6 +108,11 @@ type Props = {
   stakeholders: StakeholderDTO[];
   members: MemberDTO[];
   onReload: () => Promise<void> | void;
+  /**
+   * feat/closed-project-readonly (2026-06-05): クローズ済み (= 読み取り専用) では
+   * ステークホルダーの新規登録・編集・削除を抑止する (サーバ側 STATE_RESTRICTIONS.closed と整合)。既定 false。
+   */
+  isReadOnly?: boolean;
 };
 
 export function StakeholdersClient({
@@ -113,8 +120,11 @@ export function StakeholdersClient({
   stakeholders,
   members,
   onReload,
+  isReadOnly = false,
 }: Props) {
   const t = useTranslations('stakeholder');
+  const tCommon = useTranslations('common');
+  const { formatDateTimeSeconds } = useFormatters();
   const tAction = useTranslations('action');
   const { withLoading } = useLoading();
   const { showSuccess, showError } = useToast();
@@ -160,6 +170,7 @@ export function StakeholdersClient({
     sortState,
     getStakeholderSortValue,
   );
+  const { pageItems, page, pageCount, setPage } = useTablePagination(filteredStakeholders, priorityFilter);
 
   const gapCount = stakeholders.filter((s) => s.engagementGap !== 0).length;
 
@@ -188,12 +199,15 @@ export function StakeholdersClient({
             </span>
           )}
         </p>
-        <Button
-          onClick={() => setIsCreateOpen(true)}
-          className="shrink-0"
-        >
-          {t('register')}
-        </Button>
+        {/* feat/closed-project-readonly (2026-06-05): クローズ済みは新規登録不可 */}
+        {!isReadOnly && (
+          <Button
+            onClick={() => setIsCreateOpen(true)}
+            className="shrink-0"
+          >
+            {t('register')}
+          </Button>
+        )}
       </div>
 
       {/* Power/Interest grid 4 象限 ヒートマップ */}
@@ -266,29 +280,27 @@ export function StakeholdersClient({
           <TableHeader>
             <TableRow>
               {/* Phase D 要件 11/12: 優先度列を最左に配置 (一覧上部 = 高優先度) */}
-              <SortableResizableHead columnKey="priority" defaultWidth={70} label={t('columnPriority')} sortState={sortState} onSortChange={setSortColumn} />
               <SortableResizableHead columnKey="name" defaultWidth={160} label={t('columnName')} sortState={sortState} onSortChange={setSortColumn} />
               <SortableResizableHead columnKey="organization" defaultWidth={140} label={t('columnOrganization')} sortState={sortState} onSortChange={setSortColumn} />
               <SortableResizableHead columnKey="role" defaultWidth={100} label={t('columnRole')} sortState={sortState} onSortChange={setSortColumn} />
-              <SortableResizableHead columnKey="influence" defaultWidth={70} label={t('columnInfluence')} sortState={sortState} onSortChange={setSortColumn} />
-              <SortableResizableHead columnKey="interest" defaultWidth={70} label={t('columnInterest')} sortState={sortState} onSortChange={setSortColumn} />
+              {/* 2026-06-02: 影響度/関心度列を一覧から削除。優先度を役職と姿勢の間に配置。 */}
+              <SortableResizableHead columnKey="priority" defaultWidth={70} label={t('columnPriority')} sortState={sortState} onSortChange={setSortColumn} />
               <SortableResizableHead columnKey="attitude" defaultWidth={70} label={t('columnAttitude')} sortState={sortState} onSortChange={setSortColumn} />
               <SortableResizableHead columnKey="engagement" defaultWidth={140} label={t('columnEngagement')} sortState={sortState} onSortChange={setSortColumn} />
               <SortableResizableHead columnKey="gap" defaultWidth={60} label={t('columnGap')} sortState={sortState} onSortChange={setSortColumn} />
+              <ResizableHead columnKey="createdByName" defaultWidth={100}>{tCommon('auditCreatedBy')}</ResizableHead>
+              <ResizableHead columnKey="createdAt" defaultWidth={120}>{tCommon('auditCreatedAt')}</ResizableHead>
+              <ResizableHead columnKey="updatedByName" defaultWidth={100}>{tCommon('auditUpdatedBy')}</ResizableHead>
+              <ResizableHead columnKey="updatedAt" defaultWidth={120}>{tCommon('auditUpdatedAt')}</ResizableHead>
               <ResizableHead columnKey="actions" defaultWidth={70}>{t('columnActions')}</ResizableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {filteredStakeholders.map((s) => (
+            {pageItems.map((s) => (
               <ClickableRow
                 key={s.id}
                 onClick={() => setEditing(s)}
               >
-                <TableCell>
-                  <Badge variant={PRIORITY_BADGE_VARIANT[s.priority]}>
-                    {STAKEHOLDER_PRIORITIES[s.priority]}
-                  </Badge>
-                </TableCell>
                 <TableCell className="font-medium">
                   {s.name}
                   {s.userId && (
@@ -299,8 +311,12 @@ export function StakeholdersClient({
                   {s.organization || '-'}
                 </TableCell>
                 <TableCell className="text-sm text-muted-foreground">{s.role || '-'}</TableCell>
-                <TableCell>{s.influence}</TableCell>
-                <TableCell>{s.interest}</TableCell>
+                {/* 2026-06-02: 影響度/関心度を削除し、優先度を役職と姿勢の間に配置。 */}
+                <TableCell>
+                  <Badge variant={PRIORITY_BADGE_VARIANT[s.priority]}>
+                    {STAKEHOLDER_PRIORITIES[s.priority]}
+                  </Badge>
+                </TableCell>
                 <TableCell>
                   <Badge variant={ATTITUDE_BADGE_VARIANT[s.attitude] ?? 'outline'}>
                     {STAKEHOLDER_ATTITUDES[s.attitude]}
@@ -320,6 +336,10 @@ export function StakeholdersClient({
                     </Badge>
                   )}
                 </TableCell>
+                <TableCell className="text-sm text-muted-foreground">{s.createdByName || '—'}</TableCell>
+                <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{formatDateTimeSeconds(s.createdAt)}</TableCell>
+                <TableCell className="text-sm text-muted-foreground">{s.updatedAt !== s.createdAt ? (s.updatedByName || '—') : '—'}</TableCell>
+                <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{s.updatedAt !== s.createdAt ? formatDateTimeSeconds(s.updatedAt) : '—'}</TableCell>
                 <TableCell onClick={(e) => e.stopPropagation()}>
                   <Button
                     variant="outline"
@@ -334,14 +354,16 @@ export function StakeholdersClient({
             ))}
             {filteredStakeholders.length === 0 && (
               <TableRow>
-                {/* Phase D 要件 11: priority 列追加で colSpan を 9 → 10 に */}
-                <TableCell colSpan={10} className="py-8 text-center text-muted-foreground">
+                {/* 2026-06-02: 列構成変更 (影響度/関心度削除 + 監査4列) を反映し colSpan=12 */}
+                <TableCell colSpan={12} className="py-8 text-center text-muted-foreground">
                   {priorityFilter ? t('noStakeholdersForFilter') : t('noStakeholders')}
                 </TableCell>
               </TableRow>
             )}
           </TableBody>
       </ResizableTableShell>
+
+      <TablePagination page={page} pageCount={pageCount} onPageChange={setPage} />
 
       <StakeholderEditDialog
         projectId={projectId}

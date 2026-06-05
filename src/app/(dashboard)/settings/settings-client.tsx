@@ -36,7 +36,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { THEMES, toSafeThemeId, type ThemeId } from '@/types';
 import { THEME_DEFINITIONS } from '@/config';
 // feat/settings-tenant-identity (2026-05-21): JST 固定フォーマット (ハイドレーション安全)
-import { formatDateTimeFull } from '@/lib/format';
+// アカウント作成日時は監査列のため秒まで (formatDateTimeSeconds)。MFA 有効化日時は分まで (formatDateTimeFull)。
+import { formatDateTimeFull, formatDateTimeSeconds } from '@/lib/format';
 
 /**
  * feat/settings-tenant-identity (2026-05-21):
@@ -141,6 +142,28 @@ export function SettingsClient({
   const [pwForm, setPwForm] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' });
   const [pwError, setPwError] = useState('');
   const [pwSuccess, setPwSuccess] = useState('');
+
+  // feat/logout-other-devices (2026-06-03): 現在の端末以外の全セッションを無効化する。
+  //   API が tokenVersion を increment し、呼出端末のみ JWT を再署名 (現端末はログイン維持)。
+  const [logoutOthersError, setLogoutOthersError] = useState('');
+  const [logoutOthersSuccess, setLogoutOthersSuccess] = useState('');
+
+  async function handleLogoutOtherDevices() {
+    if (!window.confirm(tSetting('logoutOtherDevicesConfirm'))) return;
+    setLogoutOthersError('');
+    setLogoutOthersSuccess('');
+    const res = await withLoading(() =>
+      fetch('/api/auth/logout-other-devices', { method: 'POST' }),
+    );
+    if (!res.ok) {
+      const json = await res.json().catch(() => ({}));
+      setLogoutOthersError(json.error?.message || tSetting('logoutOtherDevicesFailed'));
+      showError('他の端末のログアウトに失敗しました');
+      return;
+    }
+    setLogoutOthersSuccess(tSetting('logoutOtherDevicesSuccess'));
+    showSuccess('他のすべての端末からログアウトしました');
+  }
 
   // MFA
   // 2026-05-18 (fix/cron-public-paths-and-stripe-disabled-guard, bundle 修正):
@@ -313,7 +336,8 @@ export function SettingsClient({
           規約 / 特商法) は外部 LP に集約し、フッタ共通情報から到達する方針へ統一したため。
           /settings/about ページ自体も本 PR で削除済。
       */}
-      <h2 className="text-xl font-semibold">{tSetting('title')}</h2>
+      {/* feat/collapsed-nav-screen-title (2026-06-05): 画面名「設定」見出しは撤去。
+          ナビ折りたたみ幅でのみ CollapsedNavScreenTitle (layout) が表示する (他画面と統一)。 */}
 
       {/* feat/settings-tenant-identity (2026-05-21): アカウント情報セクション。
           一般ユーザが「次回ログイン時の組織 ID」「自分のメール / 氏名 / ロール」を
@@ -365,7 +389,7 @@ export function SettingsClient({
               </dd>
               <dt className="text-muted-foreground">{tSetting('accountInfoCreatedAt')}</dt>
               <dd data-testid="account-info-created-at">
-                {formatDateTimeFull(accountInfo.createdAt)}
+                {formatDateTimeSeconds(accountInfo.createdAt)}
               </dd>
             </dl>
             <p className="mt-3 text-xs text-muted-foreground">
@@ -550,6 +574,25 @@ export function SettingsClient({
               </form>
             </div>
           )}
+        </CardContent>
+      </Card>
+
+      {/* feat/logout-other-devices (2026-06-03): 他端末セッションの一括無効化 */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg">{tSetting('logoutOtherDevicesTitle')}</CardTitle>
+          <CardDescription>{tSetting('logoutOtherDevicesDescription')}</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {logoutOthersError && (
+            <div className="mb-3 rounded-md bg-destructive/10 p-3 text-sm text-destructive">{logoutOthersError}</div>
+          )}
+          {logoutOthersSuccess && (
+            <div className="mb-3 rounded-md bg-success/10 p-3 text-sm text-success">{logoutOthersSuccess}</div>
+          )}
+          <Button variant="destructive" onClick={handleLogoutOtherDevices}>
+            {tSetting('logoutOtherDevicesButton')}
+          </Button>
         </CardContent>
       </Card>
     </div>

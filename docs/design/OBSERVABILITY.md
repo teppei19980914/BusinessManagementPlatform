@@ -33,6 +33,35 @@
 
 > 補足: 権限変更は別テーブル `role_change_logs`（schema 上存在、本書の主対象外）。可視化 UI は `super_admin` の `/admin/super/cron-history`・`/admin/super/diagnostics`・`/admin/super/tenants/[id]/diagnostics`。
 
+### §1.1 監査ログ画面 (`/admin/audit-logs`) — テナント管理者向け表示 (2026-06-03)
+
+テナント管理者 (admin + super_admin) が `audit_logs` を閲覧する画面。`page.tsx` (Server Component) が `recordAuditLog` 済みのログを取得し、表示用に整形して client table へ渡す。
+
+**列**: 日時 / 操作者 / 操作 / 対象 / 対象名。
+- **操作 / 対象はロケール翻訳**して表示 (例: `UPDATE`→更新、`knowledge`→ナレッジ)。未定義キーは生値にフォールバック (`t.has` で存在確認)。
+- **リスク / 課題の区別**: `risk_issue` 系は記録 JSON の `type` で「リスク」「課題」に振り分けて行表示。
+- **対象名**: 記録 JSON の `name` / `title` 等から推定 (無ければ「—」)。
+- **添付 (リンク/ファイル)**: 添付ログの `afterValue` に `parentEntityType` / `storageProvider` を記録し、**操作** = リンク追加/削除・ファイル添付/削除 (storageProvider: `url`=リンク / `supabase`=ファイル)、**対象** = 親エンティティ種別 (どの画面で行われたか) を表示。リンク/ファイルの内容自体 (url/displayName) は記録しない。2026-06-03 以前の添付ログは親種別未記録のため汎用「添付」表示。
+
+**絞り込み / 件数 / ページング / 列幅** (すべて client 側): 操作・対象・操作者プルダウン + キーワード検索 / 並び替え (`multiSort`) / 列幅ドラッグ + 「列幅をリセット」(`ResizableTableShell`、表の右上・全画面統一位置) / 表示件数 `100·300·1000·全件` (`?limit=` でサーバ再取得、既定 300) / 100 行/ページのページネーション (`useTablePagination`、§38.8 UI_PATTERNS)。
+
+**記録スコープ** (この画面に出る / 出ない):
+- **出る**: 業務データ (project / task / risk / issue / knowledge / retrospective / stakeholder / estimate / customer / comment / memo / member / user / attachment) の CREATE/UPDATE/DELETE、リンク/ファイルの添付・削除、CSV 一括取込 (`*_sync_import`)、一括公開範囲変更。
+- **出ない**: ① 閲覧・検索・エクスポート (read 系は非記録) ② 認証イベント (login/MFA/password → `auth_event_logs`、§1。最終ログインはユーザ管理「前回ログイン」) ③ ロール変更の詳細 (`role_change_logs` / 権限変更履歴画面) ④ **テナント設定・課金・解約の変更 (現状 `audit_logs` 未記録、将来対応候補)**。
+
+> 設計判断 (2026-06-03): 監査ログの対象は当面「業務データのみ」で確定。④ の追加は将来 PR 候補。
+
+### §1.2 権限変更履歴画面 (`/admin/role-changes`) — テナント管理者向け表示 (2026-06-03)
+
+`role_change_logs` (ロール/権限変更の専用ログ) をテナント管理者 (admin + super_admin) が閲覧する画面。`page.tsx` (Server Component) が取得し、種別・ロール・状態値をロケール/ラベル表示に変換して client table へ渡す。**監査ログ画面 (§1.1) と UI を統一** (画面見出し無し / 絞り込み / 並び替え / 列幅調整 + リセット / 表示件数 100·300·1000·全件 / 100 行ページネーション)。
+
+**列**: 日時 / 変更者 / 対象ユーザ / 種別 / 変更前 / 変更後 / 理由。
+- **種別**: `system_role`→システムロール、`project_role`→プロジェクトロール (i18n `changeTypeLabels`)。
+- **変更前/変更後**: ロール値は `SYSTEM_ROLES` / `PROJECT_ROLES` のラベル (テナント管理者 / 一般ユーザ / PM/TL / メンバー 等)、状態値は i18n `roleStateLabels` で `active`→有効 / `inactive`→無効 / `deleted`→削除 / `removed`→解除。初回付与 (before=null) は「-」。
+- **絞り込み**: 変更者 / 対象ユーザ / 種別 プルダウン + キーワード検索。
+
+**記録スコープ** (`role_change_logs`、DATA_MODEL §8.26 参照): システムロール変更 / ユーザ新規登録 (初期ロール) / **アカウント有効化・無効化** / ユーザ削除 / プロジェクトメンバーの追加・ロール変更・解除。CSV エクスポートは **未実装** (旧ドキュメントの記載は誤り、2026-06-03 是正)。
+
 ---
 
 ## §2 監視・検知（何を / どの閾値で気付くか）

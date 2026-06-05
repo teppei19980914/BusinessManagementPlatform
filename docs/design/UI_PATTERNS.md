@@ -80,7 +80,7 @@ UI 要素の配置・配色・余白・見出し階層などに適用する。
 |---|---|---|
 | **そろえる** | 位置・大きさ・色・書式を揃え、視線の迷いを減らす | ダイアログ共通のフィールド並び (公開範囲を常にフォーム先頭に配置する等)、`nativeSelectClass` / `Button` バリアントを一律に使う |
 | **まとめる** | 関連する情報を近接・グルーピングして意味単位で認識させる | `grid grid-cols-2 gap-4` で「公開範囲」「脅威/好機」をセットで提示する等、`Table` ヘッダの whitespace-nowrap で論理単位を崩さない |
-| **繰り返す** | 同じ意味のものには同じ見た目を使う | リスク一覧・全リスク一覧・全○○ 一覧で同じ `Badge` バリアントを使う、日時は全画面で `formatDateTime` ユーティリティに揃える |
+| **繰り返す** | 同じ意味のものには同じ見た目を使う | リスク一覧・全リスク一覧・全○○ 一覧で同じ `Badge` バリアントを使う、日時は全画面で共通フォーマッタに揃える（**作成日時/更新日時は `formatDateTimeSeconds`＝秒まで**、詳細は §37.2） |
 
 ### 21.2 DRY 原則 (Don't Repeat Yourself)
 
@@ -93,6 +93,7 @@ Andrew Hunt / David Thomas『達人プログラマー』で定式化された原
 - **マスタ定数の単一化**: `src/types/index.ts` の `TASK_STATUSES` / `VISIBILITIES` / `RISK_NATURES` / `PRIORITIES` 等を UI と検証（zod）で共有する
 - **フィルタ / ツリー走査ユーティリティの共通化**: WBS・ガント・マイタスクで使う `filterTreeByAssignee` / `filterTreeByStatus` / `collectAllIds` を `src/lib/task-tree-utils.ts` に一元化する
 - **UI コンポーネントの共通化**: 複数選択フィルタは `MultiSelectFilter` (WBS・ガント・マイタスクで共通)、編集ダイアログは `RiskEditDialog` / `RetrospectiveEditDialog` / `KnowledgeEditDialog` を「一覧」「全○○」両方で共有する
+- **一覧ページネーションの共通化 (2026-06-03)**: 全一覧テーブルのページ送りは `useTablePagination` + `<TablePagination>` (`src/components/common/table-pagination.tsx`) に集約。各画面でページング state を書かない (詳細は §38.8)
 - **セッション設定の永続化**: `useSessionState` / `useSessionStringSet` (`src/lib/use-session-state.ts`) を使い、各画面でバラバラに sessionStorage アクセスを書かない
 - **サーバ側ルールの共通化**: 公開範囲 (visibility) フィルタ `{ OR: [{visibility:'public'}, {visibility:'draft', ...:userId}] }` 等、認可ロジックは service 層に集約する
 
@@ -448,9 +449,19 @@ PR #64 の polymorphic attachments 機構を `entityType='memo'` で拡張。
 ### 26.5 UI
 
 - ナビ: ユーザ名プルダウンに「**全メモ**」追加 (マイタスクの下、設定の上)
-- 画面 `/memos`: 一覧 + 右上「メモ作成」ボタン + 列幅リサイズ (PR #68) + 添付列 (PR #67)
+- 画面 `/memos`: 一覧 + 右上「メモ作成」ボタン + 列幅リサイズ (PR #68)
 - 自分のメモは行クリックで編集ダイアログ、他人のメモは参照のみ (クリック不活性)
 - 作成ダイアログ: `StagedAttachmentsInput` で URL 添付を同時登録 (PR #67)
+
+**列構成・配置 (2026-06-03 に他「○○一覧」と統一)**:
+
+- 列順: メモ `/memos` = ☑(一括選択) / 件名 / 本文 / 作成日時 / 更新日時 / **リンク** / **添付** / 操作(削除)。全メモ `/all-memos` = 件名 / 本文 / 作成者 / 作成日時 / 更新日時 / **リンク** / **添付** / 操作(admin が他人 public のみ)。
+- **リンク列 (`LinksCell`) と添付列 (`AttachmentsCell`) を分離**: リンク列は url 型 (`storageProvider != 'supabase'`)、添付列は `.filter(a => a.storageProvider === 'supabase')` でファイル本体のみ。両列が重複表示しない (ナレッジ/リスク等と同パターン)。
+  - **2026-06-03: Memo もファイル本体アップロード対応**: `UPLOADABLE_ENTITY_TYPES` (UI) と `UPLOAD_ATTACHMENT_ENTITY_TYPES` (validator) に memo を追加し、旧「URL 添付のみ」制限を解除。ファイル添付は編集ダイアログ (`AttachmentList`) で行い「添付」列に表示、URL リンクは「リンク」列。書込認可は `authorizeMemoAttachment` (本人のみ)。
+- **公開範囲列は撤去**: /memos は一覧上部の `CrossListBulkVisibilityToolbar` + 編集ダイアログで操作。/all-memos は public のみ表示のため不要。
+- **更新者列は持たない**: メモは作成者本人のみ更新可能なため更新者 = 作成者で冗長。
+- **作成者列**: /all-memos のみ表示 (/memos は自分のメモのみのため非表示)。
+- **画面見出し (h2) なし + 配置順**: 他「○○一覧」と統一し、① 件数 + エクスポート/インポート/メモ作成 (右上) → ② フィルター + 一括編集ツールバー → ③ 列幅リセット + テーブル。
 
 ### 26.6 フェーズ分け (将来拡張)
 
@@ -1089,9 +1100,11 @@ T-19 で `mode` パラメータを廃止し sync 7 列出力に一本化。認�
 
 | 重大度 | 条件 | 動作 |
 |---|---|---|
-| **ブロッカー** | (1) ヘッダー不正 / (2) 必須列空 / (3) レベル不正 / (4) 種別不正 / (5) 親不在 / (6) WP↔ACT 切替 / (7) ID が DB に存在しない / (8) ID 不一致だが名称一致 / (9) 担当者氏名がメンバー外 or 複数該当 / (10) CSV 内 ID 重複 / (11) CSV 内同階層名称重複 / (12) 循環参照 / (13) 進捗あり削除候補 (削除モード時のみ) | 実行不可、エラー一覧を表示 |
-| **警告** | (1) 進捗系列の値が DB と異なる / (2) 削除候補が存在する (warn モード) / (3) read-only 列を編集している | 実行可、ユーザ確認後 OK |
+| **ブロッカー** | (1) ヘッダー不正 / (2) 必須列空 / (3) レベル不正 / (4) 種別不正 / (5) 親不在 / (6) WP↔ACT 切替 / (7) ID が DB に存在しない / (8) ID が別プロジェクト / (9) CSV 内 ID 重複 / (10) 進捗あり削除候補 (削除モード時のみ) | 実行不可、エラー一覧を表示 |
+| **警告** | (1) 同一親配下の同名タスク (CSV 内重複 / 既存と同名、ID 空欄で新規作成) / (2) 削除候補が存在する (warn モード) / (3) 大量取込で処理に時間がかかる可能性 (globalWarnings) | 実行可、ユーザ確認後 OK |
 | **情報** | 追加 / 更新 / 名称変更 / 親変更 | 表示のみ |
+
+> **ADR-0032 (2026-06-04)**: 「同一親配下の同名タスク」はブロッカー → **警告**に変更 (ADR-0017 で導入した DB 部分 UNIQUE 制約 `idx_tasks_project_parent_name_unique` を撤廃)。タスク突合は ID (UUID) のみで行い、週内に繰り返す学習タスク等の同名は業務上正当なため許容する。旧実装は「プレビュー警告のみ → 本実行で P2002 → 500」というドリフトを起こしていた。
 
 ### 33.6 トランザクション + ロールバック
 
@@ -1110,7 +1123,7 @@ PgBouncer 制約により `prisma.$transaction` は使えない (旧 import 同�
    ↓ b. UPDATE 済の Task を beforeValue から完全列復元
    ↓ c. DELETE 済の Task (deletedAt セット済) を deletedAt=null に戻す
    ↓
-[ 4. WP 集計再計算 (recalculateAncestors) ]
+[ 4. WP 集計再計算 (recalculateAllProjectWps: プロジェクト全 WP を深度降順に 1 パス) ]
    ↓
 [ 5. audit_log を本処理用に 1 件追加 (action='SYNC_IMPORT', afterValue=summary) ]
 ```
@@ -1133,11 +1146,15 @@ PgBouncer 制約により `prisma.$transaction` は使えない (旧 import 同�
   - 「削除モード」ラジオボタン (保持 / 警告のみ / 削除実行)
   - 「確定実行」ボタンで本 API 呼び出し
 
-### 33.9 上限・性能
+### 33.9 上限・性能 (ADR-0032 で改訂)
 
-- 1 インポートあたり 500 件まで (旧テンプレートと同等)
-- dry-run はメモリ上の差分計算のみで完結 (副作用なし)
-- 本実行も逐次処理で N+1 を避ける (担当者 lookup は事前に ProjectMember 全件取得)
+- **業務上のハード行数上限は撤廃** (旧: 1 インポート 500 件)。`TASK_SYNC_IMPORT_WARN_ROWS` (300 件) を超える場合は「処理に時間がかかる場合がある」警告を表示するのみでブロックしない。DoS 安全弁として route 層に `TASK_SYNC_IMPORT_MAX_ROWS` (2000 件) のみ残す。
+- dry-run はメモリ上の差分計算のみで完結 (副作用なし)。
+- 本実行 (`applySyncImport`) は **バッチ化**で DB 往復を削減 (旧実装は 1 行ずつ create + 後段で id ごとに findUnique する逐次往復で、~100 行で Netlify 関数の 10 秒上限を超え 504 になっていた):
+  - 新規行は app 側で UUID を事前採番し、**level 昇順に `createMany`** (親を先に INSERT して FK を満たす)。
+  - WP 集計は対象 WP を都度 findUnique せず、`recalculateAllProjectWps` でプロジェクト全 WP を深度降順に 1 パス再計算 (一致時 skip)。
+  - 削除候補は `updateMany` で一括論理削除。
+  - 既存行の更新のみ per-row update が残る (値が行ごとに異なるため)。
 
 ### 33.10 スコープ外 (将来 PR 候補)
 
@@ -1545,11 +1562,15 @@ ChatPanel は単一モード (意味検索のみ) から、**WAI-ARIA tab パタ
 
 ### 37.2 ヘルパの 2 層分離
 
-| 用途 | 関数 | 入力 | TZ 適用 | 主な呼び出し元 |
+| 用途 | 関数 | 入力 / 出力例 (ja) | TZ 適用 | 主な呼び出し元 |
 |---|---|---|---|---|
-| ISO datetime → locale 表示 | `formatDateTime(iso)` / `formatDate(iso)` | `2026-05-15T03:00:00Z` 等 | `opts.timeZone` | `createdAt`/`updatedAt` |
-| date-only `YYYY-MM-DD` → locale 表示 | `formatDateOnly(ymd)` | `2026-05-15` | **適用しない** (UTC 固定) | `conductedDate`/`plannedStartDate`/`deadline` 等 |
-| 詳細フル | `formatDateTimeFull(iso)` | ISO datetime | `opts.timeZone` | tooltip / 詳細欄 |
+| **★監査列 = 作成日時/更新日時 (全画面共通)** | **`formatDateTimeSeconds(iso)`** | `2026/06/02 12:34:56` (秒まで) | `opts.timeZone` | **`createdAt`/`updatedAt`** (一覧・編集ダイアログ・アカウント情報の作成/更新日時) |
+| 分まで (tooltip / 詳細欄 / 通知・ログ時刻) | `formatDateTimeFull(iso)` | `2026/06/02 12:34` | `opts.timeZone` | tooltip / 前回ログイン / 通知・コメント時刻 / 監査ログ「日時」 |
+| ハイフン区切り分まで (旧 UI 互換) | `formatDateTime(iso)` | `2026-06-02 12:34` | `opts.timeZone` | 一部の旧画面 (新規は監査列なら Seconds を使う) |
+| 日付のみ | `formatDate(iso)` | `2026/06/02` | `opts.timeZone` | 日付粒度で十分な箇所 |
+| date-only `YYYY-MM-DD` → locale 表示 | `formatDateOnly(ymd)` | `2026/05/15` | **適用しない** (UTC 固定) | `conductedDate`/`plannedStartDate`/`deadline` 等 |
+
+> **★全画面共通の設計★**: **作成日時・更新日時（監査列）は必ず `formatDateTimeSeconds`（`YYYY/MM/DD HH:mm:ss`、秒まで）** を使う。エンティティ一覧（プロジェクト/顧客/リスク/課題/ナレッジ/振り返り/ステークホルダー/メンバー/見積/メモ/ユーザ管理）・編集ダイアログ・設定のアカウント情報すべてで統一。`formatDateTimeFull`（分まで）は tooltip・前回ログイン・通知/コメント時刻・監査ログの「日時」列など別用途。
 
 client 側では `useFormatters()` で 4 種すべてが `session.user.timezone`/
 `session.user.locale` 既定で利用可能。明示的に locale 指定したい場合は
@@ -1700,8 +1721,64 @@ super_admin / テナント管理者のダッシュボードで「DB 容量」「
 | **MarkdownDisplay / MarkdownRenderInner** ([`ui/markdown-textarea.tsx`](../../src/components/ui/markdown-textarea.tsx) export / [`ui/markdown-render-inner.tsx`](../../src/components/ui/markdown-render-inner.tsx)) | read-only で Markdown を描画 (all-memos 詳細 dialog / project-detail 概要タブで再利用)。`MarkdownRenderInner` は react-markdown + remark-gfm + remark-breaks (~150KB) を `next/dynamic` (`ssr: true`) で別 chunk 化し、Markdown を含むときだけロード (PR-2 perf 2026-05-29) | `MarkdownDisplay({ value, className? })`。XSS 対策で raw HTML 不許可、改行は `<br>` 変換 (remark-breaks) |
 | **SearchableSelect** ([`ui/searchable-select.tsx`](../../src/components/ui/searchable-select.tsx)) | 項目数が多い / 増える Select の代替 (PR #126)。Base UI Combobox ベース。検索欄は **viewport 高さの 50% に収まらない件数のときのみ** 動的表示 (`computeThreshold`)。ユーザ / メンバー / 顧客選択に限定採用、固定件数 select は従来の `<Select>` 維持 | `value` / `onValueChange` / `options: {value, label, disabled?}[]` / `placeholder?` / `disabled?` / `id?` / `aria-label?` / `className?`。フィルタは `includes()` ベース (ReDoS 回避) |
 | **EntitySyncImportDialog** ([`dialogs/entity-sync-import-dialog.tsx`](../../src/components/dialogs/entity-sync-import-dialog.tsx)) | §33 の WBS 専用 sync-import を **flat entity 向けに一般化** した汎用ダイアログ (T-22 Phase 22a)。risks / retrospectives / knowledge / memos の sync-import を共通化。WBS 版 (`wbs-sync-import-dialog.tsx`) から階層関連ロジックを除いた版で、entity 種別を prop で受けて使い回す | `apiBasePath` / `i18nNamespace` / `open` / `onOpenChange` / `onImported`。2 ステップ UX (`?dryRun=1` プレビュー → 確定実行)、削除モード (keep/warn/delete)、DB 容量事前判定パネル (`StoragePrecheckPanel`、Beginner block / L3 block で実行拒否) を内包 |
-| **AppHeader** ([`app-header.tsx`](../../src/components/app-header.tsx)) | 全画面共通ヘッダ (feat/app-header-footer-unification 2026-05-24、旧 DashboardHeader 等 3 系統を統合)。`user: AppHeaderUser \| null` で表示切替 (ログイン後=ナビ + NotificationBell + AccountMenu / ログイン前=アプリ名 + ログイン導線) | `sticky top-0 z-40` + auto-hide (下スクロールで隠れ上スクロールで再表示、先頭 64px は常時 visible)。dropdown 開放中は auto-hide 抑止 (`HeaderMenuContext` + `useReportHeaderMenuOpen`)。flat ↔ 3 分類 dropdown の切替 breakpoint は `xl:` (1280px)。adminOnly / superAdminOnly / visibleToSuperAdmin の 3 フラグで項目出し分け |
+| **AppHeader** ([`app-header.tsx`](../../src/components/app-header.tsx)) | 全画面共通ヘッダ (feat/app-header-footer-unification 2026-05-24、旧 DashboardHeader 等 3 系統を統合)。`user: AppHeaderUser \| null` で表示切替 (ログイン後=ナビ + NotificationBell + AccountMenu / ログイン前=アプリ名 + ログイン導線) | `sticky top-0 z-40` + auto-hide (下スクロールで隠れ上スクロールで再表示、先頭 64px は常時 visible)。dropdown 開放中は auto-hide 抑止 (`HeaderMenuContext` + `useReportHeaderMenuOpen`)。flat ↔ 3 分類 dropdown の切替 breakpoint は `xl:` (1280px)。adminOnly / superAdminOnly / visibleToSuperAdmin の 3 フラグで項目出し分け。**dropdown 折りたたみ幅 (xl: 未満) では active 項目が見えないため、画面名を `CollapsedNavScreenTitle` で補完表示する (§38.10)** |
 | **AppFooter** ([`app-footer.tsx`](../../src/components/app-footer.tsx)) | 全画面共通フッタ (Server Component)。root layout の children の後に `mt-auto` で配置。**ADR-0031 (2026-05-31) で認証状態 2 層出し分けに全面改修**: ① **共通情報** (ログイン前後で常時表示) = 製品ページ / 利用規約 / プライバシーポリシー / 運営者情報 / 特定商取引法に基づく表記、すべて外部 LP (tasukiba-user) の各アンカーへ集約 (`target="_blank"`)。② **ログイン後限定** (`isAuthenticated` のみ) = お知らせ (アプリ内 `/announcements`、next/link) / セキュリティ報告 (LP `#security`)。旧「© copyright + 最終更新日 + サービス情報 (`/settings/about`)」は全廃し、バージョン / 更新履歴はヘッダ AccountMenu「バージョンアップ情報」(→ `/changelog`) へ移設。`/settings/about` ページは削除済 | `isAuthenticated: boolean` (root layout が `auth()` で解決、MFA 未検証=false=共通情報のみ)。`data-authenticated` 属性で状態を露出。**auto-hide 対象外** (fixed/sticky でなく document 末尾。下スクロール時は既に画面外のため「隠す」対象なし)。fixed-bottom 化する場合は ChatFab (fixed bottom-4) / Toast (fixed bottom-0 z-50) との重なり調整が必須。詳細は [ADR-0031](../adr/0031-footer-auth-aware-and-about-removal.md) |
+
+---
+
+### 38.8 TablePagination / useTablePagination — 一覧テーブル共通ページネーション (2026-06-03)
+
+全一覧テーブル (プロジェクト一覧 / 全○○ / ○○一覧 / メモ / ユーザ管理 / 監査ログ / マイタスク等 17 画面) で共通利用する**クライアント側ページネーション**。実装: [`src/components/common/table-pagination.tsx`](../../src/components/common/table-pagination.tsx)。
+
+| 項目 | 仕様 |
+|---|---|
+| **目的** | 全件取得しても DOM は 1 ページ分のみ描画し、描画コストを取得件数に依存させない (1 万件規模でも一覧表示を軽量に保つ)。サーバ側 query は変更しない (クライアント側スライス) |
+| **API** | `useTablePagination<T>(items: readonly T[], resetKey: unknown, pageSize=TABLE_PAGE_SIZE): { pageItems, page, pageCount, setPage }` / `<TablePagination page pageCount onPageChange />` |
+| **ページサイズ** | `TABLE_PAGE_SIZE = 100` (全画面共通) |
+| **resetKey** | 絞り込み / 検索条件を結合した値。変化で先頭ページへ同期リセット (render 中に `prevKey` 比較、ちらつき無し)。絞り込みの無い一覧は `''`。件数減はクランプで吸収 |
+| **配置 (統一)** | 表の直下・中央 (`flex justify-center`)。`pageCount <= 1` のときは何も描画しない。全画面で同一位置 |
+| **適用範囲** | 並び替え・列幅調整・絞り込み・全○○ の read-only 一覧すべて。PC テーブルとモバイルカードの両ビューを同じ `pageItems` で描画 (例: プロジェクト一覧) |
+| **i18n** | `common.pagination.prev` / `next` / `indicator` |
+| **将来** | 超大規模 (10 万件超) はサーバ側ページング + DB 絞り込みへ移行予定 (現状はクライアント側で十分) |
+
+> 監査ログのみ、取得上限を画面から選べる「表示件数」セレクタ (100/300/1000/全件、`?limit=` でサーバ再取得) を併設。他一覧はサーバ取得済みの全件をクライアントでページングする。
+
+---
+
+### 38.9 AccountMenu — 右上のアカウントメニュー (マイページ) (2026-06-03)
+
+`AppHeader` 右上のユーザアイコンから開く dropdown（`app-header.tsx` の `AccountMenu`、**ログイン後のみ表示**）。個人画面・ヘルプ・外部リンク・ログアウトへの導線を集約する。**項目はロールで出し分けせず全ログインユーザ共通**（管理系画面 = ユーザ管理 / 監査ログ / 権限変更 / テナント設定 はヘッダの「運用管理」グループナビ側で出し分け、本メニューには含まない）。
+
+| 区分 | 項目 | 遷移先 | 備考 |
+|---|---|---|---|
+| ヘッダ | アカウント情報 | — | 氏名 + ロールバッジ (super_admin=運営者/Crown、admin=テナント管理者/Shield、general=バッジ無し) + メールアドレス |
+| 個人 | マイタスク | `MY_TASKS_ROUTE` (`/my-tasks`) | 自分の担当タスク横断 |
+| 個人 | メモ一覧 | `MEMOS_ROUTE` (`/memos`) | 個人メモ (CRUD) |
+| 個人 | 設定 | `SETTINGS_ROUTE` (`/settings`) | 個人設定 (アカウント情報 / 画面テーマ / パスワード変更 / MFA。言語・TZ はテナント設定へ移管済) |
+| ヘルプ | 📘 使い方ガイド | `GUIDE_ROUTE` (`/guide`) | ロール別 audience フィルタ |
+| ヘルプ | ❓ よくある質問 | `HELP_ROUTE` (`/help`) | visibleTo フィルタ |
+| 情報 | 🆕 バージョンアップ情報 | `/changelog` | 旧フッタ/`/settings/about` から移設 (ADR-0031)。ログイン後のみ到達 |
+| 外部 | 🌐 サービス紹介ページ | `PRODUCT_LP_URL` (別タブ) | 公開 LP |
+| 外部 | 💬 Discord | `getDiscordInviteUrl()` (別タブ) | **招待 URL が設定されている時のみ表示** (条件付き) |
+| 認証 | ログアウト | `POST /api/auth/explicit-signout` → `/login` | NextAuth 既定 `signOut()` は Netlify で Set-Cookie 脱落の罠があるため、**自前 route で tokenVersion increment + cookie 削除**。応答 OK を確認してから遷移 ([[feedback_session_clearance_pattern]]) |
+
+- dropdown open 中は `useReportHeaderMenuOpen` で AppHeader の auto-hide を抑止 (§38.7)。
+- a11y: トリガの `aria-label` にロールラベルを含め、開く前に screen reader で身元判別可能。
+- 公開向け説明は [public/screen-reference.md](../../docs/public/screen-reference.md) §6、FAQ/ガイド `account-menu-overview`。
+
+### 38.10 ナビ折りたたみ時の画面名表示 (CollapsedNavScreenTitle, feat/collapsed-nav-screen-title 2026-06-05)
+
+ヘッダのナビは `xl:` (1280px) 未満で **flat → 3 分類 dropdown** に折りたたまれる (§38 AppHeader / `groupedBreakpointClass = 'flex xl:hidden'`)。dropdown では active な nav 項目がラベルとして見えず、**今どの画面を開いているか分かりにくい**。これを補うため、ナビが折りたたまれる幅でだけ画面名を表示する。
+
+- **コンポーネント**: [`src/components/collapsed-nav-screen-title.tsx`](../../src/components/collapsed-nav-screen-title.tsx) (Client、`usePathname()`)。
+- **表示条件**: `xl:hidden` で **xl: 未満のときだけ表示** (flat ナビで active 項目が直接見える xl: 以上では非表示)。AppHeader の `groupedBreakpointClass` と breakpoint を一致させている。
+- **配置 (UI 統一)**: dashboard layout の `<main>` 先頭に置き、**全画面で同じ位置** (コンテンツ最上部) に出す。画面側で個別の見出しを持つ必要はない。
+- **単一ソース化 (2026-06-05)**: 本コンポーネントを唯一の画面名表示源とし、各画面が個別に持っていた**常時表示の画面見出しは撤去**した (例: 個人設定 `設定` / マイタスク `マイタスク` / テナント設定 `テナント設定` の `<h1>/<h2>`)。これにより「広い幅 = ナビの active タブが現在地を示す → 画面見出し不要」「狭い幅 = 本コンポーネントが補完」を全画面で統一。撤去でロード確認用 testid (`account-info-section` / `my-tasks-screen` / `tenant-settings-slug` 等) に依存する E2E は heading assertion から testid assertion へ移行済。
+  - **視覚回帰**: 画面見出し撤去で settings 系の desktop baseline、本コンポーネント追加で全 dashboard 画面の **mobile baseline** が変化するため、導入時は `[gen-visual]` でベースライン再生成が必須。
+- **画面名の解決**: [`src/config/screen-title.ts`](../../src/config/screen-title.ts) の `getScreenTitleNavKey(pathname)` が longest-prefix-match で `nav` namespace のキーを返す (新規 i18n キーは作らず `nav.*` を再利用 = drift 回避)。該当なし (認証画面等) は null で非表示。
+  - プロジェクト: 一覧 (`/projects`) = `allProjects`、詳細・タブ (`/projects/[id]...`) = `groupProjects` ("プロジェクト")。
+  - `/settings/tenant` は `/settings` より優先 (longest-prefix)。
+- **drift guard**: `screen-title.test.ts` が「返しうる nav キーがすべて ja/en の nav namespace に存在する」ことを検証 (nav キー rename で title が空にならないよう保証)。
 
 ---
 

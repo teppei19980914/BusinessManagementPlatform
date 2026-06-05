@@ -73,13 +73,13 @@ export const KNOWLEDGE_TYPES = {
 
 export type KnowledgeType = keyof typeof KNOWLEDGE_TYPES;
 
+// 2026-06-03: 「完了」「振り返り完了」を廃止し 5 ステータスに簡素化。
+//   実行中のプロジェクトを終える際は「クローズ」へ遷移する (クローズ = 完全な読み取り専用、ただし削除は可)。
 export const PROJECT_STATUSES = {
   planning: '企画中',
   estimating: '見積中',
   scheduling: '計画中',
   executing: '実行中',
-  completed: '完了',
-  retrospected: '振り返り完了',
   closed: 'クローズ',
 } as const;
 
@@ -141,6 +141,19 @@ export const IMPACT_LEVELS = {
 } as const;
 
 export type ImpactLevel = keyof typeof IMPACT_LEVELS;
+
+/**
+ * リスク/課題の種別 (type)。
+ *   - risk : リスク (まだ発生していない不確実事象)
+ *   - issue: 課題   (既に顕在化した事象)
+ * 種別により UI ラベルが変わる (リスク=影響度/発生可能性/脅威・好機、課題=重要度/緊急度)。
+ */
+export const RISK_ISSUE_TYPES = {
+  risk: 'リスク',
+  issue: '課題',
+} as const;
+
+export type RiskIssueType = keyof typeof RISK_ISSUE_TYPES;
 
 export const RISK_ISSUE_STATES = {
   open: '未対応',

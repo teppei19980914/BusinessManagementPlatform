@@ -66,6 +66,13 @@ export type JwtReissuePatch = {
   mfaVerified?: boolean;
   timezone?: string;
   locale?: string;
+  /**
+   * 2026-06-03 (feat/logout-other-devices): tokenVersion を新値で再署名する。
+   * 「他の端末からログアウト」操作で DB.tokenVersion を increment した後、**呼出端末のみ**
+   * 新 tokenVersion で JWT を再署名し、現在の端末はログインを維持する用途。
+   * (他端末は旧 tokenVersion のまま → 次回リクエストで getAuthenticatedUser が 401)。
+   */
+  tokenVersion?: number;
 };
 
 /**
@@ -170,6 +177,9 @@ export async function reissueAuthJwtOnResponse(
   }
   if (typeof patch.locale === 'string' && patch.locale.length > 0) {
     nextToken.locale = patch.locale;
+  }
+  if (typeof patch.tokenVersion === 'number' && Number.isInteger(patch.tokenVersion)) {
+    nextToken.tokenVersion = patch.tokenVersion;
   }
 
   let newJwt: string;

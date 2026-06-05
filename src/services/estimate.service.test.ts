@@ -10,6 +10,8 @@ vi.mock('@/lib/db', () => ({
     },
     // 2026-05-09 feedback Phase 2-6: createEstimate で project tenant 検証用
     project: { findFirst: vi.fn() },
+    // 2026-06-02: 一覧の作成者/更新者名解決 (cross-tenant 氏名 lookup) 用
+    user: { findMany: vi.fn().mockResolvedValue([]) },
     // PR #89: deleteEstimate が attachment.updateMany を $transaction 内で呼ぶ
     attachment: { updateMany: vi.fn() },
     $transaction: vi.fn((ops: unknown[]) => Promise.all(ops)),

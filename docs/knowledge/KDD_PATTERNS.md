@@ -19975,3 +19975,105 @@ Lighthouse Diagnostics で LCP element が **`img.h-full.w-full.object-cover` (�
 - 関連設計: [docs/archive/performance/20260417/after/次期プログラム/cold-start-and-data-growth-analysis.md](../archive/performance/20260417/after/次期プログラム/cold-start-and-data-growth-analysis.md) §4.1
 - 関連調査記録: [docs/archive/performance/20260601/investigation-and-fixes-2026-06-01.md](../archive/performance/20260601/investigation-and-fixes-2026-06-01.md) (詳細経緯・計測値・残課題)
 - 関連 cron: [docs/operations/develop/DEPLOYMENT.md](../operations/develop/DEPLOYMENT.md) §6.1 (`/api/health` `*/2 * * * *`)
+
+---
+
+## §5.X+206 ★severity-high (ローカル開発の全機能停止)★ schema 変更 + `prisma generate` 後はローカル DB にも `migrate deploy` が必須 ─ 未適用だと再生成クライアントが「存在しない列」を参照しテーブル全クエリが落ちる (feat/starter-data-import / 2026-06-05)
+
+### 事象
+
+`docs/column-usage-map` ブランチで列追加 (`is_seed_sample` を 5 テーブル) + 列削除 (`seed_data_enabled`) の migration を作成し、`prisma generate` でクライアントを再生成した状態でローカルにログインしたところ、**プロジェクト一覧が「読み込みに失敗しました」** で全滅した (他の一覧系も同様に落ちる)。ブラウザ Console には HMR ログのみで真因が出ない (サーバ側 500)。
+
+### 根本原因
+
+**Prisma クライアント (再生成済) とローカル DB のスキーマが drift** していた。
+
+- `prisma generate` は schema を読んでクライアント (型 + 生成 SQL) を更新する。これにより `findMany` 等が **新スキーマの全スカラ列** (例: `is_seed_sample`) を `SELECT` するようになる。
+- 一方 migration は **適用していない** (`migrate deploy` 未実行) ため、ローカル DB には `is_seed_sample` 列が存在しない。
+- 結果、`prisma.project.findMany()` (select 省略 = 全列取得) が `column "is_seed_sample" does not exist` で throw → サービス層が握って「一覧の読み込みに失敗しました」を返す。
+
+`prisma migrate status` で確認すると未適用 migration が明示される:
+
+```
+Following migrations have not yet been applied:
+  20260612_add_is_seed_sample_marker
+  20260613_drop_seed_data_enabled
+```
+
+### 対処
+
+リポジトリ規約 (§ migration workflow: `migrate dev` 禁止・日付名手書き SQL + `migrate deploy`) に従い **`npx prisma migrate deploy`** を実行 (= 既存データを消さずに未適用分のみ適用)。その後 `prisma migrate status` が `Database schema is up to date!` になればクライアントと DB が一致し復旧する。
+
+> ⚠️ `prisma migrate reset` は使わない (データ全削除 + 自動 seed しない)。ログイン済みでデータがある状態では `migrate deploy` 一択。
+
+### 再発防止 (チェックリスト)
+
+schema を変更したセッションでローカル動作確認する前に、**必ず以下をセットで実施**する:
+
+1. `prisma generate` (クライアント再生成)
+2. **`prisma migrate deploy`** (ローカル DB に migration 適用) ← これを忘れると本事象
+3. `next dev --turbopack` の **再起動** (古い生成クライアントをメモリ保持する罠、[§ feedback_prisma_generate_restart_turbopack] / KDD 既出)
+
+「型 (client) ・ DB ・ dev サーバプロセス」の **3 つを同時に同期** させるのがポイント。1 つでも遅れると、tsc / lint は緑のままローカル runtime だけが落ちる (§5.X+200 「Prisma select 存在しない列は runtime で初めて throw」と同根の罠)。
+
+### 関連
+
+- 関連 KDD: §5.X+200 (Prisma `select` 存在しない列は tsc/lint 素通り → runtime throw)
+- 関連 migration workflow: このリポは `migrate dev` 禁止 (破壊的 drift 生成)・日付名手書き SQL + `migrate deploy` / `reset` 運用
+- 関連 ADR: [ADR-0033](../adr/0033-starter-data-import-and-single-tenant-suggestion.md) (`is_seed_sample` 追加 / `seed_data_enabled` 撤去)
+- 関連 migration: `prisma/migrations/20260612_add_is_seed_sample_marker` / `20260613_drop_seed_data_enabled`
+
+---
+
+## §5.X+207: CI security gate (CRITICAL) / OSV-Scanner を「抜け道なし」で根本修正する (2026-06-05 / PR #511)
+
+### 事象
+
+v1.1.0 リリース PR で 2 つの CI が fail:
+
+1. **Security Score Gate (>= 90)** が 78/100 で fail。CRITICAL 2 件 = `sample-clone.service.ts` (スターターデータ複製) と同 test で **`$executeRawUnsafe`** を使用 (`scripts/security-check.ts` の INJECT カテゴリが unsafe 系 raw API を機械検出)。
+2. **OSV-Scanner** が fail。推移的依存 `hono@4.12.18` に Medium CVE 4 件 (GHSA-2gcr-mfcq-wcc3 ほか、fix=4.12.21)。OSV は pnpm-audit (`--audit-level=high`) より厳格で **Medium でも fail**。
+
+### 正しい修正 (dismiss / accept で逃げない)
+
+**1. raw SQL は「安全な API + 動的識別子の排除」で書き換える**
+
+- `content_embedding` は Prisma の `Unsupported("vector(1024)")` 型で通常 `update` では書けないため raw SQL が必要。だが `$executeRawUnsafe` でテーブル名を文字列補間すると、値をパラメータ化していても security-check は CRITICAL 判定する。
+- **対処**: テーブルは固定 4 種 (`projects` / `knowledges` / `risks_issues` / `retrospectives`) なので、`switch` で **テーブル名をリテラルにしたタグ付きテンプレート `$executeRaw`** に置換 (値は `${id}::uuid` でパラメータ化、`WHERE tenant_id` で越境書込遮断)。動的識別子が一切無くなり、機械検出も実害も同時に解消。
+- **罠**: コメントに unsafe 系 API の文字列を残すと再検出される (スキャナは文字列一致)。コメントも言い換える。
+- **テスト整合**: mock を `$executeRawUnsafe: fn` → `$executeRaw: fn` に、アサーションの第1引数を `expect.any(String)` → `expect.any(Array)` (タグ付きテンプレートの第1引数は `TemplateStringsArray`) に修正。
+
+**2. 推移的 CVE は `pnpm.overrides` で fix version に固定**
+
+- `package.json` の `pnpm.overrides` に `"hono": ">=4.12.21"` を指定 → **同一コミットで `pnpm install`** して `pnpm-lock.yaml` を同期 (lockfile 乖離は別 CI で 7 ジョブ同時 fail、KDD 既出 feedback_pnpm_lockfile_sync)。解決後は 4.12.23 に上がり CVE 解消。
+
+### 教訓
+
+- セキュリティ検出は「実害の有無」ではなく「危険 API の使用そのもの」を機械判定する。**実害が無くても安全な API へ置換する**のが正攻法 (dismiss はレビュー負債を残す)。
+- raw SQL でどうしても識別子が動的になる場合は、**固定集合なら `switch` でリテラル展開**するのが最も安全 (allowlist + `Prisma.raw` より検出も通りやすい)。
+- 関連: feedback_pnpm_lockfile_sync (lockfile 同一コミット), feedback_codeql_hibp_sha1_false_positive (機械検出 false positive の扱い)
+
+---
+
+## §5.X+208: 仕様変更 (アカウント状態/請求条件/一覧列) に E2E が追従漏れ → 根本原因ごとに修正 (2026-06-05 / PR #511)
+
+### 事象
+
+v1.1.0 PR の E2E が複数 fail。いずれも「本体仕様は意図的に変えたが E2E (テスト/フィクスチャ/baseline) が旧前提のまま」という追従漏れ。
+
+| 失敗 spec | 根本原因 | 正しい修正 |
+|---|---|---|
+| 14-signup-3tier | Beginner 既定で請求先セクション非表示化 → テストが `getByLabel('請求先メール *')` で timeout | 層判定は初期管理者「メールアドレス」入力のみで行う (請求先メールの fill を撤去) |
+| 19-signup-lifecycle | /knowledge 一覧から本文列(背景/内容/結果)を撤去しタイトル列表示に変更 → `getByText(CONTENT)` が出ない | 一覧の表示項目に合わせ `KNOWLEDGE_TITLE` で確認 |
+| 05-teardown (user 削除) | アカウント状態 3 値化 (招待中/有効/無効)。`ensureGeneralUser` フィクスチャが `invitation_accepted_at` 未設定 = 招待中扱い → 編集ダイアログの削除ボタンが「招待取消」に切替り timeout | フィクスチャの INSERT に `invitation_accepted_at = NOW()` を追加 (パスワード設定済 = 受諾済の有効ユーザを表す) |
+| visual (settings) | /settings に「他の端末からログアウト」セクション追加で画面が +144px → 全テーマ baseline 不一致 | `[gen-visual]` 空コミットで Linux CI baseline 再生成 (feedback_visual_baseline_gen) |
+
+### 教訓
+
+- **UI/仕様を変えたら同 PR で E2E・visual baseline・テストフィクスチャまで横展開する**。本体・テスト・フィクスチャの 3 点を同期させる (型/DB/dev サーバの 3 点同期 §5.X+206 と同じ発想)。
+- DB フィクスチャ (`e2e/fixtures/db.ts`) は「画面操作で作られる状態」を正しく再現する必要がある。新カラム (例: `invitation_accepted_at`) が状態判定 (accountStatus) に効く場合、フィクスチャも更新する。
+
+### CI 再トリガの罠 (同 PR で遭遇)
+
+- **GITHUB_TOKEN でコミットした変更 (例: `[gen-visual]` workflow の baseline 自動コミット) は後続ワークフローを起動しない** (GitHub の再帰防止)。CI_TRIGGER_PAT 未登録だと baseline コミット後に CI/E2E が回らず、PR ヘッドが bot コミットのままになる。
+- 対処: **ユーザ (人間/PAT) 名義のコミットを 1 つ上に積んで push** すると pull_request synchronize が発火して CI が回る。close/reopen はヘッドが bot コミットのままだと発火しないことがある。恒久対策は `CI_TRIGGER_PAT` の登録 (e2e-visual-baseline.yml 既出)。

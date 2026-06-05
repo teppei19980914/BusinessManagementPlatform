@@ -2,7 +2,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('@/lib/db', () => {
   const prismaMock = {
-    user: { findFirst: vi.fn() },
+    // 2026-06-02: listMembers が作成者/更新者名を user.findMany で解決するため mock 追加 (既定 [])
+    user: { findFirst: vi.fn(), findMany: vi.fn().mockResolvedValue([]) },
     // 2026-05-09 feedback Phase 2-6: addMember で project tenant 検証用
     project: { findFirst: vi.fn() },
     projectMember: {
@@ -31,7 +32,10 @@ const mRow = (o: Record<string, unknown> = {}) => ({
   userId: 'u-1',
   projectId: 'p-1',
   projectRole: 'member',
+  assignedBy: 'u-admin',
+  updatedBy: null,
   createdAt: now,
+  updatedAt: now,
   user: { name: 'Alice', email: 'a@b.co' },
   ...o,
 });

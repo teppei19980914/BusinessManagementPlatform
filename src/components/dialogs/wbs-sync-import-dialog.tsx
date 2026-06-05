@@ -92,6 +92,8 @@ type SyncDiffResult = {
   rows: SyncDiffRow[];
   canExecute: boolean;
   globalErrors: string[];
+  /** ADR-0032: ブロックしないグローバル警告 (大量取込時の処理時間案内など) */
+  globalWarnings?: string[];
   /** [C2] OCC 用: dry-run 時点での project 配下 task の最大 updatedAt */
   snapshotAt?: string | null;
   /** 4 巡目フルスキャン (2026-05-28): DB 容量事前判定 */
@@ -423,6 +425,17 @@ export function WbsSyncImportDialog({
                   <ul className="list-disc pl-5 text-destructive">
                     {preview.globalErrors.map((e, i) => (
                       <li key={i}>{e}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {/* ADR-0032: グローバル警告 (ブロックしない / 大量取込時の処理時間案内など) */}
+              {preview.globalWarnings && preview.globalWarnings.length > 0 && (
+                <div className="rounded-md border border-warning bg-warning/10 p-3 text-sm">
+                  <ul className="list-disc pl-5">
+                    {preview.globalWarnings.map((w, i) => (
+                      <li key={i}>⚠ {w}</li>
                     ))}
                   </ul>
                 </div>

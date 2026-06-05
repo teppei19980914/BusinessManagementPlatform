@@ -12,6 +12,8 @@
 | [SECURITY.md](./SECURITY.md) | 権限制御設計・セキュリティ多層防御 | DESIGN.md §8-§9 + SPECIFICATION.md §25 |
 | [INFRASTRUCTURE.md](./INFRASTRUCTURE.md) | Netlify + Supabase 構成・通知メール送信設計 (ADR-0023 で Vercel から移行済) | DESIGN.md §10, §18 |
 | [UI_PATTERNS.md](./UI_PATTERNS.md) | UI 共通コンポーネント・ダイアログパターン・テーマ・添付・WBS インポート等の UI 設計 | DESIGN.md §11, §21-§33 |
+| [USER_MANAGEMENT.md](./USER_MANAGEMENT.md) | ユーザ管理画面 (`/admin/users`) の機能別詳細設計。アカウント状態 (招待中/有効/無効)・ライフサイクル・席数(案A)・API・編集ダイアログ・監査 | 新規 (2026-06-03) |
+| [TENANT_SETTINGS.md](./TENANT_SETTINGS.md) | テナント設定画面 (`/settings/tenant`) の機能別詳細設計。3 タブ (概要/使用量/請求) の全セクション・アクセス・データ入出力の区別・解約・課金関連は専用 doc へ参照 | 新規 (2026-06-03) |
 | [SUGGESTION_ENGINE.md](./SUGGESTION_ENGINE.md) | 核心機能 (提案エンジン v1 + v2) の技術設計全体 | DESIGN.md §23, §34 |
 | [STRIPE_TECHNICAL_DESIGN.md](./STRIPE_TECHNICAL_DESIGN.md) | Stripe Metered Billing 連携の詳細技術設計 (= 「how」レベル、各 PR の実装時に参照する判断保留不要の粒度) | 新規 (2026-05-14) |
 | [MASCOT.md](./MASCOT.md) | 公式マスコット「たすきフクロウ」の選定根拠・象徴・デザイン規範・使い方 | 新規 (2026-05-27) |

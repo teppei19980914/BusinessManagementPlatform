@@ -93,7 +93,6 @@ const baseTenant = {
   paymentMethod: 'invoice',
   beginnerEverUpgraded: true,
   createdAt: new Date('2026-01-01T00:00:00Z'),
-  seedDataEnabled: true,
   // PR-1 (2026-05-15): テナント単位 i18n
   timezone: 'Asia/Tokyo',
   locale: 'ja-JP',
@@ -119,7 +118,8 @@ describe('getTenantSelfInfo', () => {
 
   it('取得成功時に DTO + 派生フィールド (beginnerExpiryState / DaysRemaining) を返す', async () => {
     vi.mocked(prisma.tenant.findFirst).mockResolvedValueOnce(baseTenant as never);
-    vi.mocked(prisma.user.count).mockResolvedValueOnce(3);
+    // 2026-06-03: 1 回目 = activeUserCount (有効のみ), 2 回目 = seatUsageCount (有効+招待中)
+    vi.mocked(prisma.user.count).mockResolvedValueOnce(3).mockResolvedValueOnce(4);
 
     const r = await getTenantSelfInfo(TENANT_ID);
 
@@ -127,8 +127,9 @@ describe('getTenantSelfInfo', () => {
     if (!r) return;
     expect(r.id).toBe(TENANT_ID);
     expect(r.activeUserCount).toBe(3);
+    // 2026-06-03 (案A): seatUsageCount は有効+招待中で activeUserCount 以上になり得る
+    expect(r.seatUsageCount).toBe(4);
     expect(r.plan).toBe('expert');
-    expect(r.seedDataEnabled).toBe(true);
     // expert プランは Beginner 期限の対象外なので null
     expect(r.beginnerDaysRemaining).toBeNull();
     expect(r.beginnerExpiryState).toBe('active');
@@ -479,16 +480,6 @@ describe('updateTenantSelf', () => {
     });
   });
 
-  it('plan 未指定 + seedDataEnabled 指定: 即時反映 (PR G / #24)', async () => {
-    vi.mocked(prisma.tenant.findFirstOrThrow).mockResolvedValueOnce(baseTenant as never);
-    const r = await updateTenantSelf(TENANT_ID, { seedDataEnabled: false });
-    expect(r.ok).toBe(true);
-    expect(prisma.tenant.update).toHaveBeenCalledWith({
-      where: { id: TENANT_ID },
-      data: { seedDataEnabled: false },
-    });
-  });
-
   it('plan 未指定 + 何も変更なし: update を呼ばない', async () => {
     vi.mocked(prisma.tenant.findFirstOrThrow).mockResolvedValueOnce(baseTenant as never);
     const r = await updateTenantSelf(TENANT_ID, {});
@@ -532,6 +523,45 @@ describe('updateTenantSelf', () => {
         beginnerEverUpgraded: true,
       }),
     });
+  });
+
+  // feat/billing-conditional-by-plan (2026-06-05): 有料化時の請求先完全性ガード (両方向)。
+  //   Beginner は請求先を省略できるため、有料プラン化の瞬間に未入力なら拒否する。
+  it('有料化 (Beginner→Expert) で請求先住所が欠けていれば BILLING_INFO_INCOMPLETE', async () => {
+    vi.mocked(prisma.tenant.findFirstOrThrow).mockResolvedValueOnce({
+      ...baseTenant,
+      plan: 'beginner',
+      beginnerEverUpgraded: false,
+      billingPostalCode: null,
+      billingPrefecture: null,
+      billingCity: null,
+      billingStreetAddress: null,
+    } as never);
+    const r = await updateTenantSelf(TENANT_ID, { plan: 'expert' });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toBe('BILLING_INFO_INCOMPLETE');
+    expect(prisma.tenant.update).not.toHaveBeenCalled();
+  });
+
+  it('有料化 (Beginner→Expert) で請求先住所が揃っていれば成功', async () => {
+    // baseTenant は請求先完備 (postal/prefecture/city/street + corporate 会社名あり)
+    vi.mocked(prisma.tenant.findFirstOrThrow).mockResolvedValueOnce({
+      ...baseTenant,
+      plan: 'beginner',
+      beginnerEverUpgraded: false,
+    } as never);
+    const r = await updateTenantSelf(TENANT_ID, { plan: 'expert' });
+    expect(r.ok).toBe(true);
+  });
+
+  it('Expert↔Pro 切替でも請求先住所が欠けていれば BILLING_INFO_INCOMPLETE', async () => {
+    vi.mocked(prisma.tenant.findFirstOrThrow).mockResolvedValueOnce({
+      ...baseTenant,
+      billingStreetAddress: null,
+    } as never);
+    const r = await updateTenantSelf(TENANT_ID, { plan: 'pro' });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toBe('BILLING_INFO_INCOMPLETE');
   });
 
   it('Pro → Expert ダウングレード: 即時反映 (2026-05-14 改修)', async () => {

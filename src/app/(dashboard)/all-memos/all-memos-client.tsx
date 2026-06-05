@@ -35,10 +35,13 @@ import { useMultiSort } from '@/components/sort/use-multi-sort';
 import { multiSort } from '@/lib/multi-sort';
 import { useBatchAttachments } from '@/components/attachments/use-batch-attachments';
 import { AttachmentsCell } from '@/components/attachments/attachments-cell';
+// 2026-06-03: 他「○○一覧」と列構成を統一 — リンク列 (url 型) と添付列 (ファイル本体) を分離。
+import { LinksCell } from '@/components/attachments/links-cell';
 import { useFormatters } from '@/lib/use-formatters';
 import type { MemoDTO } from '@/services/memo.service';
 // Phase E 要件 1〜3 (2026-04-29): 共通行クリック + フィルタバー部品
 import { ClickableRow } from '@/components/common/clickable-row';
+import { useTablePagination, TablePagination } from '@/components/common/table-pagination';
 import { FilterBar } from '@/components/common/filter-bar';
 import { useAutoOpenDialog } from '@/components/common/use-auto-open-dialog';
 // feat/all-list-section-unification (2026-05-24): 他 4 画面の規約に合わせて
@@ -51,6 +54,7 @@ function getMemoSortValue(m: MemoDTO, columnKey: string): unknown {
     case 'title': return m.title;
     case 'content': return m.content;
     case 'author': return m.authorName ?? '';
+    case 'createdAt': return m.createdAt;
     case 'updatedAt': return m.updatedAt;
     default: return null;
   }
@@ -69,7 +73,8 @@ export function AllMemosClient({
   const tField = useTranslations('field');
   const tMemo = useTranslations('memo');
   const tCommon = useTranslations('common');
-  const { formatDateTime } = useFormatters();
+  // 更新日時は監査列のため秒まで表示 (formatDateTimeSeconds = 全画面共通の設計)
+  const { formatDateTimeSeconds } = useFormatters();
   const [viewing, setViewing] = useState<MemoDTO | null>(null);
   const isAdmin = currentSystemRole === 'admin';
 
@@ -85,6 +90,7 @@ export function AllMemosClient({
   // PR feat/sortable-columns (2026-05-01): カラムソート (sessionStorage 永続化、複数列対応)
   const { sortState, setSortColumn } = useMultiSort('sort:all-memos');
   const sortedMemos = multiSort(filteredMemos, sortState, getMemoSortValue);
+  const { pageItems, page, pageCount, setPage } = useTablePagination(sortedMemos, keyword);
 
   const attachmentsByEntity = useBatchAttachments('memo', sortedMemos.map((m) => m.id));
 
@@ -97,15 +103,11 @@ export function AllMemosClient({
 
   return (
     <div className="space-y-6">
-      {/* feat/all-list-section-unification (2026-05-24): 全○○ 5 画面共通レイアウト規約
-          1. 件数行 (justify-end / フィルタ後件数 / common.itemCount)
-          2. FilterBar (検索・フィルタ、軸数は画面固有)
-          3. ResizableTableShell (テーブル本体)
+      {/* feat/all-list-section-unification (2026-05-24) / 2026-06-03 件数位置を全ナレッジに統一:
+          1. FilterBar (検索・フィルタ、軸数は画面固有)
+          2. ResizableTableShell (テーブル本体)
+          3. ページネーション → 件数行 (justify-end / フィルタ後件数 / common.itemCount) を表の下部に表示
           4. 詳細ダイアログ (read-only) */}
-      <div className="flex justify-end">
-        <span className="text-sm text-muted-foreground">{tCommon('itemCount', { count: filteredMemos.length })}</span>
-      </div>
-
       <FilterBar>
         <div>
           <Label htmlFor="all-memos-filter-keyword" className="text-xs">{tMemo('keyword')}</Label>
@@ -126,15 +128,17 @@ export function AllMemosClient({
               <SortableResizableHead columnKey="title" defaultWidth={220} label={tField('title')} sortState={sortState} onSortChange={setSortColumn} />
               <SortableResizableHead columnKey="content" defaultWidth={360} label={tField('body')} sortState={sortState} onSortChange={setSortColumn} />
               <SortableResizableHead columnKey="author" defaultWidth={140} label={tMemo('colAuthor')} sortState={sortState} onSortChange={setSortColumn} />
-              <SortableResizableHead columnKey="updatedAt" defaultWidth={140} label={tMemo('colUpdatedAt')} sortState={sortState} onSortChange={setSortColumn} />
-              <ResizableHead columnKey="attachments" defaultWidth={200}>{tMemo('colAttachments')}</ResizableHead>
+              <SortableResizableHead columnKey="createdAt" defaultWidth={150} label={tMemo('colCreatedAt')} sortState={sortState} onSortChange={setSortColumn} />
+              <SortableResizableHead columnKey="updatedAt" defaultWidth={150} label={tMemo('colUpdatedAt')} sortState={sortState} onSortChange={setSortColumn} />
+              <ResizableHead columnKey="links" defaultWidth={200}>{tMemo('colLinks')}</ResizableHead>
+              <ResizableHead columnKey="attachments" defaultWidth={180}>{tMemo('colAttachments')}</ResizableHead>
               {isAdmin && (
                 <ResizableHead columnKey="adminActions" defaultWidth={80}>{tMemo('colActions')}</ResizableHead>
               )}
             </TableRow>
           </TableHeader>
           <TableBody>
-            {sortedMemos.map((m) => (
+            {pageItems.map((m) => (
               <ClickableRow
                 key={m.id}
                 onClick={() => setViewing(m)}
@@ -148,10 +152,17 @@ export function AllMemosClient({
                   {m.isMine && <span className="ml-1 text-xs text-info">{tMemo('mineSuffix')}</span>}
                 </TableCell>
                 <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
-                  {formatDateTime(m.updatedAt)}
+                  {formatDateTimeSeconds(m.createdAt)}
+                </TableCell>
+                <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
+                  {m.updatedAt !== m.createdAt ? formatDateTimeSeconds(m.updatedAt) : '—'}
+                </TableCell>
+                {/* リンク列 (url 型添付を縦に複数行) / 添付列 (ファイル本体のみ) */}
+                <TableCell onClick={(e) => e.stopPropagation()}>
+                  <LinksCell items={attachmentsByEntity[m.id] ?? []} />
                 </TableCell>
                 <TableCell onClick={(e) => e.stopPropagation()}>
-                  <AttachmentsCell items={attachmentsByEntity[m.id] ?? []} />
+                  <AttachmentsCell items={(attachmentsByEntity[m.id] ?? []).filter((a) => a.storageProvider === 'supabase')} />
                 </TableCell>
                 {isAdmin && (
                   <TableCell onClick={(e) => e.stopPropagation()}>
@@ -165,7 +176,7 @@ export function AllMemosClient({
             ))}
             {sortedMemos.length === 0 && (
               <TableRow>
-                <TableCell colSpan={isAdmin ? 6 : 5} className="py-8 text-center text-muted-foreground">
+                <TableCell colSpan={isAdmin ? 8 : 7} className="py-8 text-center text-muted-foreground">
                   {tMemo('emptyPublic')}
                   <span className="ml-1 text-xs">{tMemo('emptyPublicHint')}</span>
                 </TableCell>
@@ -173,6 +184,13 @@ export function AllMemosClient({
             )}
           </TableBody>
       </ResizableTableShell>
+
+      <TablePagination page={page} pageCount={pageCount} onPageChange={setPage} />
+
+      {/* 2026-06-03: 件数は表の下部に表示 (全ナレッジ等と位置を統一。旧実装は上部にあった) */}
+      <div className="flex justify-end">
+        <span className="text-sm text-muted-foreground">{tCommon('itemCount', { count: filteredMemos.length })}</span>
+      </div>
 
       <MemoViewDialog
         memo={viewing}

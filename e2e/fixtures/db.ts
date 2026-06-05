@@ -113,13 +113,16 @@ export async function ensureGeneralUser(
   // ★severity-1 (fix/tenant-id-default-removal, 2026-05-28, ADR-0024):
   //   ADR-0024 で schema DB DEFAULT 撤去。tenant_id を明示する必要あり。
   const res = await pool.query(
+    // feat/account-status (2026-06-03): パスワード設定済み = 招待受諾済みの「有効」ユーザを表すため
+    //   invitation_accepted_at を NOW() で設定する (NULL のままだと accountStatus='invited' = 招待中扱いになり、
+    //   ユーザ編集ダイアログで削除ボタンが「招待取消」に切り替わる)。
     `INSERT INTO users (
        tenant_id, name, email, password_hash, system_role, is_active, force_password_change,
        mfa_enabled, mfa_secret_encrypted, mfa_enabled_at,
        failed_login_count, locked_until, permanent_lock,
-       updated_at
+       invitation_accepted_at, updated_at
      )
-     VALUES ($1, $2, $3, $4, 'general', true, false, false, NULL, NULL, 0, NULL, false, NOW())
+     VALUES ($1, $2, $3, $4, 'general', true, false, false, NULL, NULL, 0, NULL, false, NOW(), NOW())
      ON CONFLICT (tenant_id, email) DO UPDATE SET
        name = EXCLUDED.name,
        password_hash = EXCLUDED.password_hash,
@@ -128,6 +131,7 @@ export async function ensureGeneralUser(
        failed_login_count = 0,
        locked_until = NULL,
        permanent_lock = false,
+       invitation_accepted_at = COALESCE(users.invitation_accepted_at, NOW()),
        updated_at = NOW()
      RETURNING id`,
     [DEFAULT_TENANT_ID, name, email, passwordHash],

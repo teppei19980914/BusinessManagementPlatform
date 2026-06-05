@@ -41,6 +41,7 @@ import { SortableResizableHead } from '@/components/sort/sortable-resizable-head
 import { useMultiSort } from '@/components/sort/use-multi-sort';
 import { multiSort } from '@/lib/multi-sort';
 import { ResizableTableShell } from '@/components/common/resizable-table-shell';
+import { useTablePagination, TablePagination } from '@/components/common/table-pagination';
 import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger,
 } from '@/components/ui/dialog';
@@ -55,6 +56,8 @@ import {
 } from '@/components/attachments/staged-attachments-input';
 import { useBatchAttachments } from '@/components/attachments/use-batch-attachments';
 import { AttachmentsCell } from '@/components/attachments/attachments-cell';
+// 2026-06-02: 「リンク」列 (url 型添付を縦に複数行表示)。添付列はファイル本体のみに分離。
+import { LinksCell } from '@/components/attachments/links-cell';
 import { PRIORITIES, IMPACT_LEVELS, RISK_ISSUE_STATES, VISIBILITIES, RISK_NATURES } from '@/types';
 import type { RiskDTO } from '@/services/risk.service';
 import type { MemberDTO } from '@/services/member.service';
@@ -63,7 +66,6 @@ import { useFormatters } from '@/lib/use-formatters';
 // Phase C 要件 19: キーワード OR 検索ヘルパ
 import { matchesAnyKeyword } from '@/lib/text-search';
 // Phase E 要件 1〜3 (2026-04-29): 共通バッジ + 行クリック + フィルタバー + 一括選択部品
-import { VisibilityBadge } from '@/components/common/visibility-badge';
 import { ClickableRow } from '@/components/common/clickable-row';
 import { FilterBar } from '@/components/common/filter-bar';
 import { BulkSelectHeader, BulkSelectCell } from '@/components/common/bulk-select';
@@ -100,9 +102,11 @@ function getProjectRiskSortValue(r: RiskDTO, columnKey: string): unknown {
     case 'title': return r.title;
     case 'priority': return r.priority;
     case 'state': return r.state;
-    case 'visibility': return r.visibility;
     case 'assignee': return r.assigneeName ?? '';
+    case 'createdByName': return r.createdByName ?? '';
     case 'createdAt': return r.createdAt;
+    case 'updatedByName': return r.updatedByName ?? '';
+    case 'updatedAt': return r.updatedAt;
     default: return null;
   }
 }
@@ -114,14 +118,20 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
   const { withLoading } = useLoading();
   const { showSuccess, showError } = useToast();
   // PR #119: session 連携フォーマッタ
-  const { formatDate } = useFormatters();
+  const { formatDateTimeSeconds } = useFormatters();
+  // 2026-06-02: 一覧の添付/リンク列を再取得させるトリガ。編集ダイアログ内で
+  //   リンク/添付を追加削除しても entity の id 集合は不変で useBatchAttachments が
+  //   refetch しないため、ダイアログ閉鎖時や CRUD 後にこの値を変えて強制再取得する。
+  const [attachToken, setAttachToken] = useState(0);
+  const bumpAttachToken = useCallback(() => setAttachToken((t) => t + 1), []);
   const reload = useCallback(async () => {
+    bumpAttachToken();
     if (onReload) {
       await onReload();
     } else {
       router.refresh();
     }
-  }, [onReload, router]);
+  }, [onReload, router, bumpAttachToken]);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [error, setError] = useState('');
   // 行クリックで開く編集ダイアログの対象 (null = 閉じる)
@@ -175,6 +185,10 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
     }
     return multiSort(xs, sortState, getProjectRiskSortValue);
   }, [risks, typeFilter, bulkFilter, sortState]);
+  const { pageItems, page, pageCount, setPage } = useTablePagination(
+    filteredRisks,
+    `${bulkFilter.state}|${bulkFilter.priority}|${bulkFilter.keyword}|${bulkFilter.mineOnly}`,
+  );
   // Phase A 要件 6 で h2 ヘディング削除に伴い headingLabel は未使用化、削除して lint clean に。
   const createLabel = typeFilter === 'issue' ? tRisk('createIssue') : typeFilter === 'risk' ? tRisk('createRisk') : tRisk('createBoth');
 
@@ -236,6 +250,8 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
   const attachmentsByEntity = useBatchAttachments(
     'risk',
     filteredRisks.map((r) => r.id),
+    'general',
+    attachToken,
   );
 
   // PR #165: 一括選択 + 一括編集ダイアログ
@@ -348,10 +364,7 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
     URL.revokeObjectURL(dlUrl);
   }
 
-  async function handleExport() {
-    await postExport('csv', `risks_${projectId}.csv`);
-  }
-
+  // 2026-06-02: 報告用 CSV出力 (handleExport / mode='csv') は廃止。エクスポートを sync 1 本化。
   // T-22 Phase 22a: sync-import 用の export (編集 dialog 完全網羅 format)
   async function handleSyncExport() {
     await postExport('sync', `risks_sync_${projectId}.csv`);
@@ -365,9 +378,7 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
       {/* Phase A 要件 6: h2 ページタイトル削除 (タブ名と重複のため) */}
       <div className="flex items-center justify-end">
         <div className="flex gap-2">
-          {systemRole === 'admin' && (
-            <Button variant="outline" onClick={handleExport}>{tRisk('csvExport')}</Button>
-          )}
+          {/* 2026-06-02: 報告用「CSV出力」は廃止し、エクスポートを1本化 (インポート可能なCSV)。 */}
           {/* T-22 Phase 22a: sync-import (往復編集) 用の export + import ボタン。canEdit (PM/TL + admin) のみ表示 */}
           {canCreate && (
             <>
@@ -641,16 +652,20 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
             </ResizableHead>
             {!typeFilter && <SortableResizableHead columnKey="type" defaultWidth={80} label={tRisk('kind')} sortState={sortState} onSortChange={setSortColumn} />}
             <SortableResizableHead columnKey="title" defaultWidth={240} label={tRisk('subject')} sortState={sortState} onSortChange={setSortColumn} />
-            {/* PR-γ / 項目 3 + 8: 影響度/重要度カラムは非表示。詳細は編集 dialog で確認。 */}
-            <SortableResizableHead columnKey="priority" defaultWidth={80} label={tRisk('priority')} sortState={sortState} onSortChange={setSortColumn} />
+            {/* 2026-06-02: 列順を 件名→状態→優先度→担当者→結果 に変更。公開範囲列は削除。
+                影響度/重要度カラムは非表示 (詳細は編集 dialog で確認)。 */}
             <SortableResizableHead columnKey="state" defaultWidth={100} label={tRisk('state')} sortState={sortState} onSortChange={setSortColumn} />
-            {/* feat/account-lock-and-ui-consistency: 公開範囲列を追加。編集ダイアログで
-                visibility を変更しても一覧に表示されず「画面上データが更新されていない」
-                ように見える bug の解消 (knowledge/memo は既存で表示済、risk/retro が漏れ) */}
-            <SortableResizableHead columnKey="visibility" defaultWidth={90} label={tRisk('visibility')} sortState={sortState} onSortChange={setSortColumn} />
+            <SortableResizableHead columnKey="priority" defaultWidth={80} label={tRisk('priority')} sortState={sortState} onSortChange={setSortColumn} />
             <SortableResizableHead columnKey="assignee" defaultWidth={120} label={tRisk('assignee')} sortState={sortState} onSortChange={setSortColumn} />
-            <SortableResizableHead columnKey="createdAt" defaultWidth={110} label={tRisk('reportedAt')} sortState={sortState} onSortChange={setSortColumn} />
-            {/* PR #67: 添付リンク列 */}
+            <ResizableHead columnKey="result" defaultWidth={200}>{tRisk('result')}</ResizableHead>
+            {/* 2026-06-02: 起票日 (=createdAt) は「作成日時」に統合。作成者/作成日時/更新者/更新日時 の 4 監査列に置換。 */}
+            <SortableResizableHead columnKey="createdByName" defaultWidth={110} label={tRisk('createdBy')} sortState={sortState} onSortChange={setSortColumn} />
+            <SortableResizableHead columnKey="createdAt" defaultWidth={150} label={tRisk('createdAt')} sortState={sortState} onSortChange={setSortColumn} />
+            <SortableResizableHead columnKey="updatedByName" defaultWidth={110} label={tRisk('updatedBy')} sortState={sortState} onSortChange={setSortColumn} />
+            <SortableResizableHead columnKey="updatedAt" defaultWidth={150} label={tRisk('updatedAt')} sortState={sortState} onSortChange={setSortColumn} />
+            {/* 2026-06-02: リンク列 (作成日時〜添付の間)。url 型添付を縦に複数行表示。 */}
+            <ResizableHead columnKey="links" defaultWidth={200}>{tRisk('links')}</ResizableHead>
+            {/* PR #67: 添付リンク列 → 2026-06-02 ファイル本体のみ表示 (リンクは左の専用列へ分離) */}
             <ResizableHead columnKey="attachments" defaultWidth={200}>{tRisk('attachment')}</ResizableHead>
             {/* 2026-04-24: 作成者本人だけが削除ボタンを使うので、自分の行が 1 つでもあれば列を出す。
                 feat/asset-assignee-expansion (2026-05-26): 担当者も削除可能なので OR で拡張。 */}
@@ -660,7 +675,7 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
           </TableRow>
         </TableHeader>
         <TableBody>
-          {filteredRisks.map((r) => {
+          {pageItems.map((r) => {
             // feat/asset-assignee-expansion (2026-05-26): 作成者 OR 担当者を編集可能 (= 削除/bulk 対象)
             const canEdit = r.viewerCanEdit === true
               || r.reporterId === currentUserId
@@ -685,29 +700,27 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
               </TableCell>
               {!typeFilter && <TableCell><Badge variant="outline">{r.type === 'risk' ? tRisk('labelRisk') : tRisk('labelIssue')}</Badge></TableCell>}
               <TableCell className="font-medium">{r.title}</TableCell>
-              {/* PR-γ: 影響度/重要度セルは非表示 (一覧は priority のみ) */}
-              <TableCell><Badge variant={impactColors[r.priority] || 'secondary'}>{PRIORITIES[r.priority as keyof typeof PRIORITIES]}</Badge></TableCell>
+              {/* 2026-06-02: 列順 件名→状態→優先度→担当者→結果。公開範囲列は削除。
+                  状態は読み取り専用バッジ (変更は行クリック → 編集 dialog の「状態」)。 */}
               <TableCell>
-                {/*
-                  PR #59: 状態列はインライン編集を廃止し、他列同様に読み取り専用バッジ表示。
-                  変更は行クリック → RiskEditDialog 内の「状態」選択経由に統一する。
-                */}
                 <Badge variant="outline">
                   {RISK_ISSUE_STATES[r.state as keyof typeof RISK_ISSUE_STATES] || r.state}
                 </Badge>
               </TableCell>
-              {/* feat/account-lock-and-ui-consistency: 公開範囲表示 (編集後の即時反映確認用) */}
-              <TableCell>
-                <VisibilityBadge
-                  visibility={r.visibility}
-                  label={VISIBILITIES[r.visibility as keyof typeof VISIBILITIES] || r.visibility}
-                />
-              </TableCell>
+              <TableCell><Badge variant={impactColors[r.priority] || 'secondary'}>{PRIORITIES[r.priority as keyof typeof PRIORITIES]}</Badge></TableCell>
               <TableCell>{r.assigneeName || '-'}</TableCell>
-              <TableCell>{formatDate(r.createdAt)}</TableCell>
-              {/* PR #67: 添付リンク chips */}
+              <TableCell className="max-w-xs truncate text-sm text-muted-foreground" title={r.result ?? undefined}>{r.result || '-'}</TableCell>
+              <TableCell className="text-sm text-muted-foreground">{r.createdByName || '—'}</TableCell>
+              <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{formatDateTimeSeconds(r.createdAt)}</TableCell>
+              <TableCell className="text-sm text-muted-foreground">{r.updatedAt !== r.createdAt ? (r.updatedByName || '—') : '—'}</TableCell>
+              <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{r.updatedAt !== r.createdAt ? formatDateTimeSeconds(r.updatedAt) : '—'}</TableCell>
+              {/* 2026-06-02: リンク列 (url 型添付を縦に複数行表示) */}
               <TableCell onClick={(e) => e.stopPropagation()}>
-                <AttachmentsCell items={attachmentsByEntity[r.id] ?? []} />
+                <LinksCell items={attachmentsByEntity[r.id] ?? []} />
+              </TableCell>
+              {/* PR #67: 添付列 → 2026-06-02 ファイル本体 (supabase 型) のみ表示 */}
+              <TableCell onClick={(e) => e.stopPropagation()}>
+                <AttachmentsCell items={(attachmentsByEntity[r.id] ?? []).filter((a) => a.storageProvider === 'supabase')} />
               </TableCell>
               {/* 2026-04-24: 削除ボタンは作成者本人のみ (admin は全○○ から別経路) */}
               {isOwner && (
@@ -742,7 +755,7 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
                   Phase C 要件 18: select 列は常時表示で +1 */}
               <TableCell
                 colSpan={
-                  (filteredRisks.some((x) => x.reporterId === currentUserId || x.assigneeId === currentUserId) ? 9 : 8)
+                  (filteredRisks.some((x) => x.reporterId === currentUserId || x.assigneeId === currentUserId) ? 13 : 12)
                   + (typeFilter ? 0 : 1)
                 }
                 className="py-8 text-center text-muted-foreground"
@@ -754,6 +767,8 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
         </TableBody>
       </ResizableTableShell>
 
+      <TablePagination page={page} pageCount={pageCount} onPageChange={setPage} />
+
       {/* Phase B 要件 5: 非作成者は readOnly で詳細表示のみ可。
           feat/asset-assignee-expansion (2026-05-26): 担当者も編集可能。
           systemRole='admin' は他人作成でも編集可能 (既存仕様維持)。 */}
@@ -762,7 +777,7 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
         members={members}
         currentProjectId={projectId}
         open={editingRisk != null}
-        onOpenChange={(v) => { if (!v) setEditingRisk(null); }}
+        onOpenChange={(v) => { if (!v) { setEditingRisk(null); bumpAttachToken(); } }}
         onSaved={reload}
         readOnly={
           editingRisk != null

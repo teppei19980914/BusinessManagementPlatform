@@ -17,7 +17,7 @@
 ```mermaid
 flowchart LR
   A[Phase 1<br/>開発着手] --> B[Phase 2<br/>ローカル開発]
-  B --> C[Phase 3<br/>ローカルテスト<br/>lint/tsc/test/e2e-coverage/build]
+  B --> C[Phase 3<br/>ローカル検証<br/>DB準備 + 5点セット + UI]
   C --> D[Phase 4<br/>E2E テスト<br/>任意]
   D --> E[Phase 5<br/>PR 作成<br/>+ Deploy Preview 検証]
   E --> F[Phase 6<br/>コードレビュー<br/>+ main マージ]
@@ -26,6 +26,29 @@ flowchart LR
 ```
 
 各 Phase は前段の **完了条件 (DoD)** を満たさない限り次へ進まない原則。退行検知を遅らせると修正コストが指数関数的に増える (KDD §5.X+58 / §5.X+99 参照)。
+
+---
+
+## 環境の使い分け (Prod / Staging / Local)
+
+3 つの環境は **役割が明確に分かれており**、テストの種類で使い分ける。「どこで何を判定するか」を取り違えると、Local で済む検証を Staging に持ち込んで deploy credit を浪費したり、逆に Local では再現できない事象を見落として本番事故になる。
+
+| 環境 | 用途 | このフローでの判定 | DB / インフラ |
+|---|---|---|---|
+| **Prod (本番)** | ユーザが実際に利用する環境。**テスト用途では使わない**。 | (判定なし) Phase 8 は smoke 確認のみ | Supabase 本番 / Netlify Production / `https://tasukiba.com` |
+| **Staging** | **Local では検証できないテスト** (インフラ構成・ネットワーク・Netlify context 別 env・実 Stripe webhook・Set-Cookie 等) と、**全変更の最終確認**。 → **Prod リリース判定** | Phase 5〜6 (Deploy Preview) | Supabase staging / Netlify Deploy Preview |
+| **Local** | 変更内容を **ソースコードベースで検証** する。 → **コミット/push/PR 作成判定** かつ **Staging リリース判定** | Phase 3 (本ドキュメントの主対象) | ローカル Docker PostgreSQL (pgvector) `localhost:5433` |
+
+**判定の連鎖 (上流ほど安く速い)**:
+
+```
+Local 検証 OK ──► コミット/push/PR 作成 ──► Staging (Deploy Preview) 検証 OK ──► main マージ ──► Prod デプロイ
+   (Phase 3)                                      (Phase 5-6)                          (Phase 7)
+```
+
+- **Local で確認できることを Staging に持ち込まない** (deploy credit と時間の節約)。
+- **Staging でしか確認できないもの** = 実 Netlify Functions 上の挙動 / context 別環境変数 / 実 Stripe webhook / Set-Cookie / DNS・リダイレクト等。これらだけを Staging で確認する。
+- Prod は検証に使わない。Prod での確認は「リリース後の smoke (Phase 8)」に限る。
 
 ---
 
@@ -119,9 +142,135 @@ npx prisma studio   # http://localhost:5555
 
 ---
 
-## Phase 3: ローカルテスト (= コミット前 5 点セット)
+## Phase 3: ローカル検証 (= コミット/push/PR 作成判定)
 
-[CLAUDE.md コミット前チェック](../../../CLAUDE.md) で定義された **必須 5 点セット**。
+**Local 環境**で「変更をソースコードベースに検証」する工程。本 Phase が全て green = **コミット/push/PR 作成 OK** かつ **Staging リリース判定 OK** ([環境の使い分け](#環境の使い分け-prod--staging--local) 参照)。
+
+**誰でも・どの環境でも同じ結果**を得られるよう、必ず次の順で実施する:
+
+```
+3.0 ローカル DB 準備 ──► 3.1 自動テスト 5 点セット ──► 3.2 手動 UI 検証
+   (初回/DBリセット時)        (毎回・必須)              (UI/挙動変更時)
+```
+
+### 3.0 ローカル DB 準備 (初回 / DB リセット時)
+
+> 単体テスト (`pnpm test`) は DB をモックするため **DB 不要**。一方 **`pnpm dev` での画面確認・ログイン・E2E は実 DB が必須**。3.2 を行うなら本節を先に完了させる。
+
+ローカル DB は **Docker の PostgreSQL**。`.env` の `DATABASE_URL` / `DIRECT_URL` は `postgresql://...@localhost:5433/tasukiba` を指す。
+
+> #### ⚠️ 必須前提: pgvector 同梱イメージを使うこと (最頻の詰まり所)
+>
+> たすきばのマイグレーションは `CREATE EXTENSION vector` (pgvector) を含む。`docker-compose.yml` の `image` は **`pgvector/pgvector:pg16`** であること。`postgres:16-alpine` 等の **pgvector 非搭載イメージだと `pnpm db:deploy` が必ず失敗** する:
+>
+> ```
+> ERROR: extension "vector" is not available
+> DETAIL: Could not open extension control file ".../vector.control": No such file or directory.
+> ```
+>
+> 現行の committed `docker-compose.yml` が `postgres:16-alpine` の場合は **image を `pgvector/pgvector:pg16` に修正** する (= postgres16 + pgvector 同梱の公式イメージ、ドロップイン置換可)。リポジトリを汚さず一時的に回避するなら、リポジトリ外に同内容で image だけ差し替えた compose を置き `docker compose -f <外部パス>.yml up -d` で起動する。
+>
+> #### ⚠️ さらなる罠: 既存ボリュームだと `db:deploy` が "嘘の成功" をする (2026-06-04 実機検証)
+>
+> 過去に pgvector イメージで起動したことのある `tasukiba-pgdata` ボリュームが残っていると、`pg_extension` カタログに `vector` が登録済みのため `CREATE EXTENSION IF NOT EXISTS vector` ([20260502_pgvector_embedding](../../../prisma/migrations/20260502_pgvector_embedding/migration.sql)) が no-op になり、**`postgres:16-alpine` のままでも `pnpm db:deploy` は成功してしまう**。しかしイメージ側に `vector` の実体 (`$libdir/vector` / `vector.control`) が無いため、embedding 生成・類似検索を叩いた瞬間に実行時エラーになる:
+>
+> ```
+> ERROR: could not access file "$libdir/vector": No such file or directory
+> ```
+>
+> **`db:deploy` の成功を pgvector OK の証拠にしないこと。** 実体の有無は次で確認する (PowerShell):
+>
+> ```powershell
+> docker exec tasukiba-db psql -U postgres -d tasukiba -c "SELECT '[1,2,3]'::vector;"
+> ```
+>
+> 値が返れば実体あり / 上記 `could not access file` エラーなら image が pgvector 非搭載。修正は `image` を `pgvector/pgvector:pg16` に直して `docker compose up -d` でコンテナ再生成すれば、**既存データを消さずに** `$libdir/vector` が供給され解消する (`down -v` は不要)。
+
+手順 (Windows PowerShell / VSCode 統合ターミナル。上から順に実行):
+
+```powershell
+# 1. Docker 起動確認 (ゲート: "docker ready" が出るまで 2 以降に進まない)
+#    未起動なら起動する。GUI クリックのほか、以下のコマンドでも起動できる
+#    (docker desktop コマンドは Docker Desktop 4.37+。起動完了まで十数秒〜1分かかる)。
+docker desktop start      # 起動 (GUI クリック不要)
+docker desktop status     # 状態確認 (running になるまで待つ)
+docker info > $null 2>&1; if ($?) { "docker ready" } else { "まだ起動中。数秒待って再実行 (まだ 2 へ進まない)" }
+
+# 2. DB コンテナ起動
+docker compose up -d
+docker inspect -f '{{.State.Health.Status}}' tasukiba-db
+
+# 3. 接続確認
+docker exec tasukiba-db pg_isready -U postgres
+
+# 4. マイグレーション適用
+pnpm db:deploy
+pnpm prisma migrate status
+
+# 5. シード (ログインユーザ作成。冪等)
+pnpm db:seed
+
+# 6. ログインユーザ存在確認
+docker exec tasukiba-db psql -U postgres -d tasukiba -c "SELECT email, system_role, force_password_change FROM users;"
+
+# 7. 開発サーバ起動 → ブラウザで http://localhost:3000/login
+pnpm dev
+```
+
+> 補足: `pg_isready` / `psql` の `WARNING: ... has no actual collation version` と `pnpm dev` の `middleware ... deprecated` は **いずれも無害**。`accepting connections` / 結果行 / `✓ Ready` が出れば成功。
+
+ログイン情報:
+
+| 項目 | 値 |
+|---|---|
+| URL | http://localhost:3000 |
+| メール | `.env` の `INITIAL_ADMIN_EMAIL` (既定 `admin@example.com`) |
+| パスワード | `.env` の `INITIAL_ADMIN_PASSWORD` |
+| 初回挙動 | `force_password_change=true` → **初回ログイン時にパスワード変更を要求** (仕様どおり) |
+
+> - `SUPER_ADMIN_INITIAL_EMAIL/PASSWORD/NAME` はプラットフォーム管理者 (別枠)。未設定ならシードでスキップされるが、通常のローカル検証には不要。
+> - DB をまっさらに作り直すなら **`pnpm db:reset` の後に `pnpm db:seed`** (`prisma migrate reset` = 全データ消去 + 全 migration 再適用)。
+>   ⚠️ **本プロジェクトの `prisma.config.ts` / `package.json` には seed フックが未設定のため、`db:reset` は seed を自動実行しない**。reset 後に必ず `pnpm db:seed` を手動実行する (忘れると users が空でログイン不可 = 「メールアドレスまたはパスワードが正しくありません」になる)。
+> - シード直後は admin ユーザのみで業務データは空。一覧の監査列・タグ自動抽出など**業務データが要る確認**は、ログイン後にプロジェクト/顧客を 1 件作成してから行う。
+
+#### 3.0.1 「初回利用ユーザ」状態の再現 (オンボーディング = たすきフクロウ歓迎モーダルの確認)
+
+歓迎モーダル ([welcome-owl-modal.tsx](../../../src/components/onboarding/welcome-owl-modal.tsx)) は **初回利用ユーザ (`session.user.isFirstTimeUser`) かつ非 super_admin** のときだけ自動表示される。同じメールで何度もこの初期表示を確認したいときの正しい手順を示す。
+
+**判定ロジック (一次ソース: [auth.ts](../../../src/lib/auth.ts) `priorLoginSuccessCount`)**:
+
+```
+isFirstTimeUser = (auth_event_logs に eventType='login_success' かつ email 一致の行が 0 件)
+```
+
+- 判定キーは **email**（userId ではない / テナント横断）。
+- **★最重要な落とし穴**: `auth_event_logs` は **ユーザ・テナントを削除しても保持される**設計（越境悪用防止 / `super-admin.service.ts` purge 対象外）。
+  → **「アカウントを削除して同じメールで作り直す」だけでは再現できない**（過去の `login_success` ログが email で残り `isFirstTimeUser=false` のまま）。
+- 当セッション内の再表示は **sessionStorage** (`welcome-owl-shown` 相当のキー、userId 単位) で抑止される。
+
+**再現手順 — 方法 A: 完全リセット (確実・重いが単純)**
+
+```bash
+pnpm db:reset       # 全データ消去 + migration 再適用 (auth_event_logs も drop)
+pnpm db:seed        # admin 再作成 (reset は自動 seed しない)
+```
+→ DB ごと作り直すため `login_success` 履歴が消え、再シードした admin は初回利用ユーザになる。ブラウザは別タブ / シークレットウィンドウで開く (sessionStorage 抑止回避)。
+
+**再現手順 — 方法 B: 該当メールのログイン履歴だけ削除 (軽量・データ温存)**
+
+業務データを残したまま、対象 email の初回判定だけ戻す:
+
+```bash
+docker exec tasukiba-db psql -U postgres -d tasukiba -c \
+  "DELETE FROM auth_event_logs WHERE email='admin@example.com' AND event_type='login_success';"
+```
+→ 次回ログインで `priorLoginSuccessCount=0` となり歓迎モーダルが再表示される。**加えてブラウザの sessionStorage をクリア**（DevTools → Application → Session Storage で当該キー削除、またはシークレットウィンドウ）すること。アカウント自体は削除不要。
+
+> どちらの方法でも **sessionStorage の当セッション抑止**を併せて解除しないと「履歴は消えたのにモーダルが出ない」となる点に注意。
+
+### 3.1 自動テスト 5 点セット (毎回・必須)
+
+[CLAUDE.md コミット前チェック](../../../CLAUDE.md) で定義された **必須 5 点セット**。いずれも **DB 不要** (モック化されているため 3.0 未実施でも実行可)。
 
 ```bash
 pnpm lint                # 1. ESLint (静的解析)
@@ -131,8 +280,6 @@ pnpm e2e:coverage-check  # 4. 新規 route.ts / page.tsx 漏れ検知
 pnpm build               # 5. Next.js production build (型エラー含む)
 ```
 
-### 3.1 各ステップの意味
-
 | # | コマンド | 検出するもの | 失敗時の対処 |
 |---|---|---|---|
 | 1 | `pnpm lint` | ESLint 違反 (banned auth pattern / unused imports 等) | 出力の指示通り修正、`pnpm lint --fix` で自動修正可能なものも多い |
@@ -141,10 +288,25 @@ pnpm build               # 5. Next.js production build (型エラー含む)
 | 4 | `pnpm e2e:coverage-check` | 新規 `route.ts` / `page.tsx` が `docs/test/E2E_COVERAGE.md` 未記載 | E2E_COVERAGE.md に `[x]` or `[ ] skip: <理由>` を追記 |
 | 5 | `pnpm build` | Next.js のフル build (型・lint・最適化込み) | local で通れば CI/Netlify でもほぼ通る |
 
-### 3.2 5 点セットを飛ばす罠 (典型的事故)
+> パイプで exit code を隠さない。`pnpm <cmd>; echo "EXIT: $?"` の形で実行し、各ステップが EXIT 0 であることを確認する ([MEMORY: feedback_quality_gate_exit_code])。
 
+### 3.2 手動 UI 検証 (UI / 挙動変更時)
+
+3.0 で起動した dev サーバ + ログインユーザで、改修範囲を画面から確認する。**「テストが緑」だけで安全とせず、データフローは画面と一次ソースで裏取りする** ([MEMORY: feedback_verify_dataflow_primary_source_always])。
+
+- [ ] 改修対象画面が意図通りに表示・動作する
+- [ ] **テナント越境**: 別テナントのデータが見えない / 越境カラムが解決されない (severity-1)
+- [ ] 既存機能の退行 (関連画面の smoke)
+- [ ] ダーク / ライト両テーマで崩れないか
+- [ ] サーバログ・ブラウザコンソールにエラーが出ていないか
+
+> Local で再現できない事象 (Netlify context 別 env / 実 Stripe webhook / Set-Cookie 等) は **Staging (Phase 5) で確認** する。Local に持ち込めるものを Staging に回さない。
+
+### 3.3 各ステップを飛ばす罠 (典型的事故)
+
+- **3.0 の pgvector 前提を飛ばす** → `pnpm db:deploy` が `extension "vector" is not available` で fail。image を `pgvector/pgvector:pg16` に直す。
 - **`pnpm e2e:coverage-check` を飛ばす** → CI で `Test (vitest + coverage)` が skip され `Report coverage` も連鎖 fail。**真因は manifest 漏れのみ** ([TEST_LINT_BUILD.md §9.5.1](./TEST_LINT_BUILD.md))
-- **`pnpm build` を飛ばす** → Netlify build credits を消費して fail (Free plan 300 credits/月、1 deploy ≈ 15 credits)。ローカルで先に通すべき ([DEPLOYMENT.md §1.2](./DEPLOYMENT.md))
+- **`pnpm build` を飛ばす** → Netlify build credits を消費して fail。ローカルで先に通すべき ([DEPLOYMENT.md §1.2](./DEPLOYMENT.md))
 
 ---
 
@@ -348,7 +510,7 @@ main へのマージで Netlify が **Production deploy** を自動起動:
 
 ---
 
-**最終更新**: 2026-05-22 (PR #425 ベース)
+**最終更新**: 2026-06-02 (環境の使い分け定義を追加 / Phase 3 にローカル DB 準備 (pgvector 必須・migrate・seed・ログイン確認) と手動 UI 検証を追記)
 
 **関連 KDD**:
 - §5.X+44 (CSP graceful degradation の 2 段階修正)

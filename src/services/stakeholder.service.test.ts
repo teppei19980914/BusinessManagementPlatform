@@ -10,6 +10,8 @@ vi.mock('@/lib/db', () => ({
     },
     // 2026-05-09 feedback Phase 2-5: createStakeholder で project tenant 検証用
     project: { findFirst: vi.fn() },
+    // 2026-06-02: 一覧の作成者/更新者名解決 (cross-tenant 氏名 lookup) 用
+    user: { findMany: vi.fn().mockResolvedValue([]) },
     // PR fix/visibility-auth-matrix: deleteStakeholder も comment cascade
     comment: { updateMany: vi.fn() },
     $transaction: vi.fn((ops: unknown[]) => Promise.all(ops)),

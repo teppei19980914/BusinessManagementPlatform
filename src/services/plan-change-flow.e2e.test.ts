@@ -58,6 +58,13 @@ type FakeTenant = {
   timezone: string;
   // chore/storage-addon-backend-removal (2026-05-26): storageAddonPlan は撤去済
   storageBytesUsed: bigint;
+  // feat/billing-conditional-by-plan (2026-06-05): 有料化ガード用の請求先 (完備状態を既定とする)
+  billingType: string;
+  billingCompanyName: string | null;
+  billingPostalCode: string | null;
+  billingPrefecture: string | null;
+  billingCity: string | null;
+  billingStreetAddress: string | null;
 };
 
 const initialState = (): FakeTenant => ({
@@ -80,6 +87,13 @@ const initialState = (): FakeTenant => ({
   // PR-4: UTC TZ で本テストの境界判定 (2026-06-01T00:00:00Z) が UTC ベースの旧仕様と一致
   timezone: 'UTC',
   storageBytesUsed: BigInt(0),
+  // feat/billing-conditional-by-plan (2026-06-05): 請求先完備 (= 有料化ガードを通過する状態)
+  billingType: 'corporate',
+  billingCompanyName: 'テスト会社',
+  billingPostalCode: '100-0001',
+  billingPrefecture: '東京都',
+  billingCity: '千代田区',
+  billingStreetAddress: '千代田1-1',
 });
 
 let state: FakeTenant;
