@@ -15,6 +15,18 @@
 
 set -u
 
+# dependabot ブランチの deploy preview はビルドしない (2026-06-04)。
+#   dependabot PR は GitHub Actions (Lint/Test/Build = next build, E2E, 必須7チェック) で
+#   検証済みで、Netlify preview は必須チェックでも検証ゲートでもない。strict + lockfile の
+#   直列カスケードで rebase のたびに再ビルド (1 deploy ≈ 15 credits) が走り Starter 枠
+#   (300/月) を圧迫するため、dependabot の preview/branch deploy をスキップする。
+#   production (= main) は BRANCH=main のため対象外で通常どおりビルドされる。
+#   関連: docs/operations/develop/DEPLOYMENT.md §8.2 / .github/workflows/dependabot-auto-merge.yml
+if [[ "${BRANCH:-}" == dependabot/* ]]; then
+  echo "[netlify-ignore] dependabot branch (${BRANCH}) → skipping preview build (credits 節約)"
+  exit 0
+fi
+
 # Netlify が渡す環境変数
 #   CACHED_COMMIT_REF: 前回ビルド成功時の commit SHA
 #   COMMIT_REF:        今回ビルド対象の commit SHA

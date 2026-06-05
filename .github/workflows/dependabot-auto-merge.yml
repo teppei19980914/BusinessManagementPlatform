@@ -1,0 +1,60 @@
+# ──────────────────────────────────────────────────────────────────────────
+# Dependabot 自動マージ (2026-06-04 / ユーザ要望「バージョンアップを main まで自動化」)
+#
+# 目的: Dependabot が起票した依存更新 PR のうち、patch / minor を CI green 条件で
+#   自動マージし、ライブラリを随時最新化する。major (破壊的変更を含みうる) は
+#   自動マージせず手動レビューに残す。
+#
+# 仕組み:
+#   1. dependabot/fetch-metadata で更新種別 (semver-patch/minor/major) を取得
+#   2. patch / minor のみ `gh pr merge --auto` で GitHub ネイティブ auto-merge を有効化
+#   3. auto-merge は main ブランチ保護の必須チェック (Lint / Test / Build,
+#      Security Score Gate (>= 90), Dependency Review, CodeQL, Secret Scan) が
+#      すべて green になった時点で初めてマージを実行する (= CI が安全弁)
+#
+# 安全設計:
+#   - pull_request トリガなので、ワークフロー定義は常に base (main) 側のものが使われ、
+#     PR 内容によって書き換えられない (pull_request_target は使わない)
+#   - GITHUB_TOKEN の権限は contents:write / pull-requests:write に限定
+#
+# 公式ドキュメント (パターン出典):
+#   https://docs.github.com/en/code-security/dependabot/working-with-dependabot/automating-dependabot-with-github-actions
+# ──────────────────────────────────────────────────────────────────────────
+name: Dependabot Auto-Merge
+
+on:
+  pull_request:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-merge:
+    name: Enable auto-merge (patch/minor)
+    runs-on: ubuntu-latest
+    # Dependabot が作成した PR のみ対象。それ以外の PR では何もしない。
+    if: ${{ github.event.pull_request.user.login == 'dependabot[bot]' }}
+    steps:
+      - name: Fetch Dependabot metadata
+        id: metadata
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Enable auto-merge for patch / minor updates
+        if: ${{ steps.metadata.outputs.update-type == 'version-update:semver-patch' || steps.metadata.outputs.update-type == 'version-update:semver-minor' }}
+        run: gh pr merge --auto --squash "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # major 更新は自動マージせず、手動レビューを促すラベル + コメントを付与する。
+      - name: Flag major updates for manual review
+        if: ${{ steps.metadata.outputs.update-type == 'version-update:semver-major' }}
+        run: |
+          gh pr edit "$PR_URL" --add-label "needs-manual-review" || true
+          gh pr comment "$PR_URL" --body "⚠️ メジャーバージョン更新 (\`${{ steps.metadata.outputs.dependency-names }}\`) のため自動マージ対象外です。破壊的変更を確認のうえ手動でマージしてください。"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
