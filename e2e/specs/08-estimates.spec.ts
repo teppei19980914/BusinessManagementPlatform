@@ -176,13 +176,13 @@ test.describe('@feature:project:estimates 見積もり管理', () => {
     // 項目名
     await page.getByRole('dialog').getByLabel('項目名').fill(coeffLabel);
 
-    // ツール選択: WinActor を選ぶ
-    const toolSelect = page.getByRole('dialog').locator('select').first();
+    // ツール選択: WinActor を選ぶ (開発ツール label で識別)
+    const toolSelect = page.getByRole('dialog').getByLabel('開発ツール');
     await toolSelect.selectOption('winactor');
 
     // カテゴリ区分: development のまま (デフォルト)
-    // プレビューが更新されるのを待機
-    await expect(page.getByRole('dialog').getByText(/見積工数/)).toBeVisible();
+    // winactor+development: baseHours=4 → calcPreview "計算結果: 4h" が表示される
+    await expect(page.getByRole('dialog').getByText(/計算結果/)).toBeVisible();
 
     // 追加ボタンが有効であることを確認してクリック
     const addBtn = page.getByRole('dialog').getByRole('button', { name: '追加' });

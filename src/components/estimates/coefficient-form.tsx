@@ -79,8 +79,9 @@ export function CoefficientForm({ category, state, onChange, onCalcResult }: Pro
     <div className="space-y-4 rounded-md border border-border bg-muted/30 p-4">
       {/* ツール選択 */}
       <div className="space-y-2">
-        <Label>{t('toolSelection')}</Label>
+        <Label htmlFor="coeff-tool-select">{t('toolSelection')}</Label>
         <select
+          id="coeff-tool-select"
           value={state.devMethodKey}
           onChange={(e) => {
             const opt = getMethodOption(e.target.value);
