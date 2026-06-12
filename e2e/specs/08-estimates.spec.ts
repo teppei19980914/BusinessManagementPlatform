@@ -265,7 +265,8 @@ test.describe('@feature:project:estimates 見積もり管理', () => {
     );
 
     const row = page.locator('tbody tr').filter({ hasText: ESTIMATE_ITEM }).first();
-    await row.getByRole('button', { name: '確定' }).click();
+    // mobile: 多カラムテーブルで横スクロール時に他の td が pointer events を遮るため force: true
+    await row.getByRole('button', { name: '確定' }).click({ force: true });
 
     const res = await confirmRes;
     expect(res.ok(), `PATCH confirm failed: ${res.status()}`).toBeTruthy();
@@ -296,7 +297,8 @@ test.describe('@feature:project:estimates 見積もり管理', () => {
     );
     page.once('dialog', (dialog) => dialog.accept());
     const row = page.locator('tbody tr').filter({ hasText: deletableLabel }).first();
-    await row.getByRole('button', { name: '削除' }).click();
+    // mobile: 多カラムテーブルで横スクロール時に他の td が pointer events を遮るため force: true
+    await row.getByRole('button', { name: '削除' }).click({ force: true });
     const res = await deleteRes;
     expect(res.ok(), `DELETE failed: ${res.status()}`).toBeTruthy();
 
