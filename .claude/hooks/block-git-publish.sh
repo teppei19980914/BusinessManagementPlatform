@@ -14,8 +14,20 @@
 
 set -u
 
-# 合言葉が立っていれば即許可
+# 合言葉が立っていれば即許可 (環境変数 or コマンド先頭プレフィックス)
 if [ "${ALLOW_GIT_PUBLISH:-}" = "1" ]; then
+  exit 0
+fi
+
+# コマンド文字列先頭に ALLOW_GIT_PUBLISH=1 が付いている場合も許可
+# (PreToolUse hook 実行時点では env var はまだ展開されていないため、
+#  コマンド文字列から直接検出する必要がある)
+_CMD_EARLY="${CLAUDE_TOOL_INPUT:-}"
+if [ -z "$_CMD_EARLY" ]; then
+  _CMD_EARLY="$(cat || true)"
+fi
+_CMD_EARLY="$(echo "$_CMD_EARLY" | grep -oE '"command"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed -E 's/^"command"[[:space:]]*:[[:space:]]*"//; s/"$//')"
+if echo "$_CMD_EARLY" | grep -qE '^[[:space:]]*ALLOW_GIT_PUBLISH=1[[:space:]]'; then
   exit 0
 fi
 
