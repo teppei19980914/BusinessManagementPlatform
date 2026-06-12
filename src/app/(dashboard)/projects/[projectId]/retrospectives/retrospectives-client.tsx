@@ -45,7 +45,6 @@ import { SortableResizableHead } from '@/components/sort/sortable-resizable-head
 import { useMultiSort } from '@/components/sort/use-multi-sort';
 import { multiSort } from '@/lib/multi-sort';
 import { useFormatters } from '@/lib/use-formatters';
-import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
 import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger,
@@ -89,7 +88,6 @@ function buildRetroVisibilityOptions(t: (key: string) => string) {
 function getProjectRetroSortValue(r: RetroDTO, columnKey: string): unknown {
   switch (columnKey) {
     case 'conductedDate': return r.conductedDate;
-    case 'state': return r.state;
     case 'assigneeName': return r.assigneeName ?? '';
     case 'createdBy': return r.createdByName ?? '';
     case 'createdAt': return r.createdAt;
@@ -113,18 +111,21 @@ type Props = {
    * 作成 form の conductedDate 初期値として使用する (UTC ズレ対策)。
    */
   today: string;
+  /** 2026-06-12: プロジェクトがクローズ済み (読み取り専用) のとき true。
+   *  編集ダイアログを強制 readOnly にし、コメント投稿欄も非表示にする。 */
+  isReadOnly?: boolean;
   /** CRUD 後に呼び出す再取得ハンドラ（未指定時は router.refresh フォールバック）*/
   onReload?: () => Promise<void> | void;
 };
 
-export function RetrospectivesClient({ projectId, retros, members, canCreate, currentUserId, today, onReload }: Props) {
+export function RetrospectivesClient({ projectId, retros, members, canCreate, currentUserId, today, isReadOnly = false, onReload }: Props) {
   const t = useTranslations('action');
   const tRetro = useTranslations('retro');
   const tCommon = useTranslations('common');
   const RETRO_VISIBILITY_OPTIONS = buildRetroVisibilityOptions(tRetro);
   const router = useRouter();
   const { withLoading } = useLoading();
-  const { showSuccess, showError } = useToast();
+  const { showSuccessKey, showErrorKey } = useToast();
   const { formatDateTimeSeconds, formatDateOnly } = useFormatters();
   // UI_PATTERNS §35: カラムソート (sessionStorage 永続化、複数列対応)
   const { sortState, setSortColumn } = useMultiSort(`sort:project-retrospectives-${projectId}`);
@@ -233,7 +234,7 @@ export function RetrospectivesClient({ projectId, retros, members, canCreate, cu
       const json = await res.json();
       const msg = json.error?.message || json.error?.details?.[0]?.message || tRetro('createFailed');
       setError(msg);
-      showError('振り返りの作成に失敗しました');
+      showErrorKey('retro.toastCreateFailed');
       return;
     }
     // PR #67: 作成成功直後にステージされた添付を一括 POST
@@ -249,7 +250,7 @@ export function RetrospectivesClient({ projectId, retros, members, canCreate, cu
 
     setIsCreateOpen(false);
     setForm({ conductedDate: today, planSummary: '', actualSummary: '', goodPoints: '', problems: '', improvements: '', visibility: 'draft' });
-    showSuccess('振り返りを作成しました');
+    showSuccessKey('retro.toastCreateSuccess');
     await reload();
   }
 
@@ -263,10 +264,10 @@ export function RetrospectivesClient({ projectId, retros, members, canCreate, cu
       body: JSON.stringify({ state: 'confirmed' }),
     });
     if (!res.ok) {
-      showError('振り返りの確定に失敗しました');
+      showErrorKey('retro.toastFinalizeFailed');
       return;
     }
-    showSuccess('振り返りを確定しました');
+    showSuccessKey('retro.toastFinalizeSuccess');
     await reload();
   }
 
@@ -278,10 +279,10 @@ export function RetrospectivesClient({ projectId, retros, members, canCreate, cu
       fetch(`/api/projects/${projectId}/retrospectives/${retroId}`, { method: 'DELETE' }),
     );
     if (!res.ok) {
-      showError('振り返りの削除に失敗しました');
+      showErrorKey('retro.toastDeleteFailed');
       return;
     }
-    showSuccess('振り返りを削除しました');
+    showSuccessKey('retro.toastDeleteSuccess');
     await reload();
   }
 
@@ -300,7 +301,7 @@ export function RetrospectivesClient({ projectId, retros, members, canCreate, cu
       }),
     );
     if (!res.ok) {
-      showError('振り返りのエクスポートに失敗しました');
+      showErrorKey('retro.toastExportFailed');
       return;
     }
     const csvText = await res.text();
@@ -437,8 +438,8 @@ export function RetrospectivesClient({ projectId, retros, members, canCreate, cu
               />
             </ResizableHead>
             <SortableResizableHead columnKey="conductedDate" defaultWidth={130} label={tRetro('conductedDate')} sortState={sortState} onSortChange={setSortColumn} />
-            <SortableResizableHead columnKey="state" defaultWidth={100} label={tRetro('state')} sortState={sortState} onSortChange={setSortColumn} />
-            {/* 2026-06-02: 担当者列を 状態 と 作成者 の間に追加 (リスク/課題一覧と同パターン)。 */}
+            {/* 2026-06-12: 状態(下書き/確定)列を一覧から撤去 (全振り返り画面と統一)。確定操作は行アクションに残置。 */}
+            {/* 2026-06-02: 担当者列を 実施日 と 作成者 の間に配置 (リスク/課題一覧と同パターン)。 */}
             <SortableResizableHead columnKey="assigneeName" defaultWidth={120} label={tRetro('assignee')} sortState={sortState} onSortChange={setSortColumn} />
             <SortableResizableHead columnKey="createdBy" defaultWidth={120} label={tRetro('createdBy')} sortState={sortState} onSortChange={setSortColumn} />
             <SortableResizableHead columnKey="createdAt" defaultWidth={150} label={tRetro('createdAt')} sortState={sortState} onSortChange={setSortColumn} />
@@ -458,7 +459,7 @@ export function RetrospectivesClient({ projectId, retros, members, canCreate, cu
           {filteredRetros.length === 0 ? (
             <TableRow>
               <TableCell
-                colSpan={filteredRetros.some((r) => r.createdBy === currentUserId || r.assigneeId === currentUserId) ? 11 : 10}
+                colSpan={filteredRetros.some((r) => r.createdBy === currentUserId || r.assigneeId === currentUserId) ? 10 : 9}
                 className="py-8 text-center text-muted-foreground"
               >
                 {tRetro('noneInList')}
@@ -478,15 +479,10 @@ export function RetrospectivesClient({ projectId, retros, members, canCreate, cu
                       stopPropagation
                       selected={selectedIds.has(retro.id)}
                       onToggle={() => toggleOneRetro(retro.id)}
-                      ariaLabel={`振り返り (${formatDateOnly(retro.conductedDate)}) を一括編集対象に追加`}
+                      ariaLabel={tRetro('bulkEditAddAria', { date: formatDateOnly(retro.conductedDate) })}
                     />
                   </TableCell>
                   <TableCell className="font-medium">{formatDateOnly(retro.conductedDate)}</TableCell>
-                  <TableCell>
-                    <Badge variant={retro.state === 'confirmed' ? 'default' : 'outline'}>
-                      {retro.state === 'confirmed' ? tRetro('confirmAction') : tRetro('draftBadge')}
-                    </Badge>
-                  </TableCell>
                   <TableCell className="text-sm text-muted-foreground">{retro.assigneeName || '—'}</TableCell>
                   <TableCell className="text-sm text-muted-foreground">{retro.createdByName || '—'}</TableCell>
                   <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{formatDateTimeSeconds(retro.createdAt)}</TableCell>
@@ -545,10 +541,13 @@ export function RetrospectivesClient({ projectId, retros, members, canCreate, cu
         open={editingRetro != null}
         onOpenChange={(v) => { if (!v) { setEditingRetro(null); bumpAttachToken(); } }}
         onSaved={reload}
+        closedProject={isReadOnly}
         readOnly={
-          editingRetro != null &&
-          editingRetro.createdBy !== currentUserId &&
-          editingRetro.assigneeId !== currentUserId
+          isReadOnly || (
+            editingRetro != null &&
+            editingRetro.createdBy !== currentUserId &&
+            editingRetro.assigneeId !== currentUserId
+          )
         }
       />
     </div>

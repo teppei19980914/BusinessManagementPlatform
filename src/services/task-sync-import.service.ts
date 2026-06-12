@@ -816,24 +816,34 @@ export async function applySyncImport(
       }
     }
 
-    // ---- UPDATE: 既存行は値が行ごとに異なるため per-row update ----
+    // ---- UPDATE: 既存行を $transaction 配列形でチャンク一括更新 (ADR-0037 / 504 対策) ----
     //   新規作成後に実行する (既存 ACT を新規 WP 配下へ移動するケースの FK を満たすため)。
-    for (const row of csvRows) {
-      if (!row.id) continue;
-      const isActivity = row.type === 'activity';
-      const updateData: Record<string, unknown> = {
-        parentTaskId: parentIdOf(row),
-        type: row.type,
-        name: row.name,
-        updatedBy: userId,
-      };
-      if (isActivity) {
-        updateData.plannedStartDate = row.plannedStartDate ? new Date(row.plannedStartDate) : null;
-        updateData.plannedEndDate = row.plannedEndDate ? new Date(row.plannedEndDate) : null;
-        updateData.plannedEffort = row.plannedEffort ?? 0;
-      }
-      await prisma.task.update({ where: { id: row.id }, data: updateData });
-      updatedIds.push(row.id);
+    //   値は行ごとに異なるため updateMany ではなく per-row update を **1 トランザクションに束ね**、
+    //   逐次 await (N 往復) を「チャンク数ぶんの往復」に削減する。配列形 $transaction は
+    //   PgBouncer transaction mode で利用可 (ADR-0032 §29)。各チャンクは原子的なので、
+    //   失敗時はそのチャンクは未適用 = updatedIds に積まれず、rollback は積み済み分のみ復元する。
+    const updateRows = csvRows.filter((r): r is SyncImportRow & { id: string } => r.id != null);
+    const UPDATE_CHUNK = 100;
+    for (let i = 0; i < updateRows.length; i += UPDATE_CHUNK) {
+      const chunk = updateRows.slice(i, i + UPDATE_CHUNK);
+      await prisma.$transaction(
+        chunk.map((row) => {
+          const isActivity = row.type === 'activity';
+          const updateData: Record<string, unknown> = {
+            parentTaskId: parentIdOf(row),
+            type: row.type,
+            name: row.name,
+            updatedBy: userId,
+          };
+          if (isActivity) {
+            updateData.plannedStartDate = row.plannedStartDate ? new Date(row.plannedStartDate) : null;
+            updateData.plannedEndDate = row.plannedEndDate ? new Date(row.plannedEndDate) : null;
+            updateData.plannedEffort = row.plannedEffort ?? 0;
+          }
+          return prisma.task.update({ where: { id: row.id }, data: updateData });
+        }),
+      );
+      for (const row of chunk) updatedIds.push(row.id);
     }
 
     // ---- DELETE (removeMode='delete'): 進捗なし REMOVE_CANDIDATE を一括論理削除 ----

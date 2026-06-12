@@ -132,8 +132,9 @@ export function EntitySyncImportDialog({
 }) {
   const t = useTranslations(i18nNamespace);
   const tAction = useTranslations('action');
+  const tCommon = useTranslations('common');
   const { withLoading } = useLoading();
-  const { showSuccess, showError } = useToast();
+  const { showSuccessKey, showErrorKey } = useToast();
   const [step, setStep] = useState<'select' | 'preview'>('select');
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<SyncDiffResult | null>(null);
@@ -212,13 +213,13 @@ export function EntitySyncImportDialog({
         /* noop */
       }
       setError(message);
-      showError('上書きインポートに失敗しました');
+      showErrorKey('common.syncImportToastFailed');
       return;
     }
 
     const json = await res.json();
     handleClose();
-    showSuccess('上書きインポートが完了しました');
+    showSuccessKey('common.syncImportToastSuccess');
     await onImported();
     alert(t('importComplete', {
       added: json.data.added,
@@ -311,7 +312,7 @@ export function EntitySyncImportDialog({
                         className={r.hasProgress ? 'text-destructive font-medium' : ''}
                       >
                         {r.hasProgress && '⚠ '}
-                        「{r.name}」
+                        {tCommon('nameQuoted', { name: r.name })}
                         {r.hasProgress && t('removeCandidateBlockedSuffix')}
                       </li>
                     ))}
@@ -462,6 +463,7 @@ function RadioOption({
  * UI 側はスタイルと現状の使用量バー表示のみを担当。
  */
 function StoragePrecheckPanel({ precheck }: { precheck: StoragePrecheck }) {
+  const tCommon = useTranslations('common');
   const isBlocker = precheck.isBlocker;
   return (
     <div
@@ -478,18 +480,23 @@ function StoragePrecheckPanel({ precheck }: { precheck: StoragePrecheck }) {
           isBlocker ? 'mb-1 font-semibold text-destructive' : 'mb-1 font-semibold'
         }
       >
-        {isBlocker ? '⛔ DB 容量の上限超過予測 (取込は実行できません)' : '⚠ DB 容量の警告'}
+        {isBlocker
+          ? tCommon('storagePrecheckTitleBlocker')
+          : tCommon('storagePrecheckTitleWarning')}
       </div>
       <p className="mb-2">{precheck.message}</p>
       <div className="grid grid-cols-1 gap-1 text-xs text-muted-foreground sm:grid-cols-3">
         <div>
-          現在の DB 使用量: <strong>{formatBytesShort(precheck.currentBytes)}</strong>
+          {tCommon('storagePrecheckLabelCurrent')}{' '}
+          <strong>{formatBytesShort(precheck.currentBytes)}</strong>
         </div>
         <div>
-          取込後の予測値: <strong>{formatBytesShort(precheck.estimatedPostImportBytes)}</strong>
+          {tCommon('storagePrecheckLabelEstimated')}{' '}
+          <strong>{formatBytesShort(precheck.estimatedPostImportBytes)}</strong>
         </div>
         <div>
-          無料枠: <strong>{formatBytesShort(precheck.freeQuotaBytes)}</strong>
+          {tCommon('storagePrecheckLabelFreeQuota')}{' '}
+          <strong>{formatBytesShort(precheck.freeQuotaBytes)}</strong>
         </div>
       </div>
     </div>

@@ -21,7 +21,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { generateDailyNotifications, cleanupReadNotifications } from '@/services/notification.service';
-import { deleteExpiredPreviews } from '@/services/external-data-import.service';
+import { deleteExpiredPreviews } from '@/services/import/tenant-import-preview.service';
 // ADR-0020 (2026-05-25): checkAndStartGracePeriod は 4 段階プラン廃止に伴い無効化。
 //   write 拒否は assertStorageLimitInTx (storage-guard.service) の 50GB ハードキャップに一本化。
 // 5 回目検証 R で追加: drift detection batch を日次実行 (ADR-0020 §3.5 / §8.3)

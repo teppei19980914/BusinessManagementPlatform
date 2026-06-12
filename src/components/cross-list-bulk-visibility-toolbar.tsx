@@ -90,7 +90,7 @@ export function CrossListBulkVisibilityToolbar({
   const t = useTranslations('bulkVisibility');
   const tAction = useTranslations('action');
   const { withLoading } = useLoading();
-  const { showSuccess, showError } = useToast();
+  const { showSuccessKey, showErrorKey } = useToast();
   const [bulkOpen, setBulkOpen] = useState(false);
   const [bulkVisibility, setBulkVisibility] = useState<string>(visibilityOptions[0]?.value ?? '');
   const [error, setError] = useState('');
@@ -117,13 +117,13 @@ export function CrossListBulkVisibilityToolbar({
       const j = await res.json().catch(() => ({}));
       const msg = j?.message || j?.error || t('bulkUpdateFailed');
       setError(msg);
-      showError(`${entityLabel}の一括更新に失敗しました`);
+      showErrorKey('bulkVisibility.toastBulkUpdateFailed', { entityLabel });
       return;
     }
     const total = selectedIds.size;
     setBulkOpen(false);
     onSelectionClear();
-    showSuccess(`${total} 件の${entityLabel}を一括更新しました`);
+    showSuccessKey('bulkVisibility.toastBulkUpdateSuccess', { count: total, entityLabel });
     await onApplied();
   }
 

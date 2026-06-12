@@ -27,6 +27,7 @@ import {
   authorizeMemoAttachment,
   createAttachment,
   getEntityVisibility,
+  isAttachmentTargetFullyClosed,
   listAttachments,
   resolveProjectIds,
 } from '@/services/attachment.service';
@@ -234,6 +235,20 @@ export async function POST(req: NextRequest) {
 
   const forbidden = await authorize(user, parsed.data.entityType, parsed.data.entityId, 'write');
   if (forbidden) return forbidden;
+
+  // 2026-06-12: クローズ済みPJ (読み取り専用) の資産には添付を追加できない
+  //   (UI は編集ダイアログ readOnly で非表示。API でも直接呼出を防御)。
+  if (await isAttachmentTargetFullyClosed(parsed.data.entityType, parsed.data.entityId, user.tenantId)) {
+    return NextResponse.json(
+      {
+        error: {
+          code: 'PROJECT_CLOSED',
+          message: 'このプロジェクトはクローズ済み (読み取り専用) のため添付を追加できません',
+        },
+      },
+      { status: 403 },
+    );
+  }
 
   // PR-5 (2026-05-15): ストレージ容量 Pre-check
   const quotaErr = await requireStorageQuotaForWrite(

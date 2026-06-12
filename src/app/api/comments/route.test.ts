@@ -23,6 +23,11 @@ vi.mock('@/lib/db', () => ({
     task: { findFirst: vi.fn() },
     stakeholder: { findFirst: vi.fn() },
     customer: { findFirst: vi.fn() },
+    // 2026-06-12: コメント投稿のクローズ済みPJガード (isCommentTargetFullyClosed) が参照する
+    //   多対多ジャンクション。既定は空配列 = 「紐付く全PJが closed」ではない (= ブロックしない)。
+    knowledgeProject: { findMany: vi.fn() },
+    riskIssueProject: { findMany: vi.fn() },
+    retrospectiveProject: { findMany: vi.fn() },
   },
 }));
 
@@ -67,6 +72,11 @@ function postReq(body: unknown): NextRequest {
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(prisma.comment.findMany).mockResolvedValue([] as never);
+  // 2026-06-12: クローズ済みPJガードの多対多クエリは既定で空 (= ブロックしない)。
+  //   個別テストで「全PJ closed」を検証する場合のみ closed な project を返すよう上書きする。
+  vi.mocked(prisma.knowledgeProject.findMany).mockResolvedValue([] as never);
+  vi.mocked(prisma.riskIssueProject.findMany).mockResolvedValue([] as never);
+  vi.mocked(prisma.retrospectiveProject.findMany).mockResolvedValue([] as never);
   vi.mocked(prisma.comment.create).mockResolvedValue({
     id: 'c-1',
     entityType: 'issue',
@@ -180,6 +190,37 @@ describe('POST /api/comments — public-or-draft entity の write 認可', () =>
 
     const res = await POST(postReq({ entityType: 'issue', entityId: ENTITY_ID, content: 'hi' }));
     expect(res.status).toBe(403);
+  });
+
+  // 2026-06-12: クローズ済みPJ (= 読み取り専用) の資産にはコメント投稿不可。
+  it('knowledge public: 紐付く全PJが closed なら write 不可 (403 PROJECT_CLOSED)', async () => {
+    vi.mocked(getAuthenticatedUser).mockResolvedValue({ id: 'u-creator', systemRole: 'general' } as never);
+    vi.mocked(prisma.knowledge.findFirst).mockResolvedValue({
+      visibility: 'public', createdBy: 'u-creator',
+    } as never);
+    // 紐付く全プロジェクトが closed
+    vi.mocked(prisma.knowledgeProject.findMany).mockResolvedValue([
+      { project: { status: 'closed' } },
+    ] as never);
+
+    const res = await POST(postReq({ entityType: 'knowledge', entityId: ENTITY_ID, content: 'hi' }));
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(body.error.code).toBe('PROJECT_CLOSED');
+  });
+
+  it('knowledge public: closed と open の両PJに紐付くなら write 可 (稼働中PJで生きている)', async () => {
+    vi.mocked(getAuthenticatedUser).mockResolvedValue({ id: 'u-creator', systemRole: 'general' } as never);
+    vi.mocked(prisma.knowledge.findFirst).mockResolvedValue({
+      visibility: 'public', createdBy: 'u-creator',
+    } as never);
+    vi.mocked(prisma.knowledgeProject.findMany).mockResolvedValue([
+      { project: { status: 'closed' } },
+      { project: { status: 'active' } },
+    ] as never);
+
+    const res = await POST(postReq({ entityType: 'knowledge', entityId: ENTITY_ID, content: 'hi' }));
+    expect(res.status).toBe(201);
   });
 });
 

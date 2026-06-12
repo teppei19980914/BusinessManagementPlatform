@@ -1,15 +1,18 @@
 /**
- * E2E シナリオ: 見積もり管理 (PR #96)
+ * E2E シナリオ: 見積もり管理
  *
- * カバー範囲:
- *   - /projects/[id]/estimates 画面が render される
- *   - 見積もり項目を API で作成 → UI 一覧に表示される
- *   - UI から確定 → 状態バッジが「確定」に切替わる
+ * カバー範囲 (v1.2.0 追加分):
+ *   - /projects/[id]/estimates 画面が render される (サマリパネルを含む)
+ *   - 手動登録ダイアログで見積追加 → 「手動」バッジが一覧に表示
+ *   - ツールで見積もるダイアログで係数ベース登録 → 「係数」バッジ + ツール名表示
+ *   - 係数モード自動計算プレビュー (デフォルト scratch/中/中 → 16h)
+ *   - API で作成した見積を UI で確定 → 状態バッジが「確定」に切替わる
  *   - UI から削除 (確定済は削除ボタン非表示、未確定のみ削除)
+ *   - 手動 + 係数の混在一覧表示
  *
  * 方針:
- *   見積フォームは 7 フィールド + NumberInput + Select の組み合わせ。
- *   作成は API で軽量化、UI は表示/確定/削除の state 遷移に集中。
+ *   API での軽量作成は事前準備のみに使用し、UI テストは画面操作に集中する。
+ *   確定・削除の waitForResponse パターンは PR #96 hotfix 5 の教訓を継承。
  */
 
 import { test, expect, type BrowserContext, type Page } from '@playwright/test';
@@ -33,17 +36,17 @@ test.describe.configure({ mode: 'serial', retries: 0 });
 
 async function createEstimateViaApi(
   page: Page,
-  projectId: string,
-  params: { itemName: string },
+  pid: string,
+  params: { itemName: string; category?: string },
 ): Promise<{ id: string }> {
-  const res = await page.request.post(`/api/projects/${projectId}/estimates`, {
+  const res = await page.request.post(`/api/projects/${pid}/estimates`, {
     data: {
       itemName: params.itemName,
-      category: 'requirements',
-      devMethod: 'scratch',
+      category: params.category ?? 'requirements',
       estimatedEffort: 10,
       effortUnit: 'person_day',
-      rationale: 'PR #96 E2E: 見積 happy path 検証',
+      inputMode: 'direct',
+      notes: 'PR #96 E2E: 見積 happy path 検証',
     },
   });
   if (!res.ok()) {
@@ -52,7 +55,7 @@ async function createEstimateViaApi(
   return (await res.json()).data;
 }
 
-test.describe('@feature:project:estimates 見積もり管理 (PR #96)', () => {
+test.describe('@feature:project:estimates 見積もり管理', () => {
   test.beforeAll(async ({ browser }) => {
     await ensureInitialAdmin(ADMIN_EMAIL, ADMIN_PW, { forcePasswordChange: false });
 
@@ -60,7 +63,6 @@ test.describe('@feature:project:estimates 見積もり管理 (PR #96)', () => {
     sharedPage = await sharedContext.newPage();
 
     await sharedPage.goto('/login');
-    // ADR-0016 (2026-05-20): 組織 ID 必須化
     await sharedPage.getByLabel('組織 ID').fill('default');
     await sharedPage.getByLabel('メールアドレス').fill(ADMIN_EMAIL);
     await sharedPage.getByLabel('パスワード').fill(ADMIN_PW);
@@ -78,15 +80,164 @@ test.describe('@feature:project:estimates 見積もり管理 (PR #96)', () => {
     await disconnectDb();
   });
 
-  test('/estimates 画面が render される (合計工数表示確認)', async () => {
+  // ============================================================
+  // 基本表示
+  // ============================================================
+
+  test('/estimates 画面が render される (サマリパネル + 合計工数表示確認)', async () => {
     const page = sharedPage;
     await page.goto(`/projects/${projectId}/estimates`);
     await page.waitForLoadState('networkidle');
-    // Phase A 要件 6 (2026-04-28): 「見積もり管理」h2 タイトル削除に伴い、
-    //   見積タブ固有の「合計工数:」表示で render 検証する形に変更。
     await expect(page.getByText(/^合計工数:/)).toBeVisible({ timeout: 10_000 });
+    // v1.2.0: サマリパネルのバッファ率入力が表示される
+    await expect(page.getByRole('spinbutton').first()).toBeVisible();
     await snapshotStep(page, 'estimates-empty');
   });
+
+  // ============================================================
+  // 手動登録
+  // ============================================================
+
+  test('「手動で登録」ボタン → ダイアログで見積作成 → 「手動」バッジが表示される', async () => {
+    const page = sharedPage;
+    await page.goto(`/projects/${projectId}/estimates`);
+    await page.waitForLoadState('networkidle');
+
+    const directLabel = withRunId('手動設計工程');
+
+    // 手動で登録ボタンを押す
+    await page.getByRole('button', { name: '手動で登録' }).click();
+    await expect(page.getByRole('dialog')).toBeVisible({ timeout: 5_000 });
+
+    // フォームに入力
+    await page.getByRole('dialog').getByLabel('項目名').fill(directLabel);
+    await page.getByRole('dialog').locator('input[type="number"]').first().fill('8');
+    await page.getByRole('dialog').getByRole('button', { name: '追加' }).click();
+
+    // ダイアログが閉じる & 一覧に反映
+    await expect(page.getByRole('dialog')).not.toBeVisible({ timeout: 10_000 });
+    await page.reload({ waitUntil: 'networkidle' });
+
+    const row = page.locator('tbody tr').filter({ hasText: directLabel }).first();
+    await expect(row).toBeVisible({ timeout: 10_000 });
+    // 「手動」バッジが表示されること
+    await expect(row.getByText('手動')).toBeVisible();
+    await snapshotStep(page, 'estimates-direct-created');
+  });
+
+  // ============================================================
+  // 係数ベース登録
+  // ============================================================
+
+  test('「ツールで見積もる」ボタン → 係数フォームが表示される', async () => {
+    const page = sharedPage;
+    await page.goto(`/projects/${projectId}/estimates`);
+    await page.waitForLoadState('networkidle');
+
+    await page.getByRole('button', { name: 'ツールで見積もる' }).click();
+    await expect(page.getByRole('dialog')).toBeVisible({ timeout: 5_000 });
+
+    // 係数フォームの主要要素が存在する
+    await expect(page.getByRole('dialog').getByText('開発ツール')).toBeVisible();
+    await expect(page.getByRole('dialog').getByText('規模')).toBeVisible();
+    await expect(page.getByRole('dialog').getByText('難易度')).toBeVisible();
+    await expect(page.getByRole('dialog').getByText(/見積工数/)).toBeVisible();
+
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('dialog')).not.toBeVisible({ timeout: 5_000 });
+  });
+
+  test('係数フォームのデフォルト値で自動計算プレビューが表示される (scratch/中/中 → 16h)', async () => {
+    const page = sharedPage;
+    await page.goto(`/projects/${projectId}/estimates`);
+    await page.waitForLoadState('networkidle');
+
+    await page.getByRole('button', { name: 'ツールで見積もる' }).click();
+    await expect(page.getByRole('dialog')).toBeVisible({ timeout: 5_000 });
+
+    // デフォルト (scratch/scale=1.0/difficulty=1.0/method=1.0/baseHours=16) → 16.0h
+    await expect(page.getByRole('dialog').getByText(/16\.0\s*h/)).toBeVisible({ timeout: 5_000 });
+
+    await page.keyboard.press('Escape');
+  });
+
+  test('係数モードで見積作成 → 「係数」バッジ + ツール名が表示される', async () => {
+    const page = sharedPage;
+    await page.goto(`/projects/${projectId}/estimates`);
+    await page.waitForLoadState('networkidle');
+
+    const coeffLabel = withRunId('WinActor自動化工程');
+
+    await page.getByRole('button', { name: 'ツールで見積もる' }).click();
+    await expect(page.getByRole('dialog')).toBeVisible({ timeout: 5_000 });
+
+    // 項目名
+    await page.getByRole('dialog').getByLabel('項目名').fill(coeffLabel);
+
+    // ツール選択: WinActor を選ぶ
+    const toolSelect = page.getByRole('dialog').locator('select').first();
+    await toolSelect.selectOption('winactor');
+
+    // カテゴリ区分: development のまま (デフォルト)
+    // プレビューが更新されるのを待機
+    await expect(page.getByRole('dialog').getByText(/見積工数/)).toBeVisible();
+
+    // 追加ボタンが有効であることを確認してクリック
+    const addBtn = page.getByRole('dialog').getByRole('button', { name: '追加' });
+    await expect(addBtn).not.toBeDisabled({ timeout: 5_000 });
+    await addBtn.click();
+
+    await expect(page.getByRole('dialog')).not.toBeVisible({ timeout: 10_000 });
+    await page.reload({ waitUntil: 'networkidle' });
+
+    const row = page.locator('tbody tr').filter({ hasText: coeffLabel }).first();
+    await expect(row).toBeVisible({ timeout: 10_000 });
+    // 「係数」バッジが表示されること
+    await expect(row.getByText('係数')).toBeVisible();
+    // WinActor のツール名が表示されること
+    await expect(row.getByText('WinActor')).toBeVisible();
+    await snapshotStep(page, 'estimates-coeff-created');
+  });
+
+  // ============================================================
+  // 混在一覧・サマリ
+  // ============================================================
+
+  test('手動 + 係数の見積が混在した一覧が表示される', async () => {
+    const page = sharedPage;
+    await page.goto(`/projects/${projectId}/estimates`);
+    await page.waitForLoadState('networkidle');
+
+    // 手動・係数のどちらかのバッジが複数存在する
+    const badges = page.locator('tbody').getByText(/手動|係数/);
+    await expect(badges.first()).toBeVisible({ timeout: 5_000 });
+
+    // サマリパネルに小計 > 0 が反映されている (合計工数: 数値)
+    const totalText = page.getByText(/^合計工数:/);
+    await expect(totalText).toBeVisible();
+    await snapshotStep(page, 'estimates-mixed-list');
+  });
+
+  test('サマリパネルのバッファ率を変更すると合計表示が変わる', async () => {
+    const page = sharedPage;
+    await page.goto(`/projects/${projectId}/estimates`);
+    await page.waitForLoadState('networkidle');
+
+    // バッファ率入力欄を探す (最初の spinbutton)
+    const bufferInput = page.getByRole('spinbutton').first();
+    await expect(bufferInput).toBeVisible();
+
+    // デフォルト 20% を 30% に変更
+    await bufferInput.fill('30');
+    await bufferInput.press('Tab');
+
+    // バッファ (30%) のテキストが表示される
+    await expect(page.getByText(/バッファ.*30%/)).toBeVisible({ timeout: 5_000 });
+  });
+
+  // ============================================================
+  // 確定・削除 (既存フロー)
+  // ============================================================
 
   test('見積もり項目を API で作成 → UI 一覧に表示される', async () => {
     const page = sharedPage;
@@ -94,7 +245,6 @@ test.describe('@feature:project:estimates 見積もり管理 (PR #96)', () => {
 
     await page.goto(`/projects/${projectId}/estimates`);
     await page.waitForLoadState('networkidle');
-    // 一覧行は tbody tr + .first() (LESSONS_LEARNED §4.11)
     await expect(
       page.locator('tbody tr').filter({ hasText: ESTIMATE_ITEM }).first(),
     ).toBeVisible({ timeout: 10_000 });
@@ -104,10 +254,6 @@ test.describe('@feature:project:estimates 見積もり管理 (PR #96)', () => {
   test('UI から見積を確定 → 確定/削除ボタンが消え、バッジ「確定」が残る', async () => {
     const page = sharedPage;
 
-    // PATCH 応答を click 前に予約 (waitForResponse は register が click より先に必要)。
-    // router.refresh() は fire-and-forget で click の await を経由しないため、
-    // `waitForLoadState('networkidle')` だけでは fetch flight を捕捉できず
-    // 誤って 0ms で解決する (PR #96 hotfix 5 事例)。
     const confirmRes = page.waitForResponse(
       (r) =>
         r.url().includes(`/api/projects/${projectId}/estimates/`)
@@ -120,24 +266,12 @@ test.describe('@feature:project:estimates 見積もり管理 (PR #96)', () => {
     const res = await confirmRes;
     expect(res.ok(), `PATCH confirm failed: ${res.status()}`).toBeTruthy();
 
-    // LESSONS §4.20: router.refresh() は fire-and-forget + React 描画の非決定性で
-    // waitForLoadState('networkidle') だけでは race が残る (PR #96 hotfix 5 / PR #97
-    // CI で再発確認)。確定後の UI 検証は page.reload() で DB の真の状態を強制取得する
-    // 方が信頼できる。デメリット: 「router.refresh による自動再描画」の検証は犠牲に
-    // なるが、それは React/Next.js framework の責務であり spec 08 の対象外と割り切る。
+    // LESSONS §4.20: router.refresh race 回避のため page.reload で DB 真状態を取得
     await page.reload({ waitUntil: 'networkidle' });
 
-    // `toContainText('確定')` は行内の「確定」ボタン文字列にもマッチするため
-    // 確定前/後を識別できない。確定後の UI 変化は以下の 2 つで判定する:
-    //   1. 「確定」ボタンが消える (button 自体が DOM から外れる)
-    //   2. 「削除」ボタンも消える (確定済は削除不可の仕様)
-    // Badge は残るが、視覚的に「未確定」が「確定」に変わるのは snapshot で視認する。
     const rowAfter = page.locator('tbody tr').filter({ hasText: ESTIMATE_ITEM }).first();
-    await expect(rowAfter.getByRole('button', { name: '確定' })).toHaveCount(0, {
-      timeout: 10_000,
-    });
+    await expect(rowAfter.getByRole('button', { name: '確定' })).toHaveCount(0, { timeout: 10_000 });
     await expect(rowAfter.getByRole('button', { name: '削除' })).toHaveCount(0);
-    // 「未確定」バッジが消えていること (以前の状態が完全にクリアされた確証)
     await expect(rowAfter).not.toContainText('未確定');
 
     await snapshotStep(page, 'estimates-confirmed');
@@ -150,7 +284,6 @@ test.describe('@feature:project:estimates 見積もり管理 (PR #96)', () => {
     await page.goto(`/projects/${projectId}/estimates`);
     await page.waitForLoadState('networkidle');
 
-    // DELETE 完了を明示的に待機 (click 前に予約)
     const deleteRes = page.waitForResponse(
       (r) =>
         r.url().includes(`/api/projects/${projectId}/estimates/`)
@@ -162,8 +295,7 @@ test.describe('@feature:project:estimates 見積もり管理 (PR #96)', () => {
     const res = await deleteRes;
     expect(res.ok(), `DELETE failed: ${res.status()}`).toBeTruthy();
 
-    // LESSONS §4.20: 確定テストと同じく router.refresh race 回避のため page.reload
-    // で DB 真状態を強制取得 (waitForLoadState 単独では 1ms で即解決する race)。
+    // LESSONS §4.20: router.refresh race 回避
     await page.reload({ waitUntil: 'networkidle' });
 
     await expect(

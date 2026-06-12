@@ -22,10 +22,10 @@
 | 顧客管理 (admin) | 2 | `/customers` `/customers/[id]` |
 | 運用管理 (admin) | 3 | `/admin/users` `/admin/audit-logs` `/admin/role-changes` |
 | 設定 | 3 | `/settings` `/settings/tenant` `/settings/tenant/billing` |
-| データ移行 (admin) | 1 | `/settings/tenant/external-import` |
+| データ移行 (admin) | 2 | `/settings/tenant/migration-import` `/settings/tenant/api-import` |
 | ヘルプ・ガイド | 2 | `/help` `/guide` |
-| 運営者専用 (super_admin) | 12 | `/admin/super` 配下 |
-| **合計 (dashboard 40 + auth 5)** | **45** | (うち project 配下 2 件 = legacy redirect) |
+| 運営者専用 (super_admin) | 15 | `/admin/super` 配下 |
+| **合計 (dashboard 43 + auth 5)** | **48** | (うち project 配下 2 件 = legacy redirect) |
 
 ### §0.1 認証画面 (auth route group — 未ログインアクセス可)
 
@@ -33,7 +33,7 @@
 |---|---|---|---|
 | ログイン | `/login` | 組織 ID (Tenant.slug) + メール + パスワードで認証。CWE-601 対策の callbackUrl sanitize。localStorage のテナント履歴 (LRU 5 件 / 90 日 expire) を候補表示。セットアップガイドリンク併設 | 全員 (未認証可) |
 | MFA 検証 | `/login/mfa` | パスワード認証後の TOTP 6 桁検証。MFA 未有効 or 既検証なら callbackUrl へ自動 redirect。検証成功で JWT update → dashboard | password 認証済セッション保持者 |
-| サインアップ | `/signup` | 公開セルフサインアップ。テナント情報 + 請求先 (個人/法人切替) + 初期 admin を 1 フォーム入力。honeypot + IP rate limit。送信後は検証メール経由でパスワード設定 | 全員 (未認証可) |
+| サインアップ | `/signup` | 公開セルフサインアップ。入力順は **組織情報 → 初期管理者 → プラン選択 → (Expert/Pro のみ) 請求先** (feat/signup-friction-reduction 2026-06-12: メールをプランより前に置き 3 層 eligibility をプラン選択へ反映)。**組織 ID は入力欄なし**=サーバが数字連番を自動採番 (作成時に確定、衝突時リトライ)。採番値は成功画面と招待メールで本人へ案内。Beginner は請求先非表示・クレカ不要。honeypot + IP rate limit。送信後の成功画面は **自動採番された組織 ID + メール予告 (差出人 noreply@tasukiba.com / 件名「たすきば - アカウントの設定」/ 到着目安 1 分 / 24h 有効)** + 再送 + トラブルシュート。検証メール経由でパスワード設定 | 全員 (未認証可) |
 | パスワード再設定 | `/reset-password` | 2 ステップ (verify → reset)。組織 slug + メールで本人確認 → reset token → 新パスワード設定。メールリンク経由の `?tenant=` 初期値取得 (ADR-0016) | 全員 (未認証可) |
 | 初期パスワード設定 | `/setup-password` | 招待/検証メールリンクからの初回パスワード設定。super_admin のみ MFA 登録 (QR + TOTP) が必須、admin/general は即時有効化。完了後リカバリーコード表示 | 検証トークン保持者 |
 
@@ -46,6 +46,7 @@
 | プロジェクト詳細 | `/projects/[id]` | 概要 + タブハブ (WBS/ガント/リスク/課題/振り返り/見積/メンバー/参考)。各タブは client 遅延取得。`?tab=` `?suggestions=1` で deep link。非メンバー + 非 admin は `notFound()` | ProjectMember or admin | §11.2 |
 | WBS / タスク | `/projects/[id]/tasks` | タスク階層管理・一括編集・複製・WBS export/import (sync) | ProjectMember | §11.4 |
 | ガントチャート | `/projects/[id]/gantt` | スケジュール時系列可視化 (表示専用)。今日列を初期スクロール位置に | ProjectMember | §11.5 |
+| 分析 (タブ) | `/projects/[id]` 分析タブ | 5 パネル: WBS 予実カーブ / 担当者別 週次消化工数 / 予定 vs 実績工数 / 作業負担 / 日次工数 (8h 上限ヒートマップ)。表示専用 | PM/PL + admin (closed 可) | §11.5b |
 | リスク一覧 (タブ) | `/projects/[id]/risks` | プロジェクト配下リスク CRUD (type=risk) | ProjectMember | §11.7 |
 | 課題一覧 (タブ) | `/projects/[id]/issues` | プロジェクト配下課題 CRUD (type=issue)。RisksClient を typeFilter='issue' で再利用 | ProjectMember | §11.7 |
 | 振り返り (タブ) | `/projects/[id]/retrospectives` | プロジェクト振り返り作成・確定・ナレッジ化 | ProjectMember | §11.9 |
@@ -84,7 +85,8 @@
 | ユーザ個別設定 | `/settings` | アカウント情報 + 画面テーマ (10 種) + パスワード変更 + MFA + **他の端末からログアウト** の 5 セクション。**言語/TZ は個人設定になく、テナント設定 (admin) に集約済 (PR-1 #327)**。DB 取得失敗時はフォールバック描画 | 認証済ユーザ | §22.A / §23 / §24 / §25 |
 | テナント設定 | `/settings/tenant` | プラン変更 (Expert↔Pro 即時 / Beginner ダウングレード禁止) + 月次予算上限 + 当月使用量 + DB/ファイルストレージ従量課金 + Stripe カード情報 + 縮退モード状態 | admin のみ (super_admin/general は redirect) | §0.6 |
 | 請求履歴 (テナント) | `/settings/tenant/billing` | 自テナント直近 6 ヶ月の BillingHistory + 当月請求予定 + 支払期日 (監査 C-G6 解消) | admin のみ | — |
-| 外部データ移行 | `/settings/tenant/external-import` | 4 ステップウィザード: ① ファイル/エンティティ選択 + (RiskIssue の) デフォルトプロジェクト → ② カラムマッピング (CSV 列 → サービスフィールド) → ③ dry-run プレビュー (件数 + エラー + コスト見積) → ④ 取込結果 | admin のみ (general/super は redirect) | §0.6 |
+| CSV データ移行 | `/settings/tenant/migration-import` | 4 ステップ: ① 種類ごとに CSV 選択 → ② カラムマッピング (列 → 画面項目、既定値可) → ③ dry-run プレビュー (件数 + エラー + 想定課金) → ④ 取込結果。7 種 (顧客/プロジェクト/WBS/リスク課題/ナレッジ/振り返り)、新規作成のみ | admin のみ (general/super は redirect) | §0.6 |
+| API 連携インポート (ベータ) | `/settings/tenant/api-import` | Notion/Backlog/kintone/Pleasanter/Google スプレッドシートに直接接続し 7 種を取込。接続→マッピング→プレビュー→取込。トークンは非保存 | admin のみ | §0.6 |
 | ヘルプ・FAQ | `/help` | 一般 FAQ (accordion) + テナント管理者向け生成 AI/課金説明 (admin/super_admin のみ表示)。たすきフクロウ AI ヘルプチャット | 認証済ユーザ | — |
 | 使い方ガイド | `/guide` | サインアップ直後の全体像 + ロール別やること + 用語。systemRole + ProjectMember.projectRole からユーザに合うセクションのみ表示 | 認証済ユーザ | — |
 
@@ -106,6 +108,9 @@
 | cron 実行履歴 | `/admin/super/cron-history` | 直近 24h サマリ + 全 cron 動作概要 + 実行履歴 100 件 (status バッジ + duration + stale running 警告で Netlify 10s timeout 検知) | cron-history |
 | メール送付失敗 | `/admin/super/email-failures` | 直近 24h の success=false な EmailSendLog 一覧 (type 別集計、recipient はハッシュ化/ドメイン部のみ)。`?hours=` `?limit=` 制御 | email-send-log |
 | Stripe DLQ | `/admin/super/stripe-dlq` | Webhook DLQ/未処理 + Usage Record DLQ/未送信の一覧 + 再投入ボタン (retryCount リセット) | stripe-dlq |
+| 周知バナー一覧 | `/admin/super/banners` | 全ユーザ共通の帯メッセージ (ADR-0036) の履歴一覧。状態バッジ (表示中/予約/終了/停止) + 編集/複製/取り下げ・再開/削除。1 本制約 (期間重複禁止) | system-banner |
+| 周知バナー新規作成 | `/admin/super/banners/new` | メッセージ/緊急度(高赤・中黄・低青)/表示期間/有効を入力して作成。`?from=<id>` で複製 prefill。期間重複は 409 で弾く | system-banner |
+| 周知バナー編集 | `/admin/super/banners/[id]/edit` | 既存バナーの内容・緊急度・期間・有効/無効を変更 | system-banner |
 
 ---
 
@@ -401,7 +406,12 @@
 
 **上限・性能 (ADR-0032 で改訂)**:
 - 業務上のハード行数上限は撤廃 (旧 500 件)。目安 (`TASK_SYNC_IMPORT_WARN_ROWS`=300) 超は「処理に時間がかかる場合がある」警告のみでブロックしない。DoS 安全弁として `TASK_SYNC_IMPORT_MAX_ROWS`=2000 を route 層に残す
-- 本実行 (`applySyncImport`) はバッチ化 (新規行を app 側 UUID 採番で level 昇順に `createMany` / WP 集計は `recalculateAllProjectWps` で 1 パス / 削除は `updateMany`)。旧実装の 1 行ずつ create + id ごと findUnique による逐次往復で ~100 行が Netlify 10 秒上限を超え 504 になっていた問題を解消
+- 本実行 (`applySyncImport`) はバッチ化:
+  - 新規行は app 側 UUID 採番で level 昇順に `createMany` (ADR-0032)
+  - **既存行の UPDATE は `$transaction` 配列形で 100 件ごとにチャンク一括** (ADR-0037。旧実装は 1 行ずつ `await update` の逐次往復で、更新主体の WBS が Netlify 10 秒上限を超え 504 になっていた)
+  - **WP 集計は `recalculateAllProjectWps` を「全タスク 1 fetch + メモリ集計 (深度降順) + 変更 WP のみ `$transaction` 一括 update」に** (ADR-0037。旧実装は WP ごとに findUnique+update の O(WP) 逐次往復で、これ単体でも 10 秒に迫っていた)。往復は WBS のサイズに依存しないほぼ定数になる
+  - 削除候補は `updateMany` で一括論理削除
+  - 最終的な格納値・監査内容は旧逐次実装と同一
 
 **並行編集検出 (OCC, PR #420 [C2])**:
 - dry-run 時点で `project` 配下 task の最大 `updatedAt` を `snapshotAt` として返す
@@ -506,6 +516,82 @@
 | ステータス絞り込み | 全ロール | 常時可 |
 | タスク詳細へ遷移 | 全ロール | 常時可 |
 | ガント直接編集 | なし | 常に不可 |
+
+## 11.5b 分析タブ (WBS 予実カーブ) — v1.2.0
+
+> **★実装ミラー★** 本節は `src/app/(dashboard)/projects/[projectId]/analysis/` (analysis-client.tsx / analysis-panels.ts / analysis-period.ts) / `src/services/analytics.service.ts` (getWbsCompletionCurve / getAssigneeWeeklyEffort / getAssigneeEffortVariance / getAssigneeWorkload / getAssigneeDailyCapacity + AnalyticsRange) / `src/lib/analytics-range.ts` / `src/components/charts/` (time-series-chart / stacked-bar-chart / grouped-bar-chart / heatmap-table) に同期。ADR-0038 参照。
+
+### 画面目的
+プロジェクト詳細の **分析** タブ (タブ並び: 「ナレッジ一覧」と「参考」の間)。PM/PL が「完了に向けた現在地」と「生産性 (消化ペース)」をグラフで把握する。パネルを縦に並べる構成で、現状は 5 枚。**表示名は「何を確認できるか」が分かる短い名前**にしている (本節は概念名で記述。表示名↔概念の対応は下表):
+
+| # | 表示名 (UI チップ・i18n title) | 概念 (本節での呼称) |
+|---|---|---|
+| 1 | 進捗の遅れ・先行 | WBS 予実カーブ |
+| 2 | 消化ペースと効率 | 担当者別 週次消化工数 |
+| 3 | 見積の精度（予実差） | 担当者別 予定 vs 実績 工数 |
+| 4 | 作業量の偏り | 担当者別 作業負担 |
+| 5 | 日別の負荷（8h超） | 担当者別 日次工数 (1 日 8h 上限チェック) |
+
+### ツールバー (表示グラフの選択 + 対象期間) — v1.2.0 追補
+- タブ最上部に sticky なツールバーを置く (`analysis-client.tsx`)。
+- **表示グラフ (複数選択チップ)**: 5 パネルのタイトルをチップ (button) で並べ、ON/OFF を切替。**OFF のパネルは fetch もしない (遅延)**。**初期表示は予実カーブ 1 枚のみ** (`DEFAULT_VISIBLE=['wbs-completion']`。縦並びの圧迫を避ける)。全 OFF のときは「表示するグラフを選んでください」の空状態。
+- **対象期間 (プリセット + カスタム)**: `全期間 / 直近1ヶ月 / 直近3ヶ月 / 直近6ヶ月 / カスタム(from–to)`。期間は**パネルの性質ごとに向きが異なる** (`analysis-period.ts#resolveRanges` + パネルの `rangeKind`):
+  - **過去向き (`past`)**: ①予実カーブ / ②週次消化工数 / ③予実差。`[today-Nヶ月, today]` (カスタムは from–to) で対象を絞る。①は横軸クリップ (累積値は維持)、②③は対象タスクを絞り**効率・合計・順位を再集計** (サーバ側)。
+  - **未来向き (`future`)**: ⑤日次工数。起点は常に本日、`to` (= today+Nヶ月 / カスタム to) で未来の終端を絞る。`to` が本日より前なら空。プリセット時はその月数を**今後側**に適用。注記「対象期間は今後側に適用」を表示。
+  - **影響なし (`none`)**: ④作業負担。現在の残作業のスナップショットのため期間指定を反映しない。期間指定中は注記を表示。
+- **永続化**: 表示グラフ・期間は `sessionStorage` に**ユーザ ID でキーを分離** (`analysis-visible:{userId}` / `analysis-period:{userId}`、`useSessionState` 流用) して保存。別ユーザに引き継がれない (越境防御。chat-history-storage と同方針)。
+- **API への受け渡し**: 各パネルは `?from=YYYY-MM-DD&to=YYYY-MM-DD` でサービスに渡す (`parseAnalyticsRange` が形式不正を無視)。④ は range を送らない。
+
+### 表示制御
+- **表示ロール**: `systemRole==='admin'` または プロジェクト `projectRole==='pm_tl'` のみ (member / viewer には非表示)。API も `analytics:read` で二重防御 (非該当は 403、非メンバーは 404)。
+- **closed プロジェクトでも表示**: 読み取り専用のため、完了案件の振り返り分析に利用できる (`isReadOnlyByStatus` に依存しない)。
+- **遅延ロード**: `dynamic()` import + 自前 fetch (SuggestionsPanel と同型。`LazyTabContent` には乗せない)。
+
+### パネル1 グラフ仕様 (WBS 予実カーブ・折れ線)
+- 縦軸 = 着手割合 (0〜100%、10% 刻み)。分母 = ACT (type='activity', 削除除く) の総数。WP は分母に含めない。
+- 横軸 = 日次。最小予定開始日 〜 max(最大予定完了日, 最大実績完了日, 本日)。
+- **予定線 (実線)**: 各日 d で「予定完了日 ≤ d」の ACT 累積件数 ÷ 総数。最大予定完了日で 100%。
+- **実績線 (点線)**: 各日 d で「status='completed' かつ 実績完了日 ≤ d」の ACT 累積件数 ÷ 総数。**本日より後は描かない (null)**。完了日に丸ごと計上 (按分しない)。
+- **本日マーカー**: 本日位置の縦線 + 上部に「本日時点 予定◯% / 実績◯% (遅れ◯%)」サマリ。
+- データが無い (ACT 0 件 / 実績未入力) 場合は空状態メッセージを表示。
+
+### パネル2 グラフ仕様 (担当者別 週次消化工数・積み上げ棒 + 工数効率)
+- 縦軸 = 実績工数 (人時、自動スケール)。横軸 = 週次 (月曜始まり、最初に完了した週 〜 max(本日週, 最後の完了週)。完了の無い中間週も 0 で連続表示)。
+- 1 本の棒 = その週に完了した ACT (status='completed' かつ実績完了日あり) の **実績工数 (Task.actualEffort) を担当者別に積み上げ**。件数でなく工数で測ることでタスクの大小を吸収する。
+- 担当者は実績工数の **上位 8 人を個別色**、残りは「その他」(グレー) に集約。担当者なしは「未割当」。実工数未入力 (null) の完了 ACT は棒に乗らない。
+- **工数効率サマリ** (パネル上部): 工数効率 = Σ予定工数 ÷ Σ実績工数 (完了 + 実工数入力済の ACT のみ)。>1 効率的 / <1 想定超過。実工数が無ければ「算出できません」。EVM の CPI 相当で、絶対的生産性ではない点に留意 (docs/FAQ に明記)。
+- ツールチップに各担当者の実績工数 + 合計を表示。最新の週は途中 (部分集計) になりうる。
+- 本日週はテナント TZ で判定 (パネル1 の本日と整合)。
+- 入力元: 実績工数は WBS の実績入力 (ACT 編集ダイアログの実績セクション) で担当者が入力する (§11.4)。
+
+### パネル3 グラフ仕様 (担当者別 予定 vs 実績 工数・グループ棒)
+- 横軸 = 担当者。各担当者に **予定工数バーと実績工数バーを横並び** (積み上げない) で描く。縦軸 = 工数 (人時、自動スケール)。
+- 母数 = status='completed' かつ実績完了日あり かつ **実績工数 > 0** の ACT (予定・実績の両方が揃うタスクのみで公平に比較)。担当者ごとに plannedEffort / actualEffort を SUM。
+- 担当者は実績工数の **上位 8 人を個別**、残りは「その他」に集約。担当者なしは「未割当」。
+- ツールチップに 予定 / 実績 と **差 (実績 − 予定。＋超過 / −短縮)** を表示。
+- 目的: PM/PL の予定工数と担当者の実績工数の差を担当者ごとに把握し、見積もり・タスク割り振りの参考にする。時系列でないため本日 (TZ) 判定は不要。
+
+### パネル4 グラフ仕様 (担当者別 作業負担・状態別積み上げ棒 + モード切替)
+- 横軸 = 担当者。1 本 = **未完了 ACT (not_started / in_progress) の予定工数**を状態別に積み上げ。縦軸 = 残工数 (人時、自動スケール)。完了タスクは負担に含めない。**保留 (on_hold) も集計に含めない** (ユーザ要件 2026-06-15。一時停止中で現在の負担とは言えないため)。
+- **モード切替 (パネル右上のセグメント)**: 「割り振り量」= 予定工数そのもの / 「個人ペース補正」= 各担当者の **実績÷予定比** (完了+実工数入力済の履歴から算出。履歴なしは ×1) を掛けた予想残工数。補正は各状態セグメントに一律適用。
+- 担当者は (選択モードの) 作業負担の **上位 8 人を個別**、残りは「その他」に集約。担当者なしは「未割当」。
+- 要約ヘッダー (モード別): 平均 / 最も重い (担当者・値) / 最も軽い (担当者・値)。平均と比べて誰が重い/軽いかを把握。
+- 目的: できる人への偏りを防ぎ、負荷分散・割り振りの材料にする。**限界**: 予定工数は見積で person-neutral、補正もスピード差を織り込むが見積誤差は残る。**個人評価には使わない** (説明文・FAQ・ガイドに明記)。未完了タスクが 0 件の担当者はタスク由来集計のため一覧に現れない。
+
+### パネル5 グラフ仕様 (担当者別 日次工数・1 日 8h 上限チェック・ヒートマップ)
+- **形式 = ヒートマップ表** (折れ線/棒とは別形式)。行 = 担当者 (1 列目は横スクロール時も固定)、列 = 日付 (本日以降)、セル = その日の予定工数 (人時)。セルは閾値レベルで色分け: **≤7h=無色 (OK) / >7h=黄 (警告) / >8h=赤 (超過)** (`classifyWorkloadLevel`、境界 7.0 は OK・8.0 は警告)。割当の無い日は空セル。下部に凡例。
+- 対象 = **未完了 ACT (not_started / in_progress)**。完了・**保留 (on_hold) は除外**。`assigneeId` / 予定開始日 / 予定完了日 / 正の予定工数が揃う ACT のみ。
+- 按分 = 各タスクの予定工数を予定期間 (予定開始日〜予定完了日, inclusive) の日数で **均等按分**し、担当者×日付で合算 (WBS 編集ダイアログの日次工数プレビュー `getAssigneeDailyWorkload` と同ロジック)。
+- 横軸 = **本日 〜 未完了タスクの最大予定完了日**。本日より前の按分日は表示しない (過去の負荷は対象外)。本日はテナント TZ で判定。全タスクが過去の担当者は一覧に現れない。
+- 並び順 = **8h 超 (超過) の日数 → 7h 超 (警告) の日数 → 最大日次工数** の降順 (逼迫している担当者ほど上)。担当者なしは「未割当」。
+- 目的: 特定日への作業集中 (山積み) を早期に発見し、予定の前倒し/後ろ倒し・割り振り直しなど負荷の平準化を検討する。パネル4 (作業負担の総量比較) と役割を分け、本パネルは「いつ」に焦点を当てる。
+- **限界**: 均等按分は概算で実際の作業配分 (前倒し/後ろ倒し) は反映しない。土日祝も 1 日として按分する (営業日按分は将来拡張)。**個人評価には使わない** (説明文・FAQ・ガイドに明記)。
+
+### 汎用基盤
+分析タブは 3 層 (サービス=ドメイン数値 / パネルレジストリ=表示組み立て / 共通チャート部品) で構成。チャート部品は `AnalysisChart` 契約のみを知り、`kind: 'line' | 'stacked-bar' | 'grouped-bar'` で `TimeSeriesChart` / `StackedBarChart` / `GroupedBarChart` を出し分ける。ヒートマップは別契約 `AnalysisHeatmap` を持ち `HeatmapTable` が描く (パネル5)。`AnalysisRenderData` は `chart` か `heatmap` のいずれかを持ち、`AnalysisPanelCard` が出し分ける。パネルは任意で `modes` (切替) を持て、`AnalysisPanelCard` がセグメント切替を描き `build(raw, labels, mode)` を呼ぶ (パネル4 が量/個人ペース補正で使用)。分析の追加は `analysis-panels.ts` へのパネル登録のみ (タブ・既存チャート部品は無改修。新しい描画形式が要るときのみチャート部品を 1 つ追加。パネル5 で `HeatmapTable` を追加した実例)。
+
+### 入力項目
+なし (表示専用。データは WBS の予定完了日 / 実績完了日 / 完了ステータスから自動集計)。
 
 ## 11.6 マイタスク画面
 
@@ -999,7 +1085,8 @@ PR #111-2 で `Project.customer_name` を廃止して `customer_id` FK に完全
 ### データ入出力の区別
 - **データエクスポート**: 全業務データの ZIP バックアップ。
 - **データインポート**: **自サービス出力 ZIP の復元/テナント間移行専用**。
-- **外部データ移行ウィザード** (`/settings/tenant/external-import`、§別): Excel/旧 PM ツール等の **初回移行** (CSV 4 ステップ)。
+- **CSV データ移行** (`/settings/tenant/migration-import`): Excel/旧 PM ツール等の **初回移行** (7 種 CSV、4 ステップ)。
+- **API 連携インポート** (`/settings/tenant/api-import`、ベータ): Notion/Backlog/kintone/Pleasanter/Google スプレッドシートに直接接続して取込。
 
 ### 監査
 - プラン変更・予算上限・請求先・解約等の操作は **現状 `audit_logs` (監査ログ画面) に記録されない** (将来対応候補)。課金表示は `ApiCallLog` SUM の真値で reconcile。

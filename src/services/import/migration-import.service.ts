@@ -158,6 +158,27 @@ export async function previewMigrationFromCsv(params: {
 }
 
 /**
+ * API連携経路のプレビュー (ADR-0034)。
+ * コネクタがサービスから取得・正規化した CsvEntitySource[] (フラット行 + 列マッピング) を、
+ * 手動CSV経路と**同じ** buildBatchFromCsv → previewMigration に流す。
+ * これにより検証・値解決・WBS階層・依存解決・上限/エラー処理が CSV 経路と完全に一致する
+ * (= 経路ごとの挙動ドリフトが起きない)。コネクタ側で取得した認証情報はこの呼出より前に破棄済み。
+ */
+export async function previewMigrationFromSources(params: {
+  tenantId: string;
+  userId: string;
+  sources: CsvEntitySource[];
+  /** コネクタ段階で出た警告 (WBS 孤児/循環・日付変換・relation 切り捨て等)。プレビュー警告に合流。 */
+  warnings?: string[];
+}): Promise<PreviewMigrationResult> {
+  const batch = buildBatchFromCsv(params.sources);
+  if (params.warnings && params.warnings.length > 0) {
+    batch.warnings.push(...params.warnings);
+  }
+  return previewMigration({ tenantId: params.tenantId, userId: params.userId, batch });
+}
+
+/**
  * CSV選択段階の軽量リンクチェック (DB 書き込みなし)。
  * プロジェクトの顧客 / WBS のプロジェクトが「既存データ + 取り込み CSV」で解決できるかを確認し、
  * 未解決を **警告** で返す (マッピング画面の既定値で補える前提。プレビューでは同条件がエラー)。

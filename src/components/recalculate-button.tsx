@@ -23,6 +23,7 @@
 
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/toast-provider';
 import { cn } from '@/lib/utils';
@@ -30,7 +31,7 @@ import { cn } from '@/lib/utils';
 export type RecalculateButtonProps = {
   /** 呼び出し先の POST endpoint (相対 path 推奨) */
   endpoint: string;
-  /** ボタンラベル (デフォルト「再集計」) */
+  /** ボタンラベル (省略時は recalculate.label を使用) */
   label?: string;
   /** ボタンサイズ (デフォルト sm) */
   size?: 'xs' | 'sm' | 'default';
@@ -46,16 +47,18 @@ type ButtonState = 'idle' | 'pending' | 'success';
 
 export function RecalculateButton({
   endpoint,
-  label = '再集計',
+  label,
   size = 'sm',
   variant = 'outline',
   onSuccess,
   className,
 }: RecalculateButtonProps) {
   const router = useRouter();
-  const { showSuccess, showError } = useToast();
+  const t = useTranslations('recalculate');
+  const { showError, showSuccessKey } = useToast();
   const [isPending, startTransition] = useTransition();
   const [state, setState] = useState<ButtonState>('idle');
+  const resolvedLabel = label ?? t('label');
 
   const handleClick = () => {
     setState('pending');
@@ -68,11 +71,11 @@ export function RecalculateButton({
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));
           const code = body?.error?.code ?? `HTTP_${res.status}`;
-          const message = body?.error?.message ?? '再集計に失敗しました';
+          const message = body?.error?.message ?? t('failedDefault');
           throw new Error(`${code}: ${message}`);
         }
         setState('success');
-        showSuccess('最新の値で再集計しました');
+        showSuccessKey('recalculate.success');
         onSuccess?.();
         // RSC キャッシュを無効化して最新値で再描画
         router.refresh();
@@ -80,19 +83,17 @@ export function RecalculateButton({
         window.setTimeout(() => setState('idle'), 3000);
       } catch (error) {
         setState('idle');
-        showError(
-          error instanceof Error ? error.message : '再集計に失敗しました',
-        );
+        showError(error instanceof Error ? error.message : t('failedDefault'));
       }
     });
   };
 
   const isBusy = isPending || state === 'pending';
   const displayLabel = isBusy
-    ? '⏳ 集計中…'
+    ? t('inProgress')
     : state === 'success'
-      ? '✓ 完了'
-      : `🔄 ${label}`;
+      ? t('done')
+      : `🔄 ${resolvedLabel}`;
 
   return (
     <Button
@@ -103,7 +104,7 @@ export function RecalculateButton({
       onClick={handleClick}
       aria-busy={isBusy}
       className={cn(className)}
-      title={`${label}: 最新値で DB 容量 / API 利用量を再集計します`}
+      title={t('buttonTitle', { label: resolvedLabel })}
     >
       {displayLabel}
     </Button>

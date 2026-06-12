@@ -49,6 +49,10 @@ export default async function SuperAdminLayout({ children }: { children: React.R
         <Link href="/admin/super/diagnostics" className="hover:underline">
           診断
         </Link>
+        {/* ADR-0036: 全ユーザ共通の周知バナー (画面上部の帯メッセージ) 管理 */}
+        <Link href="/admin/super/banners" className="hover:underline">
+          周知バナー
+        </Link>
       </nav>
       {children}
     </div>

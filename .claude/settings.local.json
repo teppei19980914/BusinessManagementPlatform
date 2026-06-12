@@ -1,4 +1,5 @@
 {
+  "model": "sonnet",
   "permissions": {
     "allow": [
       "Bash(mkdir -p c:/Users/SF02512/GitHub/Private/ClaudeCodeTemplate/.claude/memory-seed)",

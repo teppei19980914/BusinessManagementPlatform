@@ -1123,7 +1123,7 @@ PgBouncer 制約により `prisma.$transaction` は使えない (旧 import 同�
    ↓ b. UPDATE 済の Task を beforeValue から完全列復元
    ↓ c. DELETE 済の Task (deletedAt セット済) を deletedAt=null に戻す
    ↓
-[ 4. WP 集計再計算 (recalculateAllProjectWps: プロジェクト全 WP を深度降順に 1 パス) ]
+[ 4. WP 集計再計算 (recalculateAllProjectWps: 全タスク 1 fetch → メモリで深度降順集計 → 変更 WP のみ $transaction 一括 update / ADR-0037) ]
    ↓
 [ 5. audit_log を本処理用に 1 件追加 (action='SYNC_IMPORT', afterValue=summary) ]
 ```
@@ -1138,9 +1138,7 @@ PgBouncer 制約により `prisma.$transaction` は使えない (旧 import 同�
 
 ### 33.8 画面改修
 
-- タスク一覧画面に「IDを表示」トグルボタンを追加 (既定 OFF)
-  - ON で先頭に ID 列を表示 (UUID 全体、`<code>` 風 + クリックで全選択)
-- 「WBSをエクスポート」「WBSを上書きインポート」ボタンを別途追加 (PM/TL + admin のみ表示)
+- 「WBSをエクスポート」「WBSを上書きインポート」ボタンを追加 (PM/TL + admin のみ表示)
 - 上書きインポートは dry-run プレビューダイアログを必ず経由する 2 ステップ UX
   - サマリ + 行ごと差分テーブル + 削除候補セクション (赤強調)
   - 「削除モード」ラジオボタン (保持 / 警告のみ / 削除実行)
@@ -1150,11 +1148,12 @@ PgBouncer 制約により `prisma.$transaction` は使えない (旧 import 同�
 
 - **業務上のハード行数上限は撤廃** (旧: 1 インポート 500 件)。`TASK_SYNC_IMPORT_WARN_ROWS` (300 件) を超える場合は「処理に時間がかかる場合がある」警告を表示するのみでブロックしない。DoS 安全弁として route 層に `TASK_SYNC_IMPORT_MAX_ROWS` (2000 件) のみ残す。
 - dry-run はメモリ上の差分計算のみで完結 (副作用なし)。
-- 本実行 (`applySyncImport`) は **バッチ化**で DB 往復を削減 (旧実装は 1 行ずつ create + 後段で id ごとに findUnique する逐次往復で、~100 行で Netlify 関数の 10 秒上限を超え 504 になっていた):
+- 本実行 (`applySyncImport`) は **バッチ化**で DB 往復を WBS サイズ非依存のほぼ定数に畳む (ADR-0032 で CREATE、ADR-0037 で UPDATE / 再計算を畳んだ。旧実装は per-row create/update + WP ごと findUnique の逐次往復で Netlify 10 秒上限を超え 504 になっていた):
   - 新規行は app 側で UUID を事前採番し、**level 昇順に `createMany`** (親を先に INSERT して FK を満たす)。
-  - WP 集計は対象 WP を都度 findUnique せず、`recalculateAllProjectWps` でプロジェクト全 WP を深度降順に 1 パス再計算 (一致時 skip)。
+  - **既存行の UPDATE は `$transaction` 配列形で 100 件ごとにチャンク一括** (ADR-0037。値が行ごとに異なるため updateMany ではなく per-row update を 1 トランザクションに束ねる)。
+  - WP 集計は `recalculateAllProjectWps` を **全タスク 1 fetch + メモリ集計 (深度降順) + 変更 WP のみ `$transaction` 一括 update** に (ADR-0037。一致時 skip)。プロジェクト全 WP を都度 findUnique+update する O(WP) 逐次往復を排除。
   - 削除候補は `updateMany` で一括論理削除。
-  - 既存行の更新のみ per-row update が残る (値が行ごとに異なるため)。
+  - 最終的な格納値は旧逐次実装と同一 (`aggregateWpFromChildren` / `isWpAggregationEqual` を流用)。
 
 ### 33.10 スコープ外 (将来 PR 候補)
 
@@ -1814,4 +1813,43 @@ WBS 画面で ACT (Activity) を作成・編集する際、担当者の **1 人 
 - フック: [`src/components/hooks/use-workload-preview.ts`](../../src/components/hooks/use-workload-preview.ts) が dialog から呼び出し、`WorkloadPreviewLine` に渡す
 
 将来の調整 (業界別閾値 / i18n) に備え、閾値はサービス層・UI 層から共通参照する単一定義に集約済 (`workload.ts` docblock)。
+
+---
+
+## DESIGN §40. 本文テキストの URL 自動リンク化
+
+## 40. 本文テキストの URL 自動リンク化 (feat/url-autolink, 2026-06-12 / v1.2.0)
+
+各資産のテキストフィールド (内容・対策・良かった点・説明・備考・コメント・お知らせ帯など) に入力された **http/https URL を、表示時に自動でハイパーリンク化** する横断パターン。「同じ役割は同じ UI」(§21.1) のため、境界判定ロジックを 1 箇所に集約し、Markdown 経路とプレーン経路の両方から共有する。
+
+### 40.1 設計の肝 — CJK 境界
+
+標準の GFM autolink は「空白か `<` までを URL」とみなすため、日本語が URL の直後に空白なしで続くと (`https://example.com/loginにアクセス`)、日本語や全角句点まで href に巻き込む。そこで URL を構成しうる文字を **RFC 3986 の ASCII 文字集合に限定**し、非 ASCII が現れた時点で URL を打ち切る。これにより「`https://example.com/login` + `にアクセス…`」へ正しく分割できる。末尾の文末句読点 (`.,;:!?`) と、文章側の対応の取れない閉じ括弧も URL から除外する (URL 内で対応の取れた括弧は保持)。
+
+### 40.2 実装コンポーネント
+
+| 層 | ファイル | 役割 |
+|---|---|---|
+| コア (純粋関数) | [`src/lib/url-linkify.ts`](../../src/lib/url-linkify.ts) | `splitByUrl(text)` が URL/テキストのセグメントに分割。React にも mdast にも非依存でテスト容易 (`url-linkify.test.ts`) |
+| プレーン経路 (React) | [`src/components/ui/linkified-text.tsx`](../../src/components/ui/linkified-text.tsx) | `linkifyNodes(text)` / `<LinkifiedText>`。`<a target="_blank" rel="noopener noreferrer">` を生成。react-markdown chunk を読み込まない軽量経路向け |
+| Markdown 経路 (remark) | [`src/lib/remark-linkify-urls.ts`](../../src/lib/remark-linkify-urls.ts) | remark プラグイン。gfm autolink が CJK を巻き込んだ link ノードを `splitByUrl` で補正し、code/既存リンクは除外 (`remark-linkify-urls.test.ts`) |
+
+### 40.3 経路の振り分け (perf 維持)
+
+`MarkdownDisplay` ([`markdown-textarea.tsx`](../../src/components/ui/markdown-textarea.tsx)) は `isMarkdown()` で分岐する。Markdown 構文を含めば react-markdown (+ remark-linkify-urls)、含まなければプレーン分岐で `linkifyNodes` を使う。**`isMarkdown` に URL パターンは追加しない** — URL だけのテキストで react-markdown chunk をロードさせない PR-2 perf 方針を維持しつつ、プレーン分岐側で linkify するため。
+
+### 40.4 適用面
+
+- **MarkdownDisplay 経由 (自動カバー)**: ナレッジ / リスク・課題 / 振り返り / プロジェクト概要 / メモ / ステークホルダー / 提案パネル。
+- **個別プレーン表示面**: 顧客の備考 ([customer-detail-client.tsx](../../src/app/(dashboard)/customers/[customerId]/customer-detail-client.tsx))、コメント本文 ([comment-section.tsx](../../src/components/comments/comment-section.tsx))、システムお知らせ帯 ([system-banner-bar.tsx](../../src/components/system-banner-bar.tsx))、提案(参考)パネルの抜粋スニペット ([suggestions-panel.tsx](../../src/app/(dashboard)/projects/[projectId]/suggestions/suggestions-panel.tsx)、ナレッジ/課題/リスク/振り返り)。
+- **タスク**: 説明・備考は MarkdownTextarea のプレビューで `MarkdownDisplay` 経由。
+- **対象外 (意図的)**: 見積 notes (テーブルで truncate 表示)、バナー一覧プレビュー (管理画面で line-clamp) — 切り詰め表示でリンク化は不適。
+
+### 40.5 セキュリティ
+
+react-markdown は raw HTML を許可せず、プレーン経路も `linkifyNodes` が `<a>` のみ生成するため、本文の HTML/スクリプトは実行されない。リンクは `rel="noopener noreferrer"` + `target="_blank"`。
+
+### 40.6 ADR 要否
+
+本機能は既存の MarkdownDisplay/MarkdownTextarea 基盤に表示ヘルパを 1 つ足す **UI レンダリング規約**であり、データモデル変更や後戻りしにくいアーキテクチャ判断を含まない (タスク備考欄も既存カラム `Task.notes` の UI 露出にすぎない)。よって **ADR は作成せず、本 §40 を設計上の正本**とする。
 

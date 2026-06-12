@@ -31,6 +31,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
+import { useTranslations } from 'next-intl';
 import { cn } from '@/lib/utils';
 
 type ToastKind = 'success' | 'error';
@@ -41,14 +42,33 @@ type Toast = {
   message: string;
 };
 
+/**
+ * Values for ICU MessageFormat placeholders. Matches next-intl `TranslationValues`
+ * (string | number | Date). Booleans should be stringified at the call site.
+ */
+type ToastParams = Record<string, string | number | Date>;
+
 type ToastContextType = {
+  /**
+   * @deprecated Use {@link ToastContextType.showSuccessKey} with a catalog key.
+   * Kept for incremental migration during the i18n zero-hardcode rollout.
+   */
   showSuccess: (message: string) => void;
+  /**
+   * @deprecated Use {@link ToastContextType.showErrorKey} with a catalog key.
+   */
   showError: (message: string) => void;
+  /** Show a success toast by translating the given catalog key. */
+  showSuccessKey: (key: string, params?: ToastParams) => void;
+  /** Show an error toast by translating the given catalog key. */
+  showErrorKey: (key: string, params?: ToastParams) => void;
 };
 
 const ToastContext = createContext<ToastContextType>({
   showSuccess: () => {},
   showError: () => {},
+  showSuccessKey: () => {},
+  showErrorKey: () => {},
 });
 
 export function useToast() {
@@ -60,6 +80,9 @@ const AUTO_DISMISS_MS = 4000;
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
+  // Capture root translator. ICU formatting + locale resolution happens at the
+  // moment showSuccessKey/showErrorKey is called (= the caller's render context).
+  const t = useTranslations();
 
   const dismiss = useCallback((id: string) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
@@ -81,6 +104,14 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     (message: string) => showToast('error', message),
     [showToast],
   );
+  const showSuccessKey = useCallback(
+    (key: string, params?: ToastParams) => showToast('success', t(key, params)),
+    [showToast, t],
+  );
+  const showErrorKey = useCallback(
+    (key: string, params?: ToastParams) => showToast('error', t(key, params)),
+    [showToast, t],
+  );
 
   // Context value を useMemo で stable 化。これがないと toast 追加/消去で
   // ToastProvider が re-render する度に value object literal が新規生成され、
@@ -88,8 +119,8 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   // 不要 re-render する。showSuccess/showError は useCallback で stable なので
   // value 全体も stable にできる。
   const value = useMemo(
-    () => ({ showSuccess, showError }),
-    [showSuccess, showError],
+    () => ({ showSuccess, showError, showSuccessKey, showErrorKey }),
+    [showSuccess, showError, showSuccessKey, showErrorKey],
   );
 
   return (
@@ -107,16 +138,17 @@ function ToastViewport({
   toasts: Toast[];
   onDismiss: (id: string) => void;
 }) {
+  const t = useTranslations('notification');
   if (toasts.length === 0) return null;
   return (
     <div
       role="region"
-      aria-label="通知"
+      aria-label={t('ariaLabel')}
       aria-live="polite"
       className="pointer-events-none fixed inset-x-0 bottom-0 z-50 flex flex-col items-stretch gap-2 px-4 py-4 sm:items-center"
     >
-      {toasts.map((t) => (
-        <ToastItem key={t.id} toast={t} onDismiss={onDismiss} />
+      {toasts.map((toast) => (
+        <ToastItem key={toast.id} toast={toast} onDismiss={onDismiss} />
       ))}
     </div>
   );
@@ -136,6 +168,7 @@ function ToastItem({
     return () => clearTimeout(handle);
   }, [toast.id, onDismiss]);
 
+  const t = useTranslations('notification');
   const dismissLabelId = useId();
 
   return (
@@ -154,7 +187,7 @@ function ToastItem({
       <button
         type="button"
         onClick={() => onDismiss(toast.id)}
-        aria-label="通知を閉じる"
+        aria-label={t('dismissAria')}
         aria-describedby={dismissLabelId}
         className="shrink-0 rounded p-0.5 opacity-80 transition-opacity hover:opacity-100"
       >

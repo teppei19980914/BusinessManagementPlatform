@@ -281,6 +281,21 @@ describe('listKnowledgeByProject / getKnowledge', () => {
     expect(call.where.OR).toBeUndefined();
   });
 
+  // 2026-06-12 リグレッション防止: 「更新者」列が常に空になっていた include 漏れの再発防止。
+  //   listKnowledge / listAllKnowledgeForViewer には updater があったが本関数だけ欠落しており、
+  //   toKnowledgeDTO が k.updater?.name を解決できず updaterName が常に null になっていた。
+  it('listKnowledgeByProject: include に updater があり updaterName を解決する', async () => {
+    vi.mocked(prisma.knowledge.findMany).mockResolvedValue([
+      { ...kRow(), updater: { name: 'Up' } },
+    ] as never);
+
+    const r = await listKnowledgeByProject('p-1', 't-1', 'u-1', 'general');
+
+    const call = getMockCallArg(vi.mocked(prisma.knowledge.findMany));
+    expect(call.include.updater).toEqual({ select: { name: true } });
+    expect(r[0].updaterName).toBe('Up');
+  });
+
   it('getKnowledge: 存在しなければ null', async () => {
     vi.mocked(prisma.knowledge.findFirst).mockResolvedValue(null);
     expect(await getKnowledge('x')).toBe(null);

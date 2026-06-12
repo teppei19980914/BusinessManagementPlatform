@@ -48,6 +48,7 @@ import {
   CONSENT_TYPES,
 } from '@/config/legal-versions';
 import type { TenantPlan } from '@/lib/tenant';
+import { nextNumericSlug } from '@/lib/slug';
 
 // ================================================================
 // 公開型
@@ -58,10 +59,19 @@ export const TenantOnboardingInputSchema = z
   .object({
     /** 表示用テナント名 (画面ヘッダ等。請求書の正式社名は billingCompanyName を使う) */
     name: z.string().trim().min(1).max(100),
-    /** URL ルーティング用 slug (英数 + ハイフン、3-60 文字) */
-    slug: z.string().trim().regex(/^[a-z0-9](?:[a-z0-9-]{1,58}[a-z0-9])?$/, {
-      message: 'slug は英小文字・数字・ハイフンのみ、3〜60 文字で入力してください',
-    }),
+    /**
+     * URL ルーティング用 slug (英数 + ハイフン、3-60 文字)。
+     * feat/signup-friction-reduction (2026-06-12): 公開サインアップでは未指定 (optional)。
+     *   サーバが数字連番を自動採番する (createTenantBySignup → autoAssignSlug)。
+     *   super_admin 手動払い出しでは引き続き必須 (createTenantInternal が presence を強制)。
+     */
+    slug: z
+      .string()
+      .trim()
+      .regex(/^[a-z0-9](?:[a-z0-9-]{1,58}[a-z0-9])?$/, {
+        message: 'slug は英小文字・数字・ハイフンのみ、3〜60 文字で入力してください',
+      })
+      .optional(),
     /** プラン (デフォルト beginner) */
     plan: z.enum(['beginner', 'expert', 'pro']).default('beginner'),
 
@@ -168,6 +178,8 @@ export type TenantOnboardingSuccess = {
   ok: true;
   tenantId: string;
   initialAdminUserId: string;
+  /** 実際に確定した組織 ID (slug)。signup では自動採番された数字 ID。UI が成功画面/再送で使う。 */
+  slug: string;
 };
 
 export type TenantOnboardingFailure = {
@@ -227,7 +239,9 @@ export async function createTenantBySignup(
   baseUrl: string,
   consentMeta?: ConsentMeta,
 ): Promise<TenantOnboardingResult> {
-  return createTenantInternal(input, baseUrl, consentMeta);
+  // feat/signup-friction-reduction (2026-06-12): 公開サインアップは組織 ID を入力させず、
+  //   サーバが数字連番を自動採番する (autoAssignSlug=true)。
+  return createTenantInternal(input, baseUrl, consentMeta, { autoAssignSlug: true });
 }
 
 /** 同意取得時のメタ情報 (証跡用、API 層が req から抽出して渡す) */
@@ -243,7 +257,37 @@ type CreateTenantInternalOptions = {
    * を完全スキップ。super_admin 手動払い出し経路 (SA-2) でのみ true に設定する。
    */
   skipEligibilityCheck?: boolean;
+  /**
+   * feat/signup-friction-reduction (2026-06-12): true で組織 ID (slug) をサーバが数字連番で
+   * 自動採番する (入力 slug は無視)。公開サインアップ経路でのみ true。衝突時はリトライ採番する。
+   * false (super_admin 経路) では input.slug が必須。
+   */
+  autoAssignSlug?: boolean;
 };
+
+/** 既存の純粋数字 slug の最大値 + 1 を採番する (NUMERIC_SLUG_BASE 以上を保証)。 */
+async function pickNextNumericSlug(): Promise<string> {
+  // 15 桁上限で bigint キャスト安全域に限定 (overflow / Number 精度落ち防止)。
+  const rows = await prisma.$queryRaw<{ max: bigint | null }[]>`
+    SELECT MAX(slug::bigint) AS max FROM tenants WHERE slug ~ '^[0-9]{1,15}$'
+  `;
+  const maxNumeric = rows[0]?.max != null ? Number(rows[0].max) : 0;
+  return String(nextNumericSlug(maxNumeric));
+}
+
+/**
+ * P2002 (UNIQUE 制約違反) が slug 列で発生したかを判定する。
+ * @prisma/client の Prisma 名前空間を import すると test 環境で runtime client を巻き込むため、
+ * 構造的に code / meta.target を判定する (PrismaClientKnownRequestError は code='P2002' を持つ)。
+ */
+function isSlugUniqueViolation(e: unknown): boolean {
+  if (typeof e !== 'object' || e === null) return false;
+  const err = e as { code?: unknown; meta?: { target?: unknown } };
+  if (err.code !== 'P2002') return false;
+  const target = err.meta?.target;
+  if (Array.isArray(target)) return target.includes('slug');
+  return typeof target === 'string' && target.includes('slug');
+}
 
 // ================================================================
 // 内部
@@ -266,17 +310,30 @@ async function createTenantInternal(
   }
   const input = parsed.data;
 
-  // ---------- 2. slug / email 重複チェック ----------
-  const existingSlug = await prisma.tenant.findUnique({
-    where: { slug: input.slug },
-    select: { id: true },
-  });
-  if (existingSlug != null) {
-    return {
-      ok: false,
-      reason: 'SLUG_CONFLICT',
-      message: 'この組織 ID は既に使用されています',
-    };
+  // ---------- 2. slug の決定 / 重複チェック ----------
+  // feat/signup-friction-reduction (2026-06-12):
+  //   - autoAssignSlug (公開サインアップ): slug は入力させず、後段のトランザクションで
+  //     数字連番を採番する (衝突時リトライ)。ここでは事前チェック不要。
+  //   - !autoAssignSlug (super_admin 手動): input.slug 必須 + 事前重複チェック (従来どおり)。
+  if (!options.autoAssignSlug) {
+    if (input.slug == null || input.slug.length === 0) {
+      return {
+        ok: false,
+        reason: 'VALIDATION_ERROR',
+        message: '組織 ID を入力してください',
+      };
+    }
+    const existingSlug = await prisma.tenant.findUnique({
+      where: { slug: input.slug },
+      select: { id: true },
+    });
+    if (existingSlug != null) {
+      return {
+        ok: false,
+        reason: 'SLUG_CONFLICT',
+        message: 'この組織 ID は既に使用されています',
+      };
+    }
   }
 
   // ADR-0016 (2026-05-20): User.email は tenant-scoped 一意 (= @@unique([tenantId, email])) に変更。
@@ -351,10 +408,13 @@ async function createTenantInternal(
   // ---------- 3. transaction: Tenant + initial admin User + roleChangeLog ----------
   const placeholderHash = await hash(randomBytes(32).toString('hex'), BCRYPT_COST);
 
-  const { tenant, user } = await prisma.$transaction(async (tx) => {
+  // feat/signup-friction-reduction (2026-06-12): トランザクション本体を slug 引数で受ける関数に切り出し、
+  //   下の採番リトライループから呼ぶ。
+  const runCreate = (slug: string) =>
+    prisma.$transaction(async (tx) => {
     const t = await tx.tenant.create({
       data: {
-        slug: input.slug,
+        slug,
         name: input.name,
         plan: input.plan as TenantPlan,
         // P-B (2026-05-08): 初回 Beginner 試用期間ルールの実装。
@@ -449,7 +509,37 @@ async function createTenantInternal(
     });
 
     return { tenant: t, user: u };
-  });
+    });
+
+  // slug を確定してトランザクション実行。autoAssignSlug は数字連番の衝突 (P2002) を
+  //   最大 5 回までリトライ採番する (ユーザは組織 ID を編集できないため、衝突時に手で直せる
+  //   従来 UX が無いことへの対策)。super_admin 経路は input.slug 固定で 1 回のみ。
+  const MAX_SLUG_ATTEMPTS = options.autoAssignSlug ? 5 : 1;
+  let tenant!: { id: string };
+  let user!: { id: string };
+  let assignedSlug = '';
+  for (let attempt = 1; attempt <= MAX_SLUG_ATTEMPTS; attempt++) {
+    const slug = options.autoAssignSlug ? await pickNextNumericSlug() : (input.slug as string);
+    try {
+      const r = await runCreate(slug);
+      tenant = r.tenant;
+      user = r.user;
+      assignedSlug = slug;
+      break;
+    } catch (e) {
+      if (isSlugUniqueViolation(e)) {
+        if (options.autoAssignSlug && attempt < MAX_SLUG_ATTEMPTS) continue;
+        return {
+          ok: false,
+          reason: 'SLUG_CONFLICT',
+          message: options.autoAssignSlug
+            ? '組織 ID の自動採番に失敗しました。時間をおいて再度お試しください。'
+            : 'この組織 ID は既に使用されています',
+        };
+      }
+      throw e;
+    }
+  }
 
   // ---------- 4. 検証メール送信 (失敗時 compensating delete) ----------
   // Phase 2-10: sendVerificationEmail に tenantId 必須化
@@ -482,5 +572,6 @@ async function createTenantInternal(
     ok: true,
     tenantId: tenant.id,
     initialAdminUserId: user.id,
+    slug: assignedSlug,
   };
 }

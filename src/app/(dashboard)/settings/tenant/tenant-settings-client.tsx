@@ -1527,11 +1527,14 @@ function DataImportSection() {
       </div>
 
       <div className="mt-3 rounded border-l-4 border-emerald-400 bg-emerald-50 p-3 text-xs dark:bg-emerald-900/20">
-        <p className="font-semibold">② 🔗 外部データを直接インポートしたい方へ</p>
+        <p className="font-semibold">② 🔗 外部データを直接インポートしたい方へ（ベータ）</p>
         <p className="mt-1 text-muted-foreground">
           Notion / Backlog / kintone / Pleasanter / Google スプレッドシート などから、ファイルを使わずに
           <strong>直接つないで自動取り込み</strong>する機能です（API 連携）。
-          {' '}現在開発中で、近日提供予定です。提供後はこの画面から操作できるようになります。
+          {' '}
+          <a href="/settings/tenant/api-import" className="text-info underline">API 連携インポート画面を開く</a>
+          。接続のたびにトークン／APIキーを入力します（サーバには保存されません）。ベータ機能のため、
+          まずは少量で試してから本番データを取り込むことをおすすめします。
         </p>
       </div>
 

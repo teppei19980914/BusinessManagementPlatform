@@ -43,6 +43,8 @@ vi.mock('@/lib/db', () => ({
       createMany: vi.fn(),
       deleteMany: vi.fn(),
     },
+    // feat/signup-friction-reduction (2026-06-12): signup 経路の数字連番採番 (pickNextNumericSlug)。
+    $queryRaw: vi.fn(),
     $transaction: vi.fn(async (callback: unknown) => {
       // callback 形式 (function) の場合は txClient として prisma 自身を渡す
       if (typeof callback === 'function') {
@@ -126,6 +128,9 @@ beforeEach(() => {
   // feat/legal-pages-lp-integration: 同意ログ createMany は count 戻りを期待
   vi.mocked(prisma.tenantConsentLog.createMany).mockResolvedValue({ count: 2 } as never);
   vi.mocked(sendVerificationEmail).mockResolvedValue();
+  // feat/signup-friction-reduction (2026-06-12): 数字連番採番のデフォルト = 既存数字 slug なし
+  //   (→ pickNextNumericSlug が NUMERIC_SLUG_BASE=100000 を返す)。
+  vi.mocked(prisma.$queryRaw).mockResolvedValue([{ max: null }] as never);
 });
 
 describe('TenantOnboardingInputSchema', () => {
@@ -590,6 +595,78 @@ describe('ADR-0016 Revised (2026-05-22): 3 層判定 (initialAdminEmail のみ�
         where: { id: 'tenant-uuid' },
         data: { createdByUserId: 'user-uuid' },
       });
+    });
+  });
+
+  // feat/signup-friction-reduction (2026-06-12): 公開サインアップは組織 ID をサーバが数字連番で自動採番
+  describe('組織 ID サーバ自動採番 (signup)', () => {
+    it('signup は slug を入力させず、既存数字 slug が無ければ 100000 を採番して作成 + 返却', async () => {
+      vi.mocked(prisma.$queryRaw).mockResolvedValueOnce([{ max: null }] as never);
+
+      const result = await createTenantBySignup(VALID_INPUT, BASE_URL);
+
+      expect(result.ok).toBe(true);
+      if (result.ok) expect(result.slug).toBe('100000');
+      // tenant.create には採番された数字 slug が渡る (入力 'customer-a' は無視)
+      expect(prisma.tenant.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ slug: '100000' }) }),
+      );
+    });
+
+    it('既存数字 slug の最大値 + 1 を採番する (連番)', async () => {
+      vi.mocked(prisma.$queryRaw).mockResolvedValueOnce([{ max: BigInt(100042) }] as never);
+
+      const result = await createTenantBySignup(VALID_INPUT, BASE_URL);
+
+      expect(result.ok).toBe(true);
+      if (result.ok) expect(result.slug).toBe('100043');
+    });
+
+    it('採番した slug が衝突 (P2002) したらリトライ採番して成功する', async () => {
+      // 1 回目: max=100000 → 100001 を採番 → tenant.create が P2002 で衝突
+      // 2 回目: max=100001 → 100002 を採番 → 成功
+      vi.mocked(prisma.$queryRaw)
+        .mockResolvedValueOnce([{ max: BigInt(100000) }] as never)
+        .mockResolvedValueOnce([{ max: BigInt(100001) }] as never);
+      vi.mocked(prisma.tenant.create)
+        .mockRejectedValueOnce(
+          Object.assign(new Error('Unique constraint'), {
+            code: 'P2002',
+            meta: { target: ['slug'] },
+          }),
+        )
+        .mockResolvedValueOnce({ id: 'tenant-uuid' } as never);
+
+      const result = await createTenantBySignup(VALID_INPUT, BASE_URL);
+
+      expect(result.ok).toBe(true);
+      if (result.ok) expect(result.slug).toBe('100002');
+      expect(prisma.tenant.create).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  // super_admin 手動払い出しは従来どおり slug 必須 (自動採番しない)
+  describe('super_admin は組織 ID (slug) 必須', () => {
+    it('slug 未指定の super_admin 入力は VALIDATION_ERROR', async () => {
+      const { slug: _omit, ...withoutSlug } = VALID_INPUT;
+      void _omit;
+      const result = await createTenantBySuperAdmin(withoutSlug, BASE_URL);
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.reason).toBe('VALIDATION_ERROR');
+      // 自動採番クエリは呼ばれない
+      expect(prisma.$queryRaw).not.toHaveBeenCalled();
+    });
+
+    it('slug 指定の super_admin はその slug で作成し、自動採番しない', async () => {
+      const result = await createTenantBySuperAdmin(VALID_INPUT, BASE_URL);
+
+      expect(result.ok).toBe(true);
+      if (result.ok) expect(result.slug).toBe('customer-a');
+      expect(prisma.$queryRaw).not.toHaveBeenCalled();
+      expect(prisma.tenant.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ slug: 'customer-a' }) }),
+      );
     });
   });
 

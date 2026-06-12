@@ -3,6 +3,7 @@ import { getTranslations } from 'next-intl/server';
 import {
   getAuthenticatedUser,
   checkProjectPermission,
+  requireProjectNotClosed,
   requireStorageQuotaForWrite,
 } from '@/lib/api-helpers';
 import {
@@ -37,9 +38,14 @@ export async function PATCH(
     );
   }
 
-  // プロジェクトアクセス自体は担保 (閉域プロジェクト状態などの制約を維持)
+  // プロジェクトアクセス自体は担保 (メンバーシップ + 越境遮断)。
+  // 更新の可否 (作成者本人のみ) は service 層で判定するため、ここは read アクションで通す。
   const forbidden = await checkProjectPermission(user, projectId, 'project:read');
   if (forbidden) return forbidden;
+
+  // 2026-06-12: クローズ済みPJは読み取り専用。project:read 認可ではクローズ制約が効かないため明示ガード。
+  const closed = await requireProjectNotClosed(projectId, user.tenantId);
+  if (closed) return closed;
 
   const body = await req.json();
 
@@ -117,6 +123,10 @@ export async function DELETE(
 
   const forbidden = await checkProjectPermission(user, projectId, 'project:read');
   if (forbidden) return forbidden;
+
+  // 2026-06-12: クローズ済みPJは読み取り専用 (個別資産の削除も不可。プロジェクト自体の削除のみ別経路で許可)。
+  const closed = await requireProjectNotClosed(projectId, user.tenantId);
+  if (closed) return closed;
 
   try {
     // feat/crud-permission-redesign (2026-05-20): project 経路は作成者本人のみ削除可。

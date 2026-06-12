@@ -119,14 +119,15 @@ const ACTION_BADGE: Record<SyncDiffRow['action'], 'default' | 'secondary' | 'des
 /**
  * [W1] CSV テンプレート (ヘッダー + サンプル 3 行) を生成。
  * BOM 付き UTF-8 で生成し Excel 互換にする。
+ * Headers and samples come from the i18n catalog so the downloaded file is locale-aware.
  */
-function buildCsvTemplate(): string {
+function buildCsvTemplate(t: (key: string) => string): string {
   const BOM = '﻿';
-  const header = 'ID,種別,名称,レベル,予定開始日,予定終了日,予定工数';
+  const header = t('csvTemplateHeader');
   const sample = [
-    ',WP,設計フェーズ,1,,,',
-    ',ACT,要件定義,2,2026-06-01,2026-06-07,8',
-    ',ACT,基本設計レビュー,2,2026-06-08,2026-06-10,4',
+    t('csvTemplateSample1'),
+    t('csvTemplateSample2'),
+    t('csvTemplateSample3'),
   ].join('\n');
   return BOM + header + '\n' + sample + '\n';
 }
@@ -144,8 +145,9 @@ export function WbsSyncImportDialog({
 }) {
   const t = useTranslations('wbs.syncImport');
   const tAction = useTranslations('action');
+  const tCommon = useTranslations('common');
   const { withLoading } = useLoading();
-  const { showSuccess, showError } = useToast();
+  const { showError, showSuccessKey } = useToast();
   const [step, setStep] = useState<'select' | 'preview'>('select');
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<SyncDiffResult | null>(null);
@@ -237,7 +239,7 @@ export function WbsSyncImportDialog({
 
   /** [W1] テンプレート DL */
   const handleDownloadTemplate = useCallback(() => {
-    const blob = new Blob([buildCsvTemplate()], { type: 'text/csv;charset=utf-8' });
+    const blob = new Blob([buildCsvTemplate(t)], { type: 'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -246,7 +248,7 @@ export function WbsSyncImportDialog({
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-  }, []);
+  }, [t]);
 
   /** 本実行: removeMode='delete' で削除候補ありなら確認ダイアログを経由 */
   const performExecute = useCallback(async () => {
@@ -291,7 +293,7 @@ export function WbsSyncImportDialog({
 
     const json = await res.json();
     handleClose();
-    showSuccess('WBS を上書きインポートしました');
+    showSuccessKey('wbs.syncImport.toastSuccess');
     await onImported();
     alert(
       t('importComplete', {
@@ -308,7 +310,7 @@ export function WbsSyncImportDialog({
     t,
     withLoading,
     showError,
-    showSuccess,
+    showSuccessKey,
     handleClose,
     onImported,
   ]);
@@ -471,7 +473,7 @@ export function WbsSyncImportDialog({
                           className={r.hasProgress ? 'text-destructive font-medium' : ''}
                         >
                           {r.hasProgress && '⚠ '}
-                          「{r.name}」
+                          {tCommon('nameQuoted', { name: r.name })}
                           {r.hasProgress && t('removeCandidateBlockedSuffix')}
                         </li>
                       ))}
@@ -630,7 +632,7 @@ export function WbsSyncImportDialog({
               {preview.rows
                 .filter((r) => r.action === 'REMOVE_CANDIDATE' && !r.hasProgress)
                 .map((r) => (
-                  <li key={r.id ?? r.csvRow}>「{r.name}」</li>
+                  <li key={r.id ?? r.csvRow}>{tCommon('nameQuoted', { name: r.name })}</li>
                 ))}
             </ul>
           )}
@@ -689,6 +691,7 @@ function RadioOption({
  * Beginner-block / L3-block は赤色エラー、L1/L2 警告は黄色警告で表示。
  */
 function StoragePrecheckPanel({ precheck }: { precheck: StoragePrecheck }) {
+  const tCommon = useTranslations('common');
   const isBlocker = precheck.isBlocker;
   return (
     <div
@@ -705,18 +708,23 @@ function StoragePrecheckPanel({ precheck }: { precheck: StoragePrecheck }) {
           isBlocker ? 'mb-1 font-semibold text-destructive' : 'mb-1 font-semibold'
         }
       >
-        {isBlocker ? '⛔ DB 容量の上限超過予測 (取込は実行できません)' : '⚠ DB 容量の警告'}
+        {isBlocker
+          ? tCommon('storagePrecheckTitleBlocker')
+          : tCommon('storagePrecheckTitleWarning')}
       </div>
       <p className="mb-2">{precheck.message}</p>
       <div className="grid grid-cols-1 gap-1 text-xs text-muted-foreground sm:grid-cols-3">
         <div>
-          現在の DB 使用量: <strong>{formatBytesShort(precheck.currentBytes)}</strong>
+          {tCommon('storagePrecheckLabelCurrent')}{' '}
+          <strong>{formatBytesShort(precheck.currentBytes)}</strong>
         </div>
         <div>
-          取込後の予測値: <strong>{formatBytesShort(precheck.estimatedPostImportBytes)}</strong>
+          {tCommon('storagePrecheckLabelEstimated')}{' '}
+          <strong>{formatBytesShort(precheck.estimatedPostImportBytes)}</strong>
         </div>
         <div>
-          無料枠: <strong>{formatBytesShort(precheck.freeQuotaBytes)}</strong>
+          {tCommon('storagePrecheckLabelFreeQuota')}{' '}
+          <strong>{formatBytesShort(precheck.freeQuotaBytes)}</strong>
         </div>
       </div>
     </div>

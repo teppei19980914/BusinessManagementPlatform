@@ -112,6 +112,7 @@ sequenceDiagram
   - 論理削除 (`deletedAt` セット) + 紐づく Attachment / Comment も同一 `$transaction` で cascade soft-delete (L667-681)。
   - 認可は経路 (`context: 'project' | 'global'`) で分岐 (L656)。
   - Beginner プランは削除後に容量キャッシュ即時再集計 `maybeRecalcAfterBeginnerDelete` (L685)。
+- **一括削除 (WBS タスク)** は上記の per-id `delete` とは別系統。クライアントが選択 ID を **K=100 件ずつチャンク分割 + 最大 3 並列**で [`bulk-delete`](../../src/app/api/projects/[projectId]/tasks/bulk-delete/route.ts) へ送信し (`runChunkedBulk`)、各チャンクは `bulkDeleteTasks` が `$transaction([updateMany×3])` で一括 soft-delete。WP 集計の再計算は全チャンク完了後に `POST /tasks/recalculate` を 1 回だけ実行する。Netlify 10 秒上限と性能の両立設計 (ADR-0035)。
 
 ### エラー時の経路
 
@@ -261,7 +262,9 @@ sequenceDiagram
 
 | ステップ | ファイル:行 |
 |---|---|
-| signup エントリ | [`tenant-onboarding.service.ts:189`](../../src/services/tenant-onboarding.service.ts) `createTenantBySignup` |
+| signup フォーム (UI) | [`signup/page.tsx`](../../src/app/(auth)/signup/page.tsx) 入力順 = 組織情報 → 初期管理者 → プラン → (Expert/Pro) 請求先 (feat/signup-friction-reduction 2026-06-12)。**組織 ID は入力させず**、サーバが数字連番を自動採番する。採番値は送信後の成功画面と招待メールで本人へ案内 |
+| 組織 ID 数字連番採番 (サーバ) | [`tenant-onboarding.service.ts`](../../src/services/tenant-onboarding.service.ts) `pickNextNumericSlug` (既存数字 slug の MAX+1, BASE=100000 = [`lib/slug.ts`](../../src/lib/slug.ts) `nextNumericSlug`)。slug UNIQUE 衝突時は最大 5 回までリトライ採番 (ユーザは組織 ID を編集できないため) |
+| signup エントリ | [`tenant-onboarding.service.ts:189`](../../src/services/tenant-onboarding.service.ts) `createTenantBySignup` (autoAssignSlug=true) |
 | super_admin 手動払い出し | [`tenant-onboarding.service.ts:169`](../../src/services/tenant-onboarding.service.ts) `createTenantBySuperAdmin` (eligibility skip) |
 | 入力検証スキーマ | [`tenant-onboarding.service.ts:57`](../../src/services/tenant-onboarding.service.ts) `TenantOnboardingInputSchema` (規約/プラポリ同意は `z.literal(true)`) |
 | slug 重複チェック | [`tenant-onboarding.service.ts:234`](../../src/services/tenant-onboarding.service.ts) |

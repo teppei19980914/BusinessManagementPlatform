@@ -14,6 +14,7 @@ import { getTranslations } from 'next-intl/server';
 import {
   getAuthenticatedUser,
   checkProjectPermission,
+  requireProjectNotClosed,
   requireStorageQuotaForWrite,
 } from '@/lib/api-helpers';
 import { updateRiskSchema } from '@/lib/validators/risk';
@@ -137,6 +138,10 @@ export async function DELETE(
   //             作成者本人 or admin の判定は service 層で厳格に実施する。
   const forbidden = await checkProjectPermission(user, projectId, 'risk:read');
   if (forbidden) return forbidden;
+  // 2026-06-12: クローズ済みPJは読み取り専用。risk:read 認可ではクローズ制約が効かないため明示ガード
+  //   (個別リスク/課題の削除も不可。プロジェクト自体の削除のみ別経路で許可)。
+  const closed = await requireProjectNotClosed(projectId, user.tenantId);
+  if (closed) return closed;
   const existing = await getRisk(riskId, undefined, undefined, user.tenantId);
   // PR feat/asset-multi-project-linking: 紐付け判定は linkedProjectIds 経由
   if (!existing || !existing.linkedProjectIds.includes(projectId)) {

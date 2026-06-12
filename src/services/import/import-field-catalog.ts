@@ -110,3 +110,21 @@ export const IMPORT_ENTITY_ORDER: ImportEntityKind[] = [
   'knowledge',
   'retrospective',
 ];
+
+/**
+ * インポート対象フィールドの DB 最大文字数 (VarChar 列の上限)。掲載が無いフィールドは Text(無制限)。
+ * 正本は prisma/schema.prisma。超過は取り込み時にサイレント切り捨てされず、プレビューでエラーになる
+ * (外部API・大きなCSV/Excel セルからの長文流入で apply 時に Prisma が弾く事故を、プレビュー段で予防)。
+ */
+export const IMPORT_FIELD_MAX_LENGTH: Partial<Record<ImportEntityKind, Record<string, number>>> = {
+  customer: { name: 100, department: 100, contactPerson: 100, contactEmail: 255 },
+  project: { name: 100 },
+  wbs: { name: 100 },
+  risk: { title: 100 },
+  knowledge: { title: 150 },
+};
+
+/** (entity, field) の DB 最大長を返す。無制限 (Text) は undefined。 */
+export function getImportFieldMaxLength(entity: ImportEntityKind, field: string): number | undefined {
+  return IMPORT_FIELD_MAX_LENGTH[entity]?.[field];
+}

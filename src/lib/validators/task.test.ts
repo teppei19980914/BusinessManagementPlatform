@@ -35,6 +35,20 @@ describe('createTaskSchema - アクティビティ', () => {
       parentTaskId: '550e8400-e29b-41d4-a716-446655440001',
     }).success).toBe(true);
   });
+
+  it('備考(notes)はオプションで受け入れる (feat/url-autolink)', () => {
+    expect(createTaskSchema.safeParse({
+      ...validActivity,
+      notes: '参考: https://example.com/doc を参照',
+    }).success).toBe(true);
+  });
+
+  it('備考(notes)が1000文字を超える場合を拒否する', () => {
+    expect(createTaskSchema.safeParse({
+      ...validActivity,
+      notes: 'あ'.repeat(1001),
+    }).success).toBe(false);
+  });
 });
 
 describe('createTaskSchema - ワークパッケージ', () => {
@@ -134,14 +148,20 @@ describe('bulkUpdateTaskSchema', () => {
     expect(bulkUpdateTaskSchema.safeParse(input).success).toBe(true);
   });
 
-  it('101件以上のtaskIdsを拒否する', () => {
-    const ids = Array.from({ length: 101 }, (_, i) =>
+  it('2001件以上のtaskIdsを拒否する (safety net)', () => {
+    const ids = Array.from({ length: 2001 }, (_, i) =>
       `550e8400-e29b-41d4-a716-${String(i).padStart(12, '0')}`);
     expect(bulkUpdateTaskSchema.safeParse({ taskIds: ids, priority: 'high' }).success).toBe(false);
   });
 
-  it('100件のtaskIdsを受け入れる', () => {
-    const ids = Array.from({ length: 100 }, (_, i) =>
+  it('2000件のtaskIdsを受け入れる (ADR-0035: safety net は2000件)', () => {
+    const ids = Array.from({ length: 2000 }, (_, i) =>
+      `550e8400-e29b-41d4-a716-${String(i).padStart(12, '0')}`);
+    expect(bulkUpdateTaskSchema.safeParse({ taskIds: ids, priority: 'high' }).success).toBe(true);
+  });
+
+  it('101件のtaskIdsを受け入れる (ADR-0035: クライアントはチャンク分割で送信)', () => {
+    const ids = Array.from({ length: 101 }, (_, i) =>
       `550e8400-e29b-41d4-a716-${String(i).padStart(12, '0')}`);
     expect(bulkUpdateTaskSchema.safeParse({ taskIds: ids, priority: 'high' }).success).toBe(true);
   });
@@ -217,6 +237,15 @@ describe('updateTaskSchema', () => {
   it('ステータスと進捗率を受け入れる', () => {
     const input = { status: 'in_progress' as const, progressRate: 50 };
     expect(updateTaskSchema.safeParse(input).success).toBe(true);
+  });
+
+  it('備考(notes)の更新を受け入れ、null で明示クリアできる (feat/url-autolink)', () => {
+    expect(updateTaskSchema.safeParse({ notes: 'https://example.com 参照' }).success).toBe(true);
+    expect(updateTaskSchema.safeParse({ notes: null }).success).toBe(true);
+  });
+
+  it('備考(notes)が1000文字超を拒否する', () => {
+    expect(updateTaskSchema.safeParse({ notes: 'x'.repeat(1001) }).success).toBe(false);
   });
 
   it('進捗率101を拒否する', () => {

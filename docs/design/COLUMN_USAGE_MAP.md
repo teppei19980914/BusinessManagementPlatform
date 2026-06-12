@@ -46,7 +46,7 @@
 | `Task.priority` | ① 画面入力 | **③ 内部のみ (UI 非表示)**。2026-06-03 に my-tasks の優先度列を撤去 (WBS は PR #63 で撤去済) → WBS・my-tasks とも画面に列・入力欄なし。内部の既定並び順 (期限昇順 → 優先度降順) にのみ使用、`default 'medium'` 固定 | [my-tasks/route.ts:40](../../src/app/api/my-tasks/route.ts#L40)（orderBy priority desc）、my-tasks-client.tsx / tasks-client.tsx 列ヒット 0 |
 | `TaskProgressLog.completedDate` | ②/要確認 | **③ 自動 set**。`status='completed'` 時にシステムが記録、UI 非表示 | [task.service.ts:1119](../../src/services/task.service.ts#L1119) |
 | `Task.wbsNumber` | ①（要確認） | **② 表示**（名称横に muted 表示）。作成/編集フォームに個別入力欄なし、入力は CSV インポート/API 経由 | [tasks-client.tsx:273,497](../../src/app/(dashboard)/projects/[projectId]/tasks/tasks-client.tsx#L273) / [task.ts:13](../../src/lib/validators/task.ts#L13) |
-| `Task.notes` | ①（要確認） | **④ 死蔵**。validator は受理するが UI 入力欄・表示なし | [task.ts:16](../../src/lib/validators/task.ts#L16) / tasks-client.tsx ヒット 0 |
+| `Task.notes` | ① 画面入力 | **① 画面入力**（2026-06-12 feat/url-autolink で死蔵を解消）。アクティビティの作成/編集ダイアログに「備考」入力欄を新設（MarkdownTextarea、最大 1000 文字、URL は表示時に自動リンク化）。WP は集約ノードのため非表示 | [tasks-client.tsx](../../src/app/(dashboard)/projects/[projectId]/tasks/tasks-client.tsx)（`task-create-field-notes` / `task-edit-field-notes`）/ [task.ts:16](../../src/lib/validators/task.ts#L16) |
 | `Retrospective.state` | ③（要確認: スキーマ検証なし） | **② 表示**（状態バッジ）。「確定」ボタンで `state='confirmed'` 固定 set。validator に state 無し（update は pass-through 受理＝軽微な検証欠落は実在） | [retrospective.service.ts:441](../../src/services/retrospective.service.ts#L441) |
 | `RiskIssue`/`Knowledge`/`Retrospective` の `createdBy`/`updatedBy`/`createdAt`/`updatedAt` | ③ | **②（一覧で表示）**。当初「詳細で表示」としたが画面再検証で訂正 — 編集ダイアログには非表示、**全リスク/全ナレッジ/全振り返り一覧**で表示 | all-risks-table.tsx / knowledge-client.tsx / all-retrospectives-table.tsx |
 | `Memo.createdAt` | ②（一覧表示） | **③（非表示）**。一覧で表示されるのは `updatedAt` のみ、`createdAt` は未表示 | memos-client.tsx |
@@ -153,7 +153,7 @@
 > **2026-06-03 変更**: 新規作成フォームにも「ステータス」プルダウンを追加（顧客の直後、既定=企画中）。概要タブ右上の専用「ステータス変更」プルダウンは廃止し、ステータス変更は編集フォームに統合。旧 state-machine（一方向遷移）エンドポイントは dormant 残置。
 
 > **✅ 画面確認 (Fix / 2026-06-02) — 概要タブ「表示」レイアウト**（編集ダイアログとは別。実機キャプチャで確認）:
-> - ヘッダー: プロジェクト名 + ステータスバッジ + ［編集］［削除］［一覧に戻る］（2026-06-03: 専用「ステータス変更」プルダウンは廃止。変更は［編集］内のステータス項目から）
+> - ヘッダー: プロジェクト名 + ステータスバッジ + ［編集］［削除］（2026-06-03: 専用「ステータス変更」プルダウンは廃止。変更は［編集］内のステータス項目から。2026-06-09: ［一覧に戻る］ボタンを廃止。一覧へはヘッダーの「たすきば」ロゴ / 「全プロジェクト」タブで戻る）
 > - **基本情報**カード: **ステータス（ステータスバッジ。2026-06-03 追加）** / プロジェクト名 / 顧客 / 開発方式 / 契約形態 / 開始予定日 / 終了予定日 / 実績開始日 / 実績終了日（未設定は「─」）。ステータスはヘッダーのバッジに加え、概要本体の基本情報先頭にも表示。
 > - **目的** / **背景** / **スコープ** の 3 カード（各テキスト表示）
 > - **関連 URL**: メイン資料（「URL を設定」）+ その他の関連 URL（表示名 / URL ＋ 追加）+ ファイルアップロード（50MB 上限）
@@ -175,35 +175,33 @@
 | - | projectId | 所属プロジェクト(FK) | ③ | schema:689 | 必要（UI非表示・内部管理用） |
 | 見積項目名 | itemName | 見積対象項目の名称 | ① | schema:690 | 必要（一覧/編集画面表示） |
 | 区分 | category | タスク分類(TASK_CATEGORIES) | ① | schema:691 | 必要（一覧/編集画面表示） |
-| - | devMethod | 開発方式。**2026-06-02 に見積もりフォーム(追加/編集)から撤去**（一覧も非表示）。NOT NULL のため createEstimate で `'other'` を既定補完。**DB 列の物理削除はステージングで migration 実施予定** | ④ | estimate.service.ts | 不要（UI完全撤去済・DB列削除はstaging） |
-| 見積工数 | estimatedEffort | 工数の数値(Decimal 10,2) | ① | schema:693 | 必要（一覧/編集画面表示） |
-| 単位 | effortUnit | 人時 / 人日 / スプリント等 | ① | schema:694 | 必要（一覧/編集画面表示） |
-| 見積根拠 | rationale | 見積算出の根拠・計算式 | ① | schema:695 | 必要（一覧/編集画面表示） |
+| 入力モード | inputMode | **v1.2.0追加**。'direct'=手動入力 / 'coefficient'=係数ベース計算。NOT NULL DEFAULT 'direct'。一覧に「手動」「係数」バッジ表示 | ① | schema:723 | 必要（一覧/フォーム） |
+| - | devMethod | 係数モード時は選択ツールキー(winactor/kintone 等)を格納。手動モード時は createEstimate で 'other' を補完。**DB 列は v1.2.0 でツールキー格納に転用したため削除しない** | ② | estimate.service.ts | 必要（係数モードで係数一覧にツール名表示） |
+| 見積工数 | estimatedEffort | 工数の数値(Decimal 10,2)。係数モードでは calcCoefficient() 計算結果を格納 | ① | schema:693 | 必要（一覧/編集画面表示） |
+| 単位 | effortUnit | 人時 / 人日 | ① | schema:694 | 必要（一覧/編集画面表示） |
+| - | rationale | 見積根拠。**フォーム撤去済(2026-06-02)、NOT NULL のため '' で補完** | ④ | estimate.service.ts | 不要（UI撤去済・DB列削除はstaging） |
 | - | preconditions | 前提条件(UI非表示) | ④ | schema:696 | 必要（UI非表示・内部管理用） |
 | ステータス | isConfirmed | 見積確定状態 | ② | schema:697 | 必要（一覧/編集画面表示） |
-| - | notes | 備考(UI非表示) | ④ | schema:698 | 必要（編集画面表示） |
+| 備考 | notes | 備考（一覧・ダイアログで表示） | ① | schema:698 | 必要（一覧/フォーム表示） |
+| - | baseHours | **v1.2.0追加**。係数モード時の基準時間(h)。手動モード時はNULL | ③ | schema:724 | 必要（係数モード・Excel/Wordエクスポート） |
+| - | scaleCoeff | **v1.2.0追加**。規模係数(0.3〜2.5)。手動モード時はNULL | ③ | schema:725 | 必要（係数モード・Excelエクスポート） |
+| - | difficultyCoeff | **v1.2.0追加**。難易度係数(0.8〜1.8)。手動モード時はNULL | ③ | schema:726 | 必要（係数モード・Excelエクスポート） |
+| - | methodCoeff | **v1.2.0追加**。手法係数(基本1.0)。手動モード時はNULL | ③ | schema:727 | 必要（係数モード） |
 | 作成者 | createdBy | 作成者(氏名解決、一覧で表示) | ② | schema:699 | 必要（一覧画面表示） |
 | 作成日時 | createdAt | 作成日時(YYYY/MM/DD HH:mm:ss、一覧で表示) | ② | schema:701 | 必要（一覧画面表示） |
 | 更新者 | updatedBy | 更新者(氏名解決、一覧で表示。未更新は「—」) | ② | schema:700 | 必要（一覧画面表示） |
 | 更新日時 | updatedAt | 更新日時(一覧で表示。未更新は「—」) | ② | schema:702 | 必要（一覧画面表示） |
 | - | deletedAt | 論理削除日時(NULL=有効) | ③ | schema:703 | 必要（UI非表示・内部管理用） |
 
-> **✅ 画面確認 (Fix / 2026-06-02) — 見積もり管理タブ「見積もり項目追加」ダイアログ**: 実機キャプチャで確認。フィールド構成・順序 (`｜` = 同一行 2 列):
-> 1. 見積項目名（テキスト、必須）
-> 2. 区分（プルダウン、全幅。既定=開発）
-> 3. 見積工数 ｜ 単位（数値 ｜ プルダウン。既定=人時）
-> 4. 見積根拠（テキストエリア、必須）
-> 5. ［追加］ボタン
+> **✅ 画面確認 (v1.2.0 / 2026-06-12) — 見積もり管理タブ UI**:
 >
-> **開発方式は撤去済みを確認**（2026-06-02 対応。DB 列削除はステージング予定）。
+> **上部サマリパネル**: カテゴリ別小計 + バッファ率(0〜50%、既定20%) + 合計工数(バッファ込み) + [Excel出力][Word出力] ボタン。
 >
-> ✅ **根拠/備考の不整合は解消 (2026-06-02)**: フォームの「見積根拠」入力欄を **「備考」に差し替え**（一覧の「備考」列と一致、編集画面でも一覧同様に備考を表示）。見積根拠(rationale) は NOT NULL のため createEstimate で `''` を既定補完（フォーム撤去・DB 列削除はステージング予定）。
-> ※ 上記により**確定フォームの最新フィールド**: 見積項目名 → 区分 →［見積工数｜単位］→ **備考** →［追加］。
-
-> **✅ 画面確認 (Fix / 2026-06-02) — 見積もり管理タブ「一覧」表示カラム**（実機キャプチャ＝正）:
-> - 上部: 「合計工数: N」+ ［見積もり追加］ボタン。
-> - 列順: **項目名（itemName）| 区分（category）| 工数（estimatedEffort + effortUnit を「2 人時」のように合算表示）| 備考（notes）| ステータス（isConfirmed → 確定/未確定 バッジ）| 作成者 | 作成日時 | 更新者 | 更新日時 | 操作（確定/削除）**。
-> - 「見積根拠(rationale)」は一覧に列なし（フォームでも備考に置換済）。監査 4 列は `YYYY/MM/DD HH:mm:ss`、未更新は「—」。
+> **追加ボタン (2種)**:
+> - ［手動で登録］: 項目名・区分・工数・単位・備考 を直接入力。
+> - ［ツールで見積もる］: 開発ツール選択(16種) + 規模係数 + 難易度係数 で自動計算。基準時間はカテゴリ×ツールのプリセット値が自動入力、自由編集可。
+>
+> **一覧カラム順**: 項目名 | 区分 | **入力モード(手動/係数バッジ+ツール名)** | 工数 | 備考 | ステータス | 作成者 | 作成日時 | 更新者 | 更新日時 | 操作(確定/削除)。
 
 ## ProjectMember（プロジェクトメンバー）— `/projects/[id]`（メンバータブ）
 | 画面表示名 | 内部名 | 意味・用途 | 象限 | 根拠 | 要否 |
@@ -247,7 +245,8 @@
 | 終了予定日 | plannedEndDate | 計画終了日(WPは子から自動計算) | ① | schema:744 | 必要（一覧/編集画面表示） |
 | 実績開始日 | actualStartDate | 実績開始日(進捗で自動更新) | ② | schema:745 | 必要（一覧/編集画面表示） |
 | 実績終了日 | actualEndDate | 実績終了日(進捗で自動更新) | ② | schema:746 | 必要（一覧/編集画面表示） |
-| 予定工数 | plannedEffort | 計画工数(人時、WPは子の合計) | ① | schema:747 | 必要（一覧/編集画面表示） |
+| 予定工数 | plannedEffort | 計画工数(人時、WPは子の合計) | ① | schema:747 | 必要（一覧/編集画面表示・分析） |
+| 実績工数 | actualEffort | ACT の実績工数(人時、担当者が実績入力。null=未入力) | ① | schema | 必要（ACT編集ダイアログ実績入力・分析タブの消化工数/工数効率） |
 | 優先度 | priority | high/medium/low(2026-06-03 に my-tasks 列も撤去→UI 非表示、内部の既定並び順にのみ使用、default固定) | ③ | schema:748 | 必要（UI非表示・内部管理用） |
 | ステータス | status | not_started / in_progress / completed など | ① | schema:749 | 必要（一覧/編集画面表示） |
 | 進捗率 | progressRate | 進捗率(0-100%、WPは加重平均) | ① | schema:750 | 必要（一覧/編集画面表示） |
@@ -276,7 +275,7 @@
 > ⚠️ **レイアウト差（任意）**: 開始/終了予定日が、新規作成は 2 列、編集は縦並び。
 
 > **✅ 画面確認 (Fix / 2026-06-02) — WBS管理タブ「一覧」表示カラム**（実機キャプチャ＝正）:
-> - 上部ボタン: ［IDを表示］［工数集計］［エクスポート］［インポート］［追加］。フィルタ: 担当者 / 状況。［列幅をリセット］。
+> - 上部ボタン: ［エクスポート］［インポート］［追加］。フィルタ: 担当者 / 状況。［列幅をリセット］。
 > - 列順: **チェック | 名称（name。WP/ACT バッジ + 階層インデント + 開閉トライアングル）| 担当者（assigneeName。WP は子から自動集約）| ステータス（status、例 未着手）| 進捗&工数（progressRate% / plannedEffort h、例「0% / 0.5h」。WP は進捗%のみ＝工数は子集計）| 予定期間（plannedStartDate 〜 plannedEndDate）| 実績期間（actualStartDate 〜 actualEndDate、未設定「-」）| 添付 | 操作（編集/削除）**。
 > - 「進捗率」と「予定工数」は一覧では **進捗&工数**列に合成表示。WBS番号は名称横に併記。
 
@@ -552,7 +551,7 @@
 | 画面表示名 | 内部名 | 意味・用途 | 象限 | 根拠 |
 |---|---|---|---|---|
 | - | id | 主キー(UUID自動採番) | ③ | schema:58 |
-| 組織ID / 連番 | slug | URLルーティング用slug、v1は'default'固定 | ② | schema:60 |
+| 組織ID / 連番 | slug | 組織ID(ログイン識別子)。公開サインアップはサーバが数字連番を自動採番(BASE=100000)、super_adminは手入力、Defaultは'default'固定 | ② | schema:60 |
 | 組織名 | name | テナント表示名 | ② | schema:61 |
 | テナント連番 | tenantSeq | 顧客向け人間可読連番(default-tenant=1)。表示用のみ | ② | schema:67 |
 | プラン | plan | 'beginner'/'expert'/'pro' 契約区分 | ① | schema:69 |
@@ -1012,6 +1011,21 @@
 | - | createdAt | 作成日時(自動) | ③ | schema:1997 |
 | - | updatedAt | 更新日時(自動) | ③ | schema:1998 |
 
+## SystemBanner（システム周知バナー）— `/admin/super/banners`（運営者専用 / ADR-0036）
+| 画面表示名 | 内部名 | 意味・用途 | 象限 | 根拠 |
+|---|---|---|---|---|
+| - | id | 主キー(UUID自動採番) | ③ | schema:SystemBanner |
+| メッセージ | message | 帯に表示する本文(最大500字) | ① | system-banner.ts |
+| 緊急度 | severity | high(赤)/medium(黄)/low(青) | ① | system-banner.ts |
+| 表示開始日時 | startAt | この日時から表示(JST入力→timestamptz) | ① | ADR-0036 |
+| 表示終了日時 | endAt | この日時で表示終了 | ① | ADR-0036 |
+| 有効 | enabled | false=取り下げ(期間内でも非表示、履歴は残る) | ① | ADR-0036 |
+| - | createdBy | 払い出したsuper_adminのUser.id(FKなし) | ③ | ADR-0036 |
+| - | createdAt | 作成日時(自動) | ③ | schema |
+| - | updatedAt | 更新日時(自動) | ③ | schema |
+
+> グローバル(tenantId なし)。表示判定 getActiveBanner + 1本制約(期間重複禁止)。`message/severity/startAt/endAt/enabled` は管理画面で super_admin が入力(①)。
+
 ---
 
 # Part E. 整理対象カラムの棚卸し（アクション候補）
@@ -1028,7 +1042,7 @@
 | Stakeholder | tags | Phase A 要件 10 で UI 削除 | 復活予定なら追跡、無ければ撤去 |
 | Memo | assigneeId | 他資産は 2026-05-26 実装、メモのみ未実装 | **UI 入力欄を追加**（横展開漏れの可能性大） |
 | Estimate | preconditions / notes | service/zod 受理、UI 非表示 | UI 入力欄追加 or 撤去 |
-| Task | notes | validator 受理、UI 入力欄・表示なし | UI 入力欄追加 or 撤去 |
+| ~~Task | notes~~ | ✅ **解消済 (2026-06-12 feat/url-autolink)**: アクティビティの作成/編集ダイアログに「備考」入力欄を新設（MarkdownTextarea・最大 1000 文字・URL 自動リンク化）。死蔵ではなくなった | — |
 
 ## E-2. 必須なのに UI 非表示（システムが既定値補完）
 | エンティティ | カラム | 状態 | 推奨方針 |

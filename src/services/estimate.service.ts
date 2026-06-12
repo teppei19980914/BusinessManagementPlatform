@@ -40,6 +40,12 @@ export type EstimateDTO = {
   preconditions: string | null;
   isConfirmed: boolean;
   notes: string | null;
+  // v1.2.0: 係数ベース見積もりツールフィールド
+  inputMode: string;
+  baseHours: number | null;
+  scaleCoeff: number | null;
+  difficultyCoeff: number | null;
+  methodCoeff: number | null;
   createdBy: string;
   // 2026-06-02: 一覧で作成者/更新者を表示するため名前解決 (list 経路のみ非null)。
   createdByName: string | null;
@@ -60,6 +66,11 @@ function toEstimateDTO(e: {
   preconditions: string | null;
   isConfirmed: boolean;
   notes: string | null;
+  inputMode: string;
+  baseHours: Prisma.Decimal | null;
+  scaleCoeff: Prisma.Decimal | null;
+  difficultyCoeff: Prisma.Decimal | null;
+  methodCoeff: Prisma.Decimal | null;
   createdBy: string;
   createdAt: Date;
   updatedAt: Date;
@@ -76,6 +87,11 @@ function toEstimateDTO(e: {
     preconditions: e.preconditions,
     isConfirmed: e.isConfirmed,
     notes: e.notes,
+    inputMode: e.inputMode,
+    baseHours: e.baseHours !== null ? Number(e.baseHours) : null,
+    scaleCoeff: e.scaleCoeff !== null ? Number(e.scaleCoeff) : null,
+    difficultyCoeff: e.difficultyCoeff !== null ? Number(e.difficultyCoeff) : null,
+    methodCoeff: e.methodCoeff !== null ? Number(e.methodCoeff) : null,
     createdBy: e.createdBy,
     createdByName: null,
     updatedByName: null,
@@ -150,6 +166,12 @@ export async function createEstimate(
       rationale: input.rationale ?? '',
       preconditions: input.preconditions,
       notes: input.notes,
+      // v1.2.0: 係数ベースモードフィールド
+      inputMode: input.inputMode ?? 'direct',
+      baseHours: input.baseHours,
+      scaleCoeff: input.scaleCoeff,
+      difficultyCoeff: input.difficultyCoeff,
+      methodCoeff: input.methodCoeff,
       createdBy: userId,
       updatedBy: userId,
     },
@@ -180,6 +202,12 @@ export async function updateEstimate(
   if (input.rationale !== undefined) data.rationale = input.rationale;
   if (input.preconditions !== undefined) data.preconditions = input.preconditions;
   if (input.notes !== undefined) data.notes = input.notes;
+  // v1.2.0: 係数ベースモードフィールド
+  if (input.inputMode !== undefined) data.inputMode = input.inputMode;
+  if (input.baseHours !== undefined) data.baseHours = input.baseHours;
+  if (input.scaleCoeff !== undefined) data.scaleCoeff = input.scaleCoeff;
+  if (input.difficultyCoeff !== undefined) data.difficultyCoeff = input.difficultyCoeff;
+  if (input.methodCoeff !== undefined) data.methodCoeff = input.methodCoeff;
 
   const e = await prisma.estimate.update({
     where: { id: estimateId },

@@ -560,7 +560,7 @@ export function HelpClient({ isTenantAdmin, viewer }: Props) {
       {isTenantAdmin && (
         <>
           {/* 2026-05-28: 「初回ログイン後に既存ナレッジを CSV で一括取込したい」というテナント
-              管理者特有の作業を支援。手順本体は /settings/tenant/external-import (ウィザード)
+              管理者特有の作業を支援。手順本体は /settings/tenant/migration-import (CSV インポート)
               にあり、ここでは「どこから始めるか」「形式」「よくあるエラー」を抜粋で説明する。 */}
           <FaqCategory
             title="外部データの取込・移行について (CSV インポート、テナント管理者のみ)"
@@ -571,9 +571,9 @@ export function HelpClient({ isTenantAdmin, viewer }: Props) {
               a={
                 <div className="space-y-2">
                   <p>
-                    <strong>テナント管理者のみ</strong>が利用できる「外部データ移行ウィザード」で、
-                    ナレッジと過去課題 (リスク / イシュー) を CSV で一括取込できます。
-                    料金は <strong>全プラン無料</strong> (embedding 生成費用も発生しません / ADR-0019)。
+                    <strong>テナント管理者のみ</strong>が利用できる「① CSVファイルをインポート」で、
+                    顧客・プロジェクト・WBS・リスク・課題・ナレッジ・振り返りを CSV で一括取込できます。
+                    取り込んだデータは新規作成で、既定の公開範囲は「下書き」(下書きは embedding 生成・課金の対象外)。
                   </p>
                   <ol className="list-decimal space-y-1 pl-5">
                     <li>
@@ -585,14 +585,14 @@ export function HelpClient({ isTenantAdmin, viewer }: Props) {
                     </li>
                     <li>
                       「データインポート」セクションの黄色い案内ボックスから{' '}
-                      <Link href="/settings/tenant/external-import" className="text-primary underline">
-                        外部データ移行ウィザード
+                      <Link href="/settings/tenant/migration-import" className="text-primary underline">
+                        CSVファイルをインポート
                       </Link>{' '}
                       に進む
                     </li>
                     <li>
-                      ウィザード上部の <strong>テンプレート CSV</strong>{' '}
-                      (Knowledge / RiskIssue) をダウンロードし、Excel で編集 → 「名前を付けて保存」→{' '}
+                      画面上部の <strong>テンプレート CSV</strong>{' '}
+                      (取り込む種類ごと) をダウンロードし、Excel で編集 → 「名前を付けて保存」→{' '}
                       <strong>「CSV UTF-8 (コンマ区切り)」</strong> で保存
                     </li>
                     <li>
@@ -666,17 +666,17 @@ export function HelpClient({ isTenantAdmin, viewer }: Props) {
               }
             />
             <FaqItem
-              q="本ウィザードで取り込めるのは何ですか? 振り返り・メモ・WBS も取り込めますか?"
+              q="CSV インポートで取り込めるのは何ですか? メモも取り込めますか?"
               a={
                 <>
                   <p>
-                    本ウィザード (Phase 1) で取り込めるのは <strong>ナレッジ (Knowledge)</strong>{' '}
-                    と <strong>リスク・課題 (RiskIssue)</strong> の 2 種類です。
+                    「① CSVファイルをインポート」で取り込めるのは <strong>顧客・プロジェクト・WBS・リスク・課題・ナレッジ・振り返り</strong>{' '}
+                    の 7 種類です。
                   </p>
                   <p className="mt-2">
-                    振り返り・メモ・WBS (タスク) は本ウィザードの対象外で、それぞれの一覧画面の「インポート」ボタンから
-                    個別に CSV 取込する経路があります (エクスポート → 編集 → 再取込 する round-trip 型のため、
-                    外部システムからの初回投入には向きません)。
+                    メモは対象外で、メモ一覧の「インポート」ボタンから個別に CSV 取込する経路があります
+                    (エクスポート → 編集 → 再取込 する round-trip 型)。各一覧の「インポート」は既存データの
+                    上書き編集にも使えます。
                   </p>
                 </>
               }
@@ -755,19 +755,18 @@ export function HelpClient({ isTenantAdmin, viewer }: Props) {
               a={
                 <ul className="list-disc space-y-1 pl-5">
                   <li>
-                    Knowledge の <code>visibility</code> 既定値は <strong><code>company</code></strong>{' '}
-                    (テナント全員に公開、他プロジェクトの提案エンジン候補に並ぶ)
+                    公開範囲は <strong>下書き / 公開</strong> の 2 種類 (ナレッジ・リスク・課題・振り返り共通)。
+                    マッピングで指定しない場合の既定値は <strong>下書き</strong>
                   </li>
                   <li>
-                    RiskIssue の <code>visibility</code> 既定値は <strong><code>draft</code></strong>{' '}
-                    (自分のみ、提案エンジン非表示 / 課金対象外)
+                    <strong>下書き</strong>: 自分のみ。提案エンジン非表示 / 索引化・課金の対象外
                   </li>
                   <li>
-                    CSV の <code>visibility</code> 列で行ごとに <code>draft</code> / <code>project</code> /{' '}
-                    <code>company</code> (RiskIssue は <code>draft</code> / <code>public</code>) を指定可能
+                    <strong>公開</strong>: テナント全員に公開、提案エンジンの候補に並ぶ
                   </li>
                   <li>
-                    取込後に各データの編集画面から個別に公開範囲を変更することもできます
+                    CSV の公開範囲列で行ごとに <code>下書き</code> / <code>公開</code> (英語コード <code>draft</code> /{' '}
+                    <code>public</code> でも可) を指定可能。取込後に各データの編集画面から個別に変更もできます
                   </li>
                 </ul>
               }

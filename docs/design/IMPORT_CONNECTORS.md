@@ -4,9 +4,9 @@
 > 作成: 2026-06-04 / すべて各サービスの**公式ドキュメント**で実在確認済 (URLは各節)。推測値は「要確認」と明記。
 > 位置づけ: コネクタ実装・テスト実装の一次入力。たすきば側の取り込み仕様は ADR-0034 と `docs/design/COLUMN_USAGE_MAP.md` / `docs/public/field-reference.md` を正本とする。
 >
-> **提供状況 (2026-06-05, v1.1.0):**
-> - **手動CSV経路は提供済**: `/settings/tenant/migration-import` の 4 ステップウィザード (顧客・プロジェクト・WBS・リスク・課題・ナレッジ・振り返りの 7 種類、テンプレCSV + 列マッピング + プレビュー → 取込)。実装は `src/services/import/` (csv-to-batch / batch-preview / batch-apply / migration-import.service)。
-> - **本ドキュメントの API 連携 (Notion / Backlog / kintone / Pleasanter / Google Sheets) は未提供 (将来バージョン)**: `src/services/import/connectors/` には Backlog の純粋変換関数 (`backlog.ts`) のみ存在し、API 取得を行うルート/画面には**未接続**。設定画面でも「現在開発中・近日提供予定」と表示している。共通中間形式 `NormalizedBatch` を手動CSV経路と共有しているため、コネクタ実装時はこの正規化関数を足すだけで取り込み本体を流用できる。
+> **提供状況 (2026-06-05 更新):**
+> - **手動CSV経路は提供済 (v1.1.0)**: `/settings/tenant/migration-import` の 4 ステップウィザード (顧客・プロジェクト・WBS・リスク・課題・ナレッジ・振り返りの 7 種類、テンプレCSV + 列マッピング + プレビュー → 取込)。実装は `src/services/import/` (csv-to-batch / batch-preview / batch-apply / migration-import.service)。
+> - **API 連携 (Notion / Backlog / kintone / Pleasanter / Google Sheets) は ベータ 提供 (2026-06-05 実装)**: コネクタは `src/services/import/connectors/` に実装 (`http.ts` 共通基盤 + `notion/backlog/kintone/pleasanter/google-sheets.ts` + `types.ts` / `registry.ts` / `wbs-rows.ts`)。各コネクタは「fetch → `CsvEntitySource[]` 正規化」までを担い、検証・値解決・WBS階層・依存解決・取り込みは手動CSV経路の `buildBatchFromCsv` → `previewMigration` → `applyImportBatch` を**そのまま再利用** (batch-preview / batch-apply は無改変)。ルート: `connect/discover`・`connect/preview` (確定は既存 `/migration-import/apply`)、UI: `/settings/tenant/api-import`。認証情報は取得処理の間だけ使用し永続保存しない (毎回入力)。各サービスは HTTP 境界をモックした単体テストで担保。
 
 ---
 
@@ -258,6 +258,16 @@ Sheets の `values` (2次元配列・行×列の文字列) は**CSVパース結�
 | 主なレート対策 | Retry-After順守 | rateLimit API実値取得 | size500+逐次 | スロットリング+再開 | 指数バックオフ |
 | マッピング | 全項目ユーザ指定 | issueTypeで出し分け | アプリ/項目ユーザ指定 | 全項目ユーザ指定 | ヘッダ→列(CSV同) |
 
+## 6.5. 2026-06-05 公式再検証での修正・確定 (実装時反映済)
+
+実装着手前に各サービス公式で再検証した結果、§1〜§5 から以下を修正・確定した。
+
+- **Backlog**: ベースURL は **3 系統** (`.com` / `.jp` / **`.backlogtool.com`**)。レート実数値は read=600 / update=150 / **search=150** / icon=60 (件/分、`GET /api/v2/rateLimit` で実取得)。**サブタスク (親子) は有料プラン限定** — `subtaskingEnabled=false` のスペースは全課題フラット (discover で警告表示)。
+- **Notion**: 行取得クエリのメソッドは **POST** (`POST /v1/data_sources/{ds}/query`。アップグレードガイドの一部 PATCH 表記は誤り)。people の email は capability「User information (with email)」必須。relation は 25 件で truncate。Notion-Version=`2026-03-11` 固定。
+- **Pleasanter**: 表示名解決は View に **`"ApiDataType":"KeyValues"`** 指定が必須 (未指定だと Status/Owner/Manager が数値ID)。`Wikis` 種別は移行対象外として除外。
+- **Google Sheets**: 1 セル上限は 5 万字 (Sheets 側)。Excel→CSV 経路はこの上限を迂回するため、**取り込み側で DB カラム長 (VarChar) を検証**しサイレント切り捨てを禁止 (`import-field-catalog.ts` の `IMPORT_FIELD_MAX_LENGTH` + `csv-to-batch` で実装)。
+- **kintone / Pleasanter のレート上限**: 公式に明記なしの項目は引き続き「要確認」。共通 HTTP 基盤 (`connectors/http.ts`) が 429 + `Retry-After` / `X-RateLimit-Reset` 順守 + 指数バックオフで吸収する。
+
 ## 7. 要確認事項 (実装着手前に各公式で再確認)
 
 - Notion: ページングデフォルト件数 / people の email 取得条件 / relation 25件超の補完エンドポイント / 旧 `databases/query` の現行挙動。
@@ -270,4 +280,5 @@ Sheets の `values` (2次元配列・行×列の文字列) は**CSVパース結�
 
 - [ADR-0034](../adr/0034-external-tool-migration-import.md) — 本機能の決定
 - [docs/design/COLUMN_USAGE_MAP.md](./COLUMN_USAGE_MAP.md) / [docs/public/field-reference.md](../public/field-reference.md) — 取り込み対象項目の正本
-- 流用元: [external-data-import.service.ts](../../src/services/external-data-import.service.ts) / [task-sync-import.service.ts](../../src/services/task-sync-import.service.ts)
+- 取込基盤: [import/migration-import.service.ts](../../src/services/import/migration-import.service.ts)（preview→apply の 2 段階・`tenantImportPreview` TTL は [import/tenant-import-preview.service.ts](../../src/services/import/tenant-import-preview.service.ts) が GC）/ 流用元: [task-sync-import.service.ts](../../src/services/task-sync-import.service.ts)
+  - ※ 旧 `external-data-import.service.ts`（ナレッジ・課題専用の 2 段階フロー）は本機能 (ADR-0034) へ統合し撤去済み。

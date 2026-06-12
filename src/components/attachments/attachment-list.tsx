@@ -57,7 +57,7 @@ export function AttachmentList({
   const t = useTranslations('attachment');
   const tAction = useTranslations('action');
   const { withLoading } = useLoading();
-  const { showSuccess, showError } = useToast();
+  const { showError, showSuccessKey, showErrorKey } = useToast();
   const resolvedLabel = label ?? t('relatedUrl');
   // loaded=false の間は空一覧メッセージを出さないため、1 つの state にまとめる
   // (react-hooks/set-state-in-effect 回避: effect 内の setState を 1 回に集約)
@@ -127,12 +127,12 @@ export function AttachmentList({
       const json = await res.json().catch(() => ({}));
       const msg = json.error?.message || json.error?.details?.[0]?.message || t('addFailed');
       setError(msg);
-      showError('リンクの追加に失敗しました');
+      showErrorKey('attachment.linkAddFailed');
       return;
     }
     setNewDisplayName('');
     setNewUrl('');
-    showSuccess('リンクを追加しました');
+    showSuccessKey('attachment.linkAddSuccess');
     await reload();
   }
 
@@ -140,8 +140,9 @@ export function AttachmentList({
   async function handleUpload(file: File) {
     setError('');
     if (file.size > FILE_MAX_BYTES) {
-      setError(`ファイル サイズが上限 ${Math.floor(FILE_MAX_BYTES / 1_000_000)}MB を超えています`);
-      showError('ファイル サイズ上限を超えています');
+      const limitMb = Math.floor(FILE_MAX_BYTES / 1_000_000);
+      setError(t('fileSizeExceededDetailed', { limitMb }));
+      showErrorKey('attachment.fileSizeExceededShort');
       return;
     }
     setUploading(true);
@@ -163,7 +164,7 @@ export function AttachmentList({
       );
       if (!uploadRes.ok) {
         const j = await uploadRes.json().catch(() => ({}));
-        const msg = j.error?.message ?? j.error?.code ?? 'アップロード URL の発行に失敗しました';
+        const msg = j.error?.message ?? j.error?.code ?? t('uploadUrlIssuingFailed');
         setError(msg);
         showError(msg);
         return;
@@ -185,8 +186,8 @@ export function AttachmentList({
         body: file,
       });
       if (!putRes.ok) {
-        setError('Supabase へのアップロードに失敗しました');
-        showError('Supabase へのアップロードに失敗しました');
+        setError(t('supabaseUploadFailed'));
+        showErrorKey('attachment.supabaseUploadFailed');
         return;
       }
 
@@ -207,12 +208,12 @@ export function AttachmentList({
       });
       if (!finalizeRes.ok) {
         const j = await finalizeRes.json().catch(() => ({}));
-        const msg = j.error?.message ?? j.error?.code ?? 'finalize に失敗しました';
+        const msg = j.error?.message ?? j.error?.code ?? t('finalizeFailed');
         setError(msg);
         showError(msg);
         return;
       }
-      showSuccess('ファイルをアップロードしました (検索インデックス作成中)');
+      showSuccessKey('attachment.uploadSuccess');
       await reload();
     } finally {
       setUploading(false);
@@ -227,10 +228,10 @@ export function AttachmentList({
     );
     if (!res.ok) {
       setError(t('deleteFailed'));
-      showError('リンクの削除に失敗しました');
+      showErrorKey('attachment.linkDeleteFailed');
       return;
     }
-    showSuccess('リンクを削除しました');
+    showSuccessKey('attachment.linkDeleteSuccess');
     await reload();
   }
 
@@ -254,9 +255,9 @@ export function AttachmentList({
             const isSupabase = a.storageProvider === 'supabase';
             const statusBadge =
               isSupabase && a.embeddingStatus === 'pending'
-                ? ' (検索インデックス作成中)'
+                ? t('indexingNote')
                 : isSupabase && a.embeddingStatus === 'failed'
-                  ? ' (インデックス作成失敗)'
+                  ? t('indexingFailedNote')
                   : '';
             const sizeLabel = a.sizeBytes ? ` ${Math.ceil(a.sizeBytes / 1000).toLocaleString()}KB` : '';
             return (
@@ -332,7 +333,7 @@ export function AttachmentList({
       {canEdit && uploadEnabled && (
         <div className="flex items-center gap-2 rounded border bg-muted p-2 text-sm">
           <Label htmlFor={`attachment-upload-${entityId}`} className="text-xs">
-            ファイルをアップロード (50MB 上限)
+            {t('uploadButton', { limitMb: Math.floor(FILE_MAX_BYTES / 1_000_000) })}
           </Label>
           <input
             ref={fileInputRef}
@@ -345,7 +346,7 @@ export function AttachmentList({
               if (f) void handleUpload(f);
             }}
           />
-          {uploading && <span className="text-xs text-muted-foreground">アップロード中…</span>}
+          {uploading && <span className="text-xs text-muted-foreground">{t('uploading')}</span>}
         </div>
       )}
     </div>

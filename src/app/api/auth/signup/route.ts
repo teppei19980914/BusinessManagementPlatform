@@ -102,8 +102,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       {
         data: {
-          // 新規テナント / 初期 admin の ID は返さない (情報漏洩抑止)
+          // 新規テナント / 初期 admin の内部 ID は返さない (情報漏洩抑止)。
+          // feat/signup-friction-reduction (2026-06-12): 組織 ID (slug) は秘匿情報ではなく
+          //   (招待メール本文・ログイン画面で使う公開識別子)、サーバ自動採番のため UI が
+          //   成功画面表示・再送に使う。作成した本人にのみ返す。
           message: '招待メールを送信しました。メールに記載のリンクからパスワードを設定してください。',
+          slug: result.slug,
         },
       },
       { status: 201 },

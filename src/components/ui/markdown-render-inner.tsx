@@ -19,6 +19,7 @@
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
+import remarkLinkifyUrls from '@/lib/remark-linkify-urls';
 import { MARKDOWN_COMPONENTS } from './markdown-components';
 
 export default function MarkdownRenderInner({
@@ -31,7 +32,8 @@ export default function MarkdownRenderInner({
   return (
     <div className={`text-sm ${className ?? ''}`}>
       <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkBreaks]}
+        // remarkGfm の後に linkify を置き、gfm autolink が CJK を巻き込んだ URL を補正する
+        remarkPlugins={[remarkGfm, remarkBreaks, remarkLinkifyUrls]}
         components={MARKDOWN_COMPONENTS}
       >
         {value}

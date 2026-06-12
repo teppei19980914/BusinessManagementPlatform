@@ -6,7 +6,7 @@ vi.mock('@/services/notification.service', () => ({
   cleanupReadNotifications: vi.fn(),
 }));
 
-vi.mock('@/services/external-data-import.service', () => ({
+vi.mock('@/services/import/tenant-import-preview.service', () => ({
   deleteExpiredPreviews: vi.fn(),
 }));
 
@@ -28,7 +28,7 @@ import {
   generateDailyNotifications,
   cleanupReadNotifications,
 } from '@/services/notification.service';
-import { deleteExpiredPreviews } from '@/services/external-data-import.service';
+import { deleteExpiredPreviews } from '@/services/import/tenant-import-preview.service';
 import {
   updateAllStorageBytesUsed,
   detectDbCapacityDrift,

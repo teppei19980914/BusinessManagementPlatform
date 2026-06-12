@@ -41,8 +41,9 @@ service 層を読む前に、以下 3 つの横断的な約束事を理解して
 | ファイル | 責務 | 主要 export | 課金 | テナント分離 |
 |---|---|---|---|---|
 | `project.service.ts` | プロダクトのトップエンティティ。プロジェクト CRUD + 状態遷移 + 自動タグ/embedding 連携 | `listProjects` / `createProject` / `getProject` / `updateProject` / `changeProjectStatus` / `deleteProjectCascade` / `extractTagsAndEmbedForProject` | ○ (タグ抽出/embedding) | ○ |
-| `task.service.ts` | 最大・最複雑の service。WBS (WP→ACT 階層) と進捗・工数・ガント・CSV を担う | `listTasks` / `listTasksWithTree` / `createTask` / `updateTask` / `bulkUpdateTasks` / `updateTaskProgress` / `recalculateAllProjectWps` / `getAssigneeDailyWorkload` / `exportWbs` | — | ○ |
+| `task.service.ts` | 最大・最複雑の service。WBS (WP→ACT 階層) と進捗・工数・ガント・CSV を担う | `listTasks` / `listTasksWithTree` / `createTask` / `updateTask` / `bulkUpdateTasks` / `bulkDeleteTasks` (ADR-0035) / `updateTaskProgress` / `recalculateAllProjectWps` / `getAssigneeDailyWorkload` / `exportWbs` | — | ○ |
 | `task-duplicate.service.ts` | WBS タスクの一括複製 (最大 100 件、名前衝突回避) | `duplicateTasks` / `pickNonConflictingName` (`MAX_DUPLICATE_AT_ONCE=100`) | — | (project 経由) |
+| `analytics.service.ts` | 分析タブ 5 パネルのデータソース (v1.2.0): (1) WBS 予実カーブ (ACT 件数累積の予定線/実績線 + 本日サマリ)、(2) 担当者別 週次消化工数 (完了 ACT の実績工数を週×担当者で SUM + 工数効率)、(3) 担当者別 予定 vs 実績工数 (完了+実工数入力済 ACT を担当者別に予定/実績 SUM)、(4) 担当者別 作業負担 (未完了 ACT の予定工数を担当者×状態で SUM + 個人ペース比=実績÷予定)、(5) 担当者別 日次工数 (未完了 ACT の予定工数を予定期間で均等按分し担当者×日付(本日以降)で SUM、`classifyWorkloadLevel` で 7h/8h 閾値判定するヒートマップ)。ドメイン数値のみ返し表示は持たない。本日/本日週はテナント TZ。**対象期間 (`AnalyticsRange`)** を任意で受け、(1) は points をクリップ、(2)(3) は実績完了日で対象 ACT を絞り再集計、(5) は未来の終端を絞る ((4) は現在スナップショットのため非対応)。 | `getWbsCompletionCurve` / `getAssigneeWeeklyEffort` / `getAssigneeEffortVariance` / `getAssigneeWorkload` / `getAssigneeDailyCapacity` (+ `AnalyticsRange`) | — | ○ (project 経由) |
 | `estimate.service.ts` | プロジェクト工数見積もり明細の CRUD + 確定 | `listEstimates` / `createEstimate` / `confirmEstimate` / `deleteEstimate` | — | ○ |
 | `member.service.ts` | プロジェクトメンバー (projectMember) の参加 CRUD | `listMembers` / `addMember` / `updateMemberRole` / `removeMember` | — | ○ |
 | `state-machine.ts` | プロジェクト 7 状態の遷移可否・次状態列挙 (純関数) | `canTransition` / `getNextStatuses` | — | — |
@@ -116,7 +117,7 @@ service 層を読む前に、以下 3 つの横断的な約束事を理解して
 
 | ファイル | 責務 | 主要 export | 課金 | テナント分離 |
 |---|---|---|---|---|
-| `tenant-onboarding.service.ts` | 新規テナント作成の単一エントリ (super_admin 手動 + signup) | `createTenantBySuperAdmin` / `createTenantBySignup` / `TenantOnboardingInputSchema` | — | (作成) |
+| `tenant-onboarding.service.ts` | 新規テナント作成の単一エントリ (super_admin 手動 + signup)。signup は組織 ID (slug) を入力させずサーバが数字連番を自動採番 (`pickNextNumericSlug`、衝突時リトライ)。super_admin は slug 手入力 (feat/signup-friction-reduction 2026-06-12) | `createTenantBySuperAdmin` / `createTenantBySignup` / `TenantOnboardingInputSchema` / `pickNextNumericSlug` | — | (作成) |
 | `tenant-self.service.ts` | admin が自テナントのプラン/予算/i18n/請求先を self-service 変更。**有料化 (Expert/Pro) 時は請求先住所完備を必須 (`BILLING_INFO_INCOMPLETE`)** | `getTenantSelfInfo` / `updateTenantI18n` / `updateBillingContact` / `updateTenantSelf` / `cancelScheduledPlanChange` | — | (tenantId 指定) |
 | `sample-clone.service.ts` | スターターデータ取込/削除 (feat/starter-data-import 2026-06-05)。管理テナントの `isSampleData=true` を自テナントへ `is_seed_sample=true` で複製 (embedding は raw SQL コピー=課金ゼロ)、容量 precheck、`is_seed_sample=true` のみ依存順に物理削除 | `importSampleData` / `deleteSampleData` | — | ○ (越境読込元=管理テナント限定、書込=自テナント) |
 | `sample-curation.service.ts` | super_admin が取込元 (管理テナント) の Project/Knowledge の `isSampleData` を切替。**更新は MANAGEMENT_TENANT_ID 限定 (越境防御)** | `listManagementSeedCandidates` / `setManagementSampleFlag` | — | ○ (管理テナント限定) |
@@ -161,7 +162,8 @@ cron から呼ばれる主要 service は他カテゴリに分散している。
 |---|---|---|---|---|
 | `data-export.service.ts` | テナント全業務データを ZIP (JSON+CSV) でエクスポート | `exportTenantData` / `csvEscape` (`USER_EXPORT_FIELDS` / `USER_PII_FIELDS`) | — | (tenantId 指定) |
 | `data-import.service.ts` | エクスポート ZIP を現テナントに全件新規作成で取込 | `importTenantData` | — | (tenantId 指定) |
-| `external-data-import.service.ts` | 外部システムからの CSV を preview → apply で取込 (期限切れ preview 削除) | `previewImport` / `applyImport` / `deleteExpiredPreviews` | ○ (embedding) | (tenantId 経由) |
+| `import/migration-import.service.ts` | 手動 CSV / API 連携の 7 種 (顧客・プロジェクト・WBS・リスク課題・ナレッジ・振り返り) 一括取込を preview → apply で実行 (ADR-0034) | `previewMigrationFromCsv` / `previewMigrationFromSources` / `applyMigration` | ○ (embedding) | (tenantId 経由) |
+| `import/tenant-import-preview.service.ts` | 取込プレビュー (`tenantImportPreview`) の TTL GC。cron から全テナント横断で expiresAt 期限切れを物理削除 | `deleteExpiredPreviews` | — | (system-wide cleanup) |
 | `task-sync-import.service.ts` | WBS の export → 編集 → re-import (Sync by ID) | `parseSyncImportCsv` / `computeSyncDiff` / `applySyncImport` (`WBS_SYNC_CSV_HEADERS`) | — | (project 経由) |
 | `knowledge-sync-import.service.ts` | ナレッジの Sync by ID 往復編集 | `parseKnowledgeSyncImportCsv` / `computeKnowledgeSyncDiff` / `applyKnowledgeSyncImport` / `exportKnowledgeSync` | — | ○ |
 | `risk-sync-import.service.ts` | リスク/課題の Sync by ID 往復編集 | `parseRiskSyncImportCsv` / `computeRiskSyncDiff` / `applyRiskSyncImport` / `exportRisksSync` | — | ○ |
@@ -174,12 +176,13 @@ cron から呼ばれる主要 service は他カテゴリに分散している。
 |---|---|---|---|---|
 | `notification.service.ts` | 通知 CRUD + 日次通知生成 (タスク期日等) + 既読クリーンアップ | `listNotificationsForUser` / `setNotificationRead` / `markAllNotificationsRead` / `generateDailyNotifications` / `cleanupReadNotifications` / `buildTaskNotificationTitle` | — | (userId 経由) |
 | `mention.service.ts` | コメント内メンションの検証・展開・通知生成 | `validateMentionsForEntity` / `getMentionContext` / `expandMention` / `expandMentionsToRecipients` / `diffMentions` / `generateMentionNotifications` / `buildMentionNotificationTitle` | — | (エンティティ経由) |
+| `system-banner.service.ts` | システム周知バナー (画面上部の帯、ADR-0036)。**グローバル** (全テナント共通)・期間指定・緊急度色分け・1 本制約 (期間重複禁止)。super_admin 専用管理 | `getActiveBanner` / `listBanners` / `getBanner` / `createBanner` / `updateBanner` / `setBannerEnabled` / `deleteBanner` | — | (横断, 正当: グローバル運用周知) |
 
 ---
 
 ## 集計
 
-- service 総数: **78** ファイル (`src/services/**/*.ts`, テスト除外, Glob 実測)。
+- service 総数: **79** ファイル (`src/services/**/*.ts`, テスト除外, Glob 実測)。
 - `viewerTenantId` を取りテナント分離を強制する service: 24 ファイル (grep 実測)。
 - `withMeteredLLM` を直接 import する service: 4 ファイル (grep 実測; `auto-tag` / `embedding` / `project` / `suggestion-explanation`)。
 

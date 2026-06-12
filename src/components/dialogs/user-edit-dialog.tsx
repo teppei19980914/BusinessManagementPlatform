@@ -45,7 +45,7 @@ export function UserEditDialog({
   const tField = useTranslations('field');
   const t = useTranslations('admin.userEdit');
   const { withLoading } = useLoading();
-  const { showSuccess, showError } = useToast();
+  const { showSuccessKey, showErrorKey } = useToast();
   // PR #119: session 連携フォーマッタ
   const { formatDateTimeFull } = useFormatters();
   const [form, setForm] = useState({
@@ -99,12 +99,12 @@ export function UserEditDialog({
       const json = await res.json().catch(() => ({}));
       const msg = json.error?.message || t('updateFailed');
       setError(msg);
-      showError('ユーザの更新に失敗しました');
+      showErrorKey('admin.userEdit.toastUpdateFailed');
       return;
     }
     // feat/account-lock-and-ui-consistency: 作成と挙動統一、即時 close → reload は裏で
     onOpenChange(false);
-    showSuccess('ユーザを更新しました');
+    showSuccessKey('admin.userEdit.toastUpdateSuccess');
     void onSaved();
   }
 
@@ -119,12 +119,12 @@ export function UserEditDialog({
       const json = await res.json().catch(() => ({}));
       const msg = json.error?.message || t('unlockFailed');
       setError(msg);
-      showError('ロック解除に失敗しました');
+      showErrorKey('admin.userEdit.toastUnlockFailed');
       return;
     }
     // feat/account-lock-and-ui-consistency: 作成と挙動統一、即時 close → reload は裏で
     onOpenChange(false);
-    showSuccess('アカウントのロックを解除しました');
+    showSuccessKey('admin.userEdit.toastUnlockSuccess');
     void onSaved();
   }
 
@@ -142,12 +142,12 @@ export function UserEditDialog({
       const json = await res.json().catch(() => ({}));
       const msg = json.error?.message || t('recoveryReissueFailed');
       setError(msg);
-      showError('リカバリーコードの再発行に失敗しました');
+      showErrorKey('admin.userEdit.toastRecoveryReissueFailed');
       return;
     }
     const json = await res.json().catch(() => ({ data: { recoveryCodes: [] } }));
     setRecoveryCodes(json?.data?.recoveryCodes ?? []);
-    showSuccess(t('recoveryCodesDone'));
+    showSuccessKey('admin.userEdit.recoveryCodesDone');
   }
 
   // 2026-06-03: 招待メールの再送 (招待中ユーザのみ)。即時 close → reload は裏で。
@@ -161,11 +161,11 @@ export function UserEditDialog({
       const json = await res.json().catch(() => ({}));
       const msg = json.error?.message || t('inviteResendFailed');
       setError(msg);
-      showError('招待メールの再送に失敗しました');
+      showErrorKey('admin.userEdit.toastInviteResendFailed');
       return;
     }
     onOpenChange(false);
-    showSuccess('招待メールを再送しました');
+    showSuccessKey('admin.userEdit.toastInviteResendSuccess');
     void onSaved();
   }
 
@@ -181,11 +181,11 @@ export function UserEditDialog({
       const json = await res.json().catch(() => ({}));
       const msg = json.error?.message || t('inviteCancelFailed');
       setError(msg);
-      showError('招待の取消に失敗しました');
+      showErrorKey('admin.userEdit.toastInviteCancelFailed');
       return;
     }
     onOpenChange(false);
-    showSuccess('招待を取り消しました');
+    showSuccessKey('admin.userEdit.toastInviteCancelSuccess');
     void onSaved();
   }
 
@@ -202,7 +202,7 @@ export function UserEditDialog({
       const json = await res.json().catch(() => ({}));
       const msg = json.error?.message || t('deleteFailed');
       setError(msg);
-      showError('ユーザの削除に失敗しました');
+      showErrorKey('admin.userEdit.toastDeleteFailed');
       return;
     }
     const json = await res.json().catch(() => ({ data: null }));
@@ -210,7 +210,7 @@ export function UserEditDialog({
     alert(t('deleteDone', { count: removed }));
     // feat/account-lock-and-ui-consistency: 作成と挙動統一、即時 close → reload は裏で
     onOpenChange(false);
-    showSuccess('ユーザを削除しました');
+    showSuccessKey('admin.userEdit.toastDeleteSuccess');
     void onSaved();
   }
 

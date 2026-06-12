@@ -24,6 +24,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { linkifyNodes } from '@/components/ui/linkified-text';
 import {
   Dialog,
   DialogContent,
@@ -379,7 +380,9 @@ export function CustomerDetailClient({ customer, projects }: Props) {
           </div>
           <div className="sm:col-span-2">
             <dt className="text-xs font-medium text-muted-foreground">{t('fieldNotes')}</dt>
-            <dd className="mt-1 whitespace-pre-wrap text-sm">{customer.notes || '—'}</dd>
+            <dd className="mt-1 whitespace-pre-wrap text-sm">
+              {customer.notes ? linkifyNodes(customer.notes) : '—'}
+            </dd>
           </div>
         </dl>
       </div>

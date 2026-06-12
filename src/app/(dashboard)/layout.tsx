@@ -20,6 +20,10 @@ import { ToastProvider } from '@/components/toast-provider';
 //   引き続き詳細版 getDegradedModeState を利用)。
 import { getDegradedModeBannerState } from '@/services/degraded-mode.service';
 import { DegradedModeBanner } from '@/components/degraded-mode-banner';
+// ADR-0036: 全ユーザ共通のシステム周知バナー (画面上部の帯メッセージ)。
+//   feat/app-header-footer-unification (2026-05-24) で廃止した常時バナーの再導入。
+import { getActiveBanner } from '@/services/system-banner.service';
+import { SystemBannerBar } from '@/components/system-banner-bar';
 // PR #373 / chat-semantic-search: 全ページ右下のチャット意味検索 FAB
 import { ChatSemanticSearchFab } from '@/components/chat-semantic-search';
 // G2-e-3 (2026-05-31): 初回ログイン時のオンボーディングモーダル (自動表示コントローラ)
@@ -46,9 +50,11 @@ export default async function DashboardLayout({ children }: { children: React.Re
   // Q5(3): 縮退モード状態を取得し banner で表示する。
   //   - 取得失敗は許容 (バナー表示は best-effort、画面遷移を妨げない)
   //   - admin / general 双方に共通で表示 (内容は role で出し分けない、リンク先のみ admin/一般で差別)
-  const [user, degradedMode] = await Promise.all([
+  const [user, degradedMode, activeBanner] = await Promise.all([
     requireAuthForLayout(),
     getDegradedModeBannerState(session.user.tenantId).catch(() => null),
+    // ADR-0036: 全テナント共通の周知バナー。取得失敗は best-effort で握りつぶす (画面遷移を妨げない)。
+    getActiveBanner().catch(() => null),
   ]);
 
   // feat/app-header-footer-unification (2026-05-24): AnnouncementBanner を削除。
@@ -68,6 +74,9 @@ export default async function DashboardLayout({ children }: { children: React.Re
               systemRole={user.systemRole as SystemRole}
             />
           )}
+          {/* ADR-0036: システム周知バナー (運営者が出す全ユーザ共通の帯)。
+              表示判定はサーバ、×破棄のセッション維持は client (SystemBannerBar) で行う。 */}
+          <SystemBannerBar banner={activeBanner} />
           {/*
             max-w-7xl は意図的に外している: 画面左右に大きな余白が残ったまま
             一覧テーブルに横スクロールが出るとユーザビリティが下がるため、

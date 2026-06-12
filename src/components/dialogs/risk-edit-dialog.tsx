@@ -76,6 +76,7 @@ export function RiskEditDialog({
   onOpenChange,
   onSaved,
   readOnly = false,
+  closedProject = false,
   currentProjectId,
 }: {
   risk: RiskLike | null;
@@ -85,6 +86,9 @@ export function RiskEditDialog({
   onSaved: () => Promise<void> | void;
   /** PR #61: 非公開プロジェクトの行クリック時など、参照専用で開く場合に true */
   readOnly?: boolean;
+  /** 2026-06-12: クローズ済みプロジェクト経由で開いた場合 true。コメント投稿欄も非表示にする
+   *  (readOnly は非所有者の閲覧=コメント可も含むため、コメント遮断は別フラグで判定)。 */
+  closedProject?: boolean;
   /** PR feat/asset-multi-linking-ui (Phase 2): ダイアログを開いている画面のプロジェクト ID。
    *  /projects/X/risks → X、/risks (全リスク横断) → null。
    *  PATCH の URL 構築 (作成元 project が削除済の場合の fallback) と
@@ -95,7 +99,7 @@ export function RiskEditDialog({
   const tField = useTranslations('field');
   const tRisk = useTranslations('risk');
   const { withLoading } = useLoading();
-  const { showSuccess, showError } = useToast();
+  const { showSuccessKey, showErrorKey } = useToast();
   // feat/dialog-fullscreen-toggle: 全画面トグル (90vw × 90vh)。state は dialog ローカル。
   const { fullscreenClassName, FullscreenToggle } = useDialogFullscreen();
   const [form, setForm] = useState({
@@ -179,7 +183,7 @@ export function RiskEditDialog({
       currentProjectId ?? risk.projectId ?? risk.linkedProjects?.[0]?.id ?? null;
     if (!targetProjectId) {
       setError(tRisk('updateFailed'));
-      showError('編集対象プロジェクトが特定できません (孤児状態)');
+      showErrorKey('risk.toastOrphanError');
       return;
     }
     const res = await withLoading(() =>
@@ -193,14 +197,14 @@ export function RiskEditDialog({
       const json = await res.json().catch(() => ({}));
       const msg = json.error?.message || json.error?.details?.[0]?.message || tRisk('updateFailed');
       setError(msg);
-      showError(risk.type === 'risk' ? 'リスクの更新に失敗しました' : '課題の更新に失敗しました');
+      showErrorKey(risk.type === 'risk' ? 'risk.toastRiskUpdateFailed' : 'risk.toastIssueUpdateFailed');
       return;
     }
     // feat/account-lock-and-ui-consistency: 作成 dialog と挙動を揃える。
     // 旧実装: await onSaved() → onOpenChange(false) — reload 完了を待つため遅く感じる
     // 新実装: onOpenChange(false) → onSaved() (fire-and-forget) — 即座に閉じて裏で reload
     onOpenChange(false);
-    showSuccess(risk.type === 'risk' ? 'リスクを更新しました' : '課題を更新しました');
+    showSuccessKey(risk.type === 'risk' ? 'risk.toastRiskUpdateSuccess' : 'risk.toastIssueUpdateSuccess');
     void onSaved();
   }
 
@@ -363,6 +367,7 @@ export function RiskEditDialog({
           <CommentSection
             entityType={risk.type === 'issue' ? 'issue' : 'risk'}
             entityId={risk.id}
+            mutationsLocked={closedProject}
           />
         </form>
       </DialogContent>

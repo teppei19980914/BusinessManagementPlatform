@@ -86,14 +86,14 @@
 | /api/projects/[projectId]/tasks/[taskId] | DELETE | PM | 論理削除 |
 | /api/projects/[projectId]/tasks/[taskId]/progress | GET | PM | 進捗履歴取得 |
 | /api/projects/[projectId]/tasks/[taskId]/progress | POST | PM/担当 | 進捗更新 |
-| /api/projects/[projectId]/tasks/bulk-update | PATCH | PM/担当 | 一括更新 (計画系=PM、実績系=担当 member も可) |
+| /api/projects/[projectId]/tasks/bulk-update | PATCH | PM/担当 | 一括更新 (計画系=PM、実績系=担当 member も可。件数上限なし、クライアントは runChunkedBulk で 100 件ずつ分割送信 ADR-0035) |
 | /api/projects/[projectId]/tasks/bulk-duplicate | POST | PM | WBS 一括複製 (階層保持、上限 100 件) |
+| /api/projects/[projectId]/tasks/bulk-delete | POST | PM | WBS 一括論理削除 (ADR-0035、updateMany バッチ、1 リクエスト 200 件超は 413、再計算はクライアントが末尾で recalculate を 1 回) |
 | /api/projects/[projectId]/tasks/tree | GET | PM | ツリー構造取得 |
 | /api/projects/[projectId]/tasks/export | POST | PM | WBS CSV エクスポート (`mode='sync'` で ID + 進捗列込み) |
-| /api/projects/[projectId]/tasks/sync-import | POST | PM | WBS 上書きインポート (Sync by ID、`?dryRun=1` でプレビュー、OCC 並行編集検出) |
-| /api/projects/[projectId]/tasks/recalculate | POST | PM | 全 WP 集計再計算 (修復ツール) |
-| /api/projects/[projectId]/tasks/workload | GET | PM | 工数負荷集計 |
-| /api/projects/[projectId]/tasks/workload/preview | GET | PM | 工数負荷プレビュー |
+| /api/projects/[projectId]/tasks/sync-import | POST | PM | WBS 上書きインポート (Sync by ID、`?dryRun=1` でプレビュー、OCC 並行編集検出。本実行は CREATE=`createMany` / UPDATE=`$transaction` 配列チャンク / 再計算=メモリ集計+一括 update でバッチ化、ADR-0032/0037) |
+| /api/projects/[projectId]/tasks/recalculate | POST | PM | 全 WP 集計再計算 (修復ツール。ADR-0037 で全タスク 1 fetch + メモリ集計 + 変更 WP のみ `$transaction` 一括 update に畳み往復を WP 数非依存化) |
+| /api/projects/[projectId]/tasks/workload/preview | GET | PM | 工数負荷プレビュー (ACT 編集ダイアログの日次工数表示用) |
 
 #### ガント / マイタスク — 2 route
 
@@ -101,6 +101,20 @@
 |---|---|---|---|
 | /api/projects/[projectId]/gantt | GET | PM | ガント用データ取得 |
 | /api/my-tasks | GET | 認証 | 自分の担当タスク一覧 |
+
+#### 分析 (analytics) — 4 route (v1.2.0)
+
+認可は `analytics:read` (PM/PL + admin のみ。closed PJ でも閲覧可)。読み取り専用 (監査ログなし)。
+
+| パス | メソッド | 認可 | 概要 |
+|---|---|---|---|
+| /api/projects/[projectId]/analytics/wbs-progress | GET | analytics:read | WBS 予実カーブ。ACT 件数の累積で予定線 (予定完了日基準) / 実績線 (完了済み×実績完了日基準) の日次割合 + 本日サマリ (予定%/実績%/遅れ%) を返す。任意の `?from=&to=` (YYYY-MM-DD) で横軸を期間にクリップ (累積値は維持)。`getWbsCompletionCurve` (analytics.service.ts) |
+| /api/projects/[projectId]/analytics/assignee-throughput | GET | analytics:read | 担当者別 週次消化工数。完了 ACT の実績工数 (Task.actualEffort) を実績完了日の週 (月曜始まり) × 担当者で SUM し、週次の担当者別 実績工数 (人時) + 工数効率 (予定÷実績) を返す (積み上げ棒 + 効率サマリ用)。任意の `?from=&to=` で実績完了日が期間内の ACT だけ再集計。`getAssigneeWeeklyEffort` (analytics.service.ts) |
+| /api/projects/[projectId]/analytics/assignee-effort-variance | GET | analytics:read | 担当者別 予定 vs 実績 工数。完了 + 実工数入力済の ACT を担当者別に予定工数 / 実績工数で SUM し、工数の予実差を返す (グループ棒用)。任意の `?from=&to=` で実績完了日が期間内の ACT だけ再集計。`getAssigneeEffortVariance` (analytics.service.ts) |
+| /api/projects/[projectId]/analytics/assignee-workload | GET | analytics:read | 担当者別 作業負担。未完了 ACT (未着手/進行中。保留は除外) の予定工数を担当者×状態で SUM + 個人ペース比 (実績÷予定) を返す (状態別積み上げ棒 + 量/個人ペース補正 切替用)。現在のスナップショットのため**期間 (from/to) は受け取らない**。`getAssigneeWorkload` (analytics.service.ts) |
+| /api/projects/[projectId]/analytics/assignee-daily-capacity | GET | analytics:read | 担当者別 日次工数 (1 日 8h 上限チェック)。未完了 ACT (未着手/進行中。完了・保留は除外) の予定工数を予定期間で均等按分し、担当者×日付 (本日以降) の日次工数 (人時) + 閾値レベル (≤7h ok / >7h warning / >8h alert、`classifyWorkloadLevel`) を返す (ヒートマップ用)。本日はテナント TZ。任意の `?to=` で未来の終端を絞る (`from` は無視、起点は常に本日)。`getAssigneeDailyCapacity` (analytics.service.ts) |
+
+> 分析 API の `from` / `to` は `YYYY-MM-DD` (テナント TZ 暦日)。`src/lib/analytics-range.ts#parseAnalyticsRange` が形式を検証し、不正値は無視する (全期間扱い)。適用方向はパネルの `rangeKind` (past/future/none) に対応 (ADR-0038 §3-bis)。
 
 #### リスク・課題 (risks) — 8 route
 
@@ -254,9 +268,11 @@
 | /api/tenants/me/self-delete | POST | admin | 自テナント自己削除 (退会フロー) |
 | /api/tenants/me/recalculate | POST | admin | 利用量/容量の再集計 |
 | /api/tenants/me/repair-api-usage | POST | admin | ApiCallLog ↔ counter drift 修復 |
-| /api/tenants/me/external-import/template | GET | admin | 外部インポート用テンプレート取得 |
-| /api/tenants/me/external-import/preview | POST | admin | 外部インポートのプレビュー (precheck) |
-| /api/tenants/me/external-import/apply | POST | admin | 外部インポート適用 (withStorageGuard) |
+| /api/tenants/me/migration-import/csv-preview | POST | admin | 手動 CSV 7 種の取込プレビュー (ADR-0034) |
+| /api/tenants/me/migration-import/preview | POST | admin | NormalizedBatch を直接受けるプレビュー (API 連携経路の前段) |
+| /api/tenants/me/migration-import/apply | POST | admin | 取込適用 (preview→apply、withStorageGuard) |
+| /api/tenants/me/migration-import/connect/discover | POST | admin | API連携 (ベータ): 外部サービス接続→取得元列挙 (ADR-0034、認証情報は非保存) |
+| /api/tenants/me/migration-import/connect/preview | POST | admin | API連携 (ベータ): 取得+正規化→プレビュー保存 (確定は migration-import/apply 流用) |
 | /api/tenants/me/sample-data | POST | admin | スターターデータ取込 (管理テナントからクローン、容量 precheck) |
 | /api/tenants/me/sample-data | DELETE | admin | スターターデータ一括削除 (is_seed_sample=true のみ) |
 
@@ -288,7 +304,7 @@
 | /api/admin/role-change-logs | GET | admin | 権限変更履歴 |
 | /api/admin/usage-summary | GET | admin | 利用量サマリ |
 
-#### super-admin (admin/super) — 18 route
+#### super-admin (admin/super) — 22 route
 
 | パス | メソッド | 認可 | 概要 |
 |---|---|---|---|
@@ -310,6 +326,10 @@
 | /api/admin/super/billing/[id]/confirm-payment | POST | super_admin | 入金確認 (請求ステータス更新) |
 | /api/admin/super/stripe-dlq/webhook/[id]/retry | POST | super_admin | Stripe webhook DLQ 手動再送 |
 | /api/admin/super/stripe-dlq/usage/[id]/retry | POST | super_admin | Stripe usage record DLQ 手動再送 |
+| /api/admin/super/banners | GET | super_admin | 周知バナー一覧 (履歴) 取得 (ADR-0036) |
+| /api/admin/super/banners | POST | super_admin | 周知バナー作成 (期間重複時 409 OVERLAP) |
+| /api/admin/super/banners/[id] | PATCH | super_admin | 周知バナー編集・取り下げ/再開 |
+| /api/admin/super/banners/[id] | DELETE | super_admin | 周知バナー物理削除 |
 
 #### cron (定期処理) — 11 route
 
@@ -364,10 +384,10 @@
 | テナント (自己, billing 除く) | 10 |
 | テナント課金 (Stripe) | 6 |
 | システム管理 (admin, super 除く) | 8 |
-| super-admin | 16 |
+| super-admin | 18 |
 | cron | 11 |
 | webhook / health / 設定 / client-errors | 4 |
-| **合計** | **143** |
+| **合計** | **145** |
 
 ### 7.4 レスポンス共通形式 (実装準拠)
 
@@ -418,6 +438,7 @@
 | CSV_ROW_COUNT_EXCEEDED | 413 | sync-import の行数が DoS 安全弁を超過 (タスクは `TASK_SYNC_IMPORT_MAX_ROWS`=2000、他 entity は `CSV_MAX_ROWS`=500)。※ ADR-0032 でタスクの業務上限は撤廃し、目安超過は dry-run の `globalWarnings` で案内 |
 | IMPORT_VALIDATION_ERROR / IMPORT_REMOVE_BLOCKED | 400 | sync-import 本実行での blocker 再検出 / 進捗ありタスク削除要求 |
 | TASKS_OUT_OF_RANGE / TASKS_NOT_FOUND / TARGET_PARENT_NOT_FOUND / TARGET_PARENT_NOT_WP / ACT_CANNOT_BE_ROOT | 400/404 | bulk-duplicate のガード群 |
+| PAYLOAD_TOO_LARGE (一括削除) | 413 | 一括削除の件数が DoS 安全弁 (`TASK_BULK_DELETE_MAX`=200) を超過 (ADR-0035。クライアントは 100 件ずつチャンク送信するため通常到達しない) |
 | DANGEROUS_FILE_TYPE / INVALID_OBJECT_KEY | 400 | 添付: 危険拡張子 / objectKey の越境 prefix |
 | FILE_TOO_LARGE | 413 | 添付: 50MB 超過 |
 | OBJECT_NOT_FOUND | 404 | 添付: finalize 時に Storage 上のオブジェクト不在 |

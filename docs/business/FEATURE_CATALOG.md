@@ -10,7 +10,7 @@
 
 | カテゴリ | 顧客課題 (中心テーマ) | 関連機能 |
 |---|---|---|
-| **A. プロジェクト運営** | プロジェクトの状態を可視化し、健全な運営を継続したい | プロジェクト管理 / WBS / ガント / 進捗管理 / リスク・課題 |
+| **A. プロジェクト運営** | プロジェクトの状態を可視化し、健全な運営を継続したい | プロジェクト管理 / WBS / ガント / 進捗管理 / 分析 (予実カーブ) / リスク・課題 |
 | **B. 知見の再利用 (核心機能)** | 過去資産が次の判断に活きていない | 提案エンジン / チャット意味検索 / AI ヘルプチャット / ナレッジ / 振り返り / 自動タグ抽出 |
 | **C. 個人作業の管理** | 自分のタスクを横断して把握したい | マイタスク / メモ |
 | **D. チーム管理** | メンバーの権限・参加を柔軟に管理したい | プロジェクトメンバー / ユーザ管理 / ロール / ステークホルダー / メンション / 通知 / コメント |
@@ -29,6 +29,7 @@
 | **WBS / タスク管理** | 「タスクの階層構造と進捗をシンプルに」 | `src/services/task.service.ts` / `src/app/(dashboard)/projects/[projectId]/tasks/` | [SCREENS §11.4](../specification/SCREENS.md) |
 | **ガントチャート** | 「スケジュールの遅延を時系列で把握したい」 | `src/app/(dashboard)/projects/[projectId]/gantt/` | [SCREENS §11.5](../specification/SCREENS.md) |
 | **進捗・実績更新** | 「日々の進捗をワンクリックで」 | `src/services/task.service.ts` (updateProgress 系) | [SCREENS §11.4 / §11.6](../specification/SCREENS.md) |
+| **分析タブ (5 パネル)** | 「完了に向けた現在地と消化ペース、担当者の生産性・作業負担・日次の山積みをグラフで把握したい」(PM/PL + admin、v1.2.0)。表示名/概念: 進捗の遅れ・先行 (予実カーブ) / 消化ペースと効率 (週次消化工数) / 見積の精度 (予実差) / 作業量の偏り (作業負担) / 日別の負荷 (日次工数 8h ヒートマップ)。ツールバーで表示グラフ・対象期間を選択 | `src/services/analytics.service.ts` / `src/app/(dashboard)/projects/[projectId]/analysis/` / `src/components/charts/` | [SCREENS §11.5b](../specification/SCREENS.md) / [ADR-0038](../adr/0038-project-analytics-tab-and-generic-chart-foundation.md) |
 | **リスク・課題管理** | 「リスクと課題を統一フローで起票・追跡したい」 | `src/services/risk.service.ts` / `src/app/(dashboard)/projects/[projectId]/risks/` (+ プロジェクト外横断: `src/app/(dashboard)/risks/` / `issues/`) | [SCREENS §11.7](../specification/SCREENS.md) |
 
 ---
@@ -82,7 +83,7 @@
 | **Stripe 決済 (5 Item 従量)** | 「クレジットカードで自動引き落とし (Haiku/Sonnet/Embedding/DBCap/Storage)」 | `src/lib/stripe.ts` / `src/services/stripe-billing.service.ts` / `src/app/api/webhooks/stripe/route.ts` | [STRIPE_BILLING.md](./STRIPE_BILLING.md) / [ADR-0006](../adr/0006-stripe-metered-billing-integration.md) |
 | **Stripe DLQ / 同期復旧** | 「webhook 失敗・usage 記録漏れを検知し手動/自動で復旧」 | `src/services/stripe-dlq.service.ts` / `src/services/stripe-reconcile.service.ts` / `src/services/stripe-usage-flush.service.ts` / `src/app/(dashboard)/admin/super/stripe-dlq/` | [STRIPE_BILLING.md](./STRIPE_BILLING.md) |
 | **請求書・銀行振込 + クレジットカード (v1)** | 「請求書/銀行振込とクレジットカード払いの 2 経路で運用 (credit_card は 2026-05-30 有効化、それ以前は銀行振込のみ)」 | `src/services/billing-management.service.ts` (`confirmInvoicePayment` 系) / `src/services/billing-aggregation.service.ts` | [PAYMENT_TERMS.md](./PAYMENT_TERMS.md) / [ADR-0007](../adr/0007-unify-invoice-and-bank-transfer.md) |
-| **外部データ取込 (テナント機能)** | 「他システムから CSV でテナント管理者自身が一括 import (preview → apply)」 | `src/services/external-data-import.service.ts` / `src/services/import-storage-precheck.service.ts` / `src/app/api/tenants/me/external-import/` (`preview` / `apply` / `template`) / `src/app/(dashboard)/settings/tenant/external-import/` | memory: feedback_bulk_llm_call_unit |
+| **外部データ取込 (テナント機能)** | 「他システムから CSV / API 連携で 7 種 (顧客・プロジェクト・WBS・リスク課題・ナレッジ・振り返り) を一括 import (preview → apply)」 | `src/services/import/migration-import.service.ts` / `src/services/import-storage-precheck.service.ts` / `src/app/api/tenants/me/migration-import/` (`csv-preview` / `preview` / `apply` / `connect`) / `src/app/(dashboard)/settings/tenant/migration-import/` / `api-import/` | ADR-0034 / memory: feedback_bulk_llm_call_unit |
 | **月初 cron バッチ (月次リセット)** | 「月次カウンタリセット・embedding 補完・プラン切替予約適用 (legacy)」 | `src/app/api/cron/tenant-monthly-reset/route.ts` / `src/services/tenant-monthly-reset.service.ts` | [INCIDENT_RESPONSE.md §6.8](../operations/operate/INCIDENT_RESPONSE.md) |
 | **月初 cron バッチ (課金確定)** | 「LLM/DB容量/ファイル peak の月初請求確定・前月 snapshot 保存」 | `src/app/api/cron/billing-monthly-aggregation/route.ts` / `src/services/billing-aggregation.service.ts` | [INCIDENT_RESPONSE.md §6.8](../operations/operate/INCIDENT_RESPONSE.md) |
 

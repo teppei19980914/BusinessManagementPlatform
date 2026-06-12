@@ -104,6 +104,9 @@ type Props = {
   canCreate: boolean;
   /** 2026-04-24: 作成者本人判定 (k.createdBy === currentUserId で編集/削除許可) */
   currentUserId: string;
+  /** 2026-06-12: プロジェクトがクローズ済み (読み取り専用) のとき true。
+   *  編集ダイアログを強制 readOnly にし、コメント投稿欄も非表示にする。 */
+  isReadOnly?: boolean;
   onReload: () => Promise<void> | void;
 };
 
@@ -124,13 +127,14 @@ export function ProjectKnowledgeClient({
   members,
   canCreate,
   currentUserId,
+  isReadOnly = false,
   onReload,
 }: Props) {
   const tKnowledge = useTranslations('knowledge');
   const tCommon = useTranslations('common');
   const KNOWLEDGE_VISIBILITY_OPTIONS = buildKnowledgeVisibilityOptions(tKnowledge);
   const { withLoading } = useLoading();
-  const { showSuccess, showError } = useToast();
+  const { showSuccessKey, showErrorKey } = useToast();
   const { formatDateTimeSeconds } = useFormatters();
   // UI_PATTERNS §35: カラムソート (sessionStorage 永続化、複数列対応)
   const { sortState, setSortColumn } = useMultiSort(`sort:project-knowledge-${projectId}`);
@@ -241,7 +245,7 @@ export function ProjectKnowledgeClient({
       const json = await res.json().catch(() => ({}));
       const msg = json.error?.message || json.error?.details?.[0]?.message || tKnowledge('createFailed');
       setError(msg);
-      showError('ナレッジの作成に失敗しました');
+      showErrorKey('knowledge.toastCreateFailed');
       return;
     }
 
@@ -258,7 +262,7 @@ export function ProjectKnowledgeClient({
 
     setIsCreateOpen(false);
     setForm(initialForm);
-    showSuccess('ナレッジを作成しました');
+    showSuccessKey('knowledge.toastCreateSuccess');
     await reload();
   }
 
@@ -268,10 +272,10 @@ export function ProjectKnowledgeClient({
       fetch(`/api/projects/${projectId}/knowledge/${knowledgeId}`, { method: 'DELETE' }),
     );
     if (!res.ok) {
-      showError('ナレッジの削除に失敗しました');
+      showErrorKey('knowledge.toastDeleteFailed');
       return;
     }
-    showSuccess('ナレッジを削除しました');
+    showSuccessKey('knowledge.toastDeleteSuccess');
     await onReload();
   }
 
@@ -288,7 +292,7 @@ export function ProjectKnowledgeClient({
       }),
     );
     if (!res.ok) {
-      showError('ナレッジのエクスポートに失敗しました');
+      showErrorKey('knowledge.toastExportFailed');
       return;
     }
     const csvText = await res.text();
@@ -372,7 +376,7 @@ export function ProjectKnowledgeClient({
                       {tKnowledge('fieldTitle')}
                       {/* 2026-05-11: 公開範囲 = 自分のみ (draft) なら任意、全メンバー (public) なら必須 */}
                       {form.visibility === 'draft' && (
-                        <span className="ml-2 text-xs text-muted-foreground">(任意)</span>
+                        <span className="ml-2 text-xs text-muted-foreground">{tKnowledge('optional')}</span>
                       )}
                     </Label>
                     <Input
@@ -573,10 +577,13 @@ export function ProjectKnowledgeClient({
         open={editingKnowledge != null}
         onOpenChange={(v) => { if (!v) { setEditingKnowledge(null); bumpAttachToken(); } }}
         onSaved={async () => { await reload(); }}
+        closedProject={isReadOnly}
         readOnly={
-          editingKnowledge != null &&
-          editingKnowledge.createdBy !== currentUserId &&
-          editingKnowledge.assigneeId !== currentUserId
+          isReadOnly || (
+            editingKnowledge != null &&
+            editingKnowledge.createdBy !== currentUserId &&
+            editingKnowledge.assigneeId !== currentUserId
+          )
         }
       />
     </div>

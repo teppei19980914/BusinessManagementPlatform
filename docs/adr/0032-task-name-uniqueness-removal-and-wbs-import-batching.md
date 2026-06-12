@@ -53,7 +53,7 @@ DB 往復回数を O(N) 逐次から大幅削減する。
 - **新規行**: app 側で UUID を事前採番 (`Task.id` は DB default だが明示指定可) し、親 id を書込前に全行解決。**level 昇順に `createMany`** で一括 INSERT (親を先に入れて FK を満たす)。106 create → 約 3 往復。
 - **WP 集計再計算**: 対象 WP の都度 findUnique と per-WP 再帰をやめ、`recalculateAllProjectWps` で**プロジェクト全 WP を深度降順に 1 パス**再計算 (一致時 skip)。
 - **削除候補**: `updateMany` で一括論理削除。
-- **既存行更新**: 値が行ごとに異なるため per-row update は残す (本件の all-CREATE には影響なし)。
+- **既存行更新**: 値が行ごとに異なるため per-row update は残す (本件の all-CREATE には影響なし)。**→ 後日 [ADR-0037](./0037-wbs-import-apply-batching-and-recalc-in-memory.md) (2026-06-09) で、更新主体の WBS が 504 になる事象を受け `$transaction` 配列形のチャンク一括に置換済。**
 - ロールバック (事前スナップショット) / OCC / テナント検証は不変。
 
 ### 3. ハード行数上限の撤廃 + 警告化
@@ -76,8 +76,8 @@ DB 往復回数を O(N) 逐次から大幅削減する。
 ### Negative / Trade-off
 
 - ⚠️ 同名タスクが許容されるため、誤コピー (意図しない重複) はユーザが警告を見て判断する責任になる。
-- ⚠️ `recalculateAllProjectWps` は対象 WP が一部でもプロジェクト全 WP を走査する (WP 数に比例)。WP 数が極端に多い巨大プロジェクトでは将来 SQL 集計化を検討。
-- ⚠️ 既存行の大量更新が混在するケースは per-row update が残るため、超大量更新では依然時間がかかる (本 ADR の対象は all-CREATE の 504。将来 raw bulk update を検討)。
+- ⚠️ `recalculateAllProjectWps` は対象 WP が一部でもプロジェクト全 WP を走査する (WP 数に比例)。WP 数が極端に多い巨大プロジェクトでは将来 SQL 集計化を検討。**→ [ADR-0037](./0037-wbs-import-apply-batching-and-recalc-in-memory.md) で「全タスク 1 fetch + メモリ集計 + 変更 WP のみ `$transaction` 一括 update」に畳み、O(WP) 逐次往復を解消 (さらなる SQL 集計化は引き続き将来課題)。**
+- ⚠️ 既存行の大量更新が混在するケースは per-row update が残るため、超大量更新では依然時間がかかる (本 ADR の対象は all-CREATE の 504。将来 raw bulk update を検討)。**→ [ADR-0037](./0037-wbs-import-apply-batching-and-recalc-in-memory.md) で `$transaction` 配列形バッチに置換し解消済。**
 
 ### Risk / 留意事項
 

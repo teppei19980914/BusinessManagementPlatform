@@ -217,6 +217,20 @@ CREATE INDEX idx_tasks_planned_end_due ON tasks (planned_end_date)
   `$transaction` に含める。振り返り/ナレッジ等「組織の資産」を残す方針と対照的に、メモは
   退職者分を残す意味がないためカスケード削除で掃除する (2026-04-24)
 
+### 8.3.6 システム周知バナー (SystemBanner) の認可詳細 (ADR-0036)
+
+全テナント共通の画面上部の帯メッセージ。**グローバル** (tenantId を持たない運用周知)。
+
+| 操作 | 認可 |
+|---|---|
+| 表示 (全ダッシュボード画面の帯) | 認証済の全ユーザ (読み取り)。表示判定はサーバ (`getActiveBanner`) |
+| 一覧/作成 (`GET/POST /api/admin/super/banners`) | **super_admin のみ** (`isSuperAdmin`、それ以外 403)。`/admin/super/*` の Basic Auth + 親 layout guard も併用 |
+| 編集/取り下げ・再開/削除 (`PATCH/DELETE /api/admin/super/banners/[id]`) | **super_admin のみ** |
+
+- **書き込みは super_admin 専用**: テナント管理者 (admin) も一般ユーザも作成・編集できない。`visibleTo` 段に super_admin が無いため、FAQ/ガイドには「閲覧側」の説明のみ載せ、管理手順 (出し方) は公開ガイド (system-banner-guide.md) の運営者向けセクションに限定する。
+- **×破棄のユーザ分離**: 閉じた状態は sessionStorage に **userId スコープ**で保存し、ログアウト時に全 purge する ([[feedback_client_sessionstorage_user_isolation]] と同方針)。他ユーザの破棄状態を引き継がない。
+- **監査ログ**: 作成/編集/削除は `recordAuditLog` に記録。グローバル操作のため tenantId は super_admin 所属の管理テナント、entityId は banner.id (UUID 厳守)。
+
 ### 8.4 PR #416 で導入された認可機構 (CRUD 設計刷新)
 
 PR #416 (feat/crud-permission-redesign) で導入された認可機構の設計原則と実装パターン。

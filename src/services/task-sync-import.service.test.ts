@@ -15,6 +15,9 @@ vi.mock('@/lib/db', () => ({
     project: {
       findFirst: vi.fn(),
     },
+    // ADR-0037 (2026-06-09): applySyncImport の UPDATE は $transaction 配列形で一括実行する。
+    //   mock は配列内の各 prisma.task.update(...) 呼び出しをそのまま解決する (呼び出し記録は維持)。
+    $transaction: vi.fn((ops: unknown) => (Array.isArray(ops) ? Promise.all(ops) : Promise.resolve(undefined))),
   },
 }));
 
@@ -641,5 +644,79 @@ describe('applySyncImport [ADR-0032] createMany バッチ', () => {
     };
     expect(call.where.id.in).toEqual(['db-2']);
     expect(call.data.deletedAt).toBeInstanceOf(Date);
+  });
+});
+
+// ============================================================
+// applySyncImport — ADR-0037 UPDATE バッチ化 (504 タイムアウト対策)
+// ============================================================
+
+describe('applySyncImport [ADR-0037] UPDATE $transaction バッチ', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(prisma.project.findFirst).mockResolvedValue({ id: projectId } as never);
+    vi.mocked(prisma.task.createMany).mockResolvedValue({ count: 1 } as never);
+    vi.mocked(prisma.task.update).mockResolvedValue({ id: 'x' } as never);
+    vi.mocked(prisma.task.updateMany).mockResolvedValue({ count: 0 } as never);
+    vi.mocked(prisma.task.deleteMany).mockResolvedValue({ count: 0 } as never);
+  });
+
+  it('既存行の UPDATE を per-row await ではなく $transaction 配列形で 1 度に束ねる', async () => {
+    vi.mocked(prisma.task.findMany).mockResolvedValue([
+      { ...baseDbTask, id: 'db-1', name: '設計', updatedAt: new Date('2026-05-01T00:00:00Z') },
+      { ...baseDbTask, id: 'db-2', name: '実装', updatedAt: new Date('2026-05-01T00:00:00Z') },
+    ] as never);
+
+    const result = await applySyncImport(
+      projectId,
+      [
+        csvRow({ tempRowIndex: 2, id: 'db-1', name: '設計v2' }),
+        csvRow({ tempRowIndex: 3, id: 'db-2', name: '実装v2' }),
+      ],
+      'keep',
+      'user-1',
+      'tenant-A',
+    );
+
+    expect(result.updated).toBe(2);
+    // 2 件の update が 1 トランザクションに束ねられる (チャンク 100)
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(prisma.task.update).toHaveBeenCalledTimes(2);
+    const ids = vi
+      .mocked(prisma.task.update)
+      .mock.calls.map((c) => (c[0] as { where: { id: string } }).where.id)
+      .sort();
+    expect(ids).toEqual(['db-1', 'db-2']);
+  });
+
+  it('UPDATE トランザクションが失敗したら作成済み行を rollback (deleteMany) し再 throw する', async () => {
+    vi.mocked(prisma.task.findMany).mockResolvedValue([
+      { ...baseDbTask, id: 'db-1', name: '設計', updatedAt: new Date('2026-05-01T00:00:00Z') },
+    ] as never);
+    // CREATE (createMany) は成功、UPDATE ($transaction) で失敗させる
+    vi.mocked(prisma.$transaction).mockRejectedValueOnce(new Error('boom'));
+
+    await expect(
+      applySyncImport(
+        projectId,
+        [
+          // 新規 WP (CREATE 経路)
+          csvRow({ tempRowIndex: 2, id: null, name: '新規WP' }),
+          // 既存 WP の UPDATE (ここで $transaction が失敗)
+          csvRow({ tempRowIndex: 3, id: 'db-1', name: '設計v2' }),
+        ],
+        'keep',
+        'user-1',
+        'tenant-A',
+      ),
+    ).rejects.toThrow('boom');
+
+    // rollback: 作成済みを物理削除する deleteMany が呼ばれる
+    expect(prisma.task.deleteMany).toHaveBeenCalledTimes(1);
+    const delArg = vi.mocked(prisma.task.deleteMany).mock.calls[0][0] as {
+      where: { id: { in: string[] }; projectId: string };
+    };
+    expect(delArg.where.id.in.length).toBe(1); // 採番された新規 1 件
+    expect(delArg.where.projectId).toBe(projectId);
   });
 });

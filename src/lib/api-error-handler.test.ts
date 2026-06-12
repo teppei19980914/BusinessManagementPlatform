@@ -12,9 +12,42 @@ vi.mock('@/lib/auth', () => ({
 vi.mock('@/services/error-log.service', () => ({
   logUnknownError: vi.fn(),
 }));
+// next-intl の getTranslations は実行時に request context を要求するため、
+// vitest 単体テストでは初期化されない。実カタログ (messages/ja.json) と
+// 同等の値を返す簡易モックで置き換える (本ファイルで検証する error.* のみ網羅)。
+vi.mock('next-intl/server', async () => {
+  const errorMessages: Record<string, string> = {
+    INTERNAL_ERROR: '内部エラーが発生しました',
+    FORBIDDEN: 'この操作を実行する権限がありません',
+    UNAUTHORIZED: '認証が必要です。ログインしなおしてください。',
+    NOT_FOUND: '対象が見つかりません',
+    CONFLICT: '競合する操作のため処理できませんでした',
+    VALIDATION_ERROR: '入力内容に誤りがあります',
+    RATE_LIMITED: 'アクセスが集中しています。しばらく時間をおいて再度お試しください。',
+    TENANT_BOUNDARY_VIOLATION: 'この操作を実行する権限がありません',
+    TENANT_NOT_FOUND: 'テナント (ID: {tenantId}) が見つかりません',
+  };
+  return {
+    getTranslations: vi.fn(async (namespace: string) => {
+      if (namespace !== 'error') {
+        return (key: string) => `${namespace}.${key}`;
+      }
+      return (key: string, params?: Record<string, string | number>) => {
+        let template = errorMessages[key] ?? key;
+        if (params) {
+          for (const [k, v] of Object.entries(params)) {
+            template = template.replace(new RegExp(`\\{${k}\\}`, 'g'), String(v));
+          }
+        }
+        return template;
+      };
+    }),
+  };
+});
 
 import { withErrorHandler } from './api-error-handler';
 import { TenantBoundaryError } from '@/lib/permissions/tenant';
+import { AppError } from '@/lib/errors/app-error';
 import { auth } from '@/lib/auth';
 import { logUnknownError } from '@/services/error-log.service';
 
@@ -148,6 +181,55 @@ describe('withErrorHandler', () => {
       // userId は取得できないので undefined
       const extras = vi.mocked(logUnknownError).mock.calls[0]![2];
       expect(extras?.userId).toBeUndefined();
+    });
+  });
+
+  describe('AppError ハンドリング (i18n zero-hardcode)', () => {
+    it('AppError は code に応じた httpStatus + 翻訳済 message を返す', async () => {
+      const handler = withErrorHandler(async () => {
+        throw new AppError('TENANT_NOT_FOUND', { tenantId: 'abc-123' });
+      });
+      const res = await handler(makeRequest(), { params: Promise.resolve({}) });
+      expect(res.status).toBe(404);
+      const body = await res.json();
+      expect(body).toEqual({
+        error: {
+          code: 'TENANT_NOT_FOUND',
+          message: 'テナント (ID: abc-123) が見つかりません',
+        },
+      });
+    });
+
+    it('AppError は warn severity で記録 (INTERNAL_ERROR を除く)', async () => {
+      const handler = withErrorHandler(async () => {
+        throw new AppError('NOT_FOUND');
+      });
+      await handler(makeRequest(), { params: Promise.resolve({}) });
+      expect(logUnknownError).toHaveBeenCalledTimes(1);
+      const extras = vi.mocked(logUnknownError).mock.calls[0]![2];
+      expect(extras?.severity).toBe('warn');
+      expect(extras?.context).toMatchObject({
+        kind: 'app_error',
+        code: 'NOT_FOUND',
+      });
+    });
+
+    it('AppError("INTERNAL_ERROR") は warn ではなく既定 (error) で記録', async () => {
+      const handler = withErrorHandler(async () => {
+        throw new AppError('INTERNAL_ERROR');
+      });
+      await handler(makeRequest(), { params: Promise.resolve({}) });
+      expect(logUnknownError).toHaveBeenCalledTimes(1);
+      const extras = vi.mocked(logUnknownError).mock.calls[0]![2];
+      expect(extras?.severity).toBeUndefined();
+    });
+
+    it('httpStatus override が反映される', async () => {
+      const handler = withErrorHandler(async () => {
+        throw new AppError('VALIDATION_ERROR', { field: 'name' }, 422);
+      });
+      const res = await handler(makeRequest(), { params: Promise.resolve({}) });
+      expect(res.status).toBe(422);
     });
   });
 });

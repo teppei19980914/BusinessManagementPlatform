@@ -125,7 +125,7 @@ export function ProjectsClient({
   const t = useTranslations('project');
   const tCommon = useTranslations('common');
   const { withLoading } = useLoading();
-  const { showSuccess, showError } = useToast();
+  const { showSuccessKey, showErrorKey } = useToast();
   const { formatDateOnly, formatDateTimeSeconds } = useFormatters();
   // PR #425 (2026-05-22): URL params から初期化 (検索後リロード/共有時の input 復元)
   const [keyword, setKeyword] = useState(initialKeyword);
@@ -252,12 +252,12 @@ export function ProjectsClient({
       const json = await res.json();
       const msg = json.error?.message || json.error?.details?.[0]?.message || t('createFailed');
       setError(msg);
-      showError('プロジェクトの作成に失敗しました');
+      showErrorKey('project.toastCreateFailed');
       return;
     }
 
     const json = await res.json();
-    showSuccess('プロジェクトを作成しました');
+    showSuccessKey('project.toastCreateSuccess');
 
     // PR #67: 作成成功直後にステージされた添付を一括 POST
     if (stagedAttachments.length > 0 && json.data?.id) {
@@ -294,10 +294,10 @@ export function ProjectsClient({
           ヘッダ + 作成 dialog 等の操作は維持。 */}
       {dataLoadError && (
         <div className="rounded border border-destructive/30 bg-destructive/10 p-3 text-sm">
-          <p className="font-semibold">⚠ プロジェクト一覧の読み込みに失敗しました</p>
+          <p className="font-semibold">{t('loadFailedTitle')}</p>
           <p className="mt-1 text-muted-foreground">
-            一時的な問題の可能性があります。ページを再読み込みするか、しばらくしてから再試行してください。
-            問題が継続する場合は管理者にお問合せください。
+            {t('loadFailedMessageRetry')}
+            {t('loadFailedMessageContact')}
           </p>
         </div>
       )}
@@ -552,7 +552,7 @@ export function ProjectsClient({
                       className="mt-2 inline-block text-sm text-info hover:underline"
                       data-testid="empty-state-sample-import-cta"
                     >
-                      データが無くても試せます。スターターデータを取り込む →
+                      {t('starterDataPrompt')}
                     </Link>
                   </TableCell>
                 </TableRow>
@@ -568,7 +568,7 @@ export function ProjectsClient({
             <p className="m-0">{t('listEmpty')}</p>
             {/* feat/starter-data-import (2026-06-05): 空状態の取込導線 (モバイル) */}
             <Link href="/settings/tenant" className="mt-2 inline-block text-info hover:underline">
-              データが無くても試せます。スターターデータを取り込む →
+              {t('starterDataPrompt')}
             </Link>
           </div>
         ) : (

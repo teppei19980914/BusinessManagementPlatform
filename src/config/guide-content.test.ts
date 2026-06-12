@@ -86,7 +86,7 @@ describe('PR9 業務手順ガイド invariant', () => {
   it('テナント管理者の初日 + 外部データ移行ウィザード + ZIP 取込 が tenant_admin 限定で含まれる', () => {
     const expectedAdminSteps = [
       'tenant-admin-first-day', // 初日 4 ステップ
-      'external-import-wizard-full-walkthrough', // 6 ステップ詳細
+      'migration-import-6entities-walkthrough', // CSV 一括取込 (7 種) 詳細
       'zip-tenant-import-walkthrough', // ZIP 一括取込
       'invite-member-walkthrough',
       'plan-upgrade-walkthrough',

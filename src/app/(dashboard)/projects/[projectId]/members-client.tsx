@@ -67,7 +67,7 @@ export function MembersClient({ projectId, members, allUsers, canManage, canMana
   const t = useTranslations('member');
   const tCommon = useTranslations('common');
   const { withLoading } = useLoading();
-  const { showSuccess, showError } = useToast();
+  const { showSuccessKey, showErrorKey } = useToast();
   // PR #119: session 連携フォーマッタ
   const { formatDateTimeSeconds } = useFormatters();
   const reload = useCallback(async () => {
@@ -117,13 +117,13 @@ export function MembersClient({ projectId, members, allUsers, canManage, canMana
       const json = await res.json();
       const msg = json.error?.message || t('addFailed');
       setAddError(msg);
-      showError('メンバーの追加に失敗しました');
+      showErrorKey('member.toastAddFailed');
       return;
     }
 
     setIsAddOpen(false);
     setAddForm({ userId: '', projectRole: 'member' });
-    showSuccess('メンバーを追加しました');
+    showSuccessKey('member.toastAddSuccess');
     await reload();
   }
 
@@ -136,10 +136,10 @@ export function MembersClient({ projectId, members, allUsers, canManage, canMana
       }),
     );
     if (!res.ok) {
-      showError('メンバーロールの更新に失敗しました');
+      showErrorKey('member.toastRoleUpdateFailed');
       return;
     }
-    showSuccess('メンバーロールを更新しました');
+    showSuccessKey('member.toastRoleUpdateSuccess');
     await reload();
   }
 
@@ -151,10 +151,10 @@ export function MembersClient({ projectId, members, allUsers, canManage, canMana
       }),
     );
     if (!res.ok) {
-      showError('メンバーの削除に失敗しました');
+      showErrorKey('member.toastRemoveFailed');
       return;
     }
-    showSuccess('メンバーを削除しました');
+    showSuccessKey('member.toastRemoveSuccess');
     await reload();
   }
 

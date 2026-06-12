@@ -22,6 +22,7 @@ import { usePathname, useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
+import { linkifyNodes } from '@/components/ui/linkified-text';
 import { useLoading } from '@/components/loading-overlay';
 import { useToast } from '@/components/toast-provider';
 import { useSession } from 'next-auth/react';
@@ -97,6 +98,12 @@ type Props = {
   canPost?: boolean;
   /** canPost=false 時に表示する補足メッセージ (任意、未指定時は何も表示しない) */
   postDisabledHint?: string;
+  /**
+   * 2026-06-12: クローズ済みプロジェクト等で「コメントの投稿・編集・削除を一切不可」にする読み取り専用フラグ。
+   * canPost (投稿のみ制限し、自分の過去コメントの編集/削除は許可) より強く、編集/削除ボタンも非表示にする。
+   * 既定 false。
+   */
+  mutationsLocked?: boolean;
 };
 
 /**
@@ -311,7 +318,7 @@ function CommentTextarea({
   );
 }
 
-export function CommentSection({ entityType, entityId, canPost = true, postDisabledHint }: Props) {
+export function CommentSection({ entityType, entityId, canPost = true, postDisabledHint, mutationsLocked = false }: Props) {
   const t = useTranslations('comment');
   const { withLoading } = useLoading();
   const { showSuccess, showError } = useToast();
@@ -483,9 +490,10 @@ export function CommentSection({ entityType, entityId, canPost = true, postDisab
         <div className="rounded-md bg-destructive/10 p-2 text-sm text-destructive">{error}</div>
       )}
 
-      {/* 投稿フォーム (要件 Q4: dialog readOnly でも常に有効、ただし canPost=false の entity では非表示) */}
+      {/* 投稿フォーム (要件 Q4: dialog readOnly でも常に有効、ただし canPost=false の entity では非表示)。
+          2026-06-12: mutationsLocked (クローズ済みPJ) のときは投稿フォーム・補足ヒントとも完全非表示。 */}
       {/* nested form 回避: <div> + Enter キーは抑止し、Ctrl/Meta+Enter で投稿 */}
-      {canPost ? (
+      {canPost && !mutationsLocked ? (
         <div
           className="space-y-2 rounded border bg-muted/40 p-2"
           onKeyDown={(e) => {
@@ -517,7 +525,7 @@ export function CommentSection({ entityType, entityId, canPost = true, postDisab
             </Button>
           </div>
         </div>
-      ) : postDisabledHint ? (
+      ) : !mutationsLocked && postDisabledHint ? (
         <p className="rounded border bg-muted/30 p-2 text-xs text-muted-foreground" data-testid="comment-post-disabled-hint">
           {postDisabledHint}
         </p>
@@ -580,11 +588,12 @@ export function CommentSection({ entityType, entityId, canPost = true, postDisab
                   </div>
                 ) : (
                   <>
-                    {/* whitespace-pre-wrap で改行を保持。textContent 経由なので XSS 安全 */}
+                    {/* whitespace-pre-wrap で改行を保持。URL は linkifyNodes でリンク化
+                        (react-markdown は通さず素テキスト + a 要素のみ生成のため XSS 安全) */}
                     <p className="whitespace-pre-wrap break-words" data-testid="comment-content">
-                      {c.content}
+                      {linkifyNodes(c.content)}
                     </p>
-                    {canMutate(c) && (
+                    {canMutate(c) && !mutationsLocked && (
                       <div className="mt-1 flex justify-end gap-1">
                         <Button
                           type="button"

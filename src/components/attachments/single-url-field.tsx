@@ -45,7 +45,7 @@ export function SingleUrlField({
   const tAction = useTranslations('action');
   const tAttach = useTranslations('attachment');
   const { withLoading } = useLoading();
-  const { showSuccess, showError } = useToast();
+  const { showSuccessKey, showErrorKey } = useToast();
   const resolvedDefaultDisplayName = defaultDisplayName ?? tAttach('document');
   // react-hooks/set-state-in-effect 回避: loaded と current を 1 つの state にまとめる
   type CurrentState =
@@ -104,13 +104,13 @@ export function SingleUrlField({
       const json = await res.json().catch(() => ({}));
       const msg = json.error?.message || json.error?.details?.[0]?.message || tAttach('saveFailed');
       setError(msg);
-      showError('URL の保存に失敗しました');
+      showErrorKey('attachment.urlSaveFailed');
       return;
     }
     setEditing(false);
     setDisplayName(resolvedDefaultDisplayName);
     setUrl('');
-    showSuccess('URL を保存しました');
+    showSuccessKey('attachment.urlSaveSuccess');
     await reload();
   }
 
@@ -122,10 +122,10 @@ export function SingleUrlField({
     );
     if (!res.ok) {
       setError(tAttach('deleteFailed'));
-      showError('URL の削除に失敗しました');
+      showErrorKey('attachment.urlDeleteFailed');
       return;
     }
-    showSuccess('URL を削除しました');
+    showSuccessKey('attachment.urlDeleteSuccess');
     await reload();
   }
 

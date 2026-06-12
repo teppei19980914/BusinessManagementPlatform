@@ -16,6 +16,9 @@ vi.mock('@/lib/db', () => ({
     stakeholder: { findFirst: vi.fn() },
     customer: { findFirst: vi.fn() },
     memo: { findFirst: vi.fn() },
+    knowledgeProject: { findMany: vi.fn() },
+    riskIssueProject: { findMany: vi.fn() },
+    retrospectiveProject: { findMany: vi.fn() },
   },
 }));
 
@@ -27,6 +30,7 @@ import {
   deleteComment,
   resolveEntityForComment,
   softDeleteCommentsForEntity,
+  isCommentTargetFullyClosed,
 } from './comment.service';
 import { prisma } from '@/lib/db';
 
@@ -243,5 +247,69 @@ describe('softDeleteCommentsForEntity (cascade 用)', () => {
     const call = vi.mocked(prisma.comment.updateMany).mock.calls[0][0]!;
     expect(call.where).toMatchObject({ entityType: 'issue', entityId: 'r-1', deletedAt: null });
     expect(call.data.deletedAt).toBeInstanceOf(Date);
+  });
+});
+
+// 2026-06-12: クローズ済みPJ (= 読み取り専用) の資産へのコメント投稿ガード判定。
+describe('isCommentTargetFullyClosed', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('task: 紐付くプロジェクトが closed なら true', async () => {
+    vi.mocked(prisma.task.findFirst).mockResolvedValue({ project: { status: 'closed' } } as never);
+    expect(await isCommentTargetFullyClosed('task', 't-1', 'tenant-A')).toBe(true);
+  });
+
+  it('task: 紐付くプロジェクトが稼働中 (active) なら false', async () => {
+    vi.mocked(prisma.task.findFirst).mockResolvedValue({ project: { status: 'active' } } as never);
+    expect(await isCommentTargetFullyClosed('task', 't-1', 'tenant-A')).toBe(false);
+  });
+
+  it('knowledge: 紐付く全プロジェクトが closed なら true', async () => {
+    vi.mocked(prisma.knowledgeProject.findMany).mockResolvedValue([
+      { project: { status: 'closed' } },
+      { project: { status: 'closed' } },
+    ] as never);
+    expect(await isCommentTargetFullyClosed('knowledge', 'k-1', 'tenant-A')).toBe(true);
+  });
+
+  it('knowledge: 開いたプロジェクトが 1 つでもあれば false (稼働中PJで生きている)', async () => {
+    vi.mocked(prisma.knowledgeProject.findMany).mockResolvedValue([
+      { project: { status: 'closed' } },
+      { project: { status: 'planning' } },
+    ] as never);
+    expect(await isCommentTargetFullyClosed('knowledge', 'k-1', 'tenant-A')).toBe(false);
+  });
+
+  it('knowledge: 紐付け 0 件 (orphan) は false (ブロックしない)', async () => {
+    vi.mocked(prisma.knowledgeProject.findMany).mockResolvedValue([] as never);
+    expect(await isCommentTargetFullyClosed('knowledge', 'k-1', 'tenant-A')).toBe(false);
+  });
+
+  it('risk: 紐付く全プロジェクトが closed なら true (riskIssueProject 経由)', async () => {
+    vi.mocked(prisma.riskIssueProject.findMany).mockResolvedValue([
+      { project: { status: 'closed' } },
+    ] as never);
+    expect(await isCommentTargetFullyClosed('risk', 'r-1', 'tenant-A')).toBe(true);
+  });
+
+  it('retrospective: 紐付く全プロジェクトが closed なら true (retrospectiveProject 経由)', async () => {
+    vi.mocked(prisma.retrospectiveProject.findMany).mockResolvedValue([
+      { project: { status: 'closed' } },
+    ] as never);
+    expect(await isCommentTargetFullyClosed('retrospective', 'rt-1', 'tenant-A')).toBe(true);
+  });
+
+  it('customer: プロジェクトに紐付かないため常に false', async () => {
+    expect(await isCommentTargetFullyClosed('customer', 'c-1', 'tenant-A')).toBe(false);
+  });
+
+  it('越境遮断: 多対多クエリの where に tenantId を併記する', async () => {
+    vi.mocked(prisma.knowledgeProject.findMany).mockResolvedValue([] as never);
+    await isCommentTargetFullyClosed('knowledge', 'k-1', 'tenant-A');
+    const call = vi.mocked(prisma.knowledgeProject.findMany).mock.calls[0][0] as {
+      where: { knowledgeId: string; project: { tenantId: string } };
+    };
+    expect(call.where.knowledgeId).toBe('k-1');
+    expect(call.where.project.tenantId).toBe('tenant-A');
   });
 });

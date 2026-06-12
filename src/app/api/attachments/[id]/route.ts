@@ -24,6 +24,7 @@ import {
   authorizeMemoAttachment,
   deleteAttachment,
   getAttachment,
+  isAttachmentTargetFullyClosed,
   resolveProjectIds,
   updateAttachment,
 } from '@/services/attachment.service';
@@ -57,6 +58,19 @@ async function authorizeForAttachment(
       );
     }
     return null;
+  }
+
+  // 2026-06-12: クローズ済みPJ (読み取り専用) の資産の添付は編集・削除できない (admin 含む)。
+  if (await isAttachmentTargetFullyClosed(entityType, entityId, user.tenantId)) {
+    return NextResponse.json(
+      {
+        error: {
+          code: 'PROJECT_CLOSED',
+          message: 'このプロジェクトはクローズ済み (読み取り専用) のため添付を変更できません',
+        },
+      },
+      { status: 403 },
+    );
   }
 
   // feat/crud-permission-redesign (2026-05-20): super_admin も含めて短絡 (UI/API ヘルパ統一)

@@ -1,8 +1,9 @@
 # ADR-0034: 外部PMツールからの初回データ移行インポート (手動CSV + API連携 / 新規作成のみ)
 
-- **Status**: Proposed (草案)
-- **Date**: 2026-06-04
+- **Status**: Accepted — 手動CSV経路は v1.1.0 で提供済 / API連携経路 (Notion・Backlog・kintone・Pleasanter・Google Sheets) は **ベータ**で実装 (2026-06-05)
+- **Date**: 2026-06-04 (Accepted 改定: 2026-06-05)
 - **Deciders**: PM (teppei) + Claude Code
+- **実装メモ (2026-06-05)**: API連携は「全5サービス一括 / 認証情報は取得後即破棄 (毎回入力) / Notion で抽象を先行検証」で実装。コネクタは `src/services/import/connectors/` に新設し、出力を既存CSV経路 (`buildBatchFromCsv`) が食う `CsvEntitySource[]` に揃えることで、検証・値解決・WBS階層・依存解決・取り込みを **既存基盤のまま再利用** (batch-preview / batch-apply は無改変)。新ルート: `POST /api/tenants/me/migration-import/connect/discover`・`/connect/preview` (取得→正規化→既存 previewMigration)、確定は既存 `/migration-import/apply` を流用。UI は `/settings/tenant/api-import`。サイレント切り捨て防止に DB VarChar 上限の文字数検証をプレビュー段に追加。詳細は [docs/design/IMPORT_CONNECTORS.md](../design/IMPORT_CONNECTORS.md)。
 - **関連**: [ADR-0033](./0033-starter-data-import-and-single-tenant-suggestion.md) (スターターデータ取込=内部サンプル複製、本ADRとは別機能) / [ADR-0032](./0032-task-name-uniqueness-removal-and-wbs-import-batching.md) (WBS 名称一意性撤廃 + sync-import バッチ化、本ADRが流用) / 既存 `external-data-import.service.ts` (CSV→Knowledge/RiskIssue、本ADRが拡張)
 
 ---

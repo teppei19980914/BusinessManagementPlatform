@@ -35,6 +35,7 @@ import {
   extractBeforeChunks,
   extractAfterChunks,
 } from '@/lib/markdown-utils';
+import { linkifyNodes } from '@/components/ui/linkified-text';
 import type { Change } from 'diff';
 
 /**
@@ -194,7 +195,11 @@ export function MarkdownDisplay({ value, className }: { value: string; className
   if (isMarkdown(value)) {
     return <MarkdownRenderInner value={value} className={className} />;
   }
-  return <p className={`whitespace-pre-wrap break-words ${className ?? ''}`}>{value}</p>;
+  // Markdown 構文を含まない素テキストでも、http/https URL はハイパーリンク化する
+  // (react-markdown chunk を読み込まない軽量経路を維持。境界判定は url-linkify に委譲)。
+  return (
+    <p className={`whitespace-pre-wrap break-words ${className ?? ''}`}>{linkifyNodes(value)}</p>
+  );
 }
 
 /**

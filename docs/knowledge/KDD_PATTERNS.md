@@ -1529,9 +1529,6 @@ re-import」の往復編集サイクルで管理するニーズに応える新�
    blocker (`複数該当` メッセージ)。CSV では UUID ではなく **氏名で運用** (Excel 編集
    時に人間が判断しやすいため)。
 
-9. **ID 表示トグルの永続化なし**: タスク一覧の「IDを表示」ボタンは React state ローカル
-   保持 (sessionStorage 等への永続化なし)。普段は使わない列なので。
-
 #### 落とし穴と対策 (横展開ナレッジ)
 
 本 PR で踏み込んだ実装上の罠と、将来同様の課題に直面したときに参照する解決策。
@@ -20077,3 +20074,74 @@ v1.1.0 PR の E2E が複数 fail。いずれも「本体仕様は意図的に変
 
 - **GITHUB_TOKEN でコミットした変更 (例: `[gen-visual]` workflow の baseline 自動コミット) は後続ワークフローを起動しない** (GitHub の再帰防止)。CI_TRIGGER_PAT 未登録だと baseline コミット後に CI/E2E が回らず、PR ヘッドが bot コミットのままになる。
 - 対処: **ユーザ (人間/PAT) 名義のコミットを 1 つ上に積んで push** すると pull_request synchronize が発火して CI が回る。close/reopen はヘッドが bot コミットのままだと発火しないことがある。恒久対策は `CI_TRIGGER_PAT` の登録 (e2e-visual-baseline.yml 既出)。
+
+---
+
+## §5.X+209: 一括操作の「クライアント逐次ループ」アンチパターン → チャンク分割 + サーバ側バッチ + 再計算末尾集約 (2026-06-05 / ADR-0035)
+
+### 事象
+
+WBS の一括削除が「1 件あたり 3〜4 秒」(15 件で数十秒)。原因は 2 つの掛け算:
+
+1. **クライアントが ID ごとに `DELETE /tasks/[taskId]` を逐次 `await`** (専用一括 API が無く、個別 DELETE を直列送信)。
+2. **1 件の DELETE が ~9 回の逐次 DB 往復** (認証 / 権限 / `getTask` / 所有確認の二重 fetch / `$transaction` / `recalculateAncestors` ルートまで再帰 / 監査)。同一 WP 配下の兄弟を消すと **同じ WP を件数分くり返し再計算**。
+
+インポート (ADR-0032) は同型の 504 を「createMany バッチ化」で解決済だったのに、**WBS 画面の一括削除へ横展開されず旧パターンが残存**していた。
+
+### 罠: 「全件 1 リクエスト集約」も「逐次」もどちらも誤り
+
+- 逐次 → 遅い。
+- 全件 1 リクエスト集約 → 大量データで **Netlify 10 秒上限を再超過** (ADR-0032 の 504 を別経路で再発)。
+
+正解は **2 つの独立レバーを分離して両方**:
+- **レバー A (バッチ)**: 専用 `bulk-delete` で認証/権限 1 回 + `findMany` 所有確認 1 回 + `$transaction([updateMany×3])`。往復は件数 K に依存せず ~5-6 回固定。
+- **レバー B (チャンク)**: 共有 util `runChunkedBulk` が K=100・並列 3 で送信。各チャンクを 10 秒枠内に収める。ID が互いに素なので並列安全、`deletedAt: null` 条件で冪等 → 失敗チャンクのみ再送可。
+
+### 教訓
+
+- **`recalculateAllProjectWps` は O(WP) 逐次往復**。チャンクごとに走らせると走査が重複してタイムアウトに近づくため、**全チャンク完了後に 1 回だけ** (`runChunkedBulk.finalize` → `POST /tasks/recalculate`) に集約する。**(2026-06-09 追補: ADR-0037 で `recalculateAllProjectWps` 自体を「全タスク 1 fetch + メモリ集計 + 変更 WP のみ `$transaction` 一括 update」に畳み O(WP) 逐次往復を解消。末尾 1 回集約の方針は不変だが、その 1 回自体も WP 数非依存になった。)**
+- **権限の非対称に注意**: 末尾 recalc 化は「`recalculate` が `task:update` を要求する」ため、`task:update_progress` しか持たない member 経路の一括**更新**には適用できない。削除 (`task:delete` 保持者は `task:update` も持つ) では成立。→ **一括更新は inline 再計算 (認可済リクエスト内) を維持**し、削除のみ末尾集約。「全部同じパターンに揃える」と権限で詰む。
+- **監査の粒度トレードオフ**: per-id DELETE は 1 件ごとに before スナップショットを記録していたが、一括は `recordBulkAuditLogs` (createMany) で **before 全体は持たず entityId + メタのみ**。bulk-update と同方針だが、旧挙動からは監査詳細が後退する点を認識して採用する。
+- **横展開チェック**: 同型の「逐次ループ + 個別 fetch」を他エンティティでも grep (`method: 'DELETE'` が `for`/`map` 内にないか)。本件では他 DELETE は全て単一 item、他 `/bulk` は単一 PATCH で該当なしを確認。
+
+### 追補: 単一 CRUD にも残っていた冗長 fetch / 無条件 write (同リリースで解消)
+
+一括だけでなく単一操作にも「同一行の二重 fetch」が潜んでいた。
+
+- **単一削除**: route の `getTask` (before) と `deleteTask` 内の所有確認 `findFirst` が同一行を二重 fetch。→ `deleteTask` を「所有確認 + 論理削除 + before(TaskDTO) を 1 fetch で兼ねて返す」(`projectId` 引数追加) 形にし、route の `getTask` を撤去。**監査 before は従来同様 `toTaskDTO` の戻り値**なので内容は不変。削除権限は所有者非依存なので before を権限判定に使わず安全に統合できた。
+- **単一更新**: `updateTask` の所有確認 `findFirst` (select id) と現在値 `findUnique` が二重 fetch。→ owned `findFirst` の select に現在値 (status/progress/actual) を含め `findUnique` を撤去。route の `getTask` は member 権限ゲート (`before.assigneeId`) で必要なので残す。
+- **再計算**: `recalculateAncestors` が「一致時 skip」最適化 (`recalculateWpOnly` は持っていた) を欠き、祖先を無条件 update + ルートまで再帰していた。→ skip + 上位伝播停止を追加。**最終格納値は同一**。
+- **テスト独立性の罠**: `vi.clearAllMocks()` は実装 (`mockResolvedValue`) をリセットしない。`deleteTask` の新「null を返す」テストが `findFirst→null` を残し、後続 `getProgressLogs` テストが「前テストが残した truthy findFirst」に暗黙依存していた leak を露呈。→ 依存テスト側に明示 mock を追加して独立化 (型/DB 同期と同じ「暗黙依存を顕在化させて潰す」発想)。
+- **一括更新 (bulk-update) の再計算も潜在ボトルネックだった**: 本体 `updateMany` はバッチ済でも、末尾の `for (parentId of uniqueParentIds) await recalculateAncestors(parentId)` が「親ごとにルートまで再帰 = 共有祖先を親の数だけ重複再計算」で、横広な更新 (多数の別 WP) で逐次往復が膨らんでいた。→ `recalculateAffectedWps` (影響 WP 集合 = 親 ∪ 祖先を 1 回の findMany からメモリ構築し重複なく深度降順で 1 回ずつ再計算) に置換。**最終集計値は同一**。なお安易な `recalculateAllProjectWps` (全 WP 走査) への置換は、狭い更新を巨大プロジェクトで O(全 WP) 逐次 findUnique に**退行させる**ので不可 — 「全部同じ末尾集約に揃える」前に、対象範囲 (影響集合 vs 全体) のコスト特性を見極める。
+
+### 関連
+- ADR-0035 / ADR-0032 (インポート createMany バッチ化) / `src/lib/run-chunked-bulk.ts` / `bulkDeleteTasks` / `deleteTask` / `updateTask` / `recalculateAncestors`
+
+---
+
+## §5.X+210: WBS 一括更新の件数制限撤廃 — フロントの `.max(100)` が実質 UX バグだった (2026-06-12)
+
+### 事象
+
+WBS 一括編集で 100 件以上を選択して「適用」すると「一括更新は100件までです」エラーになっていた。
+バリデータの `.max(100)` が 1 リクエスト上限として UI 側まで透過していたため、
+600 件規模のプロジェクトでは実質使えない機能になっていた。
+
+### 原因
+
+- サーバ側 `bulkUpdateTaskSchema` に `.max(100)` を付けていた (bulk-delete と同じ安全弁として追加したが、値が小さすぎた)
+- フロントエンドは `runChunkedBulk` を使わずに全 ID を 1 リクエストで送信していた
+
+### 修正 (ADR-0035 準拠)
+
+1. **schema**: `.max(100)` → `.max(2000)` に緩和 (safety net の役割は維持、チャンク 100 件×並列 3 より十分大きい)
+2. **フロント**: `postBulkUpdate` を `runChunkedBulk(ids, sender, { chunkSize: 100, concurrency: 3 })` パターンに書き換え (bulk-delete と同一方式)
+3. **エラー処理**: チャンク単位の失敗は `firstError` に捕捉し、全チャンク完了後にまとめてダイアログへ返す (部分成功も UI 側でリロードされ反映される)
+
+### 教訓
+
+- **runChunkedBulk は「書くだけで件数制限が外れる」ではなく「schema の safety net も必ず同時に拡張する」**。schema だけ拡張してもフロントがチャンク分割しなければ全件を 1 リクエストで叩き直してタイムアウトする逆問題が起きる。
+- **bulk-delete と bulk-update は同じ課題を共有する** — 片方で改良したパターン (runChunkedBulk) は必ず他方にも横展開する。
+
+### 関連
+- ADR-0035 / `src/lib/run-chunked-bulk.ts` / `src/lib/validators/task.ts` (bulkUpdateTaskSchema) / `tasks-client.tsx` (postBulkUpdate)

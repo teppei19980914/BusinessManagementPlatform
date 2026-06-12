@@ -15,6 +15,12 @@ vi.mock('@/lib/db', () => ({
       // 2026-05-09 feedback Phase 2-5: deleteComment は越境遮断のため updateMany 経由
       updateMany: vi.fn(),
     },
+    // 2026-06-12: isCommentTargetFullyClosed (クローズ済みPJガード) が参照する経路。既定は空 (= ブロックしない)。
+    task: { findFirst: vi.fn() },
+    stakeholder: { findFirst: vi.fn() },
+    knowledgeProject: { findMany: vi.fn() },
+    riskIssueProject: { findMany: vi.fn() },
+    retrospectiveProject: { findMany: vi.fn() },
   },
 }));
 
@@ -54,6 +60,10 @@ const params = Promise.resolve({ id: COMMENT_ID });
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // 2026-06-12: クローズ済みPJガードの多対多クエリは既定で空 (= ブロックしない)。
+  vi.mocked(prisma.knowledgeProject.findMany).mockResolvedValue([] as never);
+  vi.mocked(prisma.riskIssueProject.findMany).mockResolvedValue([] as never);
+  vi.mocked(prisma.retrospectiveProject.findMany).mockResolvedValue([] as never);
   // 2026-05-09 feedback Phase 2-5: deleteComment は updateMany 経由で実装される
   vi.mocked(prisma.comment.updateMany).mockResolvedValue({ count: 1 } as never);
   vi.mocked(prisma.comment.update).mockResolvedValue({
@@ -149,5 +159,35 @@ describe('DELETE /api/comments/[id]', () => {
 
     const res = await DELETE(deleteReq(), { params });
     expect(res.status).toBe(403);
+  });
+});
+
+// 2026-06-12: クローズ済みPJ (読み取り専用) の資産に紐付くコメントは、投稿者本人でも編集/削除不可。
+describe('クローズ済みプロジェクトのコメント編集/削除ガード', () => {
+  it('PATCH: 紐付く全PJが closed なら投稿者本人でも 403 PROJECT_CLOSED', async () => {
+    vi.mocked(getAuthenticatedUser).mockResolvedValue({ id: 'u-author', systemRole: 'general', tenantId: 'tenant-A' } as never);
+    vi.mocked(prisma.comment.findFirst).mockResolvedValue({
+      id: COMMENT_ID, userId: 'u-author', entityType: 'issue', entityId: 'r-1',
+      content: 'orig', createdAt: new Date(), updatedAt: new Date(), user: { name: 'Alice' },
+    } as never);
+    // issue → riskIssueProject、全 closed
+    vi.mocked(prisma.riskIssueProject.findMany).mockResolvedValue([{ project: { status: 'closed' } }] as never);
+
+    const res = await PATCH(patchReq({ content: 'edited' }), { params });
+    expect(res.status).toBe(403);
+    expect((await res.json()).error.code).toBe('PROJECT_CLOSED');
+  });
+
+  it('DELETE: 紐付く全PJが closed なら投稿者本人でも 403 PROJECT_CLOSED', async () => {
+    vi.mocked(getAuthenticatedUser).mockResolvedValue({ id: 'u-author', systemRole: 'general', tenantId: 'tenant-A' } as never);
+    vi.mocked(prisma.comment.findFirst).mockResolvedValue({
+      id: COMMENT_ID, userId: 'u-author', entityType: 'issue', entityId: 'r-1',
+      content: 'orig', createdAt: new Date(), updatedAt: new Date(), user: { name: 'Alice' },
+    } as never);
+    vi.mocked(prisma.riskIssueProject.findMany).mockResolvedValue([{ project: { status: 'closed' } }] as never);
+
+    const res = await DELETE(deleteReq(), { params });
+    expect(res.status).toBe(403);
+    expect((await res.json()).error.code).toBe('PROJECT_CLOSED');
   });
 });

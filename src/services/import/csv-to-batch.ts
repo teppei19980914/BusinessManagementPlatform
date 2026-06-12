@@ -23,7 +23,7 @@ import {
   isKnownKnowledgeType,
   resolveRiskType,
 } from './value-mapping';
-import { getImportFieldLabel } from './import-field-catalog';
+import { getImportFieldLabel, getImportFieldMaxLength } from './import-field-catalog';
 import {
   VISIBILITIES,
   IMPACT_LEVELS,
@@ -138,6 +138,31 @@ function validatePulldown(
   });
 }
 
+/**
+ * 文字数上限: DB の VarChar 上限を超える値はエラーを push (サイレント切り捨て禁止)。
+ * 空は対象外。上限のないフィールド (Text) は何もしない。
+ */
+function validateLength(
+  valueErrors: ImportValueError[],
+  entity: ImportEntityKind,
+  ref: string,
+  field: string,
+  value: string,
+  origin?: SourceOrigin,
+): void {
+  const max = getImportFieldMaxLength(entity, field);
+  if (max == null) return;
+  const len = value.trim().length;
+  if (len <= max) return;
+  valueErrors.push({
+    entity,
+    ref,
+    field,
+    origin,
+    reason: `${getImportFieldLabel(entity, field)}が長すぎます（最大 ${max} 文字、現在 ${len} 文字）。短くしてから取り込んでください。`,
+  });
+}
+
 /** 日付項目: 非空かつ日付として認識できる実在日でなければエラーを push (空は許容)。 */
 function validateDate(ctx: ValueErrorCtx, field: string, rawValue: string): void {
   const v = rawValue.trim();
@@ -176,6 +201,10 @@ export function buildBatchFromCsv(sources: CsvEntitySource[]): NormalizedBatch {
       const get = makeGetter(row, src.columnMap, fixedMap);
       const name = get('name');
       if (name === '') return; // 名前なしは無視 (preview で件数に出ないだけ)
+      const origin: SourceOrigin = { file: src.fileName, row: i + 1 };
+      for (const f of ['name', 'department', 'contactPerson', 'contactEmail'] as const) {
+        validateLength(batch.valueErrors, 'customer', name, f, get(f), origin);
+      }
       batch.customers.push({
         sourceKey: name,
         name,
@@ -183,7 +212,7 @@ export function buildBatchFromCsv(sources: CsvEntitySource[]): NormalizedBatch {
         contactPerson: nz(get('contactPerson')),
         contactEmail: nz(get('contactEmail')),
         notes: nz(get('notes')),
-        origin: { file: src.fileName, row: i + 1 },
+        origin,
       });
     });
   }
@@ -196,6 +225,7 @@ export function buildBatchFromCsv(sources: CsvEntitySource[]): NormalizedBatch {
       const getValid = makeValidatedGetter(row, src.columnMap, fixedMap);
       const name = get('name');
       if (name === '') return;
+      validateLength(batch.valueErrors, 'project', name, 'name', name, { file: src.fileName, row: i + 1 });
       const project: NormalizedProject = {
         sourceKey: name,
         customerRef: nz(get('customerName')),
@@ -237,6 +267,7 @@ export function buildBatchFromCsv(sources: CsvEntitySource[]): NormalizedBatch {
       const projectName = get('projectName');
       const name = get('name');
       if (projectName === '' || name === '') return;
+      validateLength(batch.valueErrors, 'wbs', name, 'name', name, { file: src.fileName, row: i + 1 });
       if (!wbsOriginByProject.has(projectName)) {
         wbsOriginByProject.set(projectName, { file: src.fileName, row: i + 1 });
       }
@@ -365,6 +396,7 @@ function buildRisk(get: Getter, getValid: ValidatedGetter, ctx: ValueErrorCtx): 
   validatePulldown(ctx, 'visibility', visibility, isKnownVisibility, VISIBILITIES);
   if (type === 'risk') validatePulldown(ctx, 'riskNature', riskNatureRaw, isKnownRiskNature, RISK_NATURES);
   validateDate(ctx, 'deadline', deadlineRaw);
+  validateLength(ctx.valueErrors, ctx.entity, ctx.ref, 'title', get('title'), ctx.origin);
 
   return {
     type,
@@ -386,6 +418,7 @@ function buildKnowledge(get: Getter, getValid: ValidatedGetter, ctx: ValueErrorC
   const visibility = getValid('visibility', isKnownVisibility);
   validatePulldown(ctx, 'knowledgeType', knowledgeType, isKnownKnowledgeType, KNOWLEDGE_TYPES);
   validatePulldown(ctx, 'visibility', visibility, isKnownVisibility, VISIBILITIES);
+  validateLength(ctx.valueErrors, ctx.entity, ctx.ref, 'title', get('title'), ctx.origin);
   return {
     title: get('title'),
     knowledgeType,

@@ -77,6 +77,7 @@ function baseDto(overrides: Partial<TaskDTO>): TaskDTO {
     actualStartDate: null,
     actualEndDate: null,
     plannedEffort: 0,
+    actualEffort: null,
     priority: null,
     status: 'not_started',
     progressRate: 0,

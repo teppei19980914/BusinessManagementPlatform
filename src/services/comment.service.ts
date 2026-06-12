@@ -385,6 +385,79 @@ export async function resolveEntityForComment(
 }
 
 /**
+ * 2026-06-12: コメント write (投稿) のクローズ済みプロジェクトガード判定。
+ *
+ * エンティティが「1 つ以上のプロジェクトに紐付き、かつ紐付く稼働中(非削除)プロジェクトが
+ * **すべてクローズ済み (status='closed')**」のとき true を返す
+ * (= そのエンティティはどの稼働中PJからも編集されない archived 状態 → コメントも不可)。
+ *
+ * 設計:
+ *   - 多対多エンティティ (knowledge / risk / issue / retrospective) が「開いたPJ」と「閉じたPJ」の
+ *     両方に紐付く場合は false (稼働中PJで生きているためコメント可)。これは
+ *     comment-section の「cross-list の readOnly でもコメント可 (要件 Q4)」方針とも整合する
+ *     (cross-list の readOnly は非メンバー閲覧であり、PJ ライフサイクルの closed とは別軸)。
+ *   - project に紐付かない customer / memo、および紐付け 0 件 (orphan) は常に false
+ *     (= ブロックしない。存在チェックは呼出側に委ねる)。
+ *
+ * @returns 紐付く全プロジェクトがクローズ済みなら true (= write ブロック対象)
+ */
+export async function isCommentTargetFullyClosed(
+  entityType: CommentEntityType,
+  entityId: string,
+  viewerTenantId: string,
+): Promise<boolean> {
+  let statuses: string[] = [];
+  switch (entityType) {
+    case 'task': {
+      const t = await prisma.task.findFirst({
+        where: { id: entityId, deletedAt: null, project: { tenantId: viewerTenantId } },
+        select: { project: { select: { status: true } } },
+      });
+      statuses = t?.project ? [t.project.status] : [];
+      break;
+    }
+    case 'stakeholder': {
+      const s = await prisma.stakeholder.findFirst({
+        where: { id: entityId, deletedAt: null, tenantId: viewerTenantId },
+        select: { project: { select: { status: true } } },
+      });
+      statuses = s?.project ? [s.project.status] : [];
+      break;
+    }
+    case 'knowledge': {
+      const rows = await prisma.knowledgeProject.findMany({
+        where: { knowledgeId: entityId, project: { tenantId: viewerTenantId, deletedAt: null } },
+        select: { project: { select: { status: true } } },
+      });
+      statuses = rows.map((r) => r.project.status);
+      break;
+    }
+    case 'risk':
+    case 'issue': {
+      const rows = await prisma.riskIssueProject.findMany({
+        where: { riskIssueId: entityId, project: { tenantId: viewerTenantId, deletedAt: null } },
+        select: { project: { select: { status: true } } },
+      });
+      statuses = rows.map((r) => r.project.status);
+      break;
+    }
+    case 'retrospective': {
+      const rows = await prisma.retrospectiveProject.findMany({
+        where: { retrospectiveId: entityId, project: { tenantId: viewerTenantId, deletedAt: null } },
+        select: { project: { select: { status: true } } },
+      });
+      statuses = rows.map((r) => r.project.status);
+      break;
+    }
+    default:
+      // customer / memo: プロジェクトに紐付かないためクローズ概念の対象外
+      return false;
+  }
+  if (statuses.length === 0) return false; // orphan / 未存在 はブロックしない
+  return statuses.every((s) => s === 'closed');
+}
+
+/**
  * 指定 entityType / entityId / userId に紐づく **同 entity の有効コメント** を一括 soft-delete する。
  * entity 削除時の cascade に呼ぶ (各 service 層の delete から呼び出し)。
  */
