@@ -196,8 +196,8 @@ test.describe('@feature:project:estimates 見積もり管理', () => {
     await expect(row).toBeVisible({ timeout: 10_000 });
     // 「係数」バッジが表示されること
     await expect(row.getByText('係数')).toBeVisible();
-    // WinActor のツール名が表示されること
-    await expect(row.getByText('WinActor')).toBeVisible();
+    // WinActor のツール名が表示されること (exact: true で item名 substring マッチを回避)
+    await expect(row.getByText('WinActor', { exact: true })).toBeVisible();
     await snapshotStep(page, 'estimates-coeff-created');
   });
 
