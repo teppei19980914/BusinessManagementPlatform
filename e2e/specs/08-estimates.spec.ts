@@ -141,7 +141,8 @@ test.describe('@feature:project:estimates 見積もり管理', () => {
     await expect(page.getByRole('dialog').getByText('開発ツール', { exact: true })).toBeVisible();
     await expect(page.getByRole('dialog').getByText('規模', { exact: true })).toBeVisible();
     await expect(page.getByRole('dialog').getByText('難易度', { exact: true })).toBeVisible();
-    await expect(page.getByRole('dialog').getByText(/見積工数/)).toBeVisible();
+    // デフォルト係数 (baseHours=16, 全係数=1.0) から calcPreview が即時表示される
+    await expect(page.getByRole('dialog').getByText(/計算結果/)).toBeVisible();
 
     await page.keyboard.press('Escape');
     await expect(page.getByRole('dialog')).not.toBeVisible({ timeout: 5_000 });
