@@ -83,6 +83,9 @@ type Props = {
   /** 2026-04-24: 作成者本人判定に使用 (reporterId === currentUserId で編集/削除許可) */
   currentUserId: string;
   systemRole: string;
+  /** 2026-06-12: プロジェクトがクローズ済み (読み取り専用) のとき true。
+   *  編集ダイアログを強制 readOnly にし、コメント投稿欄も非表示にする。 */
+  isReadOnly?: boolean;
   /** PR #60 #1: 'risk' / 'issue' どちらか固定で表示 (未指定なら従来通り両方) */
   typeFilter?: 'risk' | 'issue';
   /** CRUD 後に呼び出す再取得ハンドラ（未指定時は router.refresh フォールバック）*/
@@ -111,12 +114,12 @@ function getProjectRiskSortValue(r: RiskDTO, columnKey: string): unknown {
   }
 }
 
-export function RisksClient({ projectId, risks, members, canCreate, currentUserId, systemRole, typeFilter, onReload }: Props) {
+export function RisksClient({ projectId, risks, members, canCreate, currentUserId, systemRole, isReadOnly = false, typeFilter, onReload }: Props) {
   const router = useRouter();
   const tRisk = useTranslations('risk');
   const tField = useTranslations('field');
   const { withLoading } = useLoading();
-  const { showSuccess, showError } = useToast();
+  const { showSuccessKey, showErrorKey } = useToast();
   // PR #119: session 連携フォーマッタ
   const { formatDateTimeSeconds } = useFormatters();
   // 2026-06-02: 一覧の添付/リンク列を再取得させるトリガ。編集ダイアログ内で
@@ -301,7 +304,7 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
       const json = await res.json();
       const msg = json.error?.message || json.error?.details?.[0]?.message || tRisk('createFailed');
       setError(msg);
-      showError(form.type === 'risk' ? 'リスクの起票に失敗しました' : '課題の起票に失敗しました');
+      showErrorKey(form.type === 'risk' ? 'risk.toastRiskCreateFailed' : 'risk.toastIssueCreateFailed');
       return;
     }
     // PR #67: 作成成功直後にステージされた添付を一括 POST
@@ -316,7 +319,7 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
     setStagedCreateAttachments([]);
 
     setIsCreateOpen(false);
-    showSuccess(form.type === 'risk' ? 'リスクを起票しました' : '課題を起票しました');
+    showSuccessKey(form.type === 'risk' ? 'risk.toastRiskCreateSuccess' : 'risk.toastIssueCreateSuccess');
     setForm({
       type: initialType,
       title: '',
@@ -351,7 +354,7 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
       }),
     );
     if (!res.ok) {
-      showError('リスク/課題のエクスポートに失敗しました');
+      showErrorKey('risk.toastExportFailed');
       return;
     }
     const csvText = await res.text();
@@ -503,9 +506,9 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
                   {relatedIssues.length > 0 && (
                     <div className="rounded-md border border-amber-300 bg-warning/10 p-3 space-y-2">
                       <p className="text-xs font-semibold text-warning">
-                        類似する過去課題があります ({relatedIssues.length} 件)
+                        {tRisk('similarIssuesTitle', { count: relatedIssues.length })}
                         <span className="ml-1 font-normal">
-                          - 過去に発生した事象の再来かもしれません、念のためご確認ください
+                          {tRisk('similarIssuesNote')}
                         </span>
                       </p>
                       <ul className="space-y-1">
@@ -513,7 +516,7 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
                           <li key={r.id} className="text-sm">
                             <div className="flex items-center gap-2">
                               <span className="font-medium">{r.title}</span>
-                              <Badge variant="outline" className="text-xs">類似度 {(r.score * 100).toFixed(0)}%</Badge>
+                              <Badge variant="outline" className="text-xs">{tRisk('similarityBadge', { percent: (r.score * 100).toFixed(0) })}</Badge>
                               {r.sourceProjectName && (
                                 <Link
                                   href={`/projects/${r.sourceProjectId}/issues`}
@@ -521,7 +524,7 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
                                   rel="noopener noreferrer"
                                   className="text-xs text-info hover:underline"
                                 >
-                                  出典: {r.sourceProjectName}
+                                  {tRisk('sourceLabel', { sourceProjectName: r.sourceProjectName })}
                                 </Link>
                               )}
                             </div>
@@ -735,10 +738,10 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
                         fetch(`/api/projects/${projectId}/risks/${r.id}`, { method: 'DELETE' }),
                       );
                       if (!res.ok) {
-                        showError(r.type === 'risk' ? 'リスクの削除に失敗しました' : '課題の削除に失敗しました');
+                        showErrorKey(r.type === 'risk' ? 'risk.toastRiskDeleteFailed' : 'risk.toastIssueDeleteFailed');
                         return;
                       }
-                      showSuccess(r.type === 'risk' ? 'リスクを削除しました' : '課題を削除しました');
+                      showSuccessKey(r.type === 'risk' ? 'risk.toastRiskDeleteSuccess' : 'risk.toastIssueDeleteSuccess');
                       await reload();
                     }}
                   >
@@ -779,10 +782,13 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
         open={editingRisk != null}
         onOpenChange={(v) => { if (!v) { setEditingRisk(null); bumpAttachToken(); } }}
         onSaved={reload}
+        closedProject={isReadOnly}
         readOnly={
-          editingRisk != null
-          && editingRisk.reporterId !== currentUserId
-          && editingRisk.assigneeId !== currentUserId
+          isReadOnly || (
+            editingRisk != null
+            && editingRisk.reporterId !== currentUserId
+            && editingRisk.assigneeId !== currentUserId
+          )
         }
       />
 

@@ -345,6 +345,11 @@ export async function listKnowledgeByProject(
     },
     include: {
       creator: { select: { name: true } },
+      // 2026-06-12: プロジェクト別一覧の「更新者」列用。listKnowledge / listAllKnowledgeForViewer に
+      //   2026-06-02 で updater を追加した際、本関数だけ include 漏れがあり、DB の updated_by が
+      //   正しくても toKnowledgeDTO が k.updater?.name を参照できず updaterName が常に null
+      //   (= 更新者列が常に空) になっていたのを修正。
+      updater: { select: { name: true } },
       // feat/asset-assignee-expansion (2026-05-26): 担当者氏名表示用
       assignee: { select: { name: true } },
       knowledgeProjects: { select: { projectId: true } },

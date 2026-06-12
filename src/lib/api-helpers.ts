@@ -124,6 +124,45 @@ export async function checkProjectPermission(
 }
 
 /**
+ * プロジェクトが「クローズ済み (status='closed' = 完全な読み取り専用)」のとき write を弾く共通ガード。
+ *
+ * 背景 (2026-06-12):
+ *   `checkPermission` の `STATE_RESTRICTIONS.closed` は write アクションをクローズPJで拒否するが、
+ *   一部の write route は **ロール判定を service 層に委ねる目的で read アクション**
+ *   (`risk:read` / `project:read`) を `checkProjectPermission` に渡しており、
+ *   クローズ制約が効かない穴があった:
+ *     - `risks/[riskId]` DELETE  … `risk:read` で認可 (creator/admin 判定は service 層)
+ *     - `retrospectives/[retroId]` PATCH / DELETE … `project:read` で認可
+ *   これらは action を write に変えると member の自己編集/削除を route 層で誤って弾くため、
+ *   本ヘルパで **ロール判定を変えずクローズのみを一律ブロック** する。
+ *
+ * @returns クローズ済みなら 403 (PROJECT_CLOSED)、open / 未存在は null
+ *   (存在チェックは呼出側の既存ロジックに委ねるため、ここでは「closed の時だけ」弾く)。
+ */
+export async function requireProjectNotClosed(
+  projectId: string,
+  tenantId: string,
+): Promise<NextResponse | null> {
+  // tenantId 併記で越境クエリを遮断 (他テナントの projectId を直叩きしても status を読めない)
+  const project = await prisma.project.findFirst({
+    where: { id: projectId, tenantId },
+    select: { status: true },
+  });
+  if (project?.status === 'closed') {
+    return NextResponse.json(
+      {
+        error: {
+          code: 'PROJECT_CLOSED',
+          message: 'このプロジェクトはクローズ済み (読み取り専用) のため変更できません',
+        },
+      },
+      { status: 403 },
+    );
+  }
+  return null;
+}
+
+/**
  * システム管理者チェック (admin または super_admin を許可)。
  *
  * 2026-05-13 (security/auth-secret-hardening, B-3): super_admin が

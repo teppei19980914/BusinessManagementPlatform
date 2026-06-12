@@ -66,6 +66,41 @@ build script は **CI と Netlify で分離**:
 - ルートの `*.md`
 - `.gitignore` / `LICENSE` / `CODEOWNERS`
 
+#### dev-only 依存更新の skip (2026-06-11 追加)
+
+Dependabot の patch/minor 自動マージ (`.github/workflows/dependabot-auto-merge.yml`) は
+**1 マージ = 1 Production build (~15 credits)** を発火させる。日次の依存更新で大量に
+main へ入るため、この本番ビルドが credits 枠を圧迫し「自分のコードをデプロイできない」
+事態を招いていた。
+
+対策として、変更が `package.json` / `pnpm-lock.yaml` のみで、その中身が
+**ランタイム出荷物 (next build の成果物) に一切影響しない dev ツールの devDependencies 更新**
+だけの場合も本番ビルドを skip する。これらは利用者に届くバンドルを変えないため本番デプロイ不要で、
+検証は GitHub Actions の Lint/Test/Build (全 PR 実施・Public repo のため枠外) で担保される。
+
+- **skip 対象 (許可リスト)**: `@types/*` / `@playwright/test` / `@vitest/coverage-v8` /
+  `vitest` / `eslint` / `eslint-config-next` / `eslint-config-prettier` / `prettier` / `shadcn`
+- **常に build (= 意図的に skip しない)**:
+  - `dependencies` (実行時コード) の全パッケージ
+  - `tailwindcss` / `@tailwindcss/postcss` (CSS 出力を生成)
+  - `prisma` (`prisma generate` で `@prisma/client` を生成)
+  - `tsx` (`build:netlify` の post-build 手順で使用)
+  - `typescript` / `dotenv` (影響は薄いが保守的に build)
+- **fail-safe**: package.json の構造変更 (scripts/dependencies 等)・許可リスト外の変更・
+  lock-only 変更 (推移的 runtime 依存が動いた可能性)・判定不能はすべて **build** にフォールバック。
+
+判定は `scripts/netlify-ignore.sh` 内で旧版↔新版の `package.json` を Node で厳密比較して行う。
+リグレッションテストは `scripts/netlify-ignore.test.sh` (14 ケース、`bash` で直接実行)。
+
+> **ロールバック**: `scripts/netlify-ignore.sh` の `SAFE_DEV_DEPS` を空文字 `""` にすれば、
+> 本ブロックは常に build にフォールバックし 2026-06-11 以前の挙動 (package.json 変更は必ず build)
+> へ即座に戻せる。
+
+> **補足 (任意の追加策・未実施)**: Dependabot の cadence を `daily→weekly` にしたり、
+> ランタイム依存を catch-all group で 1 PR に集約すれば「正当な本番ビルドの**回数**」も
+> 減らせる。ただし weekly 化はセキュリティ更新を最大 1 週間遅らせ、grouping は #497 で
+> 慎重設計した自動マージパイプラインに影響するため、本対応では変更していない。
+
 詳細は [`scripts/netlify-ignore.sh`](../../../scripts/netlify-ignore.sh) のコメント参照。
 
 ---
@@ -404,6 +439,7 @@ gh pr edit 123 --title "docs: README typo 修正 [skip ci]"
 - `.vscode/**`
 - ルートの `*.md`
 - `.gitignore` / `LICENSE` / `CODEOWNERS`
+- **dev-only 依存更新** (`package.json` / `pnpm-lock.yaml` のみ変更で許可リストの dev ツールだけ。2026-06-11 追加)
 
 詳細は §1.2 参照。
 

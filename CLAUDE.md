@@ -59,6 +59,30 @@
 
 ---
 
+## コスト効率・モデル運用ルール (2026-06-09 / Pro プラン移行に伴い必須)
+
+契約を Max ($100/月) → **Pro ($19/月)** に変更したため、Claude Code の消費 (トークン / 使用枠) を抑える運用を必須とする。Pro は 5 時間ごと + 週次の使用上限があり、枠を浪費する操作を避ける。
+
+### モデル使い分け (最大のコストレバー)
+
+- **既定は Sonnet** (`.claude/settings.local.json` の `model: sonnet` で固定済)。日々の実装・調査・設計検討・docs 更新・ADR 草案は Sonnet で十分な品質。
+- **Opus は明示時のみ**。以下に該当するときだけ Claude 側から「Opus への切替」を提案し、ユーザが `/model` で切り替える (自動切替は不可):
+  1. **severity-1 領域の横断検証** — テナント越境 (`where.tenantId`) / 課金 invariant (ApiCallLog SUM 一致) / DB カラム撤去の多レイヤ確認
+  2. **大規模リファクタの影響範囲分析** — 広い範囲を同時に保持して矛盾・抜けを探す
+  3. **込み入ったデバッグ** — 症状と真因が離れている / テスト緑なのに本番で落ちる
+  4. **後戻りコスト極大の根幹設計の最終判断**
+- 理想形: Sonnet で設計を詰め、最終チェックだけ Opus に上げて検証する併用。
+- ⚠️ **「Claude は判断・設計・調査だけ」ではない。実装 (コードを書く) は Claude の本業**。剥がすのは下記の定型機械作業のみ。
+
+### 消費を抑える運用
+
+- **機械でできることは Claude にやらせない**: lint / test / security:gate / perf 検査 / ブランチ作成 / commit 抑止は hook / CI に置けば Claude トークン消費ゼロで確実に実行される。Claude を介して実行・ログ解釈させると毎回トークンを食う。
+- **サブエージェント多並列・`/code-review ultra`・Workflow は Pro では原則封印**。1 回で通常の数十倍消費し週次枠を一気に溶かす。探索は単発で的を絞った検索で代替する。
+- **1 タスク = 1 セッション、完了したら `/clear`**。長い会話は毎ターン履歴を再処理し入力トークンが膨張する。
+- **拡張思考は常時 OFF** (グローバル設定済)。思考が要る場面だけ明示的に使う。
+
+---
+
 ## コミット前チェック (毎回必須)
 
 Claude Code が実装変更を行った場合、コミット前に以下を必ず実施する (詳細手順は [`.claude/skills/quality-check.md`](./.claude/skills/quality-check.md))。
@@ -81,8 +105,35 @@ Claude Code が実装変更を行った場合、コミット前に以下を必�
 - コミットメッセージは変更内容を端的に記述する
 - **コミットは Claude Code が勝手にやらず、必ずユーザに確認** してから実施する (緊急時運用では安全性を最優先)
 - `main` / `master` / `develop` / `release/*` / `hotfix/*` への直接コミットは禁止
+- **commit / push / PR 作成は PreToolUse hook (`block-git-publish.sh`) で既定ブロック**。ユーザが明示依頼したターンのみ、合言葉 `ALLOW_GIT_PUBLISH=1` を前置して実行する (PowerShell は `$env:ALLOW_GIT_PUBLISH='1';`)。
 
 ブランチ命名・コミットメッセージ規約・PR 作成手順は [CONTRIBUTING.md](./CONTRIBUTING.md) 参照。
+
+---
+
+## 週次リリース運用 (2026-06-09)
+
+- **毎週金曜リリース** (目標。リリース日は変動しうる)。**土曜始まり〜金曜まで**の変更を 1 ブランチに集約し、金曜に main へマージ & デプロイする。
+- **ブランチ名 = `week/YYYY-wWW`** (ISO 週番号、ただし土曜始まりに補正)。例: `week/2026-w24`。リリース日に依存しない抽象的命名。`release/*`・`hotfix/*` は保護接頭辞のため使わない。
+- **SessionStart hook (`session-start-weekly-branch.sh`)** が起動時に当週ブランチを**冪等に保証** (有れば checkout / 無ければ main 最新化のうえ作成)。週途中の再起動でも同じ週次ブランチに乗り続ける。
+  - 未コミット変更がある場合は自動切替せず警告のみ (commit はしない方針)。
+  - 「ブランチを切らないで」と指示された場合は `.claude/.weekly-branch-disabled` を touch してスキップ。
+- 溜め方は**週次ブランチへ直接コミット** (機能別サブブランチ統合はしない)。
+
+---
+
+## docs 同期チェーン (実装変更時に必ず連動)
+
+実装を変更したら、以下を **1 作業単位として連動**させ「片方だけ更新」を禁止する。
+
+```
+実装変更 → docs/design/ → docs/public/ → src/config/faq-content.ts / guide-content.ts → (週次デプロイ時に Embedding 自動再生成)
+```
+
+- **public への展開条件**: 違法でも、たすきばの機密情報でもないものに限る。
+- **FAQ/ガイド = たすきフクロウの頭脳**。`/help`・`/guide` 画面 (ユーザメニューから到達) とフクロウ AI チャットの共通ソース。
+- **Embedding は片方向・デプロイ時生成**: `faq-content.ts` 等を更新しても本番フクロウが新知識を学ぶのは**週次デプロイ (`build:netlify` が `generate-faq-embeddings.ts` を実行) 時**。ローカル完了時点で本番フクロウが未更新なのは**正常**。SHA-256 変更検知で差分のみ再生成 (無変更 deploy は Voyage 呼出ゼロ)。
+- 詳細手順は完了時に [`.claude/skills/quality-check.md`](./.claude/skills/quality-check.md) Step 2-3 で確認する。
 
 ---
 

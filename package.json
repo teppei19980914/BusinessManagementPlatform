@@ -1,6 +1,6 @@
 {
   "name": "tasukiba",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "private": true,
   "license": "AGPL-3.0-or-later",
   "scripts": {
@@ -31,7 +31,12 @@
     "security:check": "tsx scripts/security-check.ts",
     "security:gate": "tsx scripts/security-check.ts --min-score=90",
     "check:banned-auth-patterns": "tsx scripts/check-banned-auth-patterns.ts",
-    "check:llm-billing-bypass": "tsx scripts/check-llm-billing-bypass.ts"
+    "check:llm-billing-bypass": "tsx scripts/check-llm-billing-bypass.ts",
+    "check:no-hardcoded-jp": "tsx scripts/check-no-hardcoded-jp.ts --baseline scripts/i18n-baseline.json",
+    "check:no-hardcoded-jp:report": "tsx scripts/check-no-hardcoded-jp.ts --report",
+    "check:no-hardcoded-jp:update-baseline": "tsx scripts/check-no-hardcoded-jp.ts --update-baseline scripts/i18n-baseline.json",
+    "check:no-hardcoded-jp:strict": "tsx scripts/check-no-hardcoded-jp.ts --strict",
+    "perf:check": "tsx scripts/check-perf-antipatterns.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.103.0",
@@ -45,6 +50,7 @@
     "clsx": "^2.1.1",
     "csv-parse": "^6.2.1",
     "diff": "^9.0.0",
+    "docx": "^9.7.1",
     "exceljs": "^4.4.0",
     "jszip": "^3.10.1",
     "lucide-react": "^1.17.0",
@@ -59,6 +65,7 @@
     "react": "19.2.7",
     "react-dom": "19.2.7",
     "react-markdown": "^10.1.0",
+    "recharts": "^3.8.1",
     "remark-breaks": "^4.0.0",
     "remark-gfm": "^4.0.1",
     "stripe": "^17.7.0",

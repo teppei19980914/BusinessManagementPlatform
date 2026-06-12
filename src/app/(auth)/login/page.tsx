@@ -23,6 +23,12 @@ import {
   clearTenantHistory,
   type TenantHistoryEntry,
 } from '@/lib/tenant-history';
+// ADR-0036: ログイン成功時にシステム周知バナーの「×破棄」状態を全 purge する。
+//   ログアウトはフルページ遷移 (window.location) のため SystemBannerBar の unmount 時 effect は
+//   信頼できず、同一タブで sessionStorage が生き残る。ログイン経路で確実に purge することで
+//   「再ログインで (期間内なら) 帯が再表示される」要件をフルナビゲーションでも満たす
+//   ([[feedback_client_sessionstorage_user_isolation]] と同方針)。
+import { purgeAllBannerDismiss } from '@/lib/banner-dismiss-storage';
 
 export default function LoginPage() {
   return (
@@ -147,6 +153,9 @@ function LoginForm() {
     }
 
     setIsLoading(false);
+    // ADR-0036: ログイン成功 = 新しいセッション開始。前セッションで×破棄した周知バナーを
+    //   再表示できるよう、破棄状態を全 purge する (フルナビゲーション安全な確定ポイント)。
+    purgeAllBannerDismiss();
     // フルページリロードで Cookie を確実に送信（Netlify 環境対応）。
     // PR #198: 二重に sanitize する (defense in depth)。callbackUrl は受け取り時点でも
     //   sanitize 済みだが、将来コードの近接箇所で外部由来の文字列が再代入されても

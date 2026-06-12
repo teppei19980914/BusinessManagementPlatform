@@ -718,6 +718,13 @@ model Estimate {
   preconditions   String?   @db.Text
   isConfirmed     Boolean   @default(false) @map("is_confirmed")
   notes           String?   @db.Text
+  // v1.2.0: 工数見積もりツール係数列 (inputMode='coefficient' 時に使用)
+  // 計算式: estimatedEffort = baseHours × scaleCoeff × difficultyCoeff × methodCoeff
+  inputMode       String    @default("direct") @map("input_mode") @db.VarChar(20)
+  baseHours       Decimal?  @map("base_hours") @db.Decimal(10, 2)
+  scaleCoeff      Decimal?  @map("scale_coeff") @db.Decimal(5, 2)
+  difficultyCoeff Decimal?  @map("difficulty_coeff") @db.Decimal(5, 2)
+  methodCoeff     Decimal?  @map("method_coeff") @db.Decimal(5, 2)
   createdBy       String    @map("created_by") @db.Uuid
   updatedBy       String    @map("updated_by") @db.Uuid
   createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz
@@ -770,6 +777,7 @@ model Task {
   actualStartDate  DateTime? @map("actual_start_date") @db.Date
   actualEndDate    DateTime? @map("actual_end_date") @db.Date
   plannedEffort    Decimal   @default(0) @map("planned_effort") @db.Decimal(10, 2) // WP は子の合計
+  actualEffort     Decimal?  @map("actual_effort") @db.Decimal(10, 2) // ACT の実績工数 (担当者が実績入力。null=未入力)。分析タブの工数効率/消化工数に使用
   priority         String?   @default("medium") @db.VarChar(10)
   status           String    @default("not_started") @db.VarChar(20)
   progressRate     Int       @default(0) @map("progress_rate") // WP は子の加重平均
@@ -1452,6 +1460,31 @@ model Notification {
   @@index([userId, readAt, createdAt(sort: Desc)], map: "idx_notifications_user_unread")
   @@index([tenantId], map: "idx_notifications_tenant")
   @@map("notifications")
+}
+
+/// システム周知バナー (ADR-0036): 画面上部に出す全ユーザ共通の帯メッセージ。
+/// 「お知らせ画面 (markdown)」「通知ベル (Notification / 個人宛)」とは別概念で、
+///   - **グローバル** (tenantId を持たない): 運営者 (super_admin) の運用周知。全テナントの全ログインユーザに同一表示
+///   - **期間指定**: enabled かつ start_at <= now < end_at の間だけ表示
+///   - **緊急度**: severity = 'high' | 'medium' | 'low' (高=赤 / 中=黄 / 低=青)。値の正本は src/lib/validators/system-banner.ts
+///   - **1 本制約**: enabled なバナー同士の表示期間は重複不可 (service の assertNoOverlap)
+///   - **取り下げ (enabled=false) と物理削除の 2 系統**: 取り下げは履歴に残し、削除は誤作成の後始末
+/// created_by は払い出した super_admin の User.id。tenants.created_by_user_id と同じ設計で FK にしない
+///   (User 物理削除で宙吊りになっても「過去に誰が出したか」の事実は履歴上問題ない)。
+model SystemBanner {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  message   String   @db.VarChar(500)
+  severity  String   @db.VarChar(10)
+  startAt   DateTime @map("start_at") @db.Timestamptz
+  endAt     DateTime @map("end_at") @db.Timestamptz
+  enabled   Boolean  @default(true)
+  createdBy String   @map("created_by") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  /// 表示判定 (getActiveBanner) と重複判定 (assertNoOverlap) の hot path 用複合 index。
+  @@index([enabled, startAt, endAt], map: "idx_system_banners_active")
+  @@map("system_banners")
 }
 
 /// 個人メモ (PR #70): プロジェクトに紐付かない個人の知見・作業ノートを保存する。

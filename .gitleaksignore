@@ -1,0 +1,5 @@
+# gitleaks false positives (inline // gitleaks:allow already on current file state;
+# this file suppresses the fingerprint in the original commit where the line was introduced)
+
+# src/lib/banner-dismiss-storage.ts:19 — sessionStorage key, not an API secret
+dee355aee210bf77eb714ea4c3739ffb0f3ac8a3:src/lib/banner-dismiss-storage.ts:generic-api-key:19

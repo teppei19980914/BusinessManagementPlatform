@@ -94,6 +94,7 @@ export async function PATCH(
       'progressRate',
       'actualStartDate',
       'actualEndDate',
+      'actualEffort',
     ]);
     const disallowedKeys = Object.keys(parsed.data).filter(
       (k) => !ALLOWED_FOR_MEMBER.has(k),
@@ -119,7 +120,20 @@ export async function PATCH(
   if (quotaErr) return quotaErr;
 
   // ADR-0032 (2026-06-04): 名称一意性ガードは撤廃したため TASK_NAME_DUPLICATE_IN_PARENT は発生しない。
-  const task = await updateTask(taskId, parsed.data, user.id, user.tenantId);
+  let task;
+  try {
+    task = await updateTask(taskId, parsed.data, user.id, user.tenantId);
+  } catch (e) {
+    // 2026-06-15: 完了タスクは実績工数が必須 (> 0)。
+    if (e instanceof Error && e.message === 'ACTUAL_EFFORT_REQUIRED') {
+      const t = await getTranslations('message');
+      return NextResponse.json(
+        { error: { code: 'VALIDATION_ERROR', message: t('actualEffortRequiredForCompleted') } },
+        { status: 400 },
+      );
+    }
+    throw e;
+  }
 
   await recordAuditLog({
     tenantId: user.tenantId,
@@ -146,15 +160,15 @@ export async function DELETE(
   if (forbidden) return forbidden;
 
   const t = await getTranslations('message');
-  const before = await getTask(taskId, user.tenantId);
-  if (!before || before.projectId !== projectId) {
+  // ADR-0035: deleteTask が所有確認 (越境/別 project/既削除の除外) + 論理削除 + 監査 before 値の取得を
+  //   1 回の fetch でまとめて行い、削除した行を TaskDTO で返す (旧実装の getTask 二重 fetch を解消)。
+  const before = await deleteTask(taskId, projectId, user.id, user.tenantId);
+  if (!before) {
     return NextResponse.json(
       { error: { code: 'NOT_FOUND', message: t('notFoundTarget') } },
       { status: 404 },
     );
   }
-
-  await deleteTask(taskId, user.id, user.tenantId);
 
   await recordAuditLog({
     tenantId: user.tenantId,

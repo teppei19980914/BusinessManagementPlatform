@@ -85,6 +85,8 @@ export function StakeholderEditDialog({
   open,
   onOpenChange,
   onSaved,
+  readOnly = false,
+  closedProject = false,
 }: {
   projectId: string;
   /** null = 新規作成、StakeholderDTO = 既存編集 */
@@ -94,11 +96,16 @@ export function StakeholderEditDialog({
   open: boolean;
   onOpenChange: (v: boolean) => void;
   onSaved: () => Promise<void> | void;
+  /** 2026-06-12: クローズ済みプロジェクト等で参照専用で開く場合 true。入力を disabled + 保存非表示。 */
+  readOnly?: boolean;
+  /** 2026-06-12: クローズ済みプロジェクト経由のとき true。コメント投稿欄も非表示にする
+   *  (readOnly は非所有者の閲覧=コメント可も含むため別フラグで判定)。 */
+  closedProject?: boolean;
 }) {
   const tAction = useTranslations('action');
   const t = useTranslations('stakeholder');
   const { withLoading } = useLoading();
-  const { showSuccess, showError } = useToast();
+  const { showSuccessKey, showErrorKey } = useToast();
 
   const [form, setForm] = useState<FormState>(DEFAULT_FORM);
   const [error, setError] = useState('');
@@ -171,13 +178,13 @@ export function StakeholderEditDialog({
         || json.error?.details?.[0]?.message
         || (isEdit ? t('updateFailed') : t('registerFailed'));
       setError(msg);
-      showError(isEdit ? 'ステークホルダーの更新に失敗しました' : 'ステークホルダーの登録に失敗しました');
+      showErrorKey(isEdit ? 'stakeholder.toastUpdateFailed' : 'stakeholder.toastRegisterFailed');
       return;
     }
 
     // feat/account-lock-and-ui-consistency: 即座に閉じてから reload を裏で走らせる
     onOpenChange(false);
-    showSuccess(isEdit ? 'ステークホルダーを更新しました' : 'ステークホルダーを登録しました');
+    showSuccessKey(isEdit ? 'stakeholder.toastUpdateSuccess' : 'stakeholder.toastRegisterSuccess');
     void onSaved();
   }
 
@@ -195,6 +202,9 @@ export function StakeholderEditDialog({
             <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{error}</div>
           )}
 
+          {/* 2026-06-12: readOnly (クローズ済みPJ等) は入力欄を一括 disabled。
+              CommentSection は fieldset の外に配置して閲覧を維持する。 */}
+          <fieldset disabled={readOnly} className="space-y-4 disabled:opacity-90">
           {/* 内部メンバー紐付け */}
           <div className="space-y-2">
             <Label>{t('internalMemberLink')}</Label>
@@ -361,10 +371,14 @@ export function StakeholderEditDialog({
             />
           </div>
 
-          <Button type="submit" className="w-full">{isEdit ? tAction('save') : t('submitRegister')}</Button>
+          </fieldset>
+
+          {!readOnly && (
+            <Button type="submit" className="w-full">{isEdit ? tAction('save') : t('submitRegister')}</Button>
+          )}
           {/* PR #199: コメント。新規作成時は entityId 未確定なので非表示。 */}
           {isEdit && stakeholder && (
-            <CommentSection entityType="stakeholder" entityId={stakeholder.id} />
+            <CommentSection entityType="stakeholder" entityId={stakeholder.id} mutationsLocked={closedProject} />
           )}
         </form>
       </DialogContent>

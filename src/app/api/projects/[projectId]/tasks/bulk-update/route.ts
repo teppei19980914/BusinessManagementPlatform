@@ -112,6 +112,14 @@ export async function PATCH(
         { status: 400 },
       );
     }
+    // 2026-06-15: 完了になる一括更新は実績工数が必須 (> 0)。
+    if (e instanceof Error && e.message === 'ACTUAL_EFFORT_REQUIRED') {
+      const t = await getTranslations('message');
+      return NextResponse.json(
+        { error: { code: 'VALIDATION_ERROR', message: t('actualEffortRequiredForCompletedBulk') } },
+        { status: 400 },
+      );
+    }
     throw e;
   }
 

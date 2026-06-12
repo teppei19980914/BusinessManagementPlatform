@@ -299,3 +299,19 @@ DELETE 後の自動再集計 (`maybeRecalcAfterBeginnerDelete()`) は post-commi
 
 ---
 
+## ADR-0035: 一括操作のチャンク分割送信 + サーバ側バッチ化 + 再計算末尾集約 (2026-06-05 追加)
+
+WBS の一括削除を、**Netlify 同期関数の 10 秒上限**と性能を両立する形へ再設計した。背景は、旧実装が「クライアントが ID ごとに `DELETE /tasks/[taskId]` を逐次送信 (1 件 ~9 DB 往復) する」ため、15 件で 1 件 3〜4 秒 = 数十秒かかっていたこと。一方で全件 1 リクエストに集約すると大量データで 10 秒を再超過する (ADR-0032 のインポート 504 と同型)。
+
+**2 つの独立レバーを分離して両方適用する**:
+
+- **レバー A (往復削減 / バッチ)**: 専用エンドポイント [`bulk-delete`](../../src/app/api/projects/[projectId]/tasks/bulk-delete/route.ts) + service `bulkDeleteTasks` で、認証/権限を 1 回に集約し、対象を 1 回の `findMany` で所有確認 (越境/別 project/既削除を除外)、本体 + Attachment + Comment を `$transaction([updateMany×3])` で一括 soft-delete。**往復は件数 K に依存せず ~5-6 回で固定**。監査は `recordBulkAuditLogs` (createMany)。
+- **レバー B (分割送信 / チャンク)**: 共有 util [`runChunkedBulk`](../../src/lib/run-chunked-bulk.ts) が選択 ID を **K=100 件ずつ・最大 3 並列**で送信。各チャンクの ID は互いに素なので並列安全。部分失敗はチャンク単位で集約し、論理削除が `deletedAt: null` 条件付きで**冪等**なため失敗チャンクのみ再送可能。
+- **再計算の末尾集約**: 削除チャンク内では再計算せず、`runChunkedBulk` の `finalize` で **`POST /tasks/recalculate` を全チャンク完了後に 1 回だけ**呼ぶ (`task:delete` 保持ロールは `task:update` も持つため認可される)。なお `recalculateAllProjectWps` 自体も ADR-0037 で「全タスク 1 fetch + メモリ集計 (深度降順) + 変更 WP のみ `$transaction` 一括 update」に畳み、往復を WP 数非依存にした (旧: WP ごと findUnique+update の O(WP) 逐次往復)。この共有改善で finalize の `recalculate` も高速化する。
+
+**適用範囲 (本リリース)**: WBS 一括削除に加え、**単一 CRUD の冗長 fetch / 無条件 write も削減**した — (a) `deleteTask` を単一 fetch 化 (所有確認 + before(TaskDTO) を 1 query に集約、`projectId` 引数追加) し route の `getTask` 二重 fetch を撤去 (監査内容は同一)、(b) `updateTask` の現在値 `findUnique` を owned `findFirst` に統合、(c) `recalculateAncestors` に「一致時 skip + 上位伝播停止」を追加 (最終格納値は同一)。一括更新 (`bulkUpdateTasks`) は本体 `updateMany` はバッチ済のため据え置きだが、**再計算の末尾処理を改修**した: 旧実装は「親ごとに `recalculateAncestors` をルートまで再帰」で共有祖先を親の数だけ重複再計算し、横広な更新 (多数の別 WP にまたがる) で逐次往復が膨らんでいた。新ヘルパ `recalculateAffectedWps` で**影響 WP 集合 (親 ∪ 祖先) を重複なく深度降順で 1 回ずつ**再計算する (最終集計値は同一)。`recalculateAllProjectWps` への置換は、狭い更新を巨大プロジェクトで O(全 WP) に退行させるため**採らない**。認可は不変 (認可済リクエスト内で再計算。member の `task:update_progress` 経由でも成立。`recalculate` を別途叩く bulk-delete 方式は権限上 bulk-update には使えないが本改修は不要とする)。将来、巨大プロジェクトの WP 再計算が 10 秒超になる場合は WP 集計の SQL 化または Background Function を検討 (ADR-0032 §79 / 本 ADR 決定 7)。
+
+詳細: [ADR-0035](../adr/0035-bulk-ops-chunked-batching-and-recalc-deferral.md) / [ADR-0032](../adr/0032-task-name-uniqueness-removal-and-wbs-import-batching.md) (同型のインポートバッチ化)
+
+---
+

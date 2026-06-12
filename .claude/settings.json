@@ -76,17 +76,35 @@
       "WebFetch(domain:developers.google.com)",
       "WebFetch(domain:get.kintone.help)",
       "WebFetch(domain:support.google.com)",
-      "WebFetch(domain:us.kintone.help)"
+      "WebFetch(domain:us.kintone.help)",
+      "WebFetch(domain:nulab.com)",
+      "PowerShell(Get-ChildItem -Recurse -Path \"C:\\\\Users\\\\SF02512\\\\GitHub\\\\Private\\\\BusinessManagementPlatform\\\\src\\\\app\\\\api\" -Filter \"route.ts\" | Where-Object { $_.FullName -match \"\\(comments|knowledge\\)\" } | Select-Object -ExpandProperty FullName)",
+      "Read(//c/Users/SF02512/GitHub/Private/BusinessManagementPlatform/src/app/api/projects/**)",
+      "WebFetch(domain:answers.netlify.com)",
+      "PowerShell($dir = \"c:\\\\Users\\\\SF02512\\\\GitHub\\\\Private\\\\BusinessManagementPlatform\\\\src\\\\app\\\\api\\\\projects\\\\[projectId]\\\\tasks\\\\workload\"; if \\(\\(Get-ChildItem $dir -Force\\).Count -eq 0\\) { Remove-Item $dir -Force; Write-Host \"dir removed\" } else { Get-ChildItem $dir })"
     ],
     "additionalDirectories": [
       "C:\\Users\\SF02512\\GitHub\\Private\\HomePage\\src\\content\\product\\ja",
       "C:\\Users\\SF02512\\GitHub\\Private\\HomePage\\src\\content\\product\\en",
       "C:\\Users\\SF02512\\GitHub\\Private\\HomePage\\docs\\PR",
       "C:\\Users\\SF02512\\GitHub\\Private\\HomePage\\src\\content\\blog\\ja",
-      "C:\\Users\\SF02512\\GitHub\\Private\\HomePage\\src\\content\\blog\\en"
+      "C:\\Users\\SF02512\\GitHub\\Private\\HomePage\\src\\content\\blog\\en",
+      "C:\\Users\\SF02512\\OneDrive - 株式会社エル・ティー・エス ソフトウェアテクノロジー\\Downloads",
+      "C:\\Users\\SF02512\\GitHub\\Private\\CreateQiita\\public",
+      "c:\\Users\\SF02512\\.claude"
     ]
   },
   "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"c:/Users/SF02512/GitHub/Private/BusinessManagementPlatform/.claude/hooks/session-start-weekly-branch.sh\""
+          }
+        ]
+      }
+    ],
     "PreToolUse": [
       {
         "matcher": "Write|Edit",
@@ -94,6 +112,15 @@
           {
             "type": "command",
             "command": "bash \"c:/Users/SF02512/GitHub/Private/BusinessManagementPlatform/.claude/hooks/block-dangerous-edit.sh\""
+          }
+        ]
+      },
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"c:/Users/SF02512/GitHub/Private/BusinessManagementPlatform/.claude/hooks/block-git-publish.sh\""
           }
         ]
       }

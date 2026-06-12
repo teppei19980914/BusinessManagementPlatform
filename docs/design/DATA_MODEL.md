@@ -23,7 +23,7 @@
 
 ---
 
-## §1. テーブル一覧 (42 + Prisma 管理表)
+## §1. テーブル一覧 (43 + Prisma 管理表)
 
 | # | 物理名 | 日本語名 | 区分 |
 |---|---|---|---|
@@ -69,6 +69,7 @@
 | 8.40 | `tenant_consent_logs` | 規約同意ログ | 課金 / 法務 |
 | 8.41 | `faq_embeddings` | FAQ embedding | embedding / RAG |
 | 8.42 | `guide_embeddings` | ガイド embedding | embedding / RAG |
+| 8.43 | `system_banners` | システム周知バナー (グローバル) | 運用 |
 | — | `_prisma_migrations` | Prisma マイグレーション管理表 (65 行) | システム |
 
 > `_prisma_migrations` は Prisma Migrate が管理するシステム表で `public` スキーマに存在する (適用済みマイグレーションのチェックサム・適用時刻を記録)。アプリは直接参照せず、本ドキュメントでは存在のみ注記。
@@ -231,7 +232,7 @@ erDiagram
 | 論理名 | 物理名 | 型 | NULL | デフォルト | 説明 |
 |---|---|---|---|---|---|
 | ID | id | UUID | NO | gen_random_uuid() | 主キー |
-| slug | slug | VARCHAR(60) | NO | - | URL ルーティング用 slug。UNIQUE。v1 は 'default' 固定 |
+| slug | slug | VARCHAR(60) | NO | - | 組織 ID (ログイン時の識別子)。UNIQUE。公開サインアップはサーバが数字連番を自動採番 (BASE=100000、feat/signup-friction-reduction 2026-06-12)。super_admin 手動払い出しは slug 手入力。Default テナントは 'default' 固定 |
 | テナント名 | name | VARCHAR(100) | NO | - | 表示名 |
 | 顧客連番 | tenant_seq | INT | YES | (SEQUENCE) | 人間可読連番。UNIQUE。default=1、管理テナントは null |
 | プラン | plan | VARCHAR(20) | NO | 'beginner' | 'beginner' / 'expert' / 'pro' |
@@ -464,26 +465,37 @@ erDiagram
 
 ### 8.10 estimates（見積もり）
 
+v1.2.0 で「手動登録」と「係数ベース登録」の 2 モードを追加。係数列は `input_mode='coefficient'` 時のみ非 NULL となる。
+
 | 論理名 | 物理名 | 型 | NULL | デフォルト | 説明 |
 |---|---|---|---|---|---|
 | ID | id | UUID | NO | gen_random_uuid() | 主キー |
 | プロジェクト | project_id | UUID | NO | - | FK→projects.id |
 | 見積項目名 | item_name | VARCHAR(100) | NO | - | |
-| 区分 | category | VARCHAR(30) | NO | - | |
-| 開発方式 | dev_method | VARCHAR(30) | NO | - | |
-| 見積工数 | estimated_effort | DECIMAL(10,2) | NO | - | |
+| 区分 | category | VARCHAR(30) | NO | - | requirements / design / development / testing / review / management / other |
+| 開発方式 | dev_method | VARCHAR(30) | NO | - | scratch / low_code_no_code / package / winactor / uipath / power_automate_desktop / power_apps / kintone / pleasanter / outsystems / salesforce_lightning / servicenow / mendix / appsheet / zoho_creator / other |
+| 見積工数 | estimated_effort | DECIMAL(10,2) | NO | - | 係数モード時は自動計算値を保存 |
 | 工数単位 | effort_unit | VARCHAR(20) | NO | - | person_hour / person_day |
-| 根拠 | rationale | TEXT | NO | - | |
+| 根拠 | rationale | TEXT | NO | - | (旧フィールド。UI では非表示。notes を使用推奨) |
 | 前提条件 | preconditions | TEXT | YES | NULL | |
 | 確定済 | is_confirmed | BOOLEAN | NO | false | |
 | 備考 | notes | TEXT | YES | NULL | |
+| 入力モード | input_mode | VARCHAR(20) | NO | 'direct' | direct (手動) / coefficient (係数ベース) |
+| 基準時間 | base_hours | DECIMAL(10,2) | YES | NULL | 係数モード: ツール×区分プリセット値 (h) |
+| 規模係数 | scale_coeff | DECIMAL(5,2) | YES | NULL | 係数モード: 極小(0.3)〜特大(2.5) |
+| 難易度係数 | difficulty_coeff | DECIMAL(5,2) | YES | NULL | 係数モード: 低(0.8)〜非常に高(1.8) |
+| 手法係数 | method_coeff | DECIMAL(5,2) | YES | NULL | 係数モード: デフォルト 1.0 (ツール速度優位は base_hours に吸収) |
 | 作成者 | created_by | UUID | NO | - | FK→users.id |
 | 更新者 | updated_by | UUID | NO | - | FK→users.id |
 | 作成日時 | created_at | TIMESTAMPTZ | NO | now() | |
 | 更新日時 | updated_at | TIMESTAMPTZ | NO | @updatedAt | |
 | 削除日時 | deleted_at | TIMESTAMPTZ | YES | NULL | 論理削除 |
 
+**係数計算式**: `estimated_effort = base_hours × scale_coeff × difficulty_coeff × method_coeff`
+
 **インデックス**: `idx_estimates_project` (project_id)
+
+> **案Y (将来機能)**: テナントレベルでのカスタムプリセット値設定は `tenant_estimate_presets` テーブルを新設して対応予定。現状 (案X) ではシステム標準値をコードで管理する (`src/config/estimate-master.ts`)。
 
 ### 8.11 project_members（プロジェクトメンバー / M2M）
 
@@ -519,6 +531,7 @@ User × Project の中間テーブル。プロジェクトごとに異なる pro
 | 開始実績日 | actual_start_date | DATE | YES | NULL | |
 | 終了実績日 | actual_end_date | DATE | YES | NULL | |
 | 予定工数 | planned_effort | DECIMAL(10,2) | NO | 0 | WP は子の合計 |
+| 実績工数 | actual_effort | DECIMAL(10,2) | YES | NULL | ACT の実績工数 (人時)。担当者が実績入力。分析タブの消化工数/工数効率に使用 (migration `20260615_add_task_actual_effort`) |
 | 優先度 | priority | VARCHAR(10) | YES | 'medium' | low/medium/high |
 | 状態 | status | VARCHAR(20) | NO | 'not_started' | not_started/in_progress/completed/on_hold |
 | 進捗率 | progress_rate | INT | NO | 0 | 0-100、WP は子の加重平均 |
@@ -1130,6 +1143,28 @@ withMeteredLLM が INSERT、5 分 cron で Stripe へ送信。apiCallLogId を i
 | 更新日時 | updated_at | TIMESTAMPTZ | NO | @updatedAt | |
 
 **インデックス**: UNIQUE(entry_id) / `idx_guide_embeddings_step_order` (step_order) / `idx_guide_embeddings_permission` (requires_admin, requires_project_pm)
+
+---
+
+### 8.43 system_banners（システム周知バナー / ADR-0036）
+
+画面上部に出す全ユーザ共通の帯メッセージ。**グローバル**（`tenant_id` を持たない）= 運営者 (super_admin) の運用周知で、全テナントの全ログインユーザに同一表示する。お知らせ画面 (markdown) / 通知ベル (`notifications`, 個人宛) とは別概念。
+
+| 論理名 | 物理名 | 型 | NULL | デフォルト | 説明 |
+|---|---|---|---|---|---|
+| ID | id | UUID | NO | gen_random_uuid() | 主キー |
+| メッセージ | message | VARCHAR(500) | NO | - | 帯に表示する本文 |
+| 緊急度 | severity | VARCHAR(10) | NO | - | 'high'(赤) / 'medium'(黄) / 'low'(青)。正本は `src/lib/validators/system-banner.ts` |
+| 表示開始 | start_at | TIMESTAMPTZ | NO | - | この日時から表示 |
+| 表示終了 | end_at | TIMESTAMPTZ | NO | - | この日時で表示終了 (start < now < end で表示) |
+| 有効 | enabled | BOOLEAN | NO | true | false=取り下げ (期間内でも非表示・履歴は残る) |
+| 作成者 | created_by | UUID | NO | - | 払い出した super_admin の User.id。FK にしない (tenants.created_by_user_id と同設計) |
+| 作成日時 | created_at | TIMESTAMPTZ | NO | now() | |
+| 更新日時 | updated_at | TIMESTAMPTZ | NO | @updatedAt | |
+
+**インデックス**: `idx_system_banners_active` (enabled, start_at, end_at) — 表示判定 (getActiveBanner) と重複判定 (1 本制約 / assertNoOverlap) の hot path 用。
+
+> **1 本制約**: enabled なバナー同士の表示期間は重複不可 (service 層で担保)。ある時点で表示される帯は最大 1 本。
 
 ---
 

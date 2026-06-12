@@ -71,6 +71,7 @@
 | `stakeholder:create` | ○ | ○ | × | × |
 | `stakeholder:update` | ○ | ○ | × | × |
 | `stakeholder:delete` | ○ | ○ | × | × |
+| `analytics:read` | ○ | ○ | × | × |
 | `admin:users` | ○ | **×** | × | × |
 | `admin:audit_logs` | ○ | **×** | × | × |
 
@@ -96,8 +97,36 @@
 
 ロール許可を通過しても、`projectStatus` が以下の場合は許可 Action が制限される (admin 短絡経路にも適用):
 
-- **`closed`**: `project:read` / `project:delete` / `task:read` / `knowledge:read` / `risk:read` / `stakeholder:read` のみ可 (読み取り専用だが**プロジェクトの削除は可**)。
+- **`closed`**: `project:read` / `project:delete` / `task:read` / `knowledge:read` / `risk:read` / `stakeholder:read` / `analytics:read` のみ可 (読み取り専用だが**プロジェクトの削除は可**。分析は読み取り専用のため完了案件でも閲覧可)。
 - 2026-06 簡素化で旧 `completed` / `retrospected` 状態は廃止。`STATE_RESTRICTIONS` で制約を持つのは `closed` のみ（planning〜executing はロール権限のみで判定）。
+
+#### 0.6.1 read アクション認可の write route 向け補完ガード `requireProjectNotClosed` (2026-06-12)
+
+`STATE_RESTRICTIONS.closed` は **write アクションを `checkProjectPermission` 経由で拒否する**が、一部の write route は「作成者/admin の細粒度判定を service 層に委ねる」目的で **read アクション**を `checkProjectPermission` に渡しており、クローズ制約が効かない穴があった。これらは `src/lib/api-helpers.ts` の `requireProjectNotClosed(projectId, tenantId)`（`project.status==='closed'` で 403 `PROJECT_CLOSED`）でロール判定を変えずクローズのみを補完ブロックする。
+
+| route | 旧認可アクション | 補完ガード |
+|---|---|---|
+| `DELETE /api/projects/[id]/risks/[riskId]` | `risk:read` | `requireProjectNotClosed` |
+| `PATCH /api/projects/[id]/retrospectives/[retroId]` | `project:read` | `requireProjectNotClosed` |
+| `DELETE /api/projects/[id]/retrospectives/[retroId]` | `project:read` | `requireProjectNotClosed` |
+
+#### 0.6.2 コメント・添付のクローズガード (2026-06-12)
+
+コメント・添付は `checkProjectPermission` を経由しない独自認可のため、別途クローズガードを補完する。判定は「エンティティの紐付く稼働中プロジェクトが**すべて** `closed`」のとき write を弾く（開いたプロジェクトが 1 つでもあれば許可。cross-list の readOnly でのコメント可という要件 Q4 と整合。多対多エンティティの archived 判定）。
+
+| 経路 | 判定関数 | 対象 |
+|---|---|---|
+| `POST /api/comments` (投稿) | `comment.service.isCommentTargetFullyClosed` | mode==='write' で 403 `PROJECT_CLOSED` |
+| `PATCH` / `DELETE /api/comments/[id]` (編集/削除) | 同上 | 投稿者本人でも closed なら 403 |
+| `POST /api/attachments` (追加) | `attachment.service.isAttachmentTargetFullyClosed` | 403 `PROJECT_CLOSED` |
+| `PATCH` / `DELETE /api/attachments/[id]` (編集/削除) | 同上 | admin 短絡より前に判定 (admin も不可) |
+| `POST /api/attachments/upload` / `finalize` (ファイル) | `authorizeForAttachmentEntity` (write) 内で同判定 | code `PROJECT_CLOSED` を返す |
+
+UI 側も二重防御: コメントは編集ダイアログから `CommentSection` に `mutationsLocked={closedProject}` を渡し、投稿フォーム・編集/削除ボタンを全非表示。添付は編集ダイアログ `readOnly` 連動で `DialogAttachmentSection` が非表示。`GET`/`download` 等の read 系は従来どおり許可。
+
+#### 0.6.3 UI 側の二重防御 (2026-06-12)
+
+`project.status==='closed'` のとき `project-detail-client.tsx` が `canCreate` / `canEdit` / `canCreateOwnedList` を false 化し、各 CRUD 一覧 client に `isReadOnly` を伝搬する。各一覧は編集ダイアログ `readOnly` に `isReadOnly` を OR 合成し、`closedProject` フラグで `CommentSection` の `canPost=false`（投稿欄非表示）も行う。ステークホルダーは削除ボタン・編集ダイアログも同様にガードする。配線は `closed-project-readonly-ui.test.ts` / `closed-project-write-guard.test.ts` で固定。
 
 ### 0.7 PM/TL 自律権限 と member 管理の細粒度ガード
 

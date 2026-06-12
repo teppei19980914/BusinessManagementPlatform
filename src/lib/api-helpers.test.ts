@@ -18,10 +18,18 @@ vi.mock('@/lib/db', () => ({
     projectMember: {
       findFirst: vi.fn(),
     },
+    project: {
+      findFirst: vi.fn(),
+    },
   },
 }));
 
-import { getAuthenticatedUser, checkProjectPermission, requireAdmin } from './api-helpers';
+import {
+  getAuthenticatedUser,
+  checkProjectPermission,
+  requireAdmin,
+  requireProjectNotClosed,
+} from './api-helpers';
 import { auth } from '@/lib/auth';
 import { checkPermission, checkMembership } from '@/lib/permissions';
 import { prisma } from '@/lib/db';
@@ -252,5 +260,43 @@ describe('requireAdmin', () => {
       systemRole: 'super_admin' as SystemRole,
     };
     expect(requireAdmin(superAdminUser)).toBe(null);
+  });
+});
+
+// 2026-06-12: クローズ済みプロジェクト (status='closed') の write を弾く共通ガード。
+//   read アクションで認可している write route (リスク削除 / 振り返り更新・削除) の
+//   クローズ制約漏れを塞ぐためのヘルパ。
+describe('requireProjectNotClosed', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('クローズ済み (status=closed) なら 403 PROJECT_CLOSED', async () => {
+    vi.mocked(prisma.project.findFirst).mockResolvedValue({ status: 'closed' } as never);
+    const res = await requireProjectNotClosed('p1', TEST_TENANT_ID);
+    expect(res).toBeInstanceOf(Response);
+    const body = await (res as Response).json();
+    expect(body.error.code).toBe('PROJECT_CLOSED');
+    expect((res as Response).status).toBe(403);
+  });
+
+  it('open なプロジェクト (status=active) は null (許可)', async () => {
+    vi.mocked(prisma.project.findFirst).mockResolvedValue({ status: 'active' } as never);
+    const res = await requireProjectNotClosed('p1', TEST_TENANT_ID);
+    expect(res).toBe(null);
+  });
+
+  it('プロジェクト未存在 (越境/削除済) は null を返し、存在チェックは呼出側に委ねる', async () => {
+    vi.mocked(prisma.project.findFirst).mockResolvedValue(null as never);
+    const res = await requireProjectNotClosed('p1', TEST_TENANT_ID);
+    expect(res).toBe(null);
+  });
+
+  it('越境遮断: where に tenantId を併記してクエリする', async () => {
+    vi.mocked(prisma.project.findFirst).mockResolvedValue({ status: 'planning' } as never);
+    await requireProjectNotClosed('p1', TEST_TENANT_ID);
+    const call = vi.mocked(prisma.project.findFirst).mock.calls[0]![0] as {
+      where: { id: string; tenantId: string };
+    };
+    expect(call.where.id).toBe('p1');
+    expect(call.where.tenantId).toBe(TEST_TENANT_ID);
   });
 });

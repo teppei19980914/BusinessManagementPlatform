@@ -72,11 +72,17 @@ export type SignupOptions = {
 
 const DEFAULT_PASSWORD = 'E2eTenant!Pw_2026';
 
-/** RUN_ID から slug 規約 (英小文字数字ハイフン / 3-60 / 端は英数) に適合する slug を作る。 */
-function buildSlug(label: string): string {
-  const raw = withRunId(label).toLowerCase().replace(/[^a-z0-9-]/g, '-');
-  // 端のハイフンを除去し 60 文字に収める (RUN_ID 構成上通常 ~35 文字)
-  return raw.replace(/^-+/, '').replace(/-+$/, '').slice(0, 60).replace(/-+$/, '');
+/**
+ * 招待メールの setup-password URL から組織 ID (slug) を取り出す。
+ * feat/signup-friction-reduction (2026-06-12): 組織 ID はサーバが自動採番するため、
+ *   サインアップ画面では入力しない。URL の `?tenant=<slug>` が採番された組織 ID。
+ */
+function extractTenantSlug(setupUrl: string): string {
+  const slug = new URL(setupUrl).searchParams.get('tenant');
+  if (!slug) {
+    throw new Error(`extractTenantSlug: setup URL に tenant パラメータがありません: ${setupUrl}`);
+  }
+  return slug;
 }
 
 /**
@@ -92,7 +98,8 @@ export async function signupTenantViaUi(
   const password = options.password ?? DEFAULT_PASSWORD;
   const billingType = options.billingType ?? 'corporate';
   const email = (options.emailOverride ?? `${withRunId(label)}@example.com`).toLowerCase();
-  const slug = buildSlug(label);
+  // feat/signup-friction-reduction (2026-06-12): 組織 ID (slug) はサーバが自動採番するため
+  //   ここでは入力しない。送信後に招待メールの ?tenant=<slug> から採番値を取り出す。
   const tenantName = withRunId(`${label}-テナント`);
   const adminName = withRunId(`${label}-管理者`);
 
@@ -107,7 +114,7 @@ export async function signupTenantViaUi(
   }
 
   await page.locator('#name').fill(tenantName);
-  await page.locator('#slug').fill(slug);
+  // 組織 ID (slug) はサーバ自動採番のため入力欄なし (feat/signup-friction-reduction)。
 
   // 請求先
   // feat/billing-conditional-by-plan (2026-06-05): Beginner は請求先セクションが非表示になり、
@@ -155,6 +162,8 @@ export async function signupTenantViaUi(
   const mail = await waitForMail(email, { timeoutMs: 15_000 });
   const setupUrl = extractSetupPasswordUrl(mail);
   const token = extractToken(setupUrl);
+  // feat/signup-friction-reduction (2026-06-12): 自動採番された組織 ID をメール URL から取得。
+  const slug = extractTenantSlug(setupUrl);
 
   // ---------- 3. /setup-password でパスワード設定 ----------
   // 絶対 URL の NEXTAUTH_URL とテスト baseURL 差異を避けるため、token のみ取り出して相対遷移する。

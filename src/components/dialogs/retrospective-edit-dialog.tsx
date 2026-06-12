@@ -55,6 +55,7 @@ export function RetrospectiveEditDialog({
   onOpenChange,
   onSaved,
   readOnly = false,
+  closedProject = false,
   currentProjectId,
 }: {
   retro: RetroLike | null;
@@ -66,6 +67,9 @@ export function RetrospectiveEditDialog({
   onSaved: () => Promise<void> | void;
   /** PR #61: 非公開プロジェクト用の参照専用モード */
   readOnly?: boolean;
+  /** 2026-06-12: クローズ済みプロジェクト経由で開いた場合 true。コメント投稿欄も非表示にする
+   *  (readOnly は非所有者の閲覧=コメント可も含むため、コメント遮断は別フラグで判定)。 */
+  closedProject?: boolean;
   /** PR feat/asset-multi-linking-ui (Phase 2): ダイアログを開いている画面の projectId
    *  (PATCH URL 構築 + 解除可能 chip の判定に使う)。 */
   currentProjectId?: string | null;
@@ -75,7 +79,7 @@ export function RetrospectiveEditDialog({
   const tRetro = useTranslations('retro');
   const tRisk = useTranslations('risk');
   const { withLoading } = useLoading();
-  const { showSuccess, showError } = useToast();
+  const { showSuccessKey, showErrorKey } = useToast();
   // feat/dialog-fullscreen-toggle: 全画面トグル (90vw × 90vh)
   const { fullscreenClassName, FullscreenToggle } = useDialogFullscreen();
   const [form, setForm] = useState({
@@ -123,7 +127,7 @@ export function RetrospectiveEditDialog({
       currentProjectId ?? retro.projectId ?? retro.linkedProjects?.[0]?.id ?? null;
     if (!targetProjectId) {
       setError(tRetro('updateFailed'));
-      showError('編集対象プロジェクトが特定できません (孤児状態)');
+      showErrorKey('retro.toastOrphanError');
       return;
     }
     // 2026-05-11: 「自分のみ (draft)」保存時は conductedDate を空にできる仕様のため、
@@ -146,13 +150,13 @@ export function RetrospectiveEditDialog({
       const json = await res.json().catch(() => ({}));
       const msg = json.error?.message || tRetro('updateFailed');
       setError(msg);
-      showError('振り返りの更新に失敗しました');
+      showErrorKey('retro.toastUpdateFailed');
       return;
     }
     // feat/account-lock-and-ui-consistency: 作成 dialog と挙動を揃える。
     // 即座に閉じてから reload を裏で走らせる (旧実装は reload await で遅く感じた)。
     onOpenChange(false);
-    showSuccess('振り返りを更新しました');
+    showSuccessKey('retro.toastUpdateSuccess');
     void onSaved();
   }
 
@@ -184,7 +188,7 @@ export function RetrospectiveEditDialog({
                 {tField('conductedDate')}
                 {/* 2026-05-11: 公開範囲 = 自分のみ (draft) なら任意。空のまま draft 保存可 (= サーバ側で当日日付が default 補完される) */}
                 {form.visibility === 'draft' && (
-                  <span className="ml-2 text-xs text-muted-foreground">(任意)</span>
+                  <span className="ml-2 text-xs text-muted-foreground">{tRetro('optional')}</span>
                 )}
               </Label>
               <DateFieldWithActions
@@ -255,7 +259,7 @@ export function RetrospectiveEditDialog({
           )}
           {!readOnly && <Button type="submit" className="w-full">{t('save')}</Button>}
           {/* PR #199: コメント。fieldset disabled の外に配置することで readOnly でも投稿可。 */}
-          <CommentSection entityType="retrospective" entityId={retro.id} />
+          <CommentSection entityType="retrospective" entityId={retro.id} mutationsLocked={closedProject} />
         </form>
       </DialogContent>
     </Dialog>

@@ -30,7 +30,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createTenantBySignup } from '@/services/tenant-onboarding.service';
 import { getDefaultRateLimiter } from '@/lib/llm/rate-limiter';
 
-/** 1 IP あたり 1 時間に 5 回まで */
+/** 1 IP あたり 1 時間に 5 回まで (DISABLE_SIGNUP_RATE_LIMIT=true の E2E 環境では無効) */
 const SIGNUP_RATE_LIMIT_PER_HOUR = 5;
 
 export async function POST(req: NextRequest) {
@@ -38,24 +38,26 @@ export async function POST(req: NextRequest) {
   // x-forwarded-for は最初の IP (= 直接の client) を取る。Netlify / CDN 等で複数段の場合に安全。
   const forwarded = req.headers.get('x-forwarded-for') ?? '';
   const ip = forwarded.split(',')[0]?.trim() || 'unknown';
-  const rateLimiter = getDefaultRateLimiter();
-  const rl = await rateLimiter.check(`signup:${ip}:hour`, {
-    limit: SIGNUP_RATE_LIMIT_PER_HOUR,
-    windowSec: 3600,
-  });
-  if (!rl.allowed) {
-    return NextResponse.json(
-      {
-        error: {
-          code: 'RATE_LIMITED',
-          message: 'サインアップの試行回数が上限を超えました。しばらくしてから再度お試しください。',
+  if (process.env.DISABLE_SIGNUP_RATE_LIMIT !== 'true') {
+    const rateLimiter = getDefaultRateLimiter();
+    const rl = await rateLimiter.check(`signup:${ip}:hour`, {
+      limit: SIGNUP_RATE_LIMIT_PER_HOUR,
+      windowSec: 3600,
+    });
+    if (!rl.allowed) {
+      return NextResponse.json(
+        {
+          error: {
+            code: 'RATE_LIMITED',
+            message: 'サインアップの試行回数が上限を超えました。しばらくしてから再度お試しください。',
+          },
         },
-      },
-      {
-        status: 429,
-        headers: rl.retryAfterSec ? { 'Retry-After': String(rl.retryAfterSec) } : {},
-      },
-    );
+        {
+          status: 429,
+          headers: rl.retryAfterSec ? { 'Retry-After': String(rl.retryAfterSec) } : {},
+        },
+      );
+    }
   }
 
   // ---------- 2. Body 取得 + honeypot 検証 ----------
@@ -102,8 +104,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       {
         data: {
-          // 新規テナント / 初期 admin の ID は返さない (情報漏洩抑止)
+          // 新規テナント / 初期 admin の内部 ID は返さない (情報漏洩抑止)。
+          // feat/signup-friction-reduction (2026-06-12): 組織 ID (slug) は秘匿情報ではなく
+          //   (招待メール本文・ログイン画面で使う公開識別子)、サーバ自動採番のため UI が
+          //   成功画面表示・再送に使う。作成した本人にのみ返す。
           message: '招待メールを送信しました。メールに記載のリンクからパスワードを設定してください。',
+          slug: result.slug,
         },
       },
       { status: 201 },

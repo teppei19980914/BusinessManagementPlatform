@@ -12,7 +12,7 @@ vi.mock('@/lib/db', () => {
         update: vi.fn(),
         updateMany: vi.fn(),
       },
-      project: { findFirst: vi.fn() },
+      project: { findFirst: vi.fn(), findMany: vi.fn() },
       task: { findFirst: vi.fn() },
       estimate: { findFirst: vi.fn() },
       riskIssue: { findFirst: vi.fn() },
@@ -45,6 +45,7 @@ import {
   resolveProjectIds,
   authorizeMemoAttachment,
   getEntityVisibility,
+  isAttachmentTargetFullyClosed,
 } from './attachment.service';
 import { prisma } from '@/lib/db';
 
@@ -411,5 +412,50 @@ describe('getEntityVisibility', () => {
     expect(await getEntityVisibility('task', 't1', 'tenant-A')).toBeNull();
     expect(await getEntityVisibility('estimate', 'e1', 'tenant-A')).toBeNull();
     expect(await getEntityVisibility('memo', 'm1', 'tenant-A')).toBeNull();
+  });
+});
+
+// 2026-06-12: クローズ済みPJ (読み取り専用) の資産への添付 write ガード判定。
+describe('isAttachmentTargetFullyClosed', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('project: 対象プロジェクトが closed なら true', async () => {
+    vi.mocked(prisma.project.findFirst).mockResolvedValue({ id: 'p1' } as never);
+    vi.mocked(prisma.project.findMany).mockResolvedValue([{ status: 'closed' }] as never);
+    expect(await isAttachmentTargetFullyClosed('project', 'p1', 'tenant-A')).toBe(true);
+  });
+
+  it('project: 対象プロジェクトが稼働中 (active) なら false', async () => {
+    vi.mocked(prisma.project.findFirst).mockResolvedValue({ id: 'p1' } as never);
+    vi.mocked(prisma.project.findMany).mockResolvedValue([{ status: 'active' }] as never);
+    expect(await isAttachmentTargetFullyClosed('project', 'p1', 'tenant-A')).toBe(false);
+  });
+
+  it('knowledge: 紐付く全PJが closed なら true / 一部 open なら false', async () => {
+    vi.mocked(prisma.knowledge.findFirst).mockResolvedValue({
+      id: 'k1', knowledgeProjects: [{ projectId: 'pA' }, { projectId: 'pB' }],
+    } as never);
+    vi.mocked(prisma.project.findMany).mockResolvedValueOnce([
+      { status: 'closed' }, { status: 'closed' },
+    ] as never);
+    expect(await isAttachmentTargetFullyClosed('knowledge', 'k1', 'tenant-A')).toBe(true);
+
+    vi.mocked(prisma.knowledge.findFirst).mockResolvedValue({
+      id: 'k1', knowledgeProjects: [{ projectId: 'pA' }, { projectId: 'pB' }],
+    } as never);
+    vi.mocked(prisma.project.findMany).mockResolvedValueOnce([
+      { status: 'closed' }, { status: 'planning' },
+    ] as never);
+    expect(await isAttachmentTargetFullyClosed('knowledge', 'k1', 'tenant-A')).toBe(false);
+  });
+
+  it('memo: project スコープ外のため常に false (クエリも投げない)', async () => {
+    expect(await isAttachmentTargetFullyClosed('memo', 'm1', 'tenant-A')).toBe(false);
+    expect(prisma.project.findMany).not.toHaveBeenCalled();
+  });
+
+  it('対象が存在しない (resolveProjectIds=null) なら false', async () => {
+    vi.mocked(prisma.project.findFirst).mockResolvedValue(null as never);
+    expect(await isAttachmentTargetFullyClosed('project', 'missing', 'tenant-A')).toBe(false);
   });
 });

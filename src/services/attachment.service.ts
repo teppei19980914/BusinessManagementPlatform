@@ -379,6 +379,32 @@ export async function resolveProjectIds(
  * 既存の /api/attachments/route.ts に inline されていた authorize() を再利用可能に抽出。
  * 戻り値は { ok, status, code } の素朴な構造体 (NextResponse は呼出側で組み立て)。
  */
+/**
+ * 2026-06-12: 添付の write 対象がクローズ済みプロジェクトのみに紐付くとき true を返す。
+ *
+ * project スコープの添付対象 (project / task / estimate / risk / retrospective / knowledge) について、
+ * 紐付く稼働中(非削除)プロジェクトが **すべて** `status='closed'` のときに write を弾くための判定。
+ * memo は project スコープ外のため常に false。紐付け 0 件 / 未存在は false (= ブロックしない。
+ * 存在チェック・所有者判定は呼出側の認可に委ねる)。多対多 (knowledge) が開いたPJと閉じたPJの
+ * 両方に紐付く場合は false (稼働中PJで生きているため添付可能)。コメントの
+ * `isCommentTargetFullyClosed` と同方針。
+ */
+export async function isAttachmentTargetFullyClosed(
+  entityType: AttachmentEntityType,
+  entityId: string,
+  viewerTenantId: string,
+): Promise<boolean> {
+  if (entityType === 'memo') return false;
+  const projectIds = await resolveProjectIds(entityType, entityId, viewerTenantId);
+  if (!projectIds || projectIds.length === 0) return false;
+  const projects = await prisma.project.findMany({
+    where: { id: { in: projectIds }, tenantId: viewerTenantId },
+    select: { status: true },
+  });
+  if (projects.length === 0) return false;
+  return projects.every((p) => p.status === 'closed');
+}
+
 export async function authorizeForAttachmentEntity(args: {
   user: { id: string; systemRole: string; tenantId: string };
   entityType: AttachmentEntityType;
@@ -386,7 +412,7 @@ export async function authorizeForAttachmentEntity(args: {
   mode: 'read' | 'write';
 }): Promise<
   | { ok: true }
-  | { ok: false; status: 403 | 404; code: 'FORBIDDEN' | 'NOT_FOUND' }
+  | { ok: false; status: 403 | 404; code: 'FORBIDDEN' | 'NOT_FOUND' | 'PROJECT_CLOSED' }
 > {
   const { user, entityType, entityId, mode } = args;
 
@@ -395,6 +421,11 @@ export async function authorizeForAttachmentEntity(args: {
     if (r.notFound) return { ok: false, status: 404, code: 'NOT_FOUND' };
     if (!r.ok) return { ok: false, status: 403, code: 'FORBIDDEN' };
     return { ok: true };
+  }
+
+  // 2026-06-12: クローズ済みPJ (読み取り専用) の資産には添付を追加/変更できない (admin 含む)。
+  if (mode === 'write' && (await isAttachmentTargetFullyClosed(entityType, entityId, user.tenantId))) {
+    return { ok: false, status: 403, code: 'PROJECT_CLOSED' };
   }
 
   if (isAdminOrAbove(user)) return { ok: true };

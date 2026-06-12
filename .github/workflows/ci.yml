@@ -80,6 +80,15 @@ jobs:
         # 詳細: docs/adr/0019-billable-feature-units-and-free-tier-expansion.md §LLM 暴走防止
         run: pnpm check:llm-billing-bypass
 
+      - name: Hardcoded JP regression check (i18n zero-hardcode plan)
+        # i18n フルチェーンの退行防止ゲート。
+        # src/ + prisma/seed* に新規ハードコード日本語が混入したら即時 fail。
+        # 既知箇所は scripts/i18n-baseline.json に記録され、--baseline モードで
+        # 「カウントが増えていないか」を検査する (= 減少は OK、増加は FAIL)。
+        # 全 i18n 化完了後 (P10) に --strict モードへ昇格させる。
+        # 詳細: docs/i18n/CONVENTIONS.md §10 / scripts/check-no-hardcoded-jp.ts
+        run: pnpm check:no-hardcoded-jp
+
       - name: FAQ embeddings sync check (★生命線★ ADR-0028 / 2026-05-30)
         # ADR-0028 (RAG 移行) の 4 層防御の Layer 1。
         # src/config/faq-content.ts / guide-content.ts の構造健全性 (id 重複 / 文字数超過 /

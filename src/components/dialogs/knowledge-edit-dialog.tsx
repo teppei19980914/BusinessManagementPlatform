@@ -55,6 +55,7 @@ export function KnowledgeEditDialog({
   onOpenChange,
   onSaved,
   readOnly = false,
+  closedProject = false,
 }: {
   knowledge: KnowledgeLike | null;
   /** プロジェクトスコープで編集する場合の projectId。省略時はレガシー /api/knowledge/:id を使う */
@@ -67,13 +68,16 @@ export function KnowledgeEditDialog({
   onSaved: () => Promise<void> | void;
   /** PR #61: 非公開プロジェクトの行クリック用 参照専用モード */
   readOnly?: boolean;
+  /** 2026-06-12: クローズ済みプロジェクト経由で開いた場合 true。コメント投稿欄も非表示にする。
+   *  readOnly は「非所有者の閲覧 (= コメントは可)」も含むため、コメント遮断は別フラグで判定する。 */
+  closedProject?: boolean;
 }) {
   const t = useTranslations('action');
   const tKnowledge = useTranslations('knowledge');
   const tField = useTranslations('field');
   const tRisk = useTranslations('risk');
   const { withLoading } = useLoading();
-  const { showSuccess, showError } = useToast();
+  const { showSuccessKey, showErrorKey } = useToast();
   // feat/dialog-fullscreen-toggle: 全画面トグル (90vw × 90vh)
   const { fullscreenClassName, FullscreenToggle } = useDialogFullscreen();
   const [form, setForm] = useState({
@@ -133,13 +137,13 @@ export function KnowledgeEditDialog({
       const json = await res.json().catch(() => ({}));
       const msg = json.error?.message || tKnowledge('updateFailed');
       setError(msg);
-      showError('ナレッジの更新に失敗しました');
+      showErrorKey('knowledge.toastUpdateFailed');
       return;
     }
     // feat/account-lock-and-ui-consistency: 作成 dialog と挙動を揃える。
     // 即座に閉じてから reload を裏で走らせる (旧実装は reload await で遅く感じた)。
     onOpenChange(false);
-    showSuccess('ナレッジを更新しました');
+    showSuccessKey('knowledge.toastUpdateSuccess');
     void onSaved();
   }
 
@@ -178,7 +182,7 @@ export function KnowledgeEditDialog({
               {tKnowledge('fieldTitle')}
               {/* 2026-05-11: 公開範囲 = 自分のみ (draft) なら任意、全メンバー (public) なら必須 */}
               {form.visibility === 'draft' && (
-                <span className="ml-2 text-xs text-muted-foreground">(任意)</span>
+                <span className="ml-2 text-xs text-muted-foreground">{tKnowledge('optional')}</span>
               )}
             </Label>
             <Input
@@ -267,7 +271,7 @@ export function KnowledgeEditDialog({
           />
           {!readOnly && <Button type="submit" className="w-full">{t('save')}</Button>}
           {/* PR #199: コメント。readOnly でも投稿可 (fieldset 外配置)。 */}
-          <CommentSection entityType="knowledge" entityId={knowledge.id} />
+          <CommentSection entityType="knowledge" entityId={knowledge.id} mutationsLocked={closedProject} />
         </form>
       </DialogContent>
     </Dialog>

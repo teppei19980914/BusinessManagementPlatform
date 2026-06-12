@@ -90,6 +90,9 @@ jobs:
       #   本フラグで rate limit を完全 disable する。本番 env (Netlify) では絶対に設定しないこと。
       #   詳細: docs/test/E2E_LESSONS.md "login rate limit と E2E 並列実行の衝突"
       DISABLE_LOGIN_RATE_LIMIT: 'true'
+      # test/release-acceptance-e2e (2026-06): signup spec が複数あり同一 IP から 5 回超の
+      #   POST /api/auth/signup が走るため 429 RATE_LIMITED になる。CI のみ無効化する。
+      DISABLE_SIGNUP_RATE_LIMIT: 'true'
       CI: 'true'
 
     steps:

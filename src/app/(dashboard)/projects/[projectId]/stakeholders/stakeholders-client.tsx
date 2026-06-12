@@ -127,7 +127,7 @@ export function StakeholdersClient({
   const { formatDateTimeSeconds } = useFormatters();
   const tAction = useTranslations('action');
   const { withLoading } = useLoading();
-  const { showSuccess, showError } = useToast();
+  const { showSuccessKey, showErrorKey } = useToast();
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [editing, setEditing] = useState<StakeholderDTO | null>(null);
   // Phase D 要件 12 (2026-04-28): 優先度フィルタ ('' = 全件、'high'|'medium'|'low' = 該当のみ)
@@ -180,10 +180,10 @@ export function StakeholdersClient({
       fetch(`/api/projects/${projectId}/stakeholders/${s.id}`, { method: 'DELETE' }),
     );
     if (!res.ok) {
-      showError('ステークホルダーの削除に失敗しました');
+      showErrorKey('stakeholder.toastDeleteFailed');
       return;
     }
-    showSuccess('ステークホルダーを削除しました');
+    showSuccessKey('stakeholder.toastDeleteSuccess');
     await reload();
   }
 
@@ -341,14 +341,17 @@ export function StakeholdersClient({
                 <TableCell className="text-sm text-muted-foreground">{s.updatedAt !== s.createdAt ? (s.updatedByName || '—') : '—'}</TableCell>
                 <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{s.updatedAt !== s.createdAt ? formatDateTimeSeconds(s.updatedAt) : '—'}</TableCell>
                 <TableCell onClick={(e) => e.stopPropagation()}>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="text-destructive"
-                    onClick={() => handleDelete(s)}
-                  >
-                    {tAction('delete')}
-                  </Button>
+                  {/* 2026-06-12: クローズ済みPJ (読み取り専用) では削除ボタンを非表示。 */}
+                  {!isReadOnly && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="text-destructive"
+                      onClick={() => handleDelete(s)}
+                    >
+                      {tAction('delete')}
+                    </Button>
+                  )}
                 </TableCell>
               </ClickableRow>
             ))}
@@ -380,6 +383,8 @@ export function StakeholdersClient({
         open={editing != null}
         onOpenChange={(o) => { if (!o) setEditing(null); }}
         onSaved={reload}
+        readOnly={isReadOnly}
+        closedProject={isReadOnly}
       />
     </div>
   );

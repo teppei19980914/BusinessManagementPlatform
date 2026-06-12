@@ -72,6 +72,10 @@ const CROSS_TENANT_ALLOWED_FILES = new Set([
   // tenant の作成・選択そのものを扱うため横断必須
   'tenant.ts',
   'super-admin.service.ts',
+  // ADR-0036: システム周知バナーは **意図的にグローバル** (tenantId 列を持たない全テナント共通の
+  //   運用周知)。表示判定 getActiveBanner / 重複判定 assertNoOverlap は tenantId を扱わない。
+  //   書き込みは super_admin 専用 (API の isSuperAdmin + /admin/super の Basic Auth/layout guard で多層防御)。
+  'system-banner.service.ts',
   // Cron / batch (意図的に全テナント横断)
   'beginner-expiry.service.ts',
   'tenant-monthly-reset.service.ts',
@@ -91,7 +95,8 @@ const CROSS_TENANT_ALLOWED_FILES = new Set([
   // データ移行 / インポート / エクスポート (tenant 引数経由で正しく分離)
   'data-export.service.ts',
   'data-import.service.ts',
-  'external-data-import.service.ts',
+  // 取込プレビューの TTL GC (cron から全テナント横断で expiresAt 期限切れを物理削除する system-wide cleanup)
+  'tenant-import-preview.service.ts',
   // Email 送信ログ (tenantId optional + cron 経由システム通知あり)
   'email-send-log.service.ts',
   // Mail / encryption / utility
@@ -169,8 +174,19 @@ const CROSS_TENANT_ALLOWED_FILES = new Set([
   'date-normalize.ts', // 日付正規化
   'wbs-hierarchy.ts', // WBS 階層 (前順序 + レベル) 変換
   'wbs-sync-rows.ts', // WBS 行の sync 変換
-  'import-field-catalog.ts', // インポート対象項目カタログ (定数)
-  'backlog.ts', // Backlog コネクタ (外部API → SourceWbsNode 正規化)
+  'import-field-catalog.ts', // インポート対象項目カタログ (定数 + DBカラム長上限)
+  // ADR-0034 (2026-06-05) API連携コネクタ: いずれも DB アクセスを持たない純粋関数 / HTTP クライアント。
+  //   外部サービスのレスポンスを共通中間形式 (CsvEntitySource[]) へ正規化するのみで、テナント分離は
+  //   呼出元 connect/preview route → previewMigrationFromSources (tenantId 引数) → applyMigration で確保。
+  'http.ts', // 共通 HTTP 基盤 (fetch + 認証付与 + レート/ページング)。DB アクセスなし
+  'types.ts', // コネクタ共通契約 (型定義)
+  'wbs-rows.ts', // 親子グラフ → レベル列 CSV 行 (純関数)
+  'registry.ts', // コネクタ登録レジストリ (source → discover/fetchSources の対応表)
+  'backlog.ts', // Backlog コネクタ (外部API → CsvEntitySource 正規化)
+  'notion.ts', // Notion コネクタ (プロパティ抽出 + data_sources query)
+  'kintone.ts', // kintone コネクタ (フィールド抽出 + カーソル API)
+  'pleasanter.ts', // Pleasanter コネクタ (Issues/Results + ClassX 親リンク)
+  'google-sheets.ts', // Google スプレッドシート コネクタ (values → CsvEntitySource)
 ]);
 
 /**

@@ -44,7 +44,7 @@ describe('getScreenTitleNavKey', () => {
   it('longest-prefix: /settings/tenant 系は tenantSettings (settings より優先)', () => {
     expect(getScreenTitleNavKey('/settings/tenant')).toBe('tenantSettings');
     expect(getScreenTitleNavKey('/settings/tenant/billing')).toBe('tenantSettings');
-    expect(getScreenTitleNavKey('/settings/tenant/external-import')).toBe('tenantSettings');
+    expect(getScreenTitleNavKey('/settings/tenant/migration-import')).toBe('tenantSettings');
   });
 
   it('運営者画面 (/admin/super 系) を区別する', () => {

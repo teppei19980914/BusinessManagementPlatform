@@ -25,6 +25,7 @@ import { useTranslations } from 'next-intl';
 import Link from 'next/link';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { linkifyNodes } from '@/components/ui/linkified-text';
 import { SUGGESTION_TIER_STRONG_INITIAL_VISIBLE } from '@/config/suggestion';
 import {
   Dialog,
@@ -149,7 +150,7 @@ export function SuggestionsPanel({
   const canExplain = tenantPlan === 'pro';
   const t = useTranslations('suggestion');
   const { withLoading } = useLoading();
-  const { showSuccess, showError } = useToast();
+  const { showError, showSuccessKey, showErrorKey } = useToast();
   const [state, setState] = useState<PanelState>({ loaded: false });
   const [error, setError] = useState('');
   // 採用済の ID を記録し UI を「採用済」表示に切り替える (再フェッチ不要化)
@@ -243,15 +244,16 @@ export function SuggestionsPanel({
         body: JSON.stringify({ kind, id }),
       }),
     );
+    const kindLabelKey = {
+      knowledge: 'suggestion.linkKindKnowledge',
+      issue: 'suggestion.linkKindIssue',
+      risk: 'suggestion.linkKindRisk',
+      retrospective: 'suggestion.linkKindRetrospective',
+    } as const;
+    const kindLabel = t(kindLabelKey[kind].replace('suggestion.', ''));
     if (!res.ok) {
       setError(t('adoptFailed'));
-      const labelMap = {
-        knowledge: 'ナレッジ',
-        issue: '過去課題',
-        risk: '過去リスク',
-        retrospective: '振り返り',
-      };
-      showError(`${labelMap[kind]}の紐付けに失敗しました`);
+      showErrorKey('suggestion.toastLinkFailed', { kindLabel });
       return;
     }
     setAdopted((prev) => {
@@ -259,13 +261,7 @@ export function SuggestionsPanel({
       next.add(`${kind}:${id}`);
       return next;
     });
-    const labelMap = {
-      knowledge: 'ナレッジ',
-      issue: '過去課題',
-      risk: '過去リスク',
-      retrospective: '振り返り',
-    };
-    showSuccess(`${labelMap[kind]}を紐付けました`);
+    showSuccessKey('suggestion.toastLinkSuccess', { kindLabel });
   }
 
   /**
@@ -427,7 +423,7 @@ export function SuggestionsPanel({
                 </button>
               )}
             </div>
-            <p className="text-sm text-muted-foreground">{k.snippet}</p>
+            <p className="text-sm text-muted-foreground">{linkifyNodes(k.snippet)}</p>
           </div>
           <div className="shrink-0" onClick={(e) => e.stopPropagation()}>
             {isAdopted ? (
@@ -483,7 +479,7 @@ export function SuggestionsPanel({
                 </button>
               )}
             </div>
-            <p className="text-sm text-muted-foreground">{i.snippet}</p>
+            <p className="text-sm text-muted-foreground">{linkifyNodes(i.snippet)}</p>
           </div>
           <div className="shrink-0" onClick={(e) => e.stopPropagation()}>
             {isAdopted ? (
@@ -542,7 +538,7 @@ export function SuggestionsPanel({
                 </button>
               )}
             </div>
-            <p className="text-sm text-muted-foreground">{r.snippet}</p>
+            <p className="text-sm text-muted-foreground">{linkifyNodes(r.snippet)}</p>
           </div>
           <div className="shrink-0" onClick={(e) => e.stopPropagation()}>
             {isAdopted ? (
@@ -600,7 +596,7 @@ export function SuggestionsPanel({
                 </button>
               )}
             </div>
-            <p className="text-sm text-muted-foreground">{r.snippet}</p>
+            <p className="text-sm text-muted-foreground">{linkifyNodes(r.snippet)}</p>
           </div>
           <div className="shrink-0" onClick={(e) => e.stopPropagation()}>
             {isAdopted ? (

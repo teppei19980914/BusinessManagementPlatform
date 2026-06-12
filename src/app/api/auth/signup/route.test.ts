@@ -61,6 +61,8 @@ beforeEach(() => {
     ok: true,
     tenantId: 'tenant-uuid',
     initialAdminUserId: 'admin-uuid',
+    // feat/signup-friction-reduction (2026-06-12): サーバ自動採番された組織 ID
+    slug: '100000',
   });
 });
 

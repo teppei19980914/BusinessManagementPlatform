@@ -38,6 +38,7 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { NumberInput } from '@/components/ui/number-input';
 import { Label } from '@/components/ui/label';
+import { MarkdownTextarea } from '@/components/ui/markdown-textarea';
 import {
   Dialog,
   DialogContent,
@@ -64,8 +65,6 @@ import { AttachmentList } from '@/components/attachments/attachment-list';
 import { CommentSection } from '@/components/comments/comment-section';
 // feat/wbs-overwrite-import: WBS 上書きインポート (Sync by ID) ダイアログ
 import { WbsSyncImportDialog } from '@/components/dialogs/wbs-sync-import-dialog';
-// 2026-05-09 (PR H / #7): 担当者別 日次工数集計ダイアログ
-import { WorkloadDialog } from '@/components/dialogs/workload-dialog';
 // PR #361 (2026-05-14): ACT 編集中の日次工数プレビュー
 import { useWorkloadPreview } from '@/components/hooks/use-workload-preview';
 import { WorkloadPreviewLine } from '@/components/wbs/workload-preview-line';
@@ -91,6 +90,8 @@ import type { TaskDTO } from '@/services/task.service';
 import type { MemberDTO } from '@/services/member.service';
 import { useSessionStringSet } from '@/lib/use-session-state';
 import { MultiSelectFilter } from '@/components/multi-select-filter';
+// ADR-0035: 一括削除をチャンク分割 + 上限付き並列送信で実行 (Netlify 10 秒枠と性能の両立)
+import { runChunkedBulk } from '@/lib/run-chunked-bulk';
 const ALL_STATUS_KEYS = Object.keys(TASK_STATUSES) as Array<keyof typeof TASK_STATUSES>;
 
 type Props = {
@@ -171,8 +172,6 @@ type TaskTreeNodeProps = {
   expandedTaskIds: Set<string>;
   /** PR #61: WP 展開トグル。子に伝播する */
   onToggleExpanded: (taskId: string) => void;
-  /** feat/wbs-overwrite-import: ID 列を表示するか (CSV 整合確認用) */
-  showIdColumn: boolean;
   /** PR #168: バッチ取得した添付 (entityId → AttachmentDTO 配列)。一覧の添付列で表示する */
   attachmentsByEntity: Record<string, AttachmentDTO[]>;
 };
@@ -194,7 +193,6 @@ function TaskTreeNodeImpl({
   onEditClick,
   expandedTaskIds,
   onToggleExpanded,
-  showIdColumn,
   attachmentsByEntity,
 }: TaskTreeNodeProps) {
   // 表示値は task prop を直接参照する。
@@ -238,23 +236,6 @@ function TaskTreeNodeImpl({
           // 選択チェック時は全行表示 (member が自分担当以外を間違って選択してもサーバ側で 403 で弾かれる)。
           <td className="px-1.5 py-1.5 md:px-2 md:py-2 w-8">
             <input type="checkbox" checked={isSelected} onChange={() => onToggleSelect(task.id)} className="rounded" />
-          </td>
-        )}
-        {/* feat/wbs-overwrite-import: ID 列 (CSV 整合確認用、トグル ON のときのみ) */}
-        {showIdColumn && (
-          <td className="px-1.5 py-1.5 md:px-2 md:py-2 font-mono text-xs text-muted-foreground">
-            <code
-              className="cursor-pointer hover:text-foreground"
-              onClick={(e) => {
-                const r = document.createRange();
-                r.selectNodeContents(e.currentTarget);
-                window.getSelection()?.removeAllRanges();
-                window.getSelection()?.addRange(r);
-              }}
-              title={t('idCopyHint')}
-            >
-              {task.id}
-            </code>
           </td>
         )}
         <td className="px-1.5 py-1.5 md:px-3 md:py-2" style={{ paddingLeft: `${depth * 20 + 8}px` }}>
@@ -376,7 +357,7 @@ function TaskTreeNodeImpl({
           onEditClick={onEditClick}
           expandedTaskIds={expandedTaskIds}
           onToggleExpanded={onToggleExpanded}
-          showIdColumn={showIdColumn}
+
           attachmentsByEntity={attachmentsByEntity}
         />
       ))}
@@ -414,8 +395,6 @@ const TaskTreeNode = memo(TaskTreeNodeImpl, (prev, next) =>
   // PR #61: 展開状態の変化は全ノードの再描画が必要 (子孫が折りたたみ/展開されうるため)
   && prev.expandedTaskIds === next.expandedTaskIds
   && prev.onToggleExpanded === next.onToggleExpanded
-  // feat/wbs-overwrite-import: ID 列トグル変化時に全ノード再描画
-  && prev.showIdColumn === next.showIdColumn
   // PR #168: 添付バッチ取得結果が変わったら再描画 (object identity 比較で十分、
   // useBatchAttachments が ids 変動時に新オブジェクトを返す)
   && prev.attachmentsByEntity === next.attachmentsByEntity,
@@ -447,7 +426,7 @@ function TaskMobileCardImpl({
   expandedTaskIds,
   onToggleExpanded,
   attachmentsByEntity,
-}: Omit<TaskTreeNodeProps, 'canSelectForProgress' | 'isSelected' | 'selectedIds' | 'onToggleSelect' | 'showIdColumn'>) {
+}: Omit<TaskTreeNodeProps, 'canSelectForProgress' | 'isSelected' | 'selectedIds' | 'onToggleSelect'>) {
   const t = useTranslations('wbs');
   const { showSuccess, showError } = useToast();
   const { formatDateOnly } = useFormatters();
@@ -746,6 +725,8 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     name: string;
     /** 2026-04-30: ACT のみ表示・編集可。WP は使わない (子から集約) */
     description: string;
+    /** feat/url-autolink: ACT の備考欄 (任意)。URL は表示時に自動リンク化される。 */
+    notes: string;
     assigneeId: string;
     plannedStartDate: string;
     plannedEndDate: string;
@@ -754,12 +735,15 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     progressRate: number;
     actualStartDate: string;
     actualEndDate: string;
+    /** ACT の実績工数 (人時)。0 = 未入力扱い (保存時 null 化)。 */
+    actualEffort: number;
   };
   const initEditForm = (task: TaskDTO): EditForm => ({
     type: task.type as 'work_package' | 'activity',
     parentTaskId: task.parentTaskId ?? '',
     name: task.name,
     description: task.description ?? '',
+    notes: task.notes ?? '',
     assigneeId: task.assigneeId ?? '',
     plannedStartDate: task.plannedStartDate ?? '',
     plannedEndDate: task.plannedEndDate ?? '',
@@ -768,6 +752,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     progressRate: task.progressRate,
     actualStartDate: task.actualStartDate ?? '',
     actualEndDate: task.actualEndDate ?? '',
+    actualEffort: task.actualEffort ?? 0,
   });
   const [editingTask, setEditingTask] = useState<TaskDTO | null>(null);
   const [editForm, setEditForm] = useState<EditForm | null>(null);
@@ -846,7 +831,8 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
   // 従来は pm_tl も他人担当の実績を編集できたが、ユーザ要望により担当者のみに制限。
   // 担当者以外の管理者が実績を補正したい場合は、担当者を変更してから該当担当者が
   // 更新するか、監査ログで値を確認するフローになる。
-  const editingCanUpdateActual = isEditingActivity && editingIsAssignee;
+  // 2026-06-12: クローズ済みPJ (読み取り専用) では担当者でも実績更新不可 (!isReadOnly)。
+  const editingCanUpdateActual = isEditingActivity && editingIsAssignee && !isReadOnly;
   // 実績日付 disable 判定（PR #39 の整合性ルールに準拠）
   const editingActualStartDisabled = editForm?.status === 'not_started';
   const editingActualEndDisabled = editForm?.status !== 'completed';
@@ -869,14 +855,23 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
         body.plannedEffort = editForm.plannedEffort;
         // 2026-04-30: ACT のみ description を更新。空文字は null (明示クリア) として送る。
         body.description = editForm.description.trim() ? editForm.description.trim() : null;
+        // feat/url-autolink: 備考も ACT のみ。空文字は null (明示クリア) として送る。
+        body.notes = editForm.notes.trim() ? editForm.notes.trim() : null;
       }
     }
     // 実績系（PM/TL または担当者本人）
     if (editingCanUpdateActual) {
+      // 2026-06-15: ステータス=完了 のとき実績工数は必須 (> 0)。
+      if (editForm.status === 'completed' && !(editForm.actualEffort > 0)) {
+        setEditError(t('actualEffortRequiredForCompleted'));
+        return;
+      }
       body.status = editForm.status;
       body.progressRate = editForm.progressRate;
       body.actualStartDate = editForm.actualStartDate || null;
       body.actualEndDate = editForm.actualEndDate || null;
+      // 実績工数: 0 (未入力) は null としてクリア。
+      body.actualEffort = editForm.actualEffort > 0 ? editForm.actualEffort : null;
     }
 
     const res = await withLoading(() =>
@@ -987,24 +982,28 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     progressRate: boolean;
     actualStartDate: boolean;
     actualEndDate: boolean;
+    actualEffort: boolean;
   };
   type BulkActualValues = {
     status: string;
     progressRate: number;
     actualStartDate: string;
     actualEndDate: string;
+    actualEffort: number;
   };
   const bulkActualInitialApply = (): BulkActualApply => ({
     status: false,
     progressRate: false,
     actualStartDate: false,
     actualEndDate: false,
+    actualEffort: false,
   });
   const bulkActualInitialValues = (): BulkActualValues => ({
     status: 'not_started',
     progressRate: 0,
     actualStartDate: '',
     actualEndDate: '',
+    actualEffort: 0,
   });
   const [isBulkActualOpen, setIsBulkActualOpen] = useState(false);
   const [bulkActualApply, setBulkActualApply] = useState<BulkActualApply>(bulkActualInitialApply);
@@ -1104,18 +1103,43 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     void total;
   }
 
+  /**
+   * ADR-0035: 一括削除。選択 ID を K=100 件ずつのチャンクに分割し、最大 3 本を並列で
+   * `bulk-delete` エンドポイントへ送信する。各チャンクは件数によらず ~5-6 往復で完了するため
+   * Netlify 10 秒枠を構造的に超えない。WP 集計の再計算は全チャンク完了後に 1 回だけ
+   * (finalize → POST /tasks/recalculate) 実行する (チャンクごとの O(WP) 重複走査を回避)。
+   */
   async function handleBulkDelete() {
     if (selectedIds.size === 0) return;
     if (!confirm(t('bulkDeleteConfirm', { count: selectedIds.size }))) return;
-    let failed = 0;
-    const total = selectedIds.size;
-    for (const id of selectedIds) {
-      const res = await withLoading(() =>
-        fetch(`/api/projects/${projectId}/tasks/${id}`, { method: 'DELETE' }),
-      );
-      if (!res.ok) failed += 1;
-    }
+    const ids = [...selectedIds];
+    const total = ids.length;
+
+    const result = await withLoading(() =>
+      runChunkedBulk(
+        ids,
+        async (chunkIds) => {
+          const res = await fetch(`/api/projects/${projectId}/tasks/bulk-delete`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ taskIds: chunkIds }),
+          });
+          // res.ok でないチャンクは全 ID を失敗扱い (deletedAt: null 条件付きで冪等なので再送可能)
+          return { ok: res.ok, failedIds: res.ok ? [] : chunkIds };
+        },
+        {
+          chunkSize: 100,
+          concurrency: 3,
+          // 末尾 1 回だけ全 WP 集計を再計算 (task:delete 保持者は task:update も持つので認可される)
+          finalize: async () => {
+            await fetch(`/api/projects/${projectId}/tasks/recalculate`, { method: 'POST' });
+          },
+        },
+      ),
+    );
+
     setSelectedIds(new Set());
+    const failed = result.failedIds.length;
     if (failed > 0) {
       showError(`${failed} 件のタスク削除に失敗しました (${total} 件中)`);
     } else {
@@ -1124,21 +1148,44 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     await reload();
   }
 
-  /** 一括更新 API を叩く共通関数。`updates` には apply=true のフィールドのみ入っている想定 */
+  /**
+   * 一括更新 API を叩く共通関数。`updates` には apply=true のフィールドのみ入っている想定。
+   *
+   * ADR-0035 準拠: 100 件超の場合は runChunkedBulk (chunkSize:100, concurrency:3) で分割送信する。
+   * 1 チャンクを Netlify 10 秒枠内に収め、大量選択時のタイムアウトを防ぐ。
+   * いずれかのチャンクが失敗した場合は最初のエラーメッセージを返す (呼び出し元の挙動は変わらない)。
+   */
   async function postBulkUpdate(updates: Record<string, unknown>): Promise<string | null> {
     if (selectedIds.size === 0) return t('noTargetTasks');
     if (Object.keys(updates).length === 0) return t('selectAtLeastOneField');
 
-    const res = await withLoading(() =>
-      fetch(`/api/projects/${projectId}/tasks/bulk-update`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ taskIds: [...selectedIds], ...updates }),
-      }),
+    const ids = [...selectedIds];
+    let firstError: string | null = null;
+
+    const result = await withLoading(() =>
+      runChunkedBulk(
+        ids,
+        async (chunkIds) => {
+          const res = await fetch(`/api/projects/${projectId}/tasks/bulk-update`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ taskIds: chunkIds, ...updates }),
+          });
+          if (!res.ok) {
+            const json = await res.json().catch(() => ({}));
+            if (firstError == null) {
+              firstError = json.error?.message || json.error?.details?.[0]?.message || t('bulkUpdateFailed');
+            }
+            return { ok: false, failedIds: chunkIds };
+          }
+          return { ok: true };
+        },
+        { chunkSize: 100, concurrency: 3 },
+      ),
     );
-    if (!res.ok) {
-      const json = await res.json().catch(() => ({}));
-      return json.error?.message || json.error?.details?.[0]?.message || t('bulkUpdateFailed');
+
+    if (result.failedIds.length > 0) {
+      return firstError ?? t('bulkUpdateFailed');
     }
     return null;
   }
@@ -1175,6 +1222,8 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     if (bulkActualApply.progressRate) updates.progressRate = bulkActualValues.progressRate;
     if (bulkActualApply.actualStartDate) updates.actualStartDate = bulkActualValues.actualStartDate || null;
     if (bulkActualApply.actualEndDate) updates.actualEndDate = bulkActualValues.actualEndDate || null;
+    // 実績工数: 0 (未入力) は null としてクリア。
+    if (bulkActualApply.actualEffort) updates.actualEffort = bulkActualValues.actualEffort > 0 ? bulkActualValues.actualEffort : null;
 
     const total = selectedIds.size;
     const err = await postBulkUpdate(updates);
@@ -1227,11 +1276,8 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     showSuccess('WBS をエクスポートしました');
   }
 
-  // feat/wbs-overwrite-import: ID 表示トグル + 上書きインポートダイアログ state
-  const [showIdColumn, setShowIdColumn] = useState(false);
+  // feat/wbs-overwrite-import: 上書きインポートダイアログ state
   const [isSyncImportOpen, setIsSyncImportOpen] = useState(false);
-  // 2026-05-09 (PR H / #7): 工数集計ダイアログ
-  const [isWorkloadOpen, setIsWorkloadOpen] = useState(false);
 
   const [createType, setCreateType] = useState<'work_package' | 'activity'>('activity');
   const [parentTaskId, setParentTaskId] = useState('');
@@ -1257,6 +1303,8 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     name: '',
     // 2026-04-30: ACT のみ表示する作業内容欄。WP は子から集約されるため不要。
     description: '',
+    // feat/url-autolink: ACT の備考欄 (任意)。URL は表示時に自動リンク化される。
+    notes: '',
     // fix/quick-ux item 8: デフォルト担当者=自分。プルダウンで変更可。
     assigneeId: userId,
     plannedStartDate: '',
@@ -1321,6 +1369,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
           plannedEndDate: form.plannedEndDate,
           plannedEffort: form.plannedEffort,
           ...(form.description.trim() ? { description: form.description.trim() } : {}),
+          ...(form.notes.trim() ? { notes: form.notes.trim() } : {}),
         };
 
     const body = parentTaskId ? { ...base, parentTaskId } : base;
@@ -1355,7 +1404,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     setIsCreateOpen(false);
     setParentTaskId('');
     // fix/quick-ux item 8: 連続起票でも担当者は自分にリセット
-    setForm({ name: '', description: '', assigneeId: userId, plannedStartDate: '', plannedEndDate: '', plannedEffort: 0 });
+    setForm({ name: '', description: '', notes: '', assigneeId: userId, plannedStartDate: '', plannedEndDate: '', plannedEffort: 0 });
     showSuccess(createType === 'work_package' ? 'WPを作成しました' : 'アクティビティを作成しました');
     await reload();
   }
@@ -1367,24 +1416,6 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
         <div className="flex gap-2">
         {/* 2026-04-30 (Task 1): ガント表示トグルを削除し、ガントチャートは独立タブ
             ('gantt' tab) として project-detail-client 側で render する設計に移行。 */}
-        {/* feat/wbs-overwrite-import: 一覧画面に ID 列を表示するトグル (CSV 整合確認用、既定 OFF) */}
-        <Button
-          variant={showIdColumn ? 'default' : 'outline'}
-          size="sm"
-          onClick={() => setShowIdColumn((v) => !v)}
-          title={t('idToggleTooltip')}
-        >
-          {showIdColumn ? t('hideId') : t('showId')}
-        </Button>
-        {/* 2026-05-09 (PR H / #7): 担当者別 日次工数集計ダイアログ */}
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => setIsWorkloadOpen(true)}
-          title="担当者別の日次予定工数を集計表示します (#7)"
-        >
-          工数集計
-        </Button>
         {canEditPmTl && (
           <>
           {/*
@@ -1496,17 +1527,27 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                         />
                       )}
                     </div>
-                    {/* 2026-04-30: ACT 作業内容。何をするかを具体的に記述する欄 (任意) */}
-                    <div className="space-y-2">
-                      <Label htmlFor="task-create-description">{t('description')}</Label>
-                      <textarea
-                        id="task-create-description"
+                    {/* 2026-04-30: ACT 作業内容。何をするかを具体的に記述する欄 (任意)
+                        feat/url-autolink: MarkdownTextarea 化。プレビューで URL がリンク表示される */}
+                    <div className="space-y-2" data-testid="task-create-field-description">
+                      <Label>{t('description')}</Label>
+                      <MarkdownTextarea
                         value={form.description}
-                        onChange={(e) => updateField('description', e.target.value)}
+                        onChange={(v) => updateField('description', v)}
                         placeholder={t('descriptionPlaceholder')}
                         maxLength={2000}
                         rows={4}
-                        className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                      />
+                    </div>
+                    {/* feat/url-autolink: ACT 備考欄 (任意)。URL は表示時に自動リンク化 */}
+                    <div className="space-y-2" data-testid="task-create-field-notes">
+                      <Label>{t('notes')}</Label>
+                      <MarkdownTextarea
+                        value={form.notes}
+                        onChange={(v) => updateField('notes', v)}
+                        placeholder={t('notesPlaceholder')}
+                        maxLength={1000}
+                        rows={3}
                       />
                     </div>
                   </>
@@ -1726,6 +1767,18 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                     onChange={(v) => setBulkActualValues({ ...bulkActualValues, actualEndDate: v })}
                   />
                 </ApplyFieldRow>
+                <ApplyFieldRow
+                  apply={bulkActualApply.actualEffort}
+                  onApplyChange={(v) => setBulkActualApply({ ...bulkActualApply, actualEffort: v })}
+                  label={t('actualEffort')}
+                >
+                  <NumberInput
+                    min={0}
+                    step={0.5}
+                    value={bulkActualValues.actualEffort}
+                    onChange={(n) => setBulkActualValues({ ...bulkActualValues, actualEffort: n })}
+                  />
+                </ApplyFieldRow>
                 <Button type="submit" className="w-full">{t('bulkApply')}</Button>
               </form>
             </DialogContent>
@@ -1823,10 +1876,6 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                       />
                     </th>
                   )}
-                  {/* feat/wbs-overwrite-import: ID 列はトグル ON のときのみ表示 (CSV 整合確認用) */}
-                  {showIdColumn && (
-                    <ResizableHead columnKey="id" defaultWidth={300}>ID</ResizableHead>
-                  )}
                   <ResizableHead columnKey="name" defaultWidth={320}>{t('columnName')}</ResizableHead>
                   <ResizableHead columnKey="assignee" defaultWidth={140}>{t('columnAssignee')}</ResizableHead>
                   <ResizableHead columnKey="status" defaultWidth={100}>{t('columnStatus')}</ResizableHead>
@@ -1858,14 +1907,14 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                     onEditClick={openEditDialog}
                     expandedTaskIds={expandedTaskIds}
                     onToggleExpanded={toggleExpanded}
-                    showIdColumn={showIdColumn}
+          
                     attachmentsByEntity={attachmentsByEntity}
                   />
                 ))}
                 {filteredTasks.length === 0 && (
                   <tr>
                     {/* PR #168: 添付列追加に伴い colSpan +1 */}
-                    <td colSpan={(canSelectForProgress ? 9 : 8) + (showIdColumn ? 1 : 0)} className="py-8 text-center text-muted-foreground">
+                    <td colSpan={canSelectForProgress ? 9 : 8} className="py-8 text-center text-muted-foreground">
                       {tasks.length === 0
                         ? t('noTasks')
                         : t('noFilteredTasks')}
@@ -2016,17 +2065,29 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                           />
                         )}
                       </div>
-                      {/* 2026-04-30: ACT 作業内容 (任意)。何をするかを具体的に記述する欄 */}
-                      <div className="space-y-2">
-                        <Label htmlFor="task-edit-description">{t('description')}</Label>
-                        <textarea
-                          id="task-edit-description"
+                      {/* 2026-04-30: ACT 作業内容 (任意)。何をするかを具体的に記述する欄
+                          feat/url-autolink: MarkdownTextarea 化。プレビューで URL がリンク表示される */}
+                      <div className="space-y-2" data-testid="task-edit-field-description">
+                        <Label>{t('description')}</Label>
+                        <MarkdownTextarea
                           value={editForm.description}
-                          onChange={(e) => updateEditField('description', e.target.value)}
+                          onChange={(v) => updateEditField('description', v)}
+                          previousValue={editingTask?.description ?? ''}
                           placeholder={t('descriptionPlaceholder')}
                           maxLength={2000}
                           rows={4}
-                          className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                        />
+                      </div>
+                      {/* feat/url-autolink: ACT 備考欄 (任意)。URL は表示時に自動リンク化 */}
+                      <div className="space-y-2" data-testid="task-edit-field-notes">
+                        <Label>{t('notes')}</Label>
+                        <MarkdownTextarea
+                          value={editForm.notes}
+                          onChange={(v) => updateEditField('notes', v)}
+                          previousValue={editingTask?.notes ?? ''}
+                          placeholder={t('notesPlaceholder')}
+                          maxLength={1000}
+                          rows={3}
                         />
                       </div>
                     </>
@@ -2090,6 +2151,17 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                       disabled={editingActualEndDisabled}
                     />
                   </div>
+                  {/* 実績工数 (人時)。未着手では入力不可。分析タブの工数効率/消化工数に使用。 */}
+                  <div className="space-y-2">
+                    <Label className={editingActualStartDisabled ? 'text-muted-foreground' : ''}>{t('actualEffort')}</Label>
+                    <NumberInput
+                      min={0}
+                      step={0.5}
+                      value={editForm.actualEffort}
+                      onChange={(n) => updateEditField('actualEffort', n)}
+                      disabled={editingActualStartDisabled}
+                    />
+                  </div>
                 </section>
               )}
 
@@ -2103,12 +2175,16 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
 
               <div className="flex justify-end gap-2">
                 <Button type="button" variant="outline" onClick={closeEditDialog}>{tAction('cancel')}</Button>
-                <Button type="submit">{tAction('save')}</Button>
+                {/* 2026-06-12: 編集可能なセクションが無い (クローズ済み等の参照専用) ときは保存ボタンを出さない。 */}
+                {(editingCanUpdatePm || editingCanUpdateActual) && (
+                  <Button type="submit">{tAction('save')}</Button>
+                )}
               </div>
 
               {/* PR #199: コメント。プロジェクトメンバー必須 (task は project-scoped)。
-                  外側 form の submit を防ぐため CommentSection 内部で type="button" 徹底 */}
-              <CommentSection entityType="task" entityId={editingTask.id} />
+                  外側 form の submit を防ぐため CommentSection 内部で type="button" 徹底。
+                  2026-06-12: クローズ済みPJ (読み取り専用) では投稿欄を非表示 (API も 403)。 */}
+              <CommentSection entityType="task" entityId={editingTask.id} mutationsLocked={isReadOnly} />
             </form>
           )}
         </DialogContent>
@@ -2122,12 +2198,6 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
         onImported={reload}
       />
 
-      {/* 2026-05-09 (PR H / #7): 担当者別 日次工数集計ダイアログ */}
-      <WorkloadDialog
-        projectId={projectId}
-        open={isWorkloadOpen}
-        onOpenChange={setIsWorkloadOpen}
-      />
     </div>
   );
 }

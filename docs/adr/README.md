@@ -52,8 +52,12 @@
 | [0032](./0032-task-name-uniqueness-removal-and-wbs-import-batching.md) | タスク名称一意性の撤廃 (同一 WP 配下の同名許容) + WBS sync-import の createMany バッチ化による 504 解消 + 行数ハード上限撤廃と処理時間警告 (2026-06-04 採択、ADR-0017 #4/#6 を supersede) | Accepted | 設計・UX・性能 |
 | [0033](./0033-starter-data-import-and-single-tenant-suggestion.md) | スターターデータ取込 (管理テナントからクローン) + 一括削除 + super_admin キュレーション + 提案/チャットの単一テナント化 (seedDataEnabled 撤去) + 請求先のプラン別出し分け (Beginner 任意化・有料化ガード) (2026-06-05 採択) | Accepted | 設計・UX・課金・テナント分離 |
 | [0034](./0034-external-tool-migration-import.md) | 外部PMツールからの初回データ移行インポート (手動CSV + API連携 / 新規作成のみ・重複制御なし) — 6エンティティ + 依存解決 + 画面項目限定 + 値マッピング/日付正規化 + 汎用APIコネクタ (第1弾5サービス) (2026-06-04 草案) | Proposed | 設計・UX・課金 |
+| [0035](./0035-bulk-ops-chunked-batching-and-recalc-deferral.md) | WBS 一括削除のチャンク分割送信 (K=100・並列3) + サーバ側バッチ化 (bulk-delete エンドポイント / updateMany) + WP 再計算の末尾 1 回集約。Netlify 10 秒タイムアウトと性能の両立 (ADR-0032 のバッチ化パターンを横展開、bulk-update は現状維持) (2026-06-05 採択) | Accepted | パフォーマンス・設計 |
+| [0036](./0036-system-broadcast-banner.md) | システム周知バナー — 全テナント共通・期間指定・緊急度色分け (高赤/中黄/低青)・×でセッション内破棄 (再ログインで再表示)・1 本制約 (期間重複禁止)・取り下げ/物理削除の 2 系統。2026-05-24 に廃止した常時バナーの再導入 (2026-06-08 採択) | Accepted | UX・運用 |
+| [0037](./0037-wbs-import-apply-batching-and-recalc-in-memory.md) | WBS 上書きインポート apply の 504 解消 — UPDATE を `$transaction` 配列形でチャンク一括 + `recalculateAllProjectWps` を「全タスク 1 fetch + メモリ集計 (深度降順) + 変更 WP のみ一括 update」に。往復を WP 数非依存に畳む。共有 recalc 改善で一括削除 finalize / 外部移行も波及改善。他 4 エンティティ sync-import は follow-up (2026-06-09 採択) | Accepted | パフォーマンス・設計 |
+| [0038](./0038-project-analytics-tab-and-generic-chart-foundation.md) | プロジェクト「分析」タブ新設 + 汎用チャート 3 層基盤 (サービス=数値 / パネルレジストリ=表示組み立て / `AnalysisChart.kind` で折れ線/積み上げ棒を出し分け)。パネル2枚: (1) WBS 予実カーブ (ACT 件数累積の予定線/実績線 + 本日サマリ)、(2) 担当者別 週次消化数 (積み上げ棒・上位8+その他)。新アクション `analytics:read` (PM/PL + admin、closed 可)。実績は actualEndDate+status から近似なく再構成、本日/本日週はテナント TZ (2026-06-11 採択) | Accepted | 機能・設計 |
 
-> 主要設計判断を時系列で ADR 化しています (現在 33 件)。
+> 主要設計判断を時系列で ADR 化しています。
 > 設計変更を検討する際は新規 ADR を追加し、変更が確定したら旧 ADR の Status を Deprecated / Superseded に更新します。
 
 ---

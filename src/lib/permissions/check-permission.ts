@@ -55,6 +55,8 @@ export type Action =
   | 'stakeholder:create'
   | 'stakeholder:update'
   | 'stakeholder:delete'
+  // 分析タブ (PM/PL + admin のみ。WBS 予実カーブ等の進捗分析を閲覧)
+  | 'analytics:read'
   // ユーザ管理
   | 'admin:users'
   | 'admin:audit_logs';
@@ -69,6 +71,8 @@ const ROLE_PERMISSIONS: Record<string, Set<Action>> = {
     'member:read', 'member:manage',
     // ステークホルダー: admin は全プロジェクト全 CRUD 可
     'stakeholder:read', 'stakeholder:create', 'stakeholder:update', 'stakeholder:delete',
+    // 分析タブ: admin は閲覧可
+    'analytics:read',
     'admin:users', 'admin:audit_logs',
   ]),
   pm_tl: new Set([
@@ -83,6 +87,8 @@ const ROLE_PERMISSIONS: Record<string, Set<Action>> = {
     'member:read', 'member:manage',
     // ステークホルダー: PM/TL のみ全 CRUD 可 (人物評を含むため member 以下は閲覧不可)
     'stakeholder:read', 'stakeholder:create', 'stakeholder:update', 'stakeholder:delete',
+    // 分析タブ: PM/TL は閲覧可 (現在地・生産性の把握)
+    'analytics:read',
   ]),
   member: new Set([
     'project:read',
@@ -112,6 +118,8 @@ const STATE_RESTRICTIONS: Partial<Record<ProjectStatus, Set<Action>>> = {
   closed: new Set([
     'project:read', 'project:delete',
     'task:read', 'knowledge:read', 'risk:read', 'stakeholder:read',
+    // 分析は読み取り専用。完了案件こそ振り返り分析の価値が高いため closed でも許可。
+    'analytics:read',
   ]),
 };
 

@@ -76,6 +76,8 @@ export type TaskDTO = {
   actualStartDate: string | null;
   actualEndDate: string | null;
   plannedEffort: number;
+  /** ACT の実績工数 (人時)。未入力は null。WP は (現状) null。 */
+  actualEffort: number | null;
   priority: string | null;
   status: string;
   progressRate: number;
@@ -100,6 +102,7 @@ function toTaskDTO(t: {
   actualStartDate: Date | null;
   actualEndDate: Date | null;
   plannedEffort: Prisma.Decimal;
+  actualEffort: Prisma.Decimal | null;
   priority: string | null;
   status: string;
   progressRate: number;
@@ -122,6 +125,7 @@ function toTaskDTO(t: {
     actualStartDate: safeDate(t.actualStartDate),
     actualEndDate: safeDate(t.actualEndDate),
     plannedEffort: Number(t.plannedEffort),
+    actualEffort: t.actualEffort == null ? null : Number(t.actualEffort),
     priority: t.priority,
     status: t.status,
     progressRate: t.progressRate,
@@ -733,15 +737,26 @@ export async function updateTask(
 ): Promise<TaskDTO> {
   // 2026-05-09 feedback Phase 2: 越境編集を遮断するため task の project tenant 一致を verify。
   //   findFirst で先に検証することで、taskId 直叩きの編集を NOT_FOUND として弾く。
+  // ADR-0035 (2026-06-05): 所有確認に加え、status 整合性正規化で使う現在値 (status/progress/actual)
+  //   も同じ findFirst で取得する。旧実装は後段で別途 findUnique を呼び同一行を二重 fetch していた。
   const owned = await prisma.task.findFirst({
     where: { id: taskId, deletedAt: null, project: { tenantId: viewerTenantId } },
-    select: { id: true },
+    select: {
+      id: true,
+      status: true,
+      progressRate: true,
+      actualStartDate: true,
+      actualEndDate: true,
+      actualEffort: true,
+    },
   });
   if (!owned) throw new Error('NOT_FOUND');
 
   // ADR-0032 (2026-06-04): 名称一意性ガードは撤廃 (同一 WP 配下の同名タスクを許容)。
 
   const data: Prisma.TaskUpdateInput = { updatedBy: userId };
+  // 更新後に確定するステータス (status/progress 整合性ルール適用後)。既定は現状維持。
+  let finalStatus: string = owned.status;
 
   if (input.type !== undefined) data.type = input.type;
   if (input.parentTaskId !== undefined) data.parentTask = input.parentTaskId ? { connect: { id: input.parentTaskId } } : { disconnect: true };
@@ -752,6 +767,7 @@ export async function updateTask(
   if (input.plannedStartDate !== undefined) data.plannedStartDate = input.plannedStartDate ? new Date(input.plannedStartDate) : null;
   if (input.plannedEndDate !== undefined) data.plannedEndDate = input.plannedEndDate ? new Date(input.plannedEndDate) : null;
   if (input.plannedEffort !== undefined) data.plannedEffort = input.plannedEffort;
+  if (input.actualEffort !== undefined) data.actualEffort = input.actualEffort;
   if (input.priority !== undefined) data.priority = input.priority;
   if (input.progressRate !== undefined) data.progressRate = input.progressRate;
   if (input.isMilestone !== undefined) data.isMilestone = input.isMilestone;
@@ -765,11 +781,8 @@ export async function updateTask(
     || input.actualStartDate !== undefined
     || input.actualEndDate !== undefined
   ) {
-    const current = await prisma.task.findUnique({
-      where: { id: taskId },
-      select: { status: true, progressRate: true, actualStartDate: true, actualEndDate: true },
-    });
-    if (!current) throw new Error('NOT_FOUND');
+    // ADR-0035: 冒頭の owned (findFirst) で取得済みの現在値を再利用 (二重 fetch 回避)。
+    const current = owned;
 
     const inputStatus = input.status;
     const inputProgress = input.progressRate;
@@ -781,7 +794,7 @@ export async function updateTask(
     //     「進捗 100% ならば完了」の方を優先 (業務ルールとして「100% で未完了」は矛盾するため)
     //   - progress<100 と status=completed を同時に受け取った場合は従来通り
     //     「status=completed → progress=100」を優先
-    let finalStatus = inputStatus ?? current.status;
+    finalStatus = inputStatus ?? current.status;
     if (inputProgress === 100 && finalStatus !== 'completed') {
       finalStatus = 'completed';
     }
@@ -803,6 +816,16 @@ export async function updateTask(
     // input.progressRate 指定があっても 100 に揃える（完了と矛盾する値を許容しない）。
     if (finalStatus === 'completed') {
       data.progressRate = 100;
+    }
+  }
+
+  // 2026-06-15 ユーザ要件: ステータス=完了 のとき実績工数は必須 (> 0)。
+  //   最終的な実績工数 = input 指定があればそれ、無ければ現在値。完了かつ 0/未入力なら拒否。
+  if (finalStatus === 'completed') {
+    const effectiveActualEffort
+      = input.actualEffort !== undefined ? input.actualEffort : owned.actualEffort;
+    if (!(effectiveActualEffort != null && Number(effectiveActualEffort) > 0)) {
+      throw new Error('ACTUAL_EFFORT_REQUIRED');
     }
   }
 
@@ -837,20 +860,23 @@ export async function updateTask(
  */
 export async function deleteTask(
   taskId: string,
+  projectId: string,
   userId: string,
   viewerTenantId: string,
-): Promise<void> {
-  // 2026-05-09 feedback Phase 2: 越境削除を遮断するため task の project tenant 一致を verify。
-  const owned = await prisma.task.findFirst({
-    where: { id: taskId, deletedAt: null, project: { tenantId: viewerTenantId } },
-    select: { id: true },
+): Promise<TaskDTO | null> {
+  // ADR-0035 (2026-06-05): 所有確認 (越境/別 project/既削除の除外) と監査用 before 値の取得を
+  //   1 回の fetch に集約する。旧実装は呼び出し側 route の getTask と、ここでの所有確認
+  //   findFirst で同一行を二重 fetch していた (越境防止: project.tenantId + projectId を verify)。
+  const before = await prisma.task.findFirst({
+    where: { id: taskId, projectId, deletedAt: null, project: { tenantId: viewerTenantId } },
+    include: { assignee: { select: { name: true } }, parentTask: { select: { name: true } } },
   });
-  if (!owned) throw new Error('NOT_FOUND');
+  if (!before) return null; // route 側で 404 にマップ
 
   // PR #89: 紐づく Attachment も同時に論理削除 (UI アクセス不可の孤児データ防止)
   // PR fix/visibility-auth-matrix (2026-05-01): Comment も cascade soft-delete (§5.51)
   const now = new Date();
-  const [task] = await prisma.$transaction([
+  await prisma.$transaction([
     prisma.task.update({
       where: { id: taskId },
       data: { deletedAt: now, updatedBy: userId },
@@ -866,9 +892,70 @@ export async function deleteTask(
     }),
   ]);
 
-  if (task.parentTaskId) {
-    await recalculateAncestors(task.parentTaskId);
+  if (before.parentTaskId) {
+    await recalculateAncestors(before.parentTaskId);
   }
+
+  return toTaskDTO(before);
+}
+
+/**
+ * 複数タスクを一括論理削除する (ADR-0035)。
+ *
+ * 設計:
+ *   - 認証/権限は呼び出し元 route で 1 回だけ実施 (件数分くり返さない)。
+ *   - 越境/別プロジェクト/既削除の ID は **1 回の findMany で除外**しつつ所有確認する
+ *     (deleteTask の per-id findFirst を件数分くり返さない)。
+ *   - 本体 + 紐づく Attachment / Comment を `$transaction([updateMany×3])` で一括 soft-delete。
+ *   - **WP 集計の再計算はここでは行わない**。チャンクごとに再計算すると O(WP) 走査が重複し
+ *     Netlify 10 秒枠に近づくため、呼び出し側 (クライアント) が全チャンク完了後に
+ *     `recalculateAllProjectWps` (= POST /tasks/recalculate) を 1 回だけ実行する。
+ *
+ * 冪等性:
+ *   `deletedAt: null` 条件付き updateMany のため、既削除 ID を再投入しても二重削除にならず
+ *   結果は変わらない。よって失敗チャンクの再送は安全 (runChunkedBulk の retry 前提)。
+ *
+ * @returns deletedCount = 実際に soft-delete したタスク件数、deletedIds = その UUID 群 (監査用)。
+ */
+export async function bulkDeleteTasks(
+  projectId: string,
+  taskIds: string[],
+  userId: string,
+  viewerTenantId: string,
+): Promise<{ deletedCount: number; deletedIds: string[] }> {
+  if (taskIds.length === 0) return { deletedCount: 0, deletedIds: [] };
+
+  // 越境削除を遮断 + 別プロジェクト/既削除を除外。所有確認を 1 query に集約。
+  const owned = await prisma.task.findMany({
+    where: {
+      id: { in: taskIds },
+      projectId,
+      deletedAt: null,
+      project: { tenantId: viewerTenantId },
+    },
+    select: { id: true },
+  });
+  const ownedIds = owned.map((t) => t.id);
+  if (ownedIds.length === 0) return { deletedCount: 0, deletedIds: [] };
+
+  const now = new Date();
+  const [taskResult] = await prisma.$transaction([
+    prisma.task.updateMany({
+      where: { id: { in: ownedIds } },
+      data: { deletedAt: now, updatedBy: userId },
+    }),
+    // 紐づく Attachment / Comment も同時に論理削除 (孤児データ防止)。tenantId 明示 (severity-1 防御)。
+    prisma.attachment.updateMany({
+      where: { tenantId: viewerTenantId, entityType: 'task', entityId: { in: ownedIds }, deletedAt: null },
+      data: { deletedAt: now },
+    }),
+    prisma.comment.updateMany({
+      where: { tenantId: viewerTenantId, entityType: 'task', entityId: { in: ownedIds }, deletedAt: null },
+      data: { deletedAt: now },
+    }),
+  ]);
+
+  return { deletedCount: taskResult.count, deletedIds: ownedIds };
 }
 
 /**
@@ -895,6 +982,7 @@ export async function bulkUpdateTasks(
     progressRate?: number;
     actualStartDate?: string | null;
     actualEndDate?: string | null;
+    actualEffort?: number | null;
   },
   userId: string,
   viewerTenantId: string,
@@ -927,7 +1015,36 @@ export async function bulkUpdateTasks(
     data.plannedEndDate = updates.plannedEndDate ? new Date(updates.plannedEndDate) : null;
   }
   if (updates.plannedEffort !== undefined) data.plannedEffort = updates.plannedEffort;
+  // 実績工数: 0 / null は未入力としてクリア (null)。WP 集計には影響しない。
+  if (updates.actualEffort !== undefined) {
+    data.actualEffort = updates.actualEffort && updates.actualEffort > 0 ? updates.actualEffort : null;
+  }
   if (updates.progressRate !== undefined) data.progressRate = updates.progressRate;
+
+  // 2026-06-15 ユーザ要件: 完了になる一括更新では実績工数が必須 (> 0)。
+  //   - actualEffort を一括指定する場合は > 0 でなければ拒否 (完了にしつつ 0/クリアは不可)。
+  //   - 指定しない場合は、完了になる対象 ACT に実工数 0/未入力 が 1 件でもあれば拒否。
+  const becomesCompleted = updates.status === 'completed' || updates.progressRate === 100;
+  if (becomesCompleted) {
+    if (updates.actualEffort !== undefined) {
+      if (!(updates.actualEffort != null && updates.actualEffort > 0)) {
+        throw new Error('ACTUAL_EFFORT_REQUIRED');
+      }
+    } else {
+      const missing = await prisma.task.findFirst({
+        where: {
+          id: { in: taskIds },
+          projectId,
+          deletedAt: null,
+          type: 'activity',
+          project: { tenantId: viewerTenantId },
+          OR: [{ actualEffort: null }, { actualEffort: { lte: 0 } }],
+        },
+        select: { id: true },
+      });
+      if (missing) throw new Error('ACTUAL_EFFORT_REQUIRED');
+    }
+  }
 
   // ステータス=完了 → 進捗率=100 の整合性ルール（集計前に適用）。
   // bulk では対象タスク全体が一括で completed になるため、progressRate を 100 に揃えても
@@ -1014,9 +1131,10 @@ export async function bulkUpdateTasks(
     const uniqueParentIds = [
       ...new Set(affected.map((t) => t.parentTaskId).filter((id): id is string => id != null)),
     ];
-    for (const parentId of uniqueParentIds) {
-      await recalculateAncestors(parentId);
-    }
+    // ADR-0035: 親ごとの逐次 recalculateAncestors (共有祖先を親数だけ重複再計算) をやめ、
+    //   影響 WP (親 ∪ 祖先) を重複なく深度降順で 1 回ずつ再計算する (横広な一括更新の往復削減)。
+    //   最終的な WP 集計値は同一。プロジェクト全 WP は走査しない (狭い更新の退行を防ぐ)。
+    await recalculateAffectedWps(projectId, viewerTenantId, uniqueParentIds);
   }
 
   return result.count;
@@ -1132,11 +1250,19 @@ export async function recalculateAncestorsPublic(taskId: string): Promise<void> 
  *   このバックフィル関数はプロジェクト内の全 WP を深度降順（深い WP を先）で
  *   再集計し、データを最新ロジックに揃える。
  *
- * パフォーマンス (2026-04-18 改善):
- *   - A 案: recalculateWpOnly を使い、深度順ループで祖先伝播を省略
- *     → O(N × depth) → O(N) に削減
- *   - C 案: 集計値が現在値と一致する WP は update を skip
- *     → 2 回目以降の実行および部分的に最新のデータで DB 書込を大幅削減
+ * パフォーマンス (2026-04-18 → 2026-06-09 ADR-0037 で全面バッチ化):
+ *   旧実装は WP ごとに findUnique(子込み) + update を逐次実行しており、O(WP) の
+ *   ラウンドトリップが Netlify 同期関数の 10 秒上限を超えて 504 を誘発していた
+ *   (WBS 上書きインポート / 一括削除 finalize / 外部移行で顕在化。ADR-0032 §79 が
+ *   SQL 集計化を将来課題として予告済)。
+ *
+ *   ADR-0037: プロジェクト全タスクを **1 回の findMany** でロードし、メモリ上で
+ *   子 → 親 (深度降順) に集計、現在値と異なる WP **だけ**を `$transaction` の配列形
+ *   (PgBouncer transaction mode で利用可) で **チャンク一括 update** する。
+ *   ラウンドトリップは「全タスク 1 fetch + 変更 WP のチャンク数」で **WP 数に依存しない
+ *   ほぼ定数**になる。最終的な格納値は旧逐次実装と完全に同一:
+ *   - A 案 (祖先伝播スキップ): 深度降順で子 WP を先に集計し、親はその最新集計値を読む。
+ *   - C 案 (一致時スキップ): isWpAggregationEqual で現在値と一致する WP は update しない。
  *
  * @returns { total: 走査した WP 数, updated: 実際に update された WP 数 }
  */
@@ -1145,6 +1271,150 @@ export async function recalculateAllProjectWps(
   viewerTenantId: string,
 ): Promise<{ total: number; updated: number }> {
   // 2026-05-09 feedback Phase 2: 越境再計算を遮断するため project tenant 一致を verify。
+  //   tasks は tenantId 列を持たないため、project 経由で自テナント所属を 1 query で確認。
+  const project = await prisma.project.findFirst({
+    where: { id: projectId, tenantId: viewerTenantId },
+    select: { id: true },
+  });
+  if (!project) return { total: 0, updated: 0 };
+
+  // プロジェクト全タスク (WP + ACT) を 1 回でロード。集計に必要な列のみ。
+  //   severity-1 防御 (feedback_verify_dataflow_primary_source_always): 上の project 検証に
+  //   加え、越境の境界をこの「書き込み対象を決めるクエリ」自体にも `project: { tenantId }` で直付与する。
+  const tasks = await prisma.task.findMany({
+    where: { projectId, deletedAt: null, project: { tenantId: viewerTenantId } },
+    select: {
+      id: true,
+      parentTaskId: true,
+      type: true,
+      plannedEffort: true,
+      progressRate: true,
+      plannedStartDate: true,
+      plannedEndDate: true,
+      actualStartDate: true,
+      actualEndDate: true,
+      status: true,
+      assigneeId: true,
+    },
+  });
+
+  const wps = tasks.filter((t) => t.type === 'work_package');
+  if (wps.length === 0) return { total: 0, updated: 0 };
+
+  // 親 ID → 直接の子タスク
+  const childrenByParent = new Map<string, typeof tasks>();
+  for (const t of tasks) {
+    if (!t.parentTaskId) continue;
+    const arr = childrenByParent.get(t.parentTaskId) ?? [];
+    arr.push(t);
+    childrenByParent.set(t.parentTaskId, arr);
+  }
+
+  // 深度マップ: 祖先チェーン (WP のみ) の長さ = その WP の深度
+  const wpById = new Map(wps.map((w) => [w.id, w]));
+  const depthOf = (id: string): number => {
+    let d = 0;
+    let cur: string | null | undefined = id;
+    // 最大 100 階層を上限に設定（循環参照の防波堤）
+    for (let i = 0; i < 100 && cur; i++) {
+      const w = wpById.get(cur);
+      if (!w || w.parentTaskId === null) break;
+      cur = w.parentTaskId;
+      d++;
+    }
+    return d;
+  };
+
+  // 深度降順 (深い WP を先に集計 → 親が読む時点で子 WP は最新)
+  const sortedWps = [...wps].sort((a, b) => depthOf(b.id) - depthOf(a.id));
+
+  // 各 WP の集計結果をメモリ保持。親は子 WP の **集計後の値** を参照する (DB の古い値ではなく)。
+  const aggById = new Map<string, WpAggregationResult>();
+  const pendingUpdates: { id: string; agg: WpAggregationResult }[] = [];
+
+  for (const wp of sortedWps) {
+    const children = childrenByParent.get(wp.id) ?? [];
+    const aggChildren: WpAggregationChild[] = children.map((c) => {
+      // 子 WP は既に集計済み (深度降順保証) の最新値を使う
+      const childAgg = c.type === 'work_package' ? aggById.get(c.id) : undefined;
+      if (childAgg) {
+        return {
+          plannedEffort: childAgg.plannedEffort,
+          progressRate: childAgg.progressRate,
+          plannedStartDate: childAgg.plannedStartDate,
+          plannedEndDate: childAgg.plannedEndDate,
+          actualStartDate: childAgg.actualStartDate,
+          actualEndDate: childAgg.actualEndDate,
+          status: childAgg.status,
+          assigneeId: childAgg.assigneeId,
+        };
+      }
+      // ACT はそのまま DB 値で集計
+      return {
+        plannedEffort: c.plannedEffort,
+        progressRate: c.progressRate,
+        plannedStartDate: c.plannedStartDate,
+        plannedEndDate: c.plannedEndDate,
+        actualStartDate: c.actualStartDate,
+        actualEndDate: c.actualEndDate,
+        status: c.status,
+        assigneeId: c.assigneeId,
+      };
+    });
+
+    const aggregated = aggregateWpFromChildren(aggChildren);
+    aggById.set(wp.id, aggregated);
+
+    // C 案: 現在値と一致するなら update 不要
+    if (!isWpAggregationEqual(wp, aggregated)) {
+      pendingUpdates.push({ id: wp.id, agg: aggregated });
+    }
+  }
+
+  // 変更のある WP のみ $transaction 配列形でチャンク一括 update (round-trip を定数化)
+  const RECALC_UPDATE_CHUNK = 100;
+  for (let i = 0; i < pendingUpdates.length; i += RECALC_UPDATE_CHUNK) {
+    const chunk = pendingUpdates.slice(i, i + RECALC_UPDATE_CHUNK);
+    await prisma.$transaction(
+      chunk.map(({ id, agg }) => {
+        // assignee はリレーション経由で更新 (Prisma の update は scalar FK を直書きできない場合がある)
+        const { assigneeId, ...rest } = agg;
+        return prisma.task.update({
+          where: { id },
+          data: {
+            ...rest,
+            assignee: assigneeId ? { connect: { id: assigneeId } } : { disconnect: true },
+          },
+        });
+      }),
+    );
+  }
+
+  return { total: wps.length, updated: pendingUpdates.length };
+}
+
+/**
+ * ADR-0035 (2026-06-05): 指定した親 WP 群「とその祖先チェーン」だけを、重複なく深度降順で
+ * 1 回ずつ再計算する。一括更新 (bulkUpdateTasks) の再計算用。
+ *
+ * 旧実装は `for (parentId of uniqueParentIds) await recalculateAncestors(parentId)` と、
+ * 親ごとにルートまで再帰していた。これは (a) 共有祖先 (例: 共通ルート) を親の数だけ再 update し、
+ * (b) 横広な更新 (多数の別 WP にまたがる) でユニーク親数 × 深さの逐次往復になりタイムアウトに迫る。
+ *
+ * 本関数は「影響を受ける WP 集合 = 親 ∪ その祖先」を 1 回の findMany (id + parentTaskId のみ) から
+ * メモリ上で構築し、深度降順 (子から先) で各 WP をちょうど 1 回 `recalculateWpOnly` する。
+ * - `recalculateAllProjectWps` と違い**プロジェクト全 WP は走査しない** (狭い更新が巨大プロジェクトで
+ *   O(全WP) に退行するのを防ぐ)。
+ * - 共有祖先を 1 回しか再計算しない (旧ループの重複 update を排除)。
+ * 最終的な WP 集計値は旧ループと同一 (= 親と全祖先を正しい子集合から再集計した値)。
+ */
+async function recalculateAffectedWps(
+  projectId: string,
+  viewerTenantId: string,
+  parentIds: string[],
+): Promise<void> {
+  if (parentIds.length === 0) return;
+
   const wps = await prisma.task.findMany({
     where: {
       projectId,
@@ -1154,37 +1424,39 @@ export async function recalculateAllProjectWps(
     },
     select: { id: true, parentTaskId: true },
   });
-  if (wps.length === 0) return { total: 0, updated: 0 };
+  if (wps.length === 0) return;
 
-  // 深度マップを作成: 祖先チェーンの長さ = その WP の深度
   const byId = new Map(wps.map((w) => [w.id, w]));
+
+  // 影響を受ける WP 集合 = 各 parentId とその祖先チェーン (共有祖先は 1 回だけ収集)
+  const affected = new Set<string>();
+  for (const pid of parentIds) {
+    let cur: string | null | undefined = pid;
+    for (let i = 0; i < 100 && cur; i++) {
+      if (!byId.has(cur)) break; // WP でない (ありえないが保険) → そのチェーンは打ち切り
+      if (affected.has(cur)) break; // 既に収集済 = 以降の祖先も収集済なので打ち切り
+      affected.add(cur);
+      cur = byId.get(cur)!.parentTaskId;
+    }
+  }
+
   const depthOf = (id: string): number => {
     let d = 0;
     let cur: string | null | undefined = id;
-    // 最大 100 階層を上限に設定（循環参照の防波堤）
     for (let i = 0; i < 100 && cur; i++) {
       const w = byId.get(cur);
-      if (!w) break;
-      if (w.parentTaskId === null) break;
+      if (!w || w.parentTaskId === null) break;
       cur = w.parentTaskId;
       d++;
     }
     return d;
   };
 
-  const sorted = wps
-    .map((w) => ({ id: w.id, depth: depthOf(w.id) }))
-    .sort((a, b) => b.depth - a.depth);
-
-  let updated = 0;
-  for (const w of sorted) {
-    // A 案: 深度降順で処理するため、子 WP は既に最新。祖先への伝播は不要。
-    //        recalculateWpOnly は上方伝播せず、自身のみ更新（+ C 案で一致時スキップ）
-    const didUpdate = await recalculateWpOnly(w.id);
-    if (didUpdate) updated++;
+  // 深度降順 (子 WP を先に再計算 → 親が再集計する時点で子は最新)
+  const sorted = [...affected].sort((a, b) => depthOf(b) - depthOf(a));
+  for (const id of sorted) {
+    await recalculateWpOnly(id);
   }
-
-  return { total: sorted.length, updated };
 }
 
 /**
@@ -1195,7 +1467,9 @@ export async function recalculateAllProjectWps(
  * 子の有効な actual 日付のうち最小/最大を採用、すべて null なら null。
  */
 export type WpAggregationChild = {
-  plannedEffort: Prisma.Decimal;
+  // DB 由来は Decimal、子 WP の集計結果を親へ渡す経路では number。
+  // aggregateWpFromChildren は Number() で正規化するため両方を受ける。
+  plannedEffort: Prisma.Decimal | number;
   progressRate: number;
   plannedStartDate: Date | null;
   plannedEndDate: Date | null;
@@ -1413,6 +1687,15 @@ async function recalculateAncestors(taskId: string): Promise<void> {
   if (!task || task.type !== 'work_package') return;
 
   const aggregated = aggregateWpFromChildren(task.childTasks);
+
+  // ADR-0035 (2026-06-05): C 案 (recalculateWpOnly / recalculateAllProjectWps と同じ最適化)。
+  //   集計値が現在値と一致するなら自身の update をスキップし、上位への伝播も止める。
+  //   この WP の集計が変わらない = 親が集計する値も変わらないため、祖先も再計算不要 (安全な早期終了)。
+  //   旧実装は祖先を無条件 update + 必ずルートまで再帰しており、変化のない祖先にも write が走っていた。
+  if (isWpAggregationEqual(task, aggregated)) {
+    return;
+  }
+
   // assignee はリレーション経由での更新が必要（Prisma の update は scalar FK を直書きできない場合がある）
   const { assigneeId, ...rest } = aggregated;
   await prisma.task.update({

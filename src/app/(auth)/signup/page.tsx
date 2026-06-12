@@ -26,7 +26,8 @@ import { getDiscordInviteUrl } from '@/config/community';
 
 type FormState = {
   name: string;
-  slug: string;
+  // feat/signup-friction-reduction (2026-06-12): 組織 ID (slug) はサーバが自動採番するため
+  //   フォームでは入力させない (FormState から削除)。採番値は送信成功時に assignedSlug で受ける。
   plan: 'beginner' | 'expert' | 'pro';
   // 2026-05-09 (PR C / #5): 個人 / 法人 切替
   billingType: 'corporate' | 'individual';
@@ -55,7 +56,6 @@ type FormState = {
 
 const INITIAL: FormState = {
   name: '',
-  slug: '',
   plan: 'beginner',
   billingType: 'corporate',
   billingCompanyName: '',
@@ -89,6 +89,10 @@ export default function SignupPage() {
   const [eligibilityHint, setEligibilityHint] = useState('');
   const discordUrl = getDiscordInviteUrl();
 
+  // feat/signup-friction-reduction (2026-06-12): 組織 ID (slug) はサーバが自動採番する。
+  //   送信成功時にレスポンスの slug を受け取り、成功画面の表示 + 招待メール再送に使う。
+  const [assignedSlug, setAssignedSlug] = useState('');
+
   // Phase 1 (2026-05-23 / feat/signup-email-resend-ux): 招待メール再送 UX 用 state。
   //   配送 fail 時 (Brevo 拒否 / 受信側 DMARC fail / spam 振分等) に顧客が自己解決できるよう、
   //   成功画面に「再送ボタン + クールダウン + 残り回数表示」を提供する。
@@ -121,7 +125,9 @@ export default function SignupPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           email: form.initialAdminEmail,
-          tenantSlug: form.slug,
+          // feat/signup-friction-reduction (2026-06-12): slug はサーバ自動採番。
+          //   送信成功時に受け取った assignedSlug を再送に使う。
+          tenantSlug: assignedSlug,
         }),
       });
       const json = (await res.json().catch(() => ({}))) as {
@@ -241,7 +247,9 @@ export default function SignupPage() {
       if (!res.ok) {
         const code = json?.error?.code as string | undefined;
         const message = json?.error?.message as string | undefined;
-        if (code === 'SLUG_CONFLICT') setError('この組織 ID は既に使用されています。別の ID を入力してください。');
+        // feat/signup-friction-reduction (2026-06-12): 組織 ID はサーバ自動採番のため、
+        //   ユーザが入力欄で直す導線は無い。採番衝突はサーバ側で message を返す。
+        if (code === 'SLUG_CONFLICT') setError(message ?? '組織 ID の自動採番に失敗しました。時間をおいて再度お試しください。');
         // ADR-0016 (2026-05-20): EMAIL_CONFLICT は廃止 (tenant-scoped 一意化で発生不能)
         // ADR-0016 Revised (2026-05-22): 3 層判定のサーバ側 defense-in-depth エラー
         else if (code === 'OWNED_TENANT_EXISTS') setError(message ?? '入力された初期管理者メールは、既に自前テナントを保有しているユーザのものです。追加のテナント払い出しはシステム管理者へお問い合わせください。');
@@ -252,6 +260,9 @@ export default function SignupPage() {
         return;
       }
 
+      // feat/signup-friction-reduction (2026-06-12): サーバが採番した組織 ID を保持し、
+      //   成功画面の表示 + 招待メール再送に使う。
+      setAssignedSlug((json?.data?.slug as string | undefined) ?? '');
       setSuccess(true);
     } finally {
       setSubmitting(false);
@@ -284,6 +295,52 @@ export default function SignupPage() {
               </p>
               <p className="m-0 mt-2 text-xs text-muted-foreground">
                 上記アドレスに誤りがある場合は、ログイン画面に戻り、サインアップをやり直してください。
+              </p>
+            </div>
+
+            {/* feat/signup-friction-reduction (2026-06-12): 自動採番された組織 ID を明示する。
+                組織 ID はログイン時に入力する値であり、招待メールにも記載される。入力欄を無くした分、
+                ここで確実に本人へ伝える。 */}
+            {assignedSlug && (
+              <div
+                className="rounded-md border border-info/30 bg-info/5 p-3 text-sm"
+                data-testid="signup-success-slug-block"
+              >
+                <p className="m-0 text-muted-foreground">あなたの組織 ID (ログイン時に入力します)</p>
+                <p
+                  className="m-0 mt-1 font-mono text-lg font-bold break-all"
+                  data-testid="signup-success-slug"
+                >
+                  {assignedSlug}
+                </p>
+                <p className="m-0 mt-2 text-xs text-muted-foreground">
+                  この組織 ID は招待メールにも記載されます。次回ログイン時に、メールアドレス・パスワードとあわせて入力します。
+                </p>
+              </div>
+            )}
+
+            {/* feat/signup-friction-reduction (2026-06-12): メール「予告」ブロック。
+                送信後にアプリを離れてメールを探す段階で離脱しないよう、差出人・件名・到着目安・
+                次の手順を **届く前に** 明示する。差出人/件名は実メール (email-verification.service.ts)
+                と一致させること。届かなかった後のリカバリ (再送/チェックリスト) は下部に分離。 */}
+            <div
+              className="space-y-2 rounded-md border border-muted-foreground/20 bg-muted/30 p-3 text-sm"
+              data-testid="signup-email-expectation"
+            >
+              <p className="m-0 font-semibold">届くメールについて</p>
+              <ul className="m-0 ml-4 list-disc space-y-1 text-muted-foreground">
+                <li>
+                  差出人: <span className="font-mono">noreply@tasukiba.com</span>
+                </li>
+                <li>
+                  件名: <span className="font-semibold">「たすきば - アカウントの設定」</span>
+                </li>
+                <li>到着の目安: 通常 1 分以内に届きます</li>
+                <li>メール内のリンクは送信から 24 時間有効です</li>
+              </ul>
+              <p className="m-0 mt-1 text-muted-foreground">
+                このあとの手順: メール内の「パスワードを設定する」を押す → パスワードを設定 → ログイン画面で
+                組織 ID・メールアドレス・パスワードを入力してログイン。
               </p>
             </div>
 
@@ -433,6 +490,39 @@ export default function SignupPage() {
               </div>
             )}
 
+            {/* feat/signup-friction-reduction (2026-06-12): 心理的負荷低減のためセクション順を
+                「組織情報 → 初期管理者 → プラン選択 → (Expert/Pro) 請求先」に変更。
+                メール (initialAdminEmail) をプラン選択より前に入力させることで、3 層 eligibility
+                判定 (層1 全面不可の警告 / 層2 Beginner disable) がプラン選択時点で確定する。 */}
+
+            <fieldset className="space-y-3 rounded border p-4">
+              <legend className="px-1 text-sm font-semibold">テナント (組織) 情報</legend>
+              <div className="space-y-1.5">
+                <Label htmlFor="name">表示用テナント名 *</Label>
+                <Input id="name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} maxLength={100} placeholder="例: 株式会社たすきば" required />
+              </div>
+              {/* feat/signup-friction-reduction (2026-06-12): 組織 ID (ログイン時に使う識別子) は
+                  サーバが数字連番で自動採番するため入力欄なし。採番値は送信後の成功画面と招待メールで案内する。 */}
+              <p className="text-xs text-muted-foreground" data-testid="signup-org-id-auto-note">
+                ログイン時に使う「組織 ID」は自動で発行されます (入力不要)。登録後の成功画面と招待メールでお知らせします。
+              </p>
+            </fieldset>
+
+            <fieldset className="space-y-3 rounded border p-4">
+              <legend className="px-1 text-sm font-semibold">初期管理者 (ログイン用)</legend>
+              <p className="text-xs text-muted-foreground">
+                このメールアドレスに招待メールが届きます。リンクからパスワードを設定するとログインできるようになります。
+              </p>
+              <div className="space-y-1.5">
+                <Label htmlFor="initialAdminName">氏名 *</Label>
+                <Input id="initialAdminName" value={form.initialAdminName} onChange={(e) => setForm({ ...form, initialAdminName: e.target.value })} maxLength={100} required />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="initialAdminEmail">メールアドレス *</Label>
+                <Input id="initialAdminEmail" type="email" value={form.initialAdminEmail} onChange={(e) => setForm({ ...form, initialAdminEmail: e.target.value })} maxLength={255} required />
+              </div>
+            </fieldset>
+
             {/* ADR-0016 (2026-05-20): プラン選択 UI。Beginner は初回ユーザ限定 (90日試用 abuse 防止)。
                 既登録 email の場合は Beginner radio を disable し Expert/Pro 必須にする。 */}
             <fieldset className="space-y-3 rounded border p-4">
@@ -504,20 +594,6 @@ export default function SignupPage() {
                   ℹ {eligibilityHint}
                 </p>
               )}
-            </fieldset>
-
-            <fieldset className="space-y-3 rounded border p-4">
-              <legend className="px-1 text-sm font-semibold">テナント (組織) 情報</legend>
-              <div className="space-y-1.5">
-                <Label htmlFor="name">表示用テナント名 *</Label>
-                <Input id="name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} maxLength={100} required />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="slug">組織 ID *</Label>
-                {/* 2026-05-20: dash を [文字クラス先頭] に移動 (= Chrome v flag 互換、SyntaxError 回避) */}
-                <Input id="slug" value={form.slug} onChange={(e) => setForm({ ...form, slug: e.target.value.toLowerCase() })} placeholder="例: my-company" pattern="[a-z0-9](?:[-a-z0-9]{1,58}[a-z0-9])?" required />
-                <p className="text-xs text-muted-foreground">英小文字・数字・ハイフンのみ、3〜60 文字</p>
-              </div>
             </fieldset>
 
             {/* feat/billing-conditional-by-plan (2026-06-05): Beginner は課金が発生しないため請求先セクションを
@@ -622,21 +698,6 @@ export default function SignupPage() {
               </div>
             </fieldset>
             )}
-
-            <fieldset className="space-y-3 rounded border p-4">
-              <legend className="px-1 text-sm font-semibold">初期管理者 (ログイン用)</legend>
-              <p className="text-xs text-muted-foreground">
-                このメールアドレスに招待メールが届きます。リンクからパスワードを設定するとログインできるようになります。
-              </p>
-              <div className="space-y-1.5">
-                <Label htmlFor="initialAdminName">氏名 *</Label>
-                <Input id="initialAdminName" value={form.initialAdminName} onChange={(e) => setForm({ ...form, initialAdminName: e.target.value })} maxLength={100} required />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="initialAdminEmail">メールアドレス *</Label>
-                <Input id="initialAdminEmail" type="email" value={form.initialAdminEmail} onChange={(e) => setForm({ ...form, initialAdminEmail: e.target.value })} maxLength={255} required />
-              </div>
-            </fieldset>
 
             {/* feat/legal-pages-lp-integration (2026-05-21):
                 規約・プラポリ同意。両方必須 (= submit ボタンが disabled)。

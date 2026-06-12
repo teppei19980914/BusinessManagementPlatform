@@ -53,7 +53,6 @@ function getRetroSortValue(r: AllRetroDTO, columnKey: string): unknown {
   switch (columnKey) {
     case 'project': return r.projectName ?? '';
     case 'conductedDate': return r.conductedDate;
-    case 'state': return r.state;
     case 'assigneeName': return r.assigneeName ?? '';
     case 'createdAt': return r.createdAt;
     case 'createdBy': return r.createdByName ?? '';
@@ -139,7 +138,7 @@ export function AllRetrospectivesTable({
                 本文列(計画総括/実績総括/良かった点/次回改善事項)は詳細ダイアログでのみ表示するため一覧からは撤去。 */}
             <SortableResizableHead columnKey="project" defaultWidth={140} label={tRetro('project')} sortState={sortState} onSortChange={setSortColumn} />
             <SortableResizableHead columnKey="conductedDate" defaultWidth={110} label={tRetro('conductedDate')} sortState={sortState} onSortChange={setSortColumn} />
-            <SortableResizableHead columnKey="state" defaultWidth={100} label={tRetro('state')} sortState={sortState} onSortChange={setSortColumn} />
+            {/* 2026-06-12: 状態(下書き/確定)列を撤去 (プロジェクト別振り返り一覧と統一)。 */}
             <SortableResizableHead columnKey="assigneeName" defaultWidth={120} label={tRetro('assignee')} sortState={sortState} onSortChange={setSortColumn} />
             <SortableResizableHead columnKey="createdBy" defaultWidth={120} label={tRetro('createdBy')} sortState={sortState} onSortChange={setSortColumn} />
             <SortableResizableHead columnKey="createdAt" defaultWidth={150} label={tRetro('createdAt')} sortState={sortState} onSortChange={setSortColumn} />
@@ -191,11 +190,6 @@ export function AllRetrospectivesTable({
                 </div>
               </TableCell>
               <TableCell className="whitespace-nowrap font-medium">{formatDateOnly(r.conductedDate)}</TableCell>
-              <TableCell>
-                <Badge variant={r.state === 'confirmed' ? 'default' : 'outline'}>
-                  {r.state === 'confirmed' ? tRetro('confirmAction') : tRetro('draftBadge')}
-                </Badge>
-              </TableCell>
               <TableCell className="text-sm text-muted-foreground">{r.assigneeName || '—'}</TableCell>
               <TableCell className="text-sm text-muted-foreground">
                 {r.createdByName ?? <span className="text-muted-foreground">-</span>}
@@ -226,7 +220,7 @@ export function AllRetrospectivesTable({
           ))}
           {filteredRetros.length === 0 && (
             <TableRow>
-              <TableCell colSpan={isAdmin ? 11 : 10} className="py-8 text-center text-muted-foreground">
+              <TableCell colSpan={isAdmin ? 10 : 9} className="py-8 text-center text-muted-foreground">
                 {tRetro('noneInList')}
               </TableCell>
             </TableRow>

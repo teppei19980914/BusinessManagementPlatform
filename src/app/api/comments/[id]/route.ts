@@ -25,6 +25,7 @@ import {
   deleteComment,
   getComment,
   updateComment,
+  isCommentTargetFullyClosed,
 } from '@/services/comment.service';
 import { recordAuditLog } from '@/services/audit.service';
 import { validateMentionsForEntity } from '@/services/mention.service';
@@ -69,6 +70,25 @@ export async function PATCH(
   if (!existing) return notFound();
 
   if (!canMutate(user, existing)) return forbidden();
+
+  // 2026-06-12: クローズ済みPJ (読み取り専用) の資産に紐付くコメントは編集も不可。
+  if (
+    await isCommentTargetFullyClosed(
+      existing.entityType as CommentEntityType,
+      existing.entityId,
+      user.tenantId,
+    )
+  ) {
+    return NextResponse.json(
+      {
+        error: {
+          code: 'PROJECT_CLOSED',
+          message: 'このプロジェクトはクローズ済み (読み取り専用) のためコメントを編集できません',
+        },
+      },
+      { status: 403 },
+    );
+  }
 
   const body = await req.json();
   const parsed = updateCommentSchema.safeParse(body);
@@ -123,6 +143,25 @@ export async function DELETE(
   if (!existing) return notFound();
 
   if (!canMutate(user, existing)) return forbidden();
+
+  // 2026-06-12: クローズ済みPJ (読み取り専用) の資産に紐付くコメントは削除も不可。
+  if (
+    await isCommentTargetFullyClosed(
+      existing.entityType as CommentEntityType,
+      existing.entityId,
+      user.tenantId,
+    )
+  ) {
+    return NextResponse.json(
+      {
+        error: {
+          code: 'PROJECT_CLOSED',
+          message: 'このプロジェクトはクローズ済み (読み取り専用) のためコメントを削除できません',
+        },
+      },
+      { status: 403 },
+    );
+  }
 
   await deleteComment(id, user.tenantId);
 

@@ -47,6 +47,8 @@ import {
   updateTask,
   updateTaskProgress,
   bulkUpdateTasks,
+  bulkDeleteTasks,
+  recalculateAllProjectWps,
 } from './task.service';
 import { prisma } from '@/lib/db';
 import { getMockCallArg } from '@/lib/test-mock-helpers';
@@ -259,15 +261,14 @@ describe('createTask', () => {
 describe('deleteTask', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('deletedAt をセット (論理削除)', async () => {
-    // 2026-05-09 feedback Phase 2: deleteTask 冒頭の所有確認用 mock
-    vi.mocked(prisma.task.findFirst).mockResolvedValue({ id: 't-1' } as never);
-    vi.mocked(prisma.task.findUnique).mockResolvedValue({
-      parentTaskId: null,
-    } as never);
-    vi.mocked(prisma.task.update).mockResolvedValue({} as never);
+  it('deletedAt をセット (論理削除) + before(TaskDTO) を返す', async () => {
+    // ADR-0035: 所有確認 + before 取得を 1 回の findFirst (full row + includes) に集約
+    vi.mocked(prisma.task.findFirst).mockResolvedValue(rowTask() as never);
+    vi.mocked(prisma.task.update).mockResolvedValue(rowTask() as never);
+    vi.mocked(prisma.attachment.updateMany).mockResolvedValue({ count: 0 } as never);
+    vi.mocked(prisma.comment.updateMany).mockResolvedValue({ count: 0 } as never);
 
-    await deleteTask('t-1', 'u-1', 'tenant-A');
+    const before = await deleteTask('t-1', 'p-1', 'u-1', 'tenant-A');
 
     expect(prisma.task.update).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -275,6 +276,87 @@ describe('deleteTask', () => {
         data: expect.objectContaining({ deletedAt: expect.any(Date) }),
       }),
     );
+    // 削除した行を TaskDTO で返す (route が監査 before 値に使う)
+    expect(before?.id).toBe('t-1');
+    // findFirst の where に projectId + project.tenantId 越境防御が入る
+    const call = getMockCallArg(vi.mocked(prisma.task.findFirst));
+    expect((call.where as Record<string, unknown>).projectId).toBe('p-1');
+    expect((call.where as unknown as { project: { tenantId: string } }).project.tenantId).toBe('tenant-A');
+  });
+
+  it('越境/不存在は null を返す (route が 404 にマップ)', async () => {
+    vi.mocked(prisma.task.findFirst).mockResolvedValue(null);
+
+    const before = await deleteTask('t-1', 'p-1', 'u-1', 'tenant-A');
+
+    expect(before).toBeNull();
+    expect(prisma.task.update).not.toHaveBeenCalled();
+  });
+});
+
+// ADR-0035: 一括削除サービス
+describe('bulkDeleteTasks', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('所有確認した ID のみを $transaction で一括 soft-delete し、WP 再計算は呼ばない', async () => {
+    // findMany は越境/別proj/既削除を除外した owned ID を返す (c は除外された想定)
+    vi.mocked(prisma.task.findMany).mockResolvedValue([{ id: 'a' }, { id: 'b' }] as never);
+    vi.mocked(prisma.task.updateMany).mockResolvedValue({ count: 2 } as never);
+    vi.mocked(prisma.attachment.updateMany).mockResolvedValue({ count: 0 } as never);
+    vi.mocked(prisma.comment.updateMany).mockResolvedValue({ count: 0 } as never);
+
+    const res = await bulkDeleteTasks('p-1', ['a', 'b', 'c'], 'u-1', 'tenant-A');
+
+    expect(res).toEqual({ deletedCount: 2, deletedIds: ['a', 'b'] });
+
+    // 所有確認は tenant + project + deletedAt:null で 1 回の findMany に集約
+    expect(prisma.task.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          id: { in: ['a', 'b', 'c'] },
+          projectId: 'p-1',
+          deletedAt: null,
+          project: { tenantId: 'tenant-A' },
+        }),
+      }),
+    );
+    // task.updateMany は owned ID のみ対象
+    expect(prisma.task.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: { in: ['a', 'b'] } },
+        data: expect.objectContaining({ deletedAt: expect.any(Date), updatedBy: 'u-1' }),
+      }),
+    );
+    // attachment / comment も tenantId 明示で一括 soft-delete
+    expect(prisma.attachment.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          tenantId: 'tenant-A',
+          entityType: 'task',
+          entityId: { in: ['a', 'b'] },
+          deletedAt: null,
+        }),
+      }),
+    );
+    // 再計算 (recalculateAncestors の findUnique/update) は呼ばれない (末尾に集約するため)
+    expect(prisma.task.findUnique).not.toHaveBeenCalled();
+    expect(prisma.task.update).not.toHaveBeenCalled();
+  });
+
+  it('所有 ID が 0 件なら $transaction を呼ばず no-op を返す (越境/全件別proj)', async () => {
+    vi.mocked(prisma.task.findMany).mockResolvedValue([] as never);
+
+    const res = await bulkDeleteTasks('p-1', ['x'], 'u-1', 'tenant-A');
+
+    expect(res).toEqual({ deletedCount: 0, deletedIds: [] });
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('taskIds が空なら DB を一切叩かない', async () => {
+    const res = await bulkDeleteTasks('p-1', [], 'u-1', 'tenant-A');
+
+    expect(res).toEqual({ deletedCount: 0, deletedIds: [] });
+    expect(prisma.task.findMany).not.toHaveBeenCalled();
   });
 });
 
@@ -282,6 +364,8 @@ describe('getProgressLogs', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('taskId で findMany + DTO に変換', async () => {
+    // getProgressLogs 冒頭の越境ガード (task.findFirst) を明示 mock (テスト独立性確保)
+    vi.mocked(prisma.task.findFirst).mockResolvedValue({ id: 't-1' } as never);
     vi.mocked(prisma.taskProgressLog.findMany).mockResolvedValue([
       {
         id: 'pl-1',
@@ -397,13 +481,15 @@ describe('updateTask (主要分岐)', () => {
   });
 
   it('status=completed 指定時は progress=100 に正規化される (PR #69 整合性)', async () => {
-    vi.mocked(prisma.task.findFirst).mockResolvedValue({ id: 't-1' } as never);
-    vi.mocked(prisma.task.findUnique).mockResolvedValue({
+    // ADR-0035: 現在値は冒頭の findFirst (owned) で取得するため findUnique は不要
+    // 2026-06-15: 完了には実績工数 (> 0) が必要なため現在値に actualEffort を持たせる
+    vi.mocked(prisma.task.findFirst).mockResolvedValue({
+      id: 't-1',
       status: 'in_progress',
       progressRate: 50,
       actualStartDate: new Date('2026-04-01'),
       actualEndDate: null,
-      parentTaskId: null,
+      actualEffort: 8,
     } as never);
     vi.mocked(prisma.task.update).mockResolvedValue(rowTask() as never);
 
@@ -415,13 +501,14 @@ describe('updateTask (主要分岐)', () => {
   });
 
   it('progress=100 指定時は status=completed に正規化される (PR #69 整合性)', async () => {
-    vi.mocked(prisma.task.findFirst).mockResolvedValue({ id: 't-1' } as never);
-    vi.mocked(prisma.task.findUnique).mockResolvedValue({
+    // ADR-0035: 現在値は冒頭の findFirst (owned) で取得するため findUnique は不要
+    vi.mocked(prisma.task.findFirst).mockResolvedValue({
+      id: 't-1',
       status: 'in_progress',
       progressRate: 50,
       actualStartDate: new Date('2026-04-01'),
       actualEndDate: null,
-      parentTaskId: null,
+      actualEffort: 8,
     } as never);
     vi.mocked(prisma.task.update).mockResolvedValue(rowTask() as never);
 
@@ -433,13 +520,12 @@ describe('updateTask (主要分岐)', () => {
   });
 
   it('status=not_started に変えると actual 日付が両方 null になる', async () => {
-    vi.mocked(prisma.task.findFirst).mockResolvedValue({ id: 't-1' } as never);
-    vi.mocked(prisma.task.findUnique).mockResolvedValue({
+    vi.mocked(prisma.task.findFirst).mockResolvedValue({
+      id: 't-1',
       status: 'in_progress',
       progressRate: 30,
       actualStartDate: new Date('2026-04-01'),
       actualEndDate: null,
-      parentTaskId: null,
     } as never);
     vi.mocked(prisma.task.update).mockResolvedValue(rowTask() as never);
 
@@ -448,6 +534,59 @@ describe('updateTask (主要分岐)', () => {
     const updateCall = getMockCallArg(vi.mocked(prisma.task.update));
     expect(updateCall.data.actualStartDate).toBe(null);
     expect(updateCall.data.actualEndDate).toBe(null);
+  });
+
+  // 2026-06-15: 完了タスクは実績工数が必須 (> 0)。
+  it('status=completed で実績工数が無い (現在値 null・input 未指定) と拒否', async () => {
+    vi.mocked(prisma.task.findFirst).mockResolvedValue({
+      id: 't-1',
+      status: 'in_progress',
+      progressRate: 50,
+      actualStartDate: new Date('2026-04-01'),
+      actualEndDate: null,
+      actualEffort: null,
+    } as never);
+    vi.mocked(prisma.task.update).mockResolvedValue(rowTask() as never);
+
+    await expect(
+      updateTask('t-1', { status: 'completed' } as never, 'u-1', 'tenant-A'),
+    ).rejects.toThrow('ACTUAL_EFFORT_REQUIRED');
+    expect(prisma.task.update).not.toHaveBeenCalled();
+  });
+
+  it('status=completed + 実績工数を input で指定すれば更新できる', async () => {
+    vi.mocked(prisma.task.findFirst).mockResolvedValue({
+      id: 't-1',
+      status: 'in_progress',
+      progressRate: 50,
+      actualStartDate: new Date('2026-04-01'),
+      actualEndDate: null,
+      actualEffort: null,
+    } as never);
+    vi.mocked(prisma.task.update).mockResolvedValue(rowTask() as never);
+
+    await updateTask('t-1', { status: 'completed', actualEffort: 5 } as never, 'u-1', 'tenant-A');
+
+    const updateCall = getMockCallArg(vi.mocked(prisma.task.update));
+    expect(updateCall.data.actualEffort).toBe(5);
+    expect(updateCall.data.status).toBe('completed');
+  });
+
+  it('完了タスクの実績工数を 0 にクリアしようとすると拒否', async () => {
+    vi.mocked(prisma.task.findFirst).mockResolvedValue({
+      id: 't-1',
+      status: 'completed',
+      progressRate: 100,
+      actualStartDate: new Date('2026-04-01'),
+      actualEndDate: new Date('2026-04-05'),
+      actualEffort: 8,
+    } as never);
+    vi.mocked(prisma.task.update).mockResolvedValue(rowTask() as never);
+
+    await expect(
+      updateTask('t-1', { actualEffort: 0 } as never, 'u-1', 'tenant-A'),
+    ).rejects.toThrow('ACTUAL_EFFORT_REQUIRED');
+    expect(prisma.task.update).not.toHaveBeenCalled();
   });
 
   it('[ADR-0032] name を既存と同名へ変更しても更新できる (名称一意性ガード撤廃)', async () => {
@@ -464,13 +603,12 @@ describe('updateTask (主要分岐)', () => {
   });
 
   it('status=on_hold に変えると actualEndDate のみ null、actualStartDate は維持', async () => {
-    vi.mocked(prisma.task.findFirst).mockResolvedValue({ id: 't-1' } as never);
-    vi.mocked(prisma.task.findUnique).mockResolvedValue({
+    vi.mocked(prisma.task.findFirst).mockResolvedValue({
+      id: 't-1',
       status: 'completed',
       progressRate: 100,
       actualStartDate: new Date('2026-04-01'),
       actualEndDate: new Date('2026-04-10'),
-      parentTaskId: null,
     } as never);
     vi.mocked(prisma.task.update).mockResolvedValue(rowTask() as never);
 
@@ -597,6 +735,130 @@ describe('bulkUpdateTasks', () => {
     expect(call.where.type).toBe('activity');
     expect(call.where.projectId).toBe('p-1');
   });
+
+  it('実績工数を一括更新できる (0 はクリア=null)', async () => {
+    vi.mocked(prisma.project.findFirst).mockResolvedValue({ id: 'p-1' } as never);
+    vi.mocked(prisma.task.updateMany).mockResolvedValue({ count: 2 } as never);
+    vi.mocked(prisma.task.findMany).mockResolvedValue([]);
+
+    // 正の値 → そのまま反映
+    await bulkUpdateTasks('p-1', ['t-1', 't-2'], { actualEffort: 6 } as never, 'u-1', 'tenant-A');
+    expect(getMockCallArg(vi.mocked(prisma.task.updateMany)).data.actualEffort).toBe(6);
+
+    // 0 → null (クリア)
+    vi.mocked(prisma.task.updateMany).mockClear();
+    vi.mocked(prisma.task.updateMany).mockResolvedValue({ count: 2 } as never);
+    await bulkUpdateTasks('p-1', ['t-1', 't-2'], { actualEffort: 0 } as never, 'u-1', 'tenant-A');
+    expect(getMockCallArg(vi.mocked(prisma.task.updateMany)).data.actualEffort).toBeNull();
+  });
+
+  // 2026-06-15: 完了になる一括更新は実績工数が必須 (> 0)。
+  it('完了一括更新で実工数未指定 + 対象に未入力があれば拒否', async () => {
+    vi.mocked(prisma.project.findFirst).mockResolvedValue({ id: 'p-1' } as never);
+    // 実工数 未入力の対象 ACT が見つかる
+    vi.mocked(prisma.task.findFirst).mockResolvedValue({ id: 't-2' } as never);
+    vi.mocked(prisma.task.updateMany).mockResolvedValue({ count: 2 } as never);
+
+    await expect(
+      bulkUpdateTasks('p-1', ['t-1', 't-2'], { status: 'completed' } as never, 'u-1', 'tenant-A'),
+    ).rejects.toThrow('ACTUAL_EFFORT_REQUIRED');
+    expect(prisma.task.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('完了一括更新で実工数>0 を指定すれば更新できる', async () => {
+    vi.mocked(prisma.project.findFirst).mockResolvedValue({ id: 'p-1' } as never);
+    vi.mocked(prisma.task.updateMany).mockResolvedValue({ count: 2 } as never);
+    vi.mocked(prisma.task.findMany).mockResolvedValue([]);
+
+    const r = await bulkUpdateTasks(
+      'p-1',
+      ['t-1', 't-2'],
+      { status: 'completed', actualEffort: 6 } as never,
+      'u-1',
+      'tenant-A',
+    );
+    expect(r).toBe(2);
+    // 実工数>0 指定時は対象の事前確認 (findFirst) は不要
+    expect(prisma.task.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('完了一括更新で実工数=0 を指定すると拒否', async () => {
+    vi.mocked(prisma.project.findFirst).mockResolvedValue({ id: 'p-1' } as never);
+    vi.mocked(prisma.task.updateMany).mockResolvedValue({ count: 2 } as never);
+
+    await expect(
+      bulkUpdateTasks('p-1', ['t-1', 't-2'], { status: 'completed', actualEffort: 0 } as never, 'u-1', 'tenant-A'),
+    ).rejects.toThrow('ACTUAL_EFFORT_REQUIRED');
+    expect(prisma.task.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('完了一括更新で実工数未指定でも対象すべて入力済 (未入力なし) なら更新できる', async () => {
+    vi.mocked(prisma.project.findFirst).mockResolvedValue({ id: 'p-1' } as never);
+    vi.mocked(prisma.task.findFirst).mockResolvedValue(null); // 未入力なし
+    vi.mocked(prisma.task.updateMany).mockResolvedValue({ count: 2 } as never);
+    vi.mocked(prisma.task.findMany).mockResolvedValue([]);
+
+    const r = await bulkUpdateTasks(
+      'p-1',
+      ['t-1', 't-2'],
+      { status: 'completed' } as never,
+      'u-1',
+      'tenant-A',
+    );
+    expect(r).toBe(2);
+  });
+
+  it('[ADR-0035] 再計算は影響 WP (親∪祖先) を重複なく 1 回ずつ (共有祖先は 1 回だけ)', async () => {
+    // wp-1 と wp-2 は共通の親 wp-root を持つ。旧実装は親ごとに recalculateAncestors を回し
+    // wp-root を 2 回再計算していた。新実装 (recalculateAffectedWps) は影響 WP 集合を
+    // 重複排除 + 深度降順で 1 回ずつ再計算するため wp-root は 1 回だけ。
+    vi.mocked(prisma.project.findFirst).mockResolvedValue({ id: 'p-1' } as never);
+    vi.mocked(prisma.task.updateMany).mockResolvedValue({ count: 2 } as never);
+    // findMany 1回目: 更新 ACT の親 (wp-1, wp-2)、2回目: recalc 用の全 WP (id+parentTaskId)
+    vi.mocked(prisma.task.findMany)
+      .mockResolvedValueOnce([{ parentTaskId: 'wp-1' }, { parentTaskId: 'wp-2' }] as never)
+      .mockResolvedValueOnce([
+        { id: 'wp-1', parentTaskId: 'wp-root' },
+        { id: 'wp-2', parentTaskId: 'wp-root' },
+        { id: 'wp-root', parentTaskId: null },
+      ] as never);
+    // recalculateWpOnly の findUnique: 各 WP は子なし WP として返す (集計内容は本テストの関心外)
+    vi.mocked(prisma.task.findUnique).mockImplementation((args) =>
+      Promise.resolve({
+        id: (args as { where: { id: string } }).where.id,
+        type: 'work_package',
+        childTasks: [],
+        plannedEffort: 0,
+        progressRate: 0,
+        plannedStartDate: null,
+        plannedEndDate: null,
+        actualStartDate: null,
+        actualEndDate: null,
+        status: 'not_started',
+        assigneeId: null,
+      }) as never,
+    );
+    vi.mocked(prisma.task.update).mockResolvedValue({} as never);
+
+    await bulkUpdateTasks(
+      'p-1',
+      ['t-1', 't-2'],
+      { plannedEffort: 4 } as never, // needsRecalc=true
+      'u-1',
+      'tenant-A',
+    );
+
+    const idsCalled = vi
+      .mocked(prisma.task.findUnique)
+      .mock.calls.map((c) => (c[0] as { where: { id: string } }).where.id);
+    // 共有祖先 wp-root は 1 回だけ (旧実装は 2 回)
+    expect(idsCalled.filter((id) => id === 'wp-root').length).toBe(1);
+    // 各親もそれぞれ 1 回
+    expect(idsCalled.filter((id) => id === 'wp-1').length).toBe(1);
+    expect(idsCalled.filter((id) => id === 'wp-2').length).toBe(1);
+    // 全 3 WP のみ (プロジェクト全 WP 走査ではなく影響集合に限定)
+    expect(idsCalled.sort()).toEqual(['wp-1', 'wp-2', 'wp-root']);
+  });
 });
 
 // ================================================================
@@ -718,5 +980,133 @@ describe('getAssigneeDailyWorkload (PR H / #7)', () => {
         plannedEndDate: { not: null },
       }),
     );
+  });
+});
+
+// ================================================================
+// ADR-0037 (2026-06-09): recalculateAllProjectWps バッチ化
+//   全タスクを 1 fetch → メモリで子→親 (深度降順) 集計 → 変更 WP のみ
+//   $transaction 配列形で一括 update。値は旧逐次実装と同一。
+// ================================================================
+describe('recalculateAllProjectWps (ADR-0037 バッチ化)', () => {
+  const wpRow = (o: Record<string, unknown> = {}) => ({
+    id: 'wp-1',
+    parentTaskId: null,
+    type: 'work_package',
+    plannedEffort: 0,
+    progressRate: 0,
+    plannedStartDate: null,
+    plannedEndDate: null,
+    actualStartDate: null,
+    actualEndDate: null,
+    status: 'not_started',
+    assigneeId: null,
+    ...o,
+  });
+  const actRow = (o: Record<string, unknown> = {}) => ({
+    id: 'a-1',
+    parentTaskId: 'wp-1',
+    type: 'activity',
+    plannedEffort: 5,
+    progressRate: 100,
+    plannedStartDate: new Date('2026-06-01T00:00:00Z'),
+    plannedEndDate: new Date('2026-06-05T00:00:00Z'),
+    actualStartDate: null,
+    actualEndDate: null,
+    status: 'completed',
+    assigneeId: 'u-1',
+    ...o,
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(prisma.project.findFirst).mockResolvedValue({ id: 'p-1' } as never);
+  });
+
+  it('越境 (project が自テナントに無い) は何もせず {0,0} を返す', async () => {
+    vi.mocked(prisma.project.findFirst).mockResolvedValue(null as never);
+    const r = await recalculateAllProjectWps('p-1', 'tenant-X');
+    expect(r).toEqual({ total: 0, updated: 0 });
+    expect(prisma.task.findMany).not.toHaveBeenCalled();
+  });
+
+  it('子 ACT から親 WP を集計し、変更がある WP を $transaction で一括 update する', async () => {
+    vi.mocked(prisma.task.findMany).mockResolvedValue([
+      wpRow(),
+      actRow({ id: 'a-1', plannedEffort: 5 }),
+      actRow({ id: 'a-2', plannedEffort: 5, plannedEndDate: new Date('2026-06-10T00:00:00Z') }),
+    ] as never);
+
+    const r = await recalculateAllProjectWps('p-1', 'tenant-A');
+
+    expect(r).toEqual({ total: 1, updated: 1 });
+    // 逐次 update ではなく $transaction 配列形で 1 回
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    // update は WP のみ (1 件)。集計値: 工数 10 / 進捗 100 / status completed
+    expect(prisma.task.update).toHaveBeenCalledTimes(1);
+    const arg = vi.mocked(prisma.task.update).mock.calls[0][0] as {
+      where: { id: string };
+      data: Record<string, unknown>;
+    };
+    expect(arg.where.id).toBe('wp-1');
+    expect(arg.data.plannedEffort).toBe(10);
+    expect(arg.data.progressRate).toBe(100);
+    expect(arg.data.status).toBe('completed');
+    // 子が全員同一担当 → 親も connect
+    expect(arg.data.assignee).toEqual({ connect: { id: 'u-1' } });
+  });
+
+  it('C 案: 既に集計値が正しい WP は update しない (updated=0, $transaction 未呼出)', async () => {
+    // WP が既に集計済みの値を保持 (工数 5 / 進捗 100 / completed / assignee u-1 / 日付一致)
+    vi.mocked(prisma.task.findMany).mockResolvedValue([
+      wpRow({
+        plannedEffort: 5,
+        progressRate: 100,
+        plannedStartDate: new Date('2026-06-01T00:00:00Z'),
+        plannedEndDate: new Date('2026-06-05T00:00:00Z'),
+        status: 'completed',
+        assigneeId: 'u-1',
+      }),
+      actRow({ id: 'a-1', plannedEffort: 5 }),
+    ] as never);
+
+    const r = await recalculateAllProjectWps('p-1', 'tenant-A');
+    expect(r).toEqual({ total: 1, updated: 0 });
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(prisma.task.update).not.toHaveBeenCalled();
+  });
+
+  it('入れ子 WP: 子 WP の集計後の値が親 WP に伝播する (深度降順)', async () => {
+    // gp(WP) → p(WP) → a(ACT, 工数8)。p は a から 8、gp は p の集計値 8 を読む。
+    vi.mocked(prisma.task.findMany).mockResolvedValue([
+      wpRow({ id: 'gp', parentTaskId: null }),
+      wpRow({ id: 'p', parentTaskId: 'gp' }),
+      actRow({
+        id: 'a', parentTaskId: 'p', plannedEffort: 8, progressRate: 50, status: 'in_progress',
+      }),
+    ] as never);
+
+    const r = await recalculateAllProjectWps('p-1', 'tenant-A');
+
+    expect(r.total).toBe(2);
+    expect(r.updated).toBe(2);
+    const byId = new Map(
+      vi.mocked(prisma.task.update).mock.calls.map((c) => {
+        const a = c[0] as { where: { id: string }; data: Record<string, unknown> };
+        return [a.where.id, a.data];
+      }),
+    );
+    // 親 p も祖父 gp も工数 8 が伝播
+    expect(byId.get('p')?.plannedEffort).toBe(8);
+    expect(byId.get('gp')?.plannedEffort).toBe(8);
+  });
+
+  it('WP が 1 件も無ければ findMany 後に {0,0} を返す', async () => {
+    vi.mocked(prisma.task.findMany).mockResolvedValue([
+      actRow({ id: 'a-1', parentTaskId: null }),
+    ] as never);
+    const r = await recalculateAllProjectWps('p-1', 'tenant-A');
+    expect(r).toEqual({ total: 0, updated: 0 });
+    expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 });

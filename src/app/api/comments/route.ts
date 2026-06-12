@@ -36,6 +36,7 @@ import {
   createComment,
   listComments,
   resolveEntityForComment,
+  isCommentTargetFullyClosed,
 } from '@/services/comment.service';
 import { recordAuditLog } from '@/services/audit.service';
 import { validateMentionsForEntity } from '@/services/mention.service';
@@ -75,6 +76,22 @@ async function authorizeForComment(
     return NextResponse.json(
       { error: { code: 'NOT_FOUND', message: t('notFoundTarget') } },
       { status: 404 },
+    );
+  }
+
+  // 2026-06-12: クローズ済みPJ (= 読み取り専用) の資産へのコメント投稿を弾く。
+  //   public/draft 系 (knowledge/risk/retrospective/issue) は下の kind 判定で早期 return するため、
+  //   write のみここで先にチェックする。read (閲覧) は読み取り専用と矛盾しないので常に許可。
+  //   紐付く全PJが closed のときだけ true (開いたPJが 1 つでもあれば投稿可)。
+  if (mode === 'write' && (await isCommentTargetFullyClosed(entityType, entityId, user.tenantId))) {
+    return NextResponse.json(
+      {
+        error: {
+          code: 'PROJECT_CLOSED',
+          message: 'このプロジェクトはクローズ済み (読み取り専用) のためコメントできません',
+        },
+      },
+      { status: 403 },
     );
   }
 

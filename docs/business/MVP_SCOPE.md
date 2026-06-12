@@ -249,8 +249,8 @@ MVPでは、すべての機能を高度に作り込むのではなく、プロ�
 
 ### 7.13 外部データ取込 (CSV 一括 import) 機能
 - テナント管理者自身が他システムの CSV をプロジェクト/ナレッジ等として一括取込 (preview → apply の 2 段)
-- 実装: `src/services/external-data-import.service.ts` / `src/app/api/tenants/me/external-import/` /
-  `src/app/(dashboard)/settings/tenant/external-import/`
+- 実装: `src/services/import/migration-import.service.ts` / `src/app/api/tenants/me/migration-import/` /
+  `src/app/(dashboard)/settings/tenant/migration-import/`（CSV）・`api-import/`（API 連携・ベータ、ADR-0034）
 - CSV 100 件取込でも「1 取込操作 = 1 ApiCallLog = 1 課金」に集約 (Expert/Pro は ¥5)
 
 ### 7.14 通知・メンション・コメント機能

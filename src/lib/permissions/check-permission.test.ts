@@ -251,4 +251,36 @@ describe('checkPermission', () => {
       expect(checkPermission('stakeholder:delete', c).allowed).toBe(false);
     });
   });
+
+  // 分析タブ: PM/PL + admin のみ閲覧可 (現在地・生産性の把握)
+  describe('分析タブ (analytics:read)', () => {
+    it('admin は閲覧可', () => {
+      expect(checkPermission('analytics:read', ctx({ systemRole: 'admin' })).allowed).toBe(true);
+    });
+
+    it('pm_tl は閲覧可', () => {
+      expect(checkPermission('analytics:read', ctx({ projectRole: 'pm_tl' })).allowed).toBe(true);
+    });
+
+    it('member は閲覧不可', () => {
+      expect(checkPermission('analytics:read', ctx({ projectRole: 'member' })).allowed).toBe(false);
+    });
+
+    it('viewer は閲覧不可', () => {
+      expect(checkPermission('analytics:read', ctx({ projectRole: 'viewer' })).allowed).toBe(false);
+    });
+
+    it('未所属ロールは閲覧不可', () => {
+      expect(checkPermission('analytics:read', ctx({ projectRole: null })).allowed).toBe(false);
+    });
+
+    it('closed 状態でも閲覧可 (完了案件の振り返り分析)', () => {
+      expect(
+        checkPermission('analytics:read', ctx({ projectRole: 'pm_tl', projectStatus: 'closed' })).allowed,
+      ).toBe(true);
+      expect(
+        checkPermission('analytics:read', ctx({ systemRole: 'admin', projectStatus: 'closed' })).allowed,
+      ).toBe(true);
+    });
+  });
 });

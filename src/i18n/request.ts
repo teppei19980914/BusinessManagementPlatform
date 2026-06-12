@@ -20,6 +20,7 @@
 import { getRequestConfig } from 'next-intl/server';
 import { auth } from '@/lib/auth';
 import { resolveLocale } from '@/config/i18n';
+import { loadMessagesForLocale } from './load-messages';
 
 /** next-intl の messages/<locale>.json と一致するファイル名。 */
 export const SUPPORTED_LOCALES = ['ja', 'en-US'] as const;
@@ -54,6 +55,9 @@ export default getRequestConfig(async () => {
 
   return {
     locale,
-    messages: (await import(`./messages/${locale}.json`)).default,
+    // 主カタログ (messages/<locale>.json) + 分割サブカタログ (messages/<locale>/<name>.json) を
+    // shallow merge する。top-level namespace 衝突は build/runtime で early-fail。
+    // 詳細: docs/i18n/CONVENTIONS.md §2 / src/i18n/load-messages.ts
+    messages: await loadMessagesForLocale(locale),
   };
 });

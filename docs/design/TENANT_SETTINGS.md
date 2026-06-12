@@ -1,6 +1,6 @@
 # テナント設定画面 設計書
 
-> 対象画面: `/settings/tenant`（テナント管理者専用）+ 子画面 `/settings/tenant/billing`（請求履歴）/ `/settings/tenant/external-import`（外部データ移行ウィザード）
+> 対象画面: `/settings/tenant`（テナント管理者専用）+ 子画面 `/settings/tenant/billing`（請求履歴）/ `/settings/tenant/migration-import`（CSV 一括取込・7 種）/ `/settings/tenant/api-import`（API 連携インポート・ベータ）
 > 本書は **現ソースコードを正** とした設計の真値（2026-06-03 時点）。画面仕様の要約は [specification/SCREENS.md §11.14](../specification/SCREENS.md)、公開向けは [public/tenant-settings-guide.md](../public/tenant-settings-guide.md)。
 > 課金・プラン・容量の深い設計は各専用ドキュメントに委譲し、本書は **画面の構成と各セクションの責務** を集約する。
 
@@ -31,7 +31,7 @@
 | 言語・タイムゾーン | テナント全体の表示言語・TZ（配下全ユーザの画面表示・Beginner 残日数・月初リセット境界に適用）+ 保存 |
 | スターターデータ (見本データ) の取込/削除 | 運営提供の見本データ (顧客/プロジェクト/課題・リスク/ナレッジ/振り返り) を管理テナントから自テナントへ 1 クリック複製 (`is_seed_sample=true`, `isSampleData=false`)、および一括削除。Expert/Pro は容量従量課金の確認→承認で投入。実装: `sample-clone.service` / `/api/tenants/me/sample-data` (POST/DELETE)。<br>※ 旧「提案エンジン: シードデータ参照」トグル (`seedDataEnabled`) は 2026-06-05 撤去 (提案/チャットの単一テナント化に伴う) |
 | データエクスポート | 全業務データを ZIP（JSON 構造化 + CSV 主要 5 種 + 添付 URL）でダウンロード。パスワードハッシュ・MFA 秘密鍵等は除外 |
-| データインポート | **自サービスから出力した ZIP 専用**（バックアップ復元 / テナント間移行）。外部システム（Excel/旧 PM ツール）の初回移行は対象外 → 外部データ移行ウィザードへ誘導 |
+| データインポート | 3 つの入口を案内: ① CSV ファイルをインポート（`/settings/tenant/migration-import`、7 種）/ ② 外部データを直接インポート（`/settings/tenant/api-import`、API 連携・ベータ）/ ③ ZIP をインポート（**自サービスから出力した ZIP 専用**、バックアップ復元 / テナント間移行）。外部システム（Excel/旧 PM ツール）の初回移行は ① へ誘導 |
 | 詳細情報（サポート用） | テナント UUID / 作成日時（JST 固定表示）/ 単価（Haiku ¥10/call・Sonnet ¥15/call）。アコーディオン |
 | テナント解約（危険な操作） | テナント名の一致入力で確認 → 解約。アコーディオン |
 
@@ -78,7 +78,8 @@
 |---|---|---|---|
 | データエクスポート | 概要タブ | 全業務データの ZIP バックアップ | （出力のみ） |
 | データインポート | 概要タブ | **本サービスの ZIP の復元 / テナント間移行** | 自サービス出力 ZIP のみ |
-| 外部データ移行ウィザード | `/settings/tenant/external-import` | **外部システム（Excel/旧 PM ツール）からの初回移行** | CSV（UTF-8）4 ステップ（選択→マッピング→dry-run→取込） |
+| CSV 一括取込 | `/settings/tenant/migration-import` | **外部システム（Excel/旧 PM ツール）からの初回移行**（7 種） | CSV（UTF-8）4 ステップ（選択→マッピング→dry-run→取込） |
+| API 連携インポート（ベータ） | `/settings/tenant/api-import` | Notion/Backlog/kintone/Pleasanter/Google スプレッドシートから直接取込 | 接続→マッピング→プレビュー→取込（トークン非保存） |
 
 ---
 
@@ -102,6 +103,6 @@
 
 ## 7. 関連画面・ドキュメント
 
-- 子画面: 請求履歴 `/settings/tenant/billing`、外部データ移行 `/settings/tenant/external-import`。
+- 子画面: 請求履歴 `/settings/tenant/billing`、CSV 一括取込 `/settings/tenant/migration-import`、API 連携インポート `/settings/tenant/api-import`（ベータ）。
 - 個人設定（アカウント・テーマ・言語・MFA）は別画面 `/settings`（[public/settings-guide.md](../public/settings-guide.md)）。
 - 公開ガイド: [tenant-settings-guide.md](../public/tenant-settings-guide.md)（本画面）/ plan / db-capacity / file-storage / payment-methods / payment-terms / credit-card 各ガイド。

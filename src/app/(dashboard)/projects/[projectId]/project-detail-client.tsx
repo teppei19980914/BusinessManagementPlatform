@@ -88,9 +88,13 @@ import { SuggestionsPanel } from './suggestions/suggestions-panel';
 // feat/stakeholder-management: PM/TL + admin のみ閲覧可。lazy fetch でタブ初表示時に取得。
 import type { StakeholdersClient as StakeholdersClientType } from './stakeholders/stakeholders-client';
 
-const LAZY_TAB_LOADING = (
-  <div className="py-8 text-center text-sm text-muted-foreground">読み込み中...</div>
-);
+function LazyTabLoading() {
+  const tCommon = useTranslations('common');
+  return (
+    <div className="py-8 text-center text-sm text-muted-foreground">{tCommon('loading')}</div>
+  );
+}
+const LAZY_TAB_LOADING = <LazyTabLoading />;
 
 const EstimatesClient = dynamic<React.ComponentProps<typeof EstimatesClientType>>(
   () => import('./estimates/estimates-client').then((m) => m.EstimatesClient),
@@ -110,6 +114,12 @@ const MembersClient = dynamic<React.ComponentProps<typeof MembersClientType>>(
 );
 const StakeholdersClient = dynamic<React.ComponentProps<typeof StakeholdersClientType>>(
   () => import('./stakeholders/stakeholders-client').then((m) => m.StakeholdersClient),
+  { ssr: false, loading: () => LAZY_TAB_LOADING },
+);
+// 分析タブ: PM/PL + admin のみ。自前 fetch のため LazyTabContent には乗せない。
+import type { AnalyticsClient as AnalyticsClientType } from './analysis/analysis-client';
+const AnalyticsClient = dynamic<React.ComponentProps<typeof AnalyticsClientType>>(
+  () => import('./analysis/analysis-client').then((m) => m.AnalyticsClient),
   { ssr: false, loading: () => LAZY_TAB_LOADING },
 );
 import type { StakeholderDTO } from '@/services/stakeholder.service';
@@ -184,7 +194,7 @@ export function ProjectDetailClient({
   const tAction = useTranslations('action');
   const router = useRouter();
   const { withLoading } = useLoading();
-  const { showSuccess, showError } = useToast();
+  const { showSuccessKey, showErrorKey } = useToast();
   // feat/gantt-initial-scroll-and-locale (2026-05-29): date-only 日付の locale 表示用
   const { formatDateOnly } = useFormatters();
   // 概要タブ内ヘッダの操作ボタン権限 (PR #58 → fix/quick-ux item 1 で改修):
@@ -280,7 +290,7 @@ export function ProjectDetailClient({
   // 不正値 / 権限不足 tab を指定された場合は 'overview' fallback。
   const initialTabFromUrl = (() => {
     const t = searchParams.get('tab');
-    const allowed = ['overview', 'estimates', 'tasks', 'gantt', 'risks', 'issues', 'retrospectives', 'knowledge', 'members', 'stakeholders', 'suggestions'];
+    const allowed = ['overview', 'estimates', 'tasks', 'gantt', 'risks', 'issues', 'retrospectives', 'knowledge', 'analytics', 'members', 'stakeholders', 'suggestions'];
     return t && allowed.includes(t) ? t : 'overview';
   })();
   const [activeTab, setActiveTab] = useState(initialTabFromUrl);
@@ -404,11 +414,11 @@ export function ProjectDetailClient({
       const json = await res.json();
       const msg = json.error?.message || t('updateFailed');
       setEditError(msg);
-      showError('プロジェクトの更新に失敗しました');
+      showErrorKey('project.toastUpdateFailed');
       return;
     }
     setIsEditOpen(false);
-    showSuccess('プロジェクトを更新しました');
+    showSuccessKey('project.toastUpdateSuccess');
     router.refresh();
   }
 
@@ -443,10 +453,10 @@ export function ProjectDetailClient({
       fetch(`/api/projects/${project.id}?${params.toString()}`, { method: 'DELETE' }),
     );
     if (!res.ok) {
-      showError('プロジェクトの削除に失敗しました');
+      showErrorKey('project.toastDeleteFailed');
       return;
     }
-    showSuccess('プロジェクトを削除しました');
+    showSuccessKey('project.toastDeleteSuccess');
     router.push('/projects');
   }
 
@@ -583,9 +593,9 @@ export function ProjectDetailClient({
           {activeTab === 'overview' && canDeleteProject && (
             <Button variant="outline" className="text-destructive" onClick={openDeleteDialog}>{tAction('delete')}</Button>
           )}
-          <Button variant="outline" onClick={() => router.push('/projects')}>
-            {t('backToList')}
-          </Button>
+          {/* 2026-06-09: 「一覧に戻る」ボタンを廃止。一覧へはヘッダーの「たすきば」ロゴ /
+              「全プロジェクト」タブ (どちらも PROJECTS_ROUTE) で戻れるため冗長。
+              i18n の project.backToList も同時に撤去。 */}
         </div>
       </div>
 
@@ -597,12 +607,12 @@ export function ProjectDetailClient({
           className="rounded-md border border-info/30 bg-info/5 p-3 text-sm"
           data-testid="closed-readonly-notice"
         >
-          <p className="m-0 font-semibold">このプロジェクトはクローズ済み（読み取り専用）です</p>
+          <p className="m-0 font-semibold">{t('closedReadOnlyTitle')}</p>
           <p className="m-0 mt-1 text-muted-foreground">
-            内容の閲覧のみ可能です。見積もり・参考（提案）・メンバー管理などの編集機能はご利用いただけません。
-            （サンプルのスターターデータはこの状態です。）これらの機能をお試しになるには、
-            <Link href="/projects" className="text-info hover:underline">ご自身でプロジェクトを作成</Link>
-            してください。稼働中のプロジェクトでは、提案エンジンを含むすべての機能をご利用いただけます。
+            {t('closedReadOnlyDesc1')}
+            {t('closedReadOnlyDesc2')}
+            <Link href="/projects" className="text-info hover:underline">{t('closedReadOnlyCreateLink')}</Link>
+            {t('closedReadOnlyDesc3')}
           </p>
         </div>
       )}
@@ -681,6 +691,11 @@ export function ProjectDetailClient({
           <TabsTrigger value="issues" className="hidden lg:inline-flex">{t('tabIssues')}</TabsTrigger>
           <TabsTrigger value="retrospectives" className="hidden lg:inline-flex">{t('tabRetrospectives')}</TabsTrigger>
           <TabsTrigger value="knowledge" className="hidden lg:inline-flex">{t('tabKnowledge')}</TabsTrigger>
+          {/* 分析タブ: WBS 予実カーブ等の進捗分析。PM/PL + admin のみ表示 (現在地・生産性の把握)。
+              読み取り専用のため closed プロジェクトでも表示する (isReadOnlyByStatus に依存しない)。 */}
+          {(systemRole === 'admin' || projectRole === 'pm_tl') && (
+            <TabsTrigger value="analytics" className="hidden lg:inline-flex">{t('tabAnalytics')}</TabsTrigger>
+          )}
           {/* PR #65 核心機能: 過去プロジェクトから流用できるナレッジ・課題を常時提案。
               feat/crud-permission-redesign (2026-05-20): PM/TL + admin のみ。adopt 操作も PM/TL 判断のため。 */}
           {canEdit && (
@@ -691,7 +706,7 @@ export function ProjectDetailClient({
             <Menu.Trigger
               className={cn(
                 'inline-flex items-center gap-1 rounded-md px-3 py-1 text-sm transition-colors hover:bg-accent lg:hidden',
-                ['risks', 'issues', 'retrospectives', 'knowledge', 'suggestions'].includes(activeTab)
+                ['risks', 'issues', 'retrospectives', 'knowledge', 'analytics', 'suggestions'].includes(activeTab)
                   ? 'bg-background font-medium shadow-sm text-foreground'
                   : 'text-muted-foreground',
               )}
@@ -714,6 +729,8 @@ export function ProjectDetailClient({
                     { value: 'issues', label: t('tabIssues') },
                     { value: 'retrospectives', label: t('tabRetrospectives') },
                     { value: 'knowledge', label: t('tabKnowledge') },
+                    // 分析タブ: PM/PL + admin のみ。提案の左隣に配置。
+                    ...((systemRole === 'admin' || projectRole === 'pm_tl') ? [{ value: 'analytics', label: t('tabAnalytics') }] : []),
                     // feat/crud-permission-redesign (2026-05-20): suggestions は PM/TL + admin のみ
                     ...(canEdit ? [{ value: 'suggestions', label: t('tabSuggestions') }] : []),
                   ].map((opt) => (
@@ -893,6 +910,7 @@ export function ProjectDetailClient({
               {(data) => (
                 <EstimatesClient
                   projectId={project.id}
+                  projectName={project.name}
                   estimates={data}
                   canEdit={canEdit}
                   onReload={reloadEstimates}
@@ -958,6 +976,7 @@ export function ProjectDetailClient({
                     canCreate={canCreateOwnedList}
                     currentUserId={userId}
                     systemRole={systemRole}
+                    isReadOnly={isReadOnlyByStatus}
                     typeFilter="risk"
                     onReload={reloadRisks}
                   />
@@ -980,6 +999,7 @@ export function ProjectDetailClient({
                     canCreate={canCreateOwnedList}
                     currentUserId={userId}
                     systemRole={systemRole}
+                    isReadOnly={isReadOnlyByStatus}
                     typeFilter="issue"
                     onReload={reloadRisks}
                   />
@@ -1003,6 +1023,7 @@ export function ProjectDetailClient({
                     canCreate={canCreateOwnedList}
                     currentUserId={userId}
                     today={today}
+                    isReadOnly={isReadOnlyByStatus}
                     onReload={reloadRetros}
                   />
                 )}
@@ -1029,6 +1050,7 @@ export function ProjectDetailClient({
                     members={membersData}
                     canCreate={canCreateOwnedList}
                     currentUserId={userId}
+                    isReadOnly={isReadOnlyByStatus}
                     onReload={reloadKnowledges}
                   />
                 )}
@@ -1036,6 +1058,18 @@ export function ProjectDetailClient({
             )}
           </LazyTabContent>
         </TabsContent>
+
+        {/*
+          分析タブ: WBS 予実カーブ等の進捗分析。PM/PL + admin のみ表示し、
+          現在地 (完了に向けた到達度) と生産性 (消化ペース) を可視化する。
+          SuggestionsPanel と同様に独自 fetch を持つため LazyTabContent 不要。
+          読み取り専用のため closed プロジェクトでも表示する。
+        */}
+        {(systemRole === 'admin' || projectRole === 'pm_tl') && (
+          <TabsContent value="analytics" className="mt-4">
+            <AnalyticsClient projectId={project.id} viewerUserId={userId} />
+          </TabsContent>
+        )}
 
         {/*
           参考タブ (PR #65 核心機能): 過去プロジェクトから流用可能な

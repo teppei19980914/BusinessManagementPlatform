@@ -15,6 +15,9 @@ const eslintConfig = defineConfig([
     "src/generated/**",
     // PR #84: v8 coverage が生成する HTML レポート配下 (lcov-report/) を除外
     "coverage/**",
+    // Playwright HTML report (.gitignore 済の local/CI 生成物 = minified vendor JS を含む)
+    "playwright-report/**",
+    "test-results/**",
   ]),
   {
     // PR #115 (2026-04-24 / DESIGN §9.8.5):
