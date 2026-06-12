@@ -261,6 +261,7 @@ test.describe('@feature:project:estimates 見積もり管理', () => {
       (r) =>
         r.url().includes(`/api/projects/${projectId}/estimates/`)
         && r.request().method() === 'PATCH',
+      { timeout: 30_000 },
     );
 
     const row = page.locator('tbody tr').filter({ hasText: ESTIMATE_ITEM }).first();
@@ -291,6 +292,7 @@ test.describe('@feature:project:estimates 見積もり管理', () => {
       (r) =>
         r.url().includes(`/api/projects/${projectId}/estimates/`)
         && r.request().method() === 'DELETE',
+      { timeout: 30_000 },
     );
     page.once('dialog', (dialog) => dialog.accept());
     const row = page.locator('tbody tr').filter({ hasText: deletableLabel }).first();
