@@ -185,9 +185,10 @@ test.describe('@feature:project:estimates 見積もり管理', () => {
     await expect(page.getByRole('dialog').getByText(/計算結果/)).toBeVisible();
 
     // 追加ボタンが有効であることを確認してクリック
+    // mobile: ダイアログが viewport より長くなり calcPreview div がボタンを覆うため force: true
     const addBtn = page.getByRole('dialog').getByRole('button', { name: '追加' });
     await expect(addBtn).not.toBeDisabled({ timeout: 5_000 });
-    await addBtn.click();
+    await addBtn.click({ force: true });
 
     await expect(page.getByRole('dialog')).not.toBeVisible({ timeout: 10_000 });
     await page.reload({ waitUntil: 'networkidle' });
