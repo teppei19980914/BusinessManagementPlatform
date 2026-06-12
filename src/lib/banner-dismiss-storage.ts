@@ -16,7 +16,7 @@
  * セッション中に複数の異なるバナーを順次破棄しうるため集合で持つ。
  */
 
-const BASE_KEY = 'tasukiba_dismissed_banner_v1';
+const BASE_KEY = 'tasukiba_dismissed_banner_v1'; // gitleaks:allow
 
 function scopedKey(userId: string): string {
   return `${BASE_KEY}:${userId}`;
