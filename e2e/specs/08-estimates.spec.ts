@@ -120,8 +120,8 @@ test.describe('@feature:project:estimates 見積もり管理', () => {
 
     const row = page.locator('tbody tr').filter({ hasText: directLabel }).first();
     await expect(row).toBeVisible({ timeout: 10_000 });
-    // 「手動」バッジが表示されること
-    await expect(row.getByText('手動')).toBeVisible();
+    // 「手動」バッジが表示されること (exact: true で item名の substring マッチを避ける)
+    await expect(row.getByText('手動', { exact: true })).toBeVisible();
     await snapshotStep(page, 'estimates-direct-created');
   });
 

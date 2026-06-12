@@ -62,7 +62,12 @@ test.describe('@feature:project:closed-readonly クローズ済みプロジェ�
     expect(kRes.ok(), `knowledge create failed: ${kRes.status()} ${await kRes.text()}`).toBeTruthy();
     knowledgeId = (await kRes.json()).data.id;
 
-    // プロジェクトをクローズ (= 読み取り専用へ遷移)
+    // planning → active → closed の順に遷移 (planning から closed への直接遷移は不可)
+    const aRes = await page.request.patch(`/api/projects/${projectId}/status`, {
+      data: { status: 'active' },
+    });
+    expect(aRes.ok(), `active transition failed: ${aRes.status()} ${await aRes.text()}`).toBeTruthy();
+
     const sRes = await page.request.patch(`/api/projects/${projectId}/status`, {
       data: { status: 'closed' },
     });
