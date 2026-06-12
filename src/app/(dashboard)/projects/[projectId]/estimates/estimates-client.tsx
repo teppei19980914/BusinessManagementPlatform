@@ -286,8 +286,8 @@ export function EstimatesClient({ projectId, projectName, estimates, canEdit, on
           <form onSubmit={handleCreateCoeff} className="space-y-4">
             {error && <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
             <div className="space-y-2">
-              <Label>{t('itemName')}</Label>
-              <Input value={coeffBase.itemName} onChange={(e) => setCoeffBase({ ...coeffBase, itemName: e.target.value })} maxLength={100} required />
+              <Label htmlFor="coeff-item-name">{t('itemName')}</Label>
+              <Input id="coeff-item-name" value={coeffBase.itemName} onChange={(e) => setCoeffBase({ ...coeffBase, itemName: e.target.value })} maxLength={100} required />
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
