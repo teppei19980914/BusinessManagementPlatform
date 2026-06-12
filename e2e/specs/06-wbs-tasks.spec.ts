@@ -629,7 +629,7 @@ test.describe('@feature:project:wbs WBS 管理 (PR #96)', () => {
 
     // 値更新は API で: status=completed → updateTask が progress=100 に正規化
     const patchRes = await page.request.patch(`/api/projects/${projectId}/tasks/${actId}`, {
-      data: { status: 'completed' },
+      data: { status: 'completed', actualEffort: 1 },
     });
     expect(patchRes.ok(), `single update: ${await patchRes.text()}`).toBeTruthy();
     const updated = (await patchRes.json()).data;

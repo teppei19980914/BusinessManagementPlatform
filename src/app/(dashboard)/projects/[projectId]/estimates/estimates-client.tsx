@@ -244,8 +244,8 @@ export function EstimatesClient({ projectId, projectName, estimates, canEdit, on
           <form onSubmit={handleCreateDirect} className="space-y-4">
             {error && <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
             <div className="space-y-2">
-              <Label>{t('itemName')}</Label>
-              <Input value={directForm.itemName} onChange={(e) => setDirectForm({ ...directForm, itemName: e.target.value })} maxLength={100} required />
+              <Label htmlFor="direct-item-name">{t('itemName')}</Label>
+              <Input id="direct-item-name" value={directForm.itemName} onChange={(e) => setDirectForm({ ...directForm, itemName: e.target.value })} maxLength={100} required />
             </div>
             <div className="space-y-2">
               <Label>{t('category')}</Label>

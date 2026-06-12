@@ -16,7 +16,7 @@ import { test, expect, type BrowserContext, type Page } from '@playwright/test';
 import { RUN_ID, withRunId } from '../fixtures/run-id';
 import { ensureInitialAdmin, cleanupByRunId, disconnectDb } from '../fixtures/db';
 import { waitForProjectsReady } from '../fixtures/auth';
-import { createProjectViaApi } from '../fixtures/project';
+import { createProjectViaApi, addProjectMemberViaApi } from '../fixtures/project';
 
 const ADMIN_EMAIL = `admin-closed-${RUN_ID}@example.com`.toLowerCase();
 const ADMIN_PW = 'E2eAdmin!Pw_2026';
@@ -31,7 +31,7 @@ test.describe.configure({ mode: 'serial', retries: 0 });
 
 test.describe('@feature:project:closed-readonly クローズ済みプロジェクトの読み取り専用ガード', () => {
   test.beforeAll(async ({ browser }) => {
-    await ensureInitialAdmin(ADMIN_EMAIL, ADMIN_PW, { forcePasswordChange: false });
+    const adminUserId = await ensureInitialAdmin(ADMIN_EMAIL, ADMIN_PW, { forcePasswordChange: false });
 
     ctx = await browser.newContext();
     page = await ctx.newPage();
@@ -44,9 +44,12 @@ test.describe('@feature:project:closed-readonly クローズ済みプロジェ�
     await page.getByRole('button', { name: 'ログイン' }).click();
     await waitForProjectsReady(page);
 
-    // 稼働中のプロジェクトを作成し、クローズ前にナレッジを 1 件登録しておく
+    // 稼働中のプロジェクトを作成し、admin をメンバーとして追加してからナレッジを登録する
     const { id } = await createProjectViaApi(page, { name: PROJECT_NAME });
     projectId = id;
+
+    // requireActualProjectMember が ProjectMember 行の存在を要求するため、admin を明示的に追加する
+    await addProjectMemberViaApi(page, { projectId, userId: adminUserId, projectRole: 'pm_tl' });
 
     const kRes = await page.request.post(`/api/projects/${projectId}/knowledge`, {
       data: {

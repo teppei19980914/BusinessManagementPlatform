@@ -183,6 +183,10 @@ export default defineConfig({
           //   CI 経由で渡された値を子プロセスに伝搬する (= e2e.yml の env に依存)。
           //   未設定なら空文字 → middleware 内で 'true' チェックに falsy 扱い = rate limit 有効。
           DISABLE_LOGIN_RATE_LIMIT: process.env.DISABLE_LOGIN_RATE_LIMIT || '',
+          // test/release-acceptance-e2e (2026-06): 複数 spec が同一 IP から signup API を呼ぶため
+          //   5/h のデフォルト上限を超過し 429 が返る (CI の 127.0.0.1 共有が原因)。
+          //   e2e.yml と同じパターンで CI 時のみ無効化する。
+          DISABLE_SIGNUP_RATE_LIMIT: process.env.DISABLE_SIGNUP_RATE_LIMIT || '',
         },
       }
     : undefined, // ローカルは開発者が pnpm dev を別途起動
