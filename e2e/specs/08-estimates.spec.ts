@@ -137,10 +137,10 @@ test.describe('@feature:project:estimates 見積もり管理', () => {
     await page.getByRole('button', { name: 'ツールで見積もる' }).click();
     await expect(page.getByRole('dialog')).toBeVisible({ timeout: 5_000 });
 
-    // 係数フォームの主要要素が存在する
-    await expect(page.getByRole('dialog').getByText('開発ツール')).toBeVisible();
-    await expect(page.getByRole('dialog').getByText('規模')).toBeVisible();
-    await expect(page.getByRole('dialog').getByText('難易度')).toBeVisible();
+    // 係数フォームの主要要素が存在する (exact: true でダイアログ説明文の substring マッチを回避)
+    await expect(page.getByRole('dialog').getByText('開発ツール', { exact: true })).toBeVisible();
+    await expect(page.getByRole('dialog').getByText('規模', { exact: true })).toBeVisible();
+    await expect(page.getByRole('dialog').getByText('難易度', { exact: true })).toBeVisible();
     await expect(page.getByRole('dialog').getByText(/見積工数/)).toBeVisible();
 
     await page.keyboard.press('Escape');
