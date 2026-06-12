@@ -156,8 +156,9 @@ test.describe('@feature:project:estimates 見積もり管理', () => {
     await page.getByRole('button', { name: 'ツールで見積もる' }).click();
     await expect(page.getByRole('dialog')).toBeVisible({ timeout: 5_000 });
 
-    // デフォルト (scratch/scale=1.0/difficulty=1.0/method=1.0/baseHours=16) → 16.0h
-    await expect(page.getByRole('dialog').getByText(/16\.0\s*h/)).toBeVisible({ timeout: 5_000 });
+    // デフォルト (scratch/scale=1.0/difficulty=1.0/method=1.0/baseHours=16) → 16h
+    // calcCoefficient は Math.round(x * 10) / 10 を返す (整数値は小数なし)
+    await expect(page.getByRole('dialog').getByText(/16\.?0?\s*h/)).toBeVisible({ timeout: 5_000 });
 
     await page.keyboard.press('Escape');
   });
