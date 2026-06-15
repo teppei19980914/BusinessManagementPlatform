@@ -39,7 +39,7 @@
     "perf:check": "tsx scripts/check-perf-antipatterns.ts"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.104.1",
+    "@anthropic-ai/sdk": "^0.104.2",
     "@base-ui/react": "^1.5.0",
     "@holiday-jp/holiday_jp": "^2.5.1",
     "@prisma/adapter-pg": "^7.8.0",
