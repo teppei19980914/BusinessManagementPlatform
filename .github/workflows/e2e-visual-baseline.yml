@@ -91,7 +91,7 @@ jobs:
       CI: 'true'
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.branch || github.ref }}
           # commit push に必要 (actions/checkout の token は fetch 専用)。
