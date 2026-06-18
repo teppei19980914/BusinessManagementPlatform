@@ -16,6 +16,8 @@ vi.mock('@/lib/db', () => ({
     attachment: { updateMany: vi.fn() },
     // PR fix/visibility-auth-matrix: deleteKnowledge も comment cascade
     comment: { updateMany: vi.fn() },
+    // v1.3.0 資産導線機能: deleteKnowledge が deleteAssetLinksForEntity 経由で呼ぶ (count 読み取りのため既定値必須)
+    assetLink: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
     $transaction: vi.fn((ops: unknown[]) => Promise.all(ops)),
   },
 }));
@@ -496,15 +498,16 @@ describe('updateKnowledge / deleteKnowledge', () => {
   });
 
   it('updateKnowledge: public → public で text 非変更 (visibility 維持のみ) は embedding 再生成しない', async () => {
-    // 2026-05-11: defense-in-depth が「public 化時に DB の既存 title が空でない」ことを要求するため、
-    //   findFirst モックで非空 title を返す必要がある (テスト整合性のため)。
+    // defense-in-depth が「public 化時に DB の既存 title / 本文が空でない」ことを要求するため、
+    //   findFirst モックで非空 title + 背景/内容/結果を返す必要がある。
+    //   (v1.3.0: PUBLIC_REQUIRES_FIELDS の追加で背景/内容/結果も非空必須)
     // PR #357: 既存 visibility=public 維持なら text 変更なしで再生成しない。
     vi.mocked(prisma.knowledge.findFirst).mockResolvedValue({
       createdBy: 'u-1',
       title: '既存タイトル',
-      background: '',
-      content: '',
-      result: '',
+      background: '既存背景',
+      content: '既存内容',
+      result: '既存結果',
       conclusion: null,
       recommendation: null,
       visibility: 'public',
@@ -541,6 +544,19 @@ describe('updateKnowledge / deleteKnowledge', () => {
     await expect(
       updateKnowledge('k-1', { visibility: 'public', title: '   ' }, 'u-1', TEST_TENANT_ID),
     ).rejects.toThrow('PUBLIC_REQUIRES_TITLE');
+  });
+
+  // v1.3.0 軽量入力 (2026-06-19): public 化時に title はあるが背景/内容/結果が空なら PUBLIC_REQUIRES_FIELDS。
+  it('updateKnowledge: public 化時に title はあるが本文が空なら PUBLIC_REQUIRES_FIELDS をスロー (v1.3.0)', async () => {
+    vi.mocked(prisma.knowledge.findFirst).mockResolvedValue({
+      createdBy: 'u-1',
+      title: '既存タイトル',
+      background: '', content: '', result: '',
+      conclusion: null, recommendation: null,
+    } as never);
+    await expect(
+      updateKnowledge('k-1', { visibility: 'public' }, 'u-1', TEST_TENANT_ID),
+    ).rejects.toThrow('PUBLIC_REQUIRES_FIELDS');
   });
 
   // ================================================================
@@ -725,8 +741,8 @@ describe('bulkUpdateKnowledgeVisibilityFromList', () => {
   //   silent skip + skippedEmptyTitle を返す。
   it('draft→public 化時に空タイトルの行はスキップ', async () => {
     vi.mocked(prisma.knowledge.findMany).mockResolvedValue([
-      { id: 'k-1', createdBy: 'u-1', title: '正しい' },
-      { id: 'k-empty', createdBy: 'u-1', title: '' },
+      { id: 'k-1', createdBy: 'u-1', title: '正しい', background: 'b', content: 'c', result: 'r' },
+      { id: 'k-empty', createdBy: 'u-1', title: '', background: 'b', content: 'c', result: 'r' },
     ] as never);
     vi.mocked(prisma.knowledge.updateMany).mockResolvedValue({ count: 1 } as never);
 
@@ -742,12 +758,28 @@ describe('bulkUpdateKnowledgeVisibilityFromList', () => {
     expect(r.skippedEmptyTitle).toBe(1);
   });
 
+  // v1.3.0 軽量入力 (2026-06-19): public 化は背景/内容/結果も非空必須。本文欠落行は skip。
+  it('draft→public 化時に本文 (背景/内容/結果) が空の行はスキップ (v1.3.0)', async () => {
+    vi.mocked(prisma.knowledge.findMany).mockResolvedValue([
+      { id: 'k-full', createdBy: 'u-1', title: 't', background: 'b', content: 'c', result: 'r' },
+      { id: 'k-nobody', createdBy: 'u-1', title: 't', background: '', content: 'c', result: 'r' },
+    ] as never);
+    vi.mocked(prisma.knowledge.updateMany).mockResolvedValue({ count: 1 } as never);
+
+    const r = await bulkUpdateKnowledgeVisibilityFromList(
+      'p-1', ['k-full', 'k-nobody'], 'public', 'u-1', 't-1',
+    );
+
+    expect(r.updatedIds).toEqual(['k-full']);
+    expect(r.skippedEmptyTitle).toBe(1);
+  });
+
   // feat/asset-assignee-expansion (2026-05-26): 担当者も bulk visibility 更新対象
   it('担当者本人のレコードも bulk 更新対象に含まれる', async () => {
     vi.mocked(prisma.knowledge.findMany).mockResolvedValue([
-      { id: 'k-1', createdBy: 'u-creator', assigneeId: 'u-1', title: 't' }, // u-1 が担当者
-      { id: 'k-2', createdBy: 'u-1', assigneeId: null, title: 't' },        // u-1 が作成者
-      { id: 'k-3', createdBy: 'u-OTHER', assigneeId: 'u-OTHER', title: 't' }, // 第3者
+      { id: 'k-1', createdBy: 'u-creator', assigneeId: 'u-1', title: 't', background: 'b', content: 'c', result: 'r' }, // u-1 が担当者
+      { id: 'k-2', createdBy: 'u-1', assigneeId: null, title: 't', background: 'b', content: 'c', result: 'r' },        // u-1 が作成者
+      { id: 'k-3', createdBy: 'u-OTHER', assigneeId: 'u-OTHER', title: 't', background: 'b', content: 'c', result: 'r' }, // 第3者
     ] as never);
     vi.mocked(prisma.knowledge.updateMany).mockResolvedValue({ count: 2 } as never);
     const r = await bulkUpdateKnowledgeVisibilityFromList(

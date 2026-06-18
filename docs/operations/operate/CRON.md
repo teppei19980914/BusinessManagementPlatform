@@ -38,16 +38,15 @@
 
 **処理内容** (1 リクエストで以下を順次実行):
 
-1. **開始通知生成**: ACT (`type='activity'`) で `status='not_started'` AND `plannedStartDate=today (JST)` AND `assigneeId IS NOT NULL` のタスクを抽出 → 各 assignee に通知作成
-2. **終了通知生成**: 同 ACT で `status≠'completed'` AND `plannedEndDate=today (JST)` AND `assigneeId IS NOT NULL` のタスクを抽出 → 各 assignee に通知作成
-3. **古い通知の物理削除**: `readAt > 30日` の既読通知を `deleteMany`
+1. **終了通知生成**: ACT (`type='activity'`) で `status≠'completed'` AND `plannedEndDate=today (JST)` AND `assigneeId IS NOT NULL` のタスクを抽出 → 各 assignee に通知作成
+2. **古い通知の物理削除**: `readAt > 30日` の既読通知を `deleteMany`
 
 **コスト**: アプリ内通知のみ (メール / push 不使用)、cron-job.org Free 枠で完結。
 
 **重複抑止**: `dedupeKey = '{type}:{taskId}:{YYYY-MM-DD}'` の UNIQUE 制約 + `createMany skipDuplicates: true` で 2 重生成を DB レベルで弾く。cron が時間内に再呼出されても安全。
 
 **監視ポイント**:
-- レスポンスの `data.generated.{startCreated, endCreated}` が想定外に 0 連続 → cron 落ち or タスクの date / status / assignee 設定不全の疑い
+- レスポンスの `data.generated.endCreated` が想定外に 0 連続 → cron 落ち or タスクの date / status / assignee 設定不全の疑い
 - レスポンスの `data.cleaned.deleted` が累積で増えない → 既読通知が永続化される異常 (UI 側の既読化が動いていない可能性)
 
 **手動実行** (動作確認用):

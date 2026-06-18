@@ -71,6 +71,7 @@ export type TaskDTO = {
   description: string | null;
   assigneeId: string | null;
   assigneeName?: string;
+  assigneeDisplayText?: string;
   plannedStartDate: string | null;
   plannedEndDate: string | null;
   actualStartDate: string | null;
@@ -97,6 +98,7 @@ function toTaskDTO(t: {
   description: string | null;
   assigneeId: string | null;
   assignee?: { name: string } | null;
+  assigneeDisplayText?: string | null;
   plannedStartDate: Date | null;
   plannedEndDate: Date | null;
   actualStartDate: Date | null;
@@ -120,6 +122,7 @@ function toTaskDTO(t: {
     description: t.description,
     assigneeId: t.assigneeId,
     assigneeName: t.assignee?.name,
+    assigneeDisplayText: t.assigneeDisplayText ?? undefined,
     plannedStartDate: safeDate(t.plannedStartDate),
     plannedEndDate: safeDate(t.plannedEndDate),
     actualStartDate: safeDate(t.actualStartDate),
@@ -293,6 +296,36 @@ export async function listTasksFlat(projectId: string, viewerTenantId: string): 
     orderBy: [{ plannedStartDate: 'asc' }, { plannedEndDate: 'asc' }, { createdAt: 'asc' }],
   });
   return tasks.map(toTaskDTO);
+}
+
+/**
+ * WBS 完了バナーの表示判定 (v1.3.0 資産導線機能)。
+ *
+ * 表示条件: プロジェクト内に ACT (type='activity') が 1 件以上存在し、
+ *   かつ全 ACT の status が 'completed' または 'on_hold' のみ (他の status が 1 件もない)。
+ *   振り返りの有無は問わない (既に振り返り済みでも表示し、再確認を促す)。
+ *
+ * 実装: 全件 status を読まず COUNT 2 本に分解 (総数 / 非対象 status 数) して判定する。
+ */
+export async function getWbsCompletionBannerState(
+  projectId: string,
+  viewerTenantId: string,
+): Promise<{ shouldShow: boolean }> {
+  const [totalActCount, incompleteActCount] = await Promise.all([
+    prisma.task.count({
+      where: { projectId, type: 'activity', deletedAt: null, project: { tenantId: viewerTenantId } },
+    }),
+    prisma.task.count({
+      where: {
+        projectId,
+        type: 'activity',
+        deletedAt: null,
+        project: { tenantId: viewerTenantId },
+        status: { notIn: ['completed', 'on_hold'] },
+      },
+    }),
+  ]);
+  return { shouldShow: totalActCount > 0 && incompleteActCount === 0 };
 }
 
 // ================================================================
@@ -1295,11 +1328,21 @@ export async function recalculateAllProjectWps(
       actualEndDate: true,
       status: true,
       assigneeId: true,
+      assignee: { select: { name: true } },
     },
   });
 
   const wps = tasks.filter((t) => t.type === 'work_package');
   if (wps.length === 0) return { total: 0, updated: 0 };
+
+  // userId → 表示名マップ (assigneeDisplayText 計算用)
+  const userNameById = new Map<string, string>(
+    tasks
+      .filter((t): t is typeof t & { assigneeId: string; assignee: { name: string } } =>
+        t.assigneeId !== null && t.assignee !== null && t.assignee.name !== undefined,
+      )
+      .map((t) => [t.assigneeId, t.assignee.name]),
+  );
 
   // 親 ID → 直接の子タスク
   const childrenByParent = new Map<string, typeof tasks>();
@@ -1347,6 +1390,7 @@ export async function recalculateAllProjectWps(
           actualEndDate: childAgg.actualEndDate,
           status: childAgg.status,
           assigneeId: childAgg.assigneeId,
+          assigneeName: childAgg.assigneeId ? (userNameById.get(childAgg.assigneeId) ?? null) : null,
         };
       }
       // ACT はそのまま DB 値で集計
@@ -1359,6 +1403,7 @@ export async function recalculateAllProjectWps(
         actualEndDate: c.actualEndDate,
         status: c.status,
         assigneeId: c.assigneeId,
+        assigneeName: c.assignee?.name ?? null,
       };
     });
 
@@ -1477,6 +1522,7 @@ export type WpAggregationChild = {
   actualEndDate: Date | null;
   status: string;
   assigneeId: string | null;
+  assigneeName: string | null;
 };
 
 export type WpAggregationResult = {
@@ -1493,6 +1539,12 @@ export type WpAggregationResult = {
    * 再帰的 recalculateAncestors により、孫以降の変更もボトムアップで伝播する。
    */
   assigneeId: string | null;
+  /**
+   * 子 ACT に複数の異なる担当者がいる場合の表示テキスト（WP 専用）。
+   * 例: "田中 +2"（先頭担当者名 + 残り人数）。
+   * 担当者が 0 人または全員同一の場合は null（assigneeName で表示）。
+   */
+  assigneeDisplayText: string | null;
 };
 
 export function aggregateWpFromChildren(children: WpAggregationChild[]): WpAggregationResult {
@@ -1506,6 +1558,7 @@ export function aggregateWpFromChildren(children: WpAggregationChild[]): WpAggre
       actualEndDate: null,
       status: 'not_started',
       assigneeId: null,
+      assigneeDisplayText: null,
     };
   }
 
@@ -1525,14 +1578,20 @@ export function aggregateWpFromChildren(children: WpAggregationChild[]): WpAggre
     dates.length > 0 ? new Date(Math.max(...dates.map((d) => d.getTime()))) : null;
 
   // ステータス自動判定
+  // 優先順位: completed(全員) > in_progress(1件以上) > on_hold(1件以上) > completed(一部) > not_started
+  // 「in_progress が 0 件・on_hold が 1 件以上」なら保留を優先する。
+  // 例: completed+on_hold → on_hold (アクティブな作業がなく残りが保留中)
+  //     completed+not_started → in_progress (一部完了、残りはこれから着手)
   const statuses = children.map((c) => c.status);
   let wpStatus = 'not_started';
   if (statuses.every((s) => s === 'completed')) {
     wpStatus = 'completed';
-  } else if (statuses.some((s) => s === 'in_progress' || s === 'completed')) {
+  } else if (statuses.some((s) => s === 'in_progress')) {
     wpStatus = 'in_progress';
   } else if (statuses.some((s) => s === 'on_hold')) {
     wpStatus = 'on_hold';
+  } else if (statuses.some((s) => s === 'completed')) {
+    wpStatus = 'in_progress';
   }
 
   // 実績日付は予定と同じ min/max ロジックで集計した上で、ステータス整合性ルール（PR #39）を
@@ -1555,6 +1614,20 @@ export function aggregateWpFromChildren(children: WpAggregationChild[]): WpAggre
   const uniformAssignee: string | null
     = distinctAssignees.size === 1 ? [...distinctAssignees][0] : null;
 
+  // 複数担当者の表示テキスト: 2 人以上の異なる担当者がいる場合は "田中 +N" 形式。
+  // 担当者が 0 人または全員同一の場合は null (assigneeName で表示するため不要)。
+  const nonNullAssignees = children.filter(
+    (c): c is WpAggregationChild & { assigneeId: string } => c.assigneeId !== null,
+  );
+  const uniqueAssigneeIds = [...new Set(nonNullAssignees.map((c) => c.assigneeId))];
+  let assigneeDisplayText: string | null = null;
+  if (uniqueAssigneeIds.length >= 2) {
+    const firstEntry = nonNullAssignees.find((c) => c.assigneeId === uniqueAssigneeIds[0]);
+    const firstName = firstEntry?.assigneeName ?? '';
+    const extraCount = uniqueAssigneeIds.length - 1;
+    assigneeDisplayText = firstName ? `${firstName} +${extraCount}` : null;
+  }
+
   return {
     plannedEffort: totalEffort,
     progressRate: weightedProgress,
@@ -1564,6 +1637,7 @@ export function aggregateWpFromChildren(children: WpAggregationChild[]): WpAggre
     actualEndDate: normalized.actualEndDate,
     status: wpStatus,
     assigneeId: uniformAssignee,
+    assigneeDisplayText,
   };
 }
 
@@ -1586,6 +1660,7 @@ export function isWpAggregationEqual(
     actualEndDate: Date | null;
     status: string;
     assigneeId: string | null;
+    assigneeDisplayText?: string | null;
   },
   next: WpAggregationResult,
 ): boolean {
@@ -1603,6 +1678,7 @@ export function isWpAggregationEqual(
     && sameDate(current.actualEndDate, next.actualEndDate)
     && current.status === next.status
     && (current.assigneeId ?? null) === (next.assigneeId ?? null)
+    && (current.assigneeDisplayText ?? null) === (next.assigneeDisplayText ?? null)
   );
 }
 
@@ -1637,13 +1713,16 @@ async function recalculateWpOnly(taskId: string): Promise<boolean> {
           status: true,
           type: true,
           assigneeId: true,
+          assignee: { select: { name: true } },
         },
       },
     },
   });
   if (!task || task.type !== 'work_package') return false;
 
-  const aggregated = aggregateWpFromChildren(task.childTasks);
+  const aggregated = aggregateWpFromChildren(
+    task.childTasks.map((c) => ({ ...c, assigneeName: c.assignee?.name ?? null })),
+  );
 
   // C 案: 現在値と一致するなら update をスキップ
   if (isWpAggregationEqual(task, aggregated)) {
@@ -1680,13 +1759,16 @@ async function recalculateAncestors(taskId: string): Promise<void> {
           status: true,
           type: true,
           assigneeId: true,
+          assignee: { select: { name: true } },
         },
       },
     },
   });
   if (!task || task.type !== 'work_package') return;
 
-  const aggregated = aggregateWpFromChildren(task.childTasks);
+  const aggregated = aggregateWpFromChildren(
+    task.childTasks.map((c) => ({ ...c, assigneeName: c.assignee?.name ?? null })),
+  );
 
   // ADR-0035 (2026-06-05): C 案 (recalculateWpOnly / recalculateAllProjectWps と同じ最適化)。
   //   集計値が現在値と一致するなら自身の update をスキップし、上位への伝播も止める。

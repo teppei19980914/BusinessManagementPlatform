@@ -31,6 +31,7 @@
  */
 
 import { useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/toast-provider';
 
@@ -136,6 +137,7 @@ export function StripePaymentMethodSection({
   onRefresh,
   cardSummary,
 }: StripePaymentMethodSectionProps): React.ReactElement {
+  const t = useTranslations('tenantSettings');
   const { showError } = useToast();
   const [submitting, setSubmitting] = useState(false);
   const state = deriveStripeState(info);
@@ -158,12 +160,8 @@ export function StripePaymentMethodSection({
     if (state === 'invoice_only') return;
     const confirmMsg =
       state === 'credit_card_unregistered'
-        ? '新しいクレジットカードを登録しますか?\n\n' +
-          '次の画面 (Stripe Checkout) でカード情報を入力してください。\n' +
-          '検証成功時は自動的にカード払いの引落準備が完了します。'
-        : 'クレジットカード情報を変更しますか?\n\n' +
-          '次の画面 (Stripe Checkout) で新しいカード情報を入力してください。\n' +
-          '完了時、次回以降の月次引落は新しいカードから行われます (= サブスクリプションは維持されます)。';
+        ? t('stripeRegisterConfirm')
+        : t('stripeChangeConfirm');
     const ok = window.confirm(confirmMsg);
     if (!ok) return;
     await callSetup();
@@ -184,16 +182,16 @@ export function StripePaymentMethodSection({
       });
       const json = await res.json();
       if (!res.ok) {
-        showError(json?.error?.message ?? 'カード登録画面の起動に失敗しました');
+        showError(json?.error?.message ?? t('stripeCheckoutLaunchFailed'));
         return;
       }
       if (json.data?.checkoutUrl == null) {
-        showError('Stripe Checkout URL の取得に失敗しました');
+        showError(t('stripeCheckoutUrlFailed'));
         return;
       }
       window.location.href = json.data.checkoutUrl;
     } catch {
-      showError('通信エラーが発生しました');
+      showError(t('stripeNetworkError'));
     } finally {
       setSubmitting(false);
     }
@@ -203,24 +201,20 @@ export function StripePaymentMethodSection({
   //   状態バッジ (✅ 有効 / ⚠ 未登録 / ❌ 要対応 / 🏦 銀行振込) を currentLabel に明示。
   const currentLabel =
     state === 'invoice_only'
-      ? '🏦 銀行振込'
+      ? t('stripeBankTransferLabel')
       : state === 'credit_card_unregistered'
-        ? '⚠ クレジットカード払い (カード未登録 = 自動請求不可)'
+        ? t('stripeCardUnregisteredLabel')
         : state === 'credit_card_active'
-          ? '✅ クレジットカード払い (有効・自動引落)'
-          : '❌ クレジットカード払い (要対応 = 引落停止リスクあり)';
+          ? t('stripeCardActiveLabel')
+          : t('stripeCardNeedsAttentionLabel');
 
   const description =
     state === 'invoice_only'
-      ? '月末締めの翌月25日支払で、毎月請求書 PDF を請求担当者メールにお送りしています。' +
-        ' クレジットカード払いに切替えるには、上の請求先情報フォームで「支払い方法」を' +
-        '「クレジットカード」に変更して「請求先情報を更新」を押してください (自動でカード登録画面に進みます)。'
+      ? t('stripeBankTransferHint')
       : state === 'credit_card_unregistered'
-        ? '★ご注意★ 支払い方法はクレジットカードに設定されていますが、まだカードが登録されていないため自動請求できません。' +
-          ' 「クレジットカード情報更新」ボタンから今すぐ登録してください。'
+        ? t('stripeCardUnregisteredHint')
         : state === 'credit_card_active'
-          ? '毎月末締めで Stripe が自動的に利用料を集計し、翌月初に登録カードから引き落とします。' +
-            ' 領収書 PDF は Stripe から自動メール送付されます。'
+          ? t('stripeCardActiveHint')
           : '';
 
   return (
@@ -229,11 +223,11 @@ export function StripePaymentMethodSection({
       aria-labelledby="stripe-payment-section-heading"
     >
       <h2 id="stripe-payment-section-heading" className="text-base font-semibold">
-        支払い方法
+        {t('stripePaymentMethodLabel')}
       </h2>
 
       <div className="space-y-3 text-sm">
-        <p>現在の支払い方法: {currentLabel}</p>
+        <p>{t('stripeCurrentMethodPrefix', { label: currentLabel })}</p>
         {description && <p className="text-muted-foreground">{description}</p>}
 
         {/* PR #425 (2026-05-22): Stripe 登録カード情報の可視化。
@@ -248,16 +242,16 @@ export function StripePaymentMethodSection({
             className="rounded border border-info/40 bg-info/5 p-3"
             data-testid="stripe-card-summary"
           >
-            <p className="text-xs font-medium text-muted-foreground">請求に使用されるカード (Stripe 登録情報)</p>
+            <p className="text-xs font-medium text-muted-foreground">{t('stripeBillingCardHeading')}</p>
             <p className="mt-1 font-mono text-sm">
               {formatCardBrand(cardSummary.brand)} •••• {cardSummary.last4}
               <span className="ml-3 text-muted-foreground">
-                有効期限 {formatCardExpiry(cardSummary.expMonth, cardSummary.expYear)}
+                {t('stripeCardExpiryPrefix', { expiry: formatCardExpiry(cardSummary.expMonth, cardSummary.expYear) })}
               </span>
             </p>
             <p className="mt-1 text-xs text-muted-foreground">
-              このカードに毎月の利用料が自動引落されます。
-              変更したい場合は「クレジットカード情報更新」ボタンをご利用ください。
+              {t('stripeCardActiveDescription')}
+              {t('stripeCardUpdateHint')}
             </p>
           </div>
         )}
@@ -269,10 +263,9 @@ export function StripePaymentMethodSection({
             role="alert"
             data-testid="stripe-card-summary-missing"
           >
-            <p className="font-semibold">⚠ カード情報を Stripe から取得できませんでした</p>
+            <p className="font-semibold">{t('stripeCardFetchFailedTitle')}</p>
             <p className="text-muted-foreground">
-              ネットワーク一時障害の可能性があります。少し待ってからページを再読込してください。
-              繰り返し表示される場合は「クレジットカード情報更新」からカード再登録をお願いします。
+              {t('stripeCardFetchFailedDetail')}
             </p>
           </div>
         )}
@@ -282,16 +275,12 @@ export function StripePaymentMethodSection({
             className="rounded border border-destructive/40 bg-destructive/10 p-3 text-sm"
             role="alert"
           >
-            <p className="font-semibold text-destructive">⚠️ カードの状態を確認してください</p>
+            <p className="font-semibold text-destructive">{t('stripeCardStatusWarning')}</p>
             <p className="text-muted-foreground">
-              {info.cardVerificationStatus === 'expired' &&
-                'カードの有効期限が切れています。Stripe ポータルからカード情報を更新してください。'}
-              {info.cardVerificationStatus === 'declined' &&
-                'カードが拒否されています。別のカードへの変更を Stripe ポータルから行ってください。'}
-              {info.cardVerificationStatus === 'never_verified' &&
-                'カードがまだ検証されていません。Stripe ポータルでカードを確認してください。'}
-              {info.autoSuspendScheduledAt != null &&
-                ' 引落失敗が続いており、まもなくサービスが自動停止する予定です。'}
+              {info.cardVerificationStatus === 'expired' && t('stripeCardStatusExpired')}
+              {info.cardVerificationStatus === 'declined' && t('stripeCardStatusRejected')}
+              {info.cardVerificationStatus === 'never_verified' && t('stripeCardStatusUnverified')}
+              {info.autoSuspendScheduledAt != null && t('stripeCardStatusSuspensionWarning')}
             </p>
           </div>
         )}
@@ -301,9 +290,9 @@ export function StripePaymentMethodSection({
             type="button"
             onClick={handleClick}
             disabled={!buttonActive || !stripeEnabled || submitting}
-            aria-label="クレジットカード情報更新"
+            aria-label={t('stripeCardUpdateAria')}
           >
-            {submitting ? '処理中...' : '💳 クレジットカード情報更新'}
+            {submitting ? t('stripeProcessing') : t('stripeCardUpdateButton')}
           </Button>
           {/* PR #425 (2026-05-22): 請求履歴閲覧リンク (既存の /settings/tenant/billing への遷移)。
               Customer Portal を撤去したため、請求履歴閲覧の導線をここに集約する。 */}
@@ -311,13 +300,13 @@ export function StripePaymentMethodSection({
             href="/settings/tenant/billing"
             className="text-sm text-info underline"
           >
-            📋 請求履歴を見る
+            {t('stripeViewBillingHistory')}
           </a>
         </div>
 
         {!stripeEnabled && (
           <p className="text-xs text-muted-foreground">
-            ※ クレジットカード払いは現在準備中です (運営による有効化待ち)。
+            {t('stripePreparingNote')}
           </p>
         )}
       </div>

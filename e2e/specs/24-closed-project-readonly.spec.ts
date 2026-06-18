@@ -55,7 +55,10 @@ test.describe('@feature:project:closed-readonly クローズ済みプロジェ�
       data: {
         title: withRunId('クローズ前ナレッジ'),
         knowledgeType: 'lesson',
+        // v1.3.0 軽量入力 (2026-06-19): public は背景/内容/結果が必須
+        background: 'E2E 背景',
         content: 'E2E 用ナレッジ',
+        result: 'E2E 結果',
         visibility: 'public',
       },
     });

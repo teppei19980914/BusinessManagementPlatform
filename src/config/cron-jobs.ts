@@ -64,7 +64,7 @@ export const CRON_JOBS: Record<string, CronJobMetadata> = {
   },
   'daily-notifications': {
     description:
-      'ACT (活動) の予定開始日/予定終了日リマインダ通知を生成。'
+      'ACT (活動) の予定終了日リマインダ通知を生成。'
       + ' 加えて 30 日経過済の既読通知を物理削除、tenant_import_preview の TTL 削除、'
       + ' 全テナントの storage 容量更新 + Grace period 判定を併走実行する。',
     schedule: '日次 07:00 JST',

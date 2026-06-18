@@ -142,7 +142,12 @@ export function parseRetrospectiveSyncImportCsv(csvText: string): RetrospectiveS
     const improvements = (fields[COL.improvements] ?? '').trim();
     const knowledgeToShare = COL.knowledgeToShare >= 0 ? ((fields[COL.knowledgeToShare] ?? '').trim() || null) : null;
     const visibilityRaw = (fields[COL.visibility] ?? '').trim();
-    const visibility = (VALID_VISIBILITIES.has(visibilityRaw) ? visibilityRaw : 'public') as 'draft' | 'public';
+    let visibility = (VALID_VISIBILITIES.has(visibilityRaw) ? visibilityRaw : 'public') as 'draft' | 'public';
+    // v1.3.0 軽量入力 (2026-06-19): 5 セクションが全て空の public は draft へ降格する (空資産の公開防止)。
+    //   UI 作成/更新は全必須だが、import は過去資産を救うため「本文が全く無い public のみ降格」の緩和ルール。
+    if (visibility === 'public' && !planSummary && !actualSummary && !goodPoints && !problems && !improvements) {
+      visibility = 'draft';
+    }
 
     rows.push({
       tempRowIndex: csvRowIndex,

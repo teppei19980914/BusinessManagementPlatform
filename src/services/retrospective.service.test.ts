@@ -24,6 +24,8 @@ vi.mock('@/lib/db', () => ({
     attachment: { updateMany: vi.fn() },
     // PR fix/visibility-auth-matrix: deleteRetrospective も comment cascade
     comment: { updateMany: vi.fn() },
+    // v1.3.0 資産導線機能: deleteRetrospective が deleteAssetLinksForEntity 経由で呼ぶ (count 読み取りのため既定値必須)
+    assetLink: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
     $transaction: vi.fn((ops: unknown[]) => Promise.all(ops)),
   },
 }));
@@ -425,8 +427,11 @@ describe('updateRetrospective', () => {
 
   it('updateRetrospective: text フィールド非変更 (state/visibility 維持のみ) は embedding 再生成しない', async () => {
     // PR #357: 既存 visibility=public 維持なら text 変更なしで再生成しない
+    // v1.3.0: public 維持の更新は 5 セクションが非空である必要があるため mock で埋める。
     vi.mocked(prisma.retrospective.findFirst).mockResolvedValue({
       createdBy: 'u-1', visibility: 'public',
+      planSummary: '既存計画', actualSummary: '既存実績', goodPoints: '既存良かった点',
+      problems: '既存課題', improvements: '既存改善', knowledgeToShare: null,
     } as never);
     vi.mocked(prisma.retrospective.update).mockResolvedValue(retRow() as never);
 
@@ -675,10 +680,12 @@ describe('bulkUpdateRetrospectivesVisibilityFromList', () => {
 
   // feat/asset-assignee-expansion (2026-05-26): 担当者も bulk visibility 更新対象
   it('担当者本人のレコードも bulk 更新対象に含まれる', async () => {
+    // v1.3.0: public 化は 5 セクション非空が条件のため mock で埋める。
+    const sections = { planSummary: 'p', actualSummary: 'a', goodPoints: 'g', problems: 'pr', improvements: 'i' };
     vi.mocked(prisma.retrospective.findMany).mockResolvedValue([
-      { id: 'ret-1', createdBy: 'u-creator', assigneeId: 'u-1' }, // u-1 が担当者
-      { id: 'ret-2', createdBy: 'u-1', assigneeId: null },        // u-1 が作成者
-      { id: 'ret-3', createdBy: 'u-OTHER', assigneeId: 'u-OTHER' }, // 第3者
+      { id: 'ret-1', createdBy: 'u-creator', assigneeId: 'u-1', ...sections }, // u-1 が担当者
+      { id: 'ret-2', createdBy: 'u-1', assigneeId: null, ...sections },        // u-1 が作成者
+      { id: 'ret-3', createdBy: 'u-OTHER', assigneeId: 'u-OTHER', ...sections }, // 第3者
     ] as never);
     vi.mocked(prisma.retrospective.updateMany).mockResolvedValue({ count: 2 } as never);
     const r = await bulkUpdateRetrospectivesVisibilityFromList(
@@ -689,14 +696,27 @@ describe('bulkUpdateRetrospectivesVisibilityFromList', () => {
   });
 
   it('存在しない id は skippedNotFound にカウント', async () => {
+    // v1.3.0: public 化は 5 セクション非空が条件のため mock で埋める。
     vi.mocked(prisma.retrospective.findMany).mockResolvedValue([
-      { id: 'ret-1', createdBy: 'u-1' },
+      { id: 'ret-1', createdBy: 'u-1', planSummary: 'p', actualSummary: 'a', goodPoints: 'g', problems: 'pr', improvements: 'i' },
     ] as never);
     vi.mocked(prisma.retrospective.updateMany).mockResolvedValue({ count: 1 } as never);
 
     const r = await bulkUpdateRetrospectivesVisibilityFromList('p-1', ['ret-1', 'ret-MISSING'], 'public', 'u-1', 'tenant-A');
     expect(r.skippedNotFound).toBe(1);
     expect(r.updatedIds).toEqual(['ret-1']);
+  });
+
+  // v1.3.0 軽量入力 (2026-06-19): public 化は 5 セクション非空必須。欠落行は skip。
+  it('public 化時に 5 セクションのいずれかが空の行はスキップ (v1.3.0)', async () => {
+    vi.mocked(prisma.retrospective.findMany).mockResolvedValue([
+      { id: 'ret-full', createdBy: 'u-1', planSummary: 'p', actualSummary: 'a', goodPoints: 'g', problems: 'pr', improvements: 'i' },
+      { id: 'ret-partial', createdBy: 'u-1', planSummary: 'p', actualSummary: '', goodPoints: 'g', problems: 'pr', improvements: 'i' },
+    ] as never);
+    vi.mocked(prisma.retrospective.updateMany).mockResolvedValue({ count: 1 } as never);
+
+    const r = await bulkUpdateRetrospectivesVisibilityFromList('p-1', ['ret-full', 'ret-partial'], 'public', 'u-1', 't-1');
+    expect(r.updatedIds).toEqual(['ret-full']);
   });
 
   it('全件他人なら updateMany を呼ばない', async () => {

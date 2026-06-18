@@ -20,6 +20,7 @@
  *   - 同設計参考: src/app/(dashboard)/settings/tenant/db-capacity-section.tsx
  */
 
+import { getTranslations } from 'next-intl/server';
 import { prisma } from '@/lib/db';
 import { syncTenantFileStorageUsage } from '@/services/file-storage-bucket-usage.service';
 import {
@@ -62,14 +63,21 @@ function formatDateJa(d: Date | null): string {
   return d.toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
 }
 
-const LEVEL_BADGES: Record<FileStorageWarningLevel, { label: string; color: string }> = {
-  none: { label: '正常', color: 'bg-green-100 text-green-800' },
-  l1: { label: 'Level 1 (1GB 到達)', color: 'bg-blue-100 text-blue-800' },
-  l2: { label: 'Level 2 (10GB 到達)', color: 'bg-yellow-100 text-yellow-800' },
-  l3: { label: 'Level 3 (50GB 到達 / 監視アラート)', color: 'bg-red-100 text-red-800' },
+const LEVEL_BADGE_COLORS: Record<FileStorageWarningLevel, string> = {
+  none: 'bg-green-100 text-green-800',
+  l1: 'bg-blue-100 text-blue-800',
+  l2: 'bg-yellow-100 text-yellow-800',
+  l3: 'bg-red-100 text-red-800',
+};
+const LEVEL_BADGE_KEYS: Record<FileStorageWarningLevel, string> = {
+  none: 'dbCapacityLevelNone',
+  l1: 'dbCapacityLevelL1',
+  l2: 'dbCapacityLevelL2',
+  l3: 'dbCapacityLevelL3',
 };
 
 export async function FileStorageSection({ tenantId }: { tenantId: string }) {
+  const t = await getTranslations('tenantSettings');
   // [feedback_billing_data_realtime]: ダッシュボード遷移時に再集計し誤請求リスク予防。
   //   失敗時はキャッシュ値表示に fallback (Supabase 一時不通でも UI は壊さない)。
   try {
@@ -107,8 +115,9 @@ export async function FileStorageSection({ tenantId }: { tenantId: string }) {
     : calculateFileStorageOverageJpy(typed.storageFileBytesPeakThisMonth);
   const currentLevel = classifyFileStorageLevel(typed.storageFileBytesPeakThisMonth);
   const safeLevel: FileStorageWarningLevel =
-    currentLevel in LEVEL_BADGES ? currentLevel : 'none';
-  const badge = LEVEL_BADGES[safeLevel];
+    currentLevel in LEVEL_BADGE_COLORS ? currentLevel : 'none';
+  const badgeColor = LEVEL_BADGE_COLORS[safeLevel];
+  const badgeLabel = t(LEVEL_BADGE_KEYS[safeLevel]);
 
   // 進捗率: Beginner は 100MB 基準、Expert/Pro は 50GB (L3 監視アラート閾値) 基準
   //   2026-05-31: 50GB は累積ハードキャップではなく監視アラート閾値 (ADR-0030、write は止めない)
@@ -133,12 +142,11 @@ export async function FileStorageSection({ tenantId }: { tenantId: string }) {
           id="file-storage-section-title"
           className="text-lg font-semibold text-gray-900"
         >
-          ファイルストレージ
-          {isBeginner ? ' (Beginner プラン 無料枠 100MB)' : ' (添付ファイル従量課金)'}
+          {isBeginner ? t('fileStorageTitleBeginner') : t('fileStorageTitleStandard')}
         </h2>
         {!isBeginner && (
-          <span className={`rounded-full px-3 py-1 text-xs font-medium ${badge.color}`}>
-            {badge.label}
+          <span className={`rounded-full px-3 py-1 text-xs font-medium ${badgeColor}`}>
+            {badgeLabel}
           </span>
         )}
         {isBeginner && beginnerOverFreeTier && (
@@ -146,17 +154,17 @@ export async function FileStorageSection({ tenantId }: { tenantId: string }) {
             className="rounded-full bg-red-100 px-3 py-1 text-xs font-medium text-red-800"
             data-testid="beginner-storage-quota-exceeded-badge"
           >
-            無料枠超過 (アップロードブロック中)
+            {t('fileStorageBeginnerOverFreeBadge')}
           </span>
         )}
         {isBeginner && !beginnerOverFreeTier && beginnerNearFreeTier && (
           <span className="rounded-full bg-yellow-100 px-3 py-1 text-xs font-medium text-yellow-800">
-            無料枠の 80% に到達
+            {t('dbCapacityBeginnerNearFreeBadge')}
           </span>
         )}
         {isBeginner && !beginnerNearFreeTier && (
           <span className="rounded-full bg-green-100 px-3 py-1 text-xs font-medium text-green-800">
-            無料枠内
+            {t('dbCapacityBeginnerWithinFreeBadge')}
           </span>
         )}
       </div>
@@ -168,48 +176,47 @@ export async function FileStorageSection({ tenantId }: { tenantId: string }) {
           role="alert"
           data-testid="beginner-storage-block-banner"
         >
-          <p className="font-semibold">
-            ⚠ Beginner プランのファイルストレージ無料枠 (100MB) を超えました
-          </p>
+          <p className="font-semibold">{t('fileStorageBeginnerOverFreeBannerTitle')}</p>
           <p className="mt-1">
-            新規アップロードは停止しています (削除のみ可)。不要なファイルを削除すると自動的に再集計され、再びアップロード可能になります。反映されない場合は画面上部の{' '}
-            <strong>[DB 容量 / API 利用量を再集計]</strong> ボタンをご利用ください。
+            {t.rich('fileStorageBeginnerOverFreeBannerBody', {
+              strong: (chunks) => <strong>{chunks}</strong>,
+            })}
           </p>
           <p className="mt-1 text-xs">
-            または{' '}
+            {t('dbCapacityBeginnerOverFreeBannerUpgradeLeading')}
             <a href="?tab=overview" className="font-semibold underline">
-              Expert プランへアップグレード
-            </a>{' '}
-            すれば 50GB まで継続利用できます (¥10/GB tier、超過時のみ従量課金)。
+              {t('dbCapacityBeginnerOverFreeBannerUpgradeLink')}
+            </a>
+            {t('fileStorageBeginnerOverFreeBannerUpgradeTrailing')}
           </p>
         </div>
       )}
 
       <dl className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <div>
-          <dt className="text-sm font-medium text-gray-500">現在の使用量</dt>
+          <dt className="text-sm font-medium text-gray-500">{t('dbCapacityCurrentUsage')}</dt>
           <dd className="mt-1 text-2xl font-semibold text-gray-900">
             {formatBytes(typed.storageFileBytesUsed)}
           </dd>
           <p className="mt-1 text-xs text-gray-500">
-            最新: {formatDateJa(typed.storageFileBytesUsedAt)}
+            {t('dbCapacityLatestPrefix', { value: formatDateJa(typed.storageFileBytesUsedAt) })}
           </p>
         </div>
         <div>
-          <dt className="text-sm font-medium text-gray-500">月中ピーク (請求根拠)</dt>
+          <dt className="text-sm font-medium text-gray-500">{t('dbCapacityPeakLabel')}</dt>
           <dd className="mt-1 text-2xl font-semibold text-gray-900">
             {formatBytes(typed.storageFileBytesPeakThisMonth)}
           </dd>
           <p className="mt-1 text-xs text-gray-500">
-            到達: {formatDateJa(typed.storageFileBytesPeakAt)}
+            {t('dbCapacityReachedPrefix', { value: formatDateJa(typed.storageFileBytesPeakAt) })}
           </p>
         </div>
         <div>
-          <dt className="text-sm font-medium text-gray-500">想定請求額 (当月)</dt>
+          <dt className="text-sm font-medium text-gray-500">{t('dbCapacityEstimatedJpy')}</dt>
           <dd className="mt-1 text-2xl font-semibold text-gray-900">
             {formatJpy(estimatedJpy)}
           </dd>
-          <p className="mt-1 text-xs text-gray-500">月末 cron で確定 (税抜)</p>
+          <p className="mt-1 text-xs text-gray-500">{t('dbCapacityEstimatedJpyHint')}</p>
         </div>
       </dl>
 
@@ -218,9 +225,9 @@ export async function FileStorageSection({ tenantId }: { tenantId: string }) {
           <span>0</span>
           <span>
             {isBeginner
-              ? `Beginner 無料枠 ${BEGINNER_STORAGE_FREE_TIER_BYTES / SI_MB_BYTES}MB`
-              : '50GB (L3 監視アラート閾値)'}{' '}
-            ({usagePercent.toFixed(1)}%)
+              ? t('dbCapacityBeginnerFreeTierLabel', { sizeMb: BEGINNER_STORAGE_FREE_TIER_BYTES / SI_MB_BYTES })
+              : t('dbCapacityStandardL3Label')}
+            {t('dbCapacityUsagePercentSuffix', { percent: usagePercent.toFixed(1) })}
           </span>
         </div>
         <div className="h-2 w-full overflow-hidden rounded-full bg-gray-200">
@@ -241,58 +248,70 @@ export async function FileStorageSection({ tenantId }: { tenantId: string }) {
                       : 'bg-green-500'
             }`}
             style={{ width: `${usagePercent}%` }}
-            aria-label={`使用率 ${usagePercent.toFixed(1)}%`}
+            aria-label={t('dbCapacityUsageAria', { percent: usagePercent.toFixed(1) })}
           />
         </div>
       </div>
 
       <details className="mt-6 rounded border border-gray-200 bg-gray-50 p-4">
         <summary className="cursor-pointer text-sm font-medium text-gray-700">
-          {isBeginner ? 'Beginner プランの容量ルールを表示' : '料金体系を表示'}
+          {isBeginner ? t('dbCapacityRulesBeginnerSummary') : t('dbCapacityRulesStandardSummary')}
         </summary>
         <div className="mt-3 space-y-2 text-sm text-gray-600">
           {isBeginner ? (
             <>
               <p>
-                <strong>無料枠:</strong> {BEGINNER_STORAGE_FREE_TIER_BYTES / SI_MB_BYTES}MB
-                (Beginner プラン、PDF 10MB を 10 件アップロード可能の目安)
+                {t.rich('fileStorageBeginnerRuleFreeTier', {
+                  strong: (chunks) => <strong>{chunks}</strong>,
+                  sizeMb: BEGINNER_STORAGE_FREE_TIER_BYTES / SI_MB_BYTES,
+                })}
               </p>
               <p>
-                <strong>ファイル上限:</strong> 1 ファイルあたり 50MB
+                {t.rich('fileStorageBeginnerRuleFileLimit', {
+                  strong: (chunks) => <strong>{chunks}</strong>,
+                })}
               </p>
               <p>
-                <strong>超過時の挙動:</strong> 新規アップロードが停止 (削除のみ可)、overage
-                課金は<strong>発生しません</strong> (ADR-0025)
+                {t.rich('fileStorageBeginnerRuleOverflow', {
+                  strong: (chunks) => <strong>{chunks}</strong>,
+                })}
               </p>
               <p>
-                <strong>削除後:</strong> 容量キャッシュが自動的に再集計され (debounce 30
-                秒)、再びアップロード可能になります
+                {t.rich('fileStorageBeginnerRuleRecalc', {
+                  strong: (chunks) => <strong>{chunks}</strong>,
+                })}
               </p>
               <p className="text-xs text-gray-500">
-                Expert / Pro プランへアップグレードすると 50GB まで継続利用可能 (¥10/GB
-                tier、超過時のみ従量課金)。
+                {t('fileStorageBeginnerRuleUpgrade')}
               </p>
             </>
           ) : (
             <>
               <p>
-                <strong>無料枠:</strong> {FILE_STORAGE_FREE_TIER_BYTES / SI_MB_BYTES}MB まで
-                (PDF 10MB を 10 件無料の目安)
+                {t.rich('fileStorageStandardRuleFreeTier', {
+                  strong: (chunks) => <strong>{chunks}</strong>,
+                  sizeMb: FILE_STORAGE_FREE_TIER_BYTES / SI_MB_BYTES,
+                })}
               </p>
               <p>
-                <strong>超過料金:</strong> 1GB ごとに ¥10 (税抜、1MB 未満は繰上)
+                {t.rich('fileStorageStandardRuleOverage', {
+                  strong: (chunks) => <strong>{chunks}</strong>,
+                })}
               </p>
               <p>
-                <strong>ファイル上限:</strong> 1 ファイルあたり 50MB
+                {t.rich('fileStorageBeginnerRuleFileLimit', {
+                  strong: (chunks) => <strong>{chunks}</strong>,
+                })}
               </p>
               <p className="text-xs text-gray-500">
-                例: 200MB → ¥10 / 1GB → ¥10 / 1.5GB → ¥20 /{' '}
-                {FILE_STORAGE_L1_USER_WARNING_BYTES / SI_GB_BYTES}GB → 表示通知 (Level 1) /{' '}
-                {FILE_STORAGE_L2_ADMIN_ALERT_BYTES / SI_GB_BYTES}GB → 管理者通知 (Level 2) /{' '}
-                {FILE_STORAGE_L3_HARD_CAP_BYTES / SI_GB_BYTES}GB → 監視アラート (Level 3)
+                {t('fileStorageStandardRuleExamples', {
+                  l1Gb: FILE_STORAGE_L1_USER_WARNING_BYTES / SI_GB_BYTES,
+                  l2Gb: FILE_STORAGE_L2_ADMIN_ALERT_BYTES / SI_GB_BYTES,
+                  l3Gb: FILE_STORAGE_L3_HARD_CAP_BYTES / SI_GB_BYTES,
+                })}
               </p>
               <p className="text-xs text-gray-500">
-                2026-05-31: 累積ハードキャップは撤去 (ADR-0030)。容量超過でアップロードが止まることはなく、使った分だけ従量課金されます。アップロードされたファイルは自動で検索インデックスが作成され、チャット検索や提案エンジンの対象になります (= 無料)。
+                {t('fileStorageStandardRuleNote')}
               </p>
             </>
           )}

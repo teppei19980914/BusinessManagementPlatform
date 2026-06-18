@@ -72,6 +72,18 @@ export async function PATCH(
         { status: 400 },
       );
     }
+    // v1.3.0 軽量入力 (2026-06-19): public 化を試みたが本文が空 (input + DB 共に) のケース
+    if (e instanceof Error && e.message === 'PUBLIC_REQUIRES_FIELDS') {
+      return NextResponse.json(
+        {
+          error: {
+            code: 'PUBLIC_REQUIRES_FIELDS',
+            message: '「全メンバー」に公開する場合は本文を入力してください',
+          },
+        },
+        { status: 400 },
+      );
+    }
     // feat/asset-assignee-expansion (2026-05-26) severity-1:
     //   「自分のみ」(private) のメモに他人を担当者指定すると、担当者は memo 不可視のまま
     //   編集権限だけ持つ矛盾状態になる。UI は selector 非表示で防御するが、API 直叩きを

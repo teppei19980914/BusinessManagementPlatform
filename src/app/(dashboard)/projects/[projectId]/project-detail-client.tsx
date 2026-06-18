@@ -125,6 +125,8 @@ const AnalyticsClient = dynamic<React.ComponentProps<typeof AnalyticsClientType>
 import type { StakeholderDTO } from '@/services/stakeholder.service';
 // feat/markdown-textarea: Markdown 入力 + プレビュー + 既存値との差分表示
 import { MarkdownTextarea, MarkdownDisplay } from '@/components/ui/markdown-textarea';
+// v1.3.0 資産導線機能: WBS 完了バナー
+import { WbsCompletionBanner } from '@/components/wbs-completion-banner';
 
 type CustomerOption = { id: string; name: string };
 
@@ -150,6 +152,10 @@ type Props = {
   tenantTimeZone: string;
   /** Tenant locale (BCP 47、ガント月ヘッダの言語表記に使用) */
   tenantLocale: string;
+  /** v1.3.0 資産導線機能: WBS 完了バナーの表示条件 (全 ACT が completed/on_hold のみか) */
+  wbsCompletionBannerShouldShow: boolean;
+  /** v1.3.0 資産導線機能: 実 ProjectMember ロールが pm_tl か (admin 短絡なし、WBS 完了バナーの可視性ゲート) */
+  isActualProjectPmTl: boolean;
 };
 
 /**
@@ -181,6 +187,7 @@ export function ProjectDetailClient({
   project, projectRole, systemRole, userId,
   canEdit: canEditRaw, canCreate: canCreateRaw, canCreateOwnedList: canCreateOwnedListRaw, customers, tenantPlan,
   today, tenantTimeZone, tenantLocale,
+  wbsCompletionBannerShouldShow, isActualProjectPmTl,
 }: Props) {
   // feat/closed-project-readonly (2026-06-05): クローズ済みプロジェクトは読み取り専用 (project:delete のみ可)。
   //   サーバ側 STATE_RESTRICTIONS.closed と UI を整合させ、編集・作成・管理系を一律抑止する。
@@ -598,6 +605,14 @@ export function ProjectDetailClient({
               i18n の project.backToList も同時に撤去。 */}
         </div>
       </div>
+
+      {/* v1.3.0 資産導線機能: 全 ACT が completed/on_hold のみになった際の振り返り促し。
+          実 ProjectMember ロールが pm_tl の場合のみ表示 (admin 短絡なし)。 */}
+      <WbsCompletionBanner
+        projectId={project.id}
+        shouldShow={wbsCompletionBannerShouldShow}
+        isActualPmTl={isActualProjectPmTl}
+      />
 
       {/* feat/closed-project-readonly (2026-06-05): クローズ済み (= 読み取り専用) の案内。
           スターターデータ(サンプル)はクローズ済みのため、見積もり・参考(提案)・メンバー管理などの編集機能は

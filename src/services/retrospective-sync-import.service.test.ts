@@ -64,9 +64,17 @@ describe('parseRetrospectiveSyncImportCsv (T-22 Phase 22b)', () => {
   });
 
   it('不正な visibility はデフォルト public', () => {
-    const csv = [HEADER_13, ',2026-04-15,,,,,,,,,,,bad'].join('\n');
+    // v1.3.0: visibility 既定(public)の検証なので、本文 (planSummary) を埋めて draft 降格を回避する。
+    const csv = [HEADER_13, ',2026-04-15,計画総括あり,,,,,,,,,,bad'].join('\n');
     const rows = parseRetrospectiveSyncImportCsv(csv);
     expect(rows[0].visibility).toBe('public');
+  });
+
+  // v1.3.0 軽量入力 (2026-06-19): public だが 5 セクションが全て空なら draft へ降格。
+  it('public 指定でも 5 セクションが全て空なら draft へ降格 (v1.3.0)', () => {
+    const csv = [HEADER_13, ',2026-04-15,,,,,,,,,,,public'].join('\n');
+    const rows = parseRetrospectiveSyncImportCsv(csv);
+    expect(rows[0].visibility).toBe('draft');
   });
 
   // fix/csv-import-multiline-text-data-loss: 計画総括/実績総括/良かった点/課題/改善事項/共有ナレッジ

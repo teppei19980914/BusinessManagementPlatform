@@ -38,7 +38,7 @@ function patchReq(body: unknown): NextRequest {
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(prisma.notification.update).mockResolvedValue({
-    id: NOTIF_ID, type: 'task_start_due', entityType: 'task', entityId: 't-1',
+    id: NOTIF_ID, type: 'task_end_due', entityType: 'task', entityId: 't-1',
     title: 't', link: '/x', readAt: new Date(), createdAt: new Date(),
   } as never);
 });

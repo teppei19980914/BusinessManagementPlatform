@@ -18,6 +18,7 @@
  */
 
 import Link from 'next/link';
+import { getTranslations } from 'next-intl/server';
 import { getRecentFailedEmails } from '@/services/email-send-log.service';
 
 const DEFAULT_HOURS_BACK = 24;
@@ -28,6 +29,7 @@ export default async function EmailFailuresPage({
 }: {
   searchParams: Promise<{ hours?: string; limit?: string }>;
 }) {
+  const t = await getTranslations('superAdmin');
   const sp = await searchParams;
   const hoursBack = clampInt(sp.hours, DEFAULT_HOURS_BACK, 1, 168);
   const limit = clampInt(sp.limit, DEFAULT_LIMIT, 10, 500);
@@ -43,49 +45,49 @@ export default async function EmailFailuresPage({
     <div className="space-y-4">
       <nav className="text-sm">
         <Link href="/admin/super" className="text-info hover:underline">
-          ← サマリへ戻る
+          {t('emailFailuresBackToSummary')}
         </Link>
       </nav>
 
       <h1 className="text-xl font-semibold">
-        メール送付失敗一覧 (直近 {hoursBack} 時間)
+        {t('emailFailuresTitle', { hours: hoursBack })}
       </h1>
 
       <p className="text-sm text-muted-foreground">
-        PII 保護のため、宛先メールアドレスは SHA-256 ハッシュ化済でドメイン部のみ表示。
-        詳細な宛先確認は <code className="rounded bg-muted px-1">email_send_logs</code>
-        テーブルへの直接クエリ + テナント情報 (tenant_id) の突合で実施してください。
+        {t('emailFailuresPiiNoticeBody')}
+        {t('emailFailuresPiiNoticeQuery')}<code className="rounded bg-muted px-1">email_send_logs</code>{t('emailFailuresPiiNoticeQueryTail')}
       </p>
 
       <div className="rounded-md border bg-muted/30 p-3 text-sm">
-        合計: <strong>{rows.length} 件</strong>
+        {t('emailFailuresTotalLabel')}
+        {t.rich('emailFailuresTotalCount', { count: rows.length, strong: (chunks) => <strong>{chunks}</strong> })}
         {byType.size > 0 && (
           <span className="ml-3 text-xs">
-            (type 別:{' '}
+            {t('emailFailuresTypePrefix')}
             {Array.from(byType.entries())
               .sort((a, b) => b[1] - a[1])
-              .map(([t, c]) => `${t} ${c}`)
+              .map(([type, c]) => `${type} ${c}`)
               .join(' / ')}
-            )
+            {t('emailFailuresTypeSuffix')}
           </span>
         )}
       </div>
 
       {rows.length === 0 ? (
         <p className="rounded-md border p-4 text-sm text-muted-foreground">
-          直近 {hoursBack} 時間で送付失敗したメールはありません。
+          {t('emailFailuresEmpty', { hours: hoursBack })}
         </p>
       ) : (
         <div className="overflow-x-auto rounded-md border">
           <table className="w-full text-sm">
             <thead className="bg-muted">
               <tr>
-                <th className="px-3 py-2 text-left">送信日時 (JST)</th>
-                <th className="px-3 py-2 text-left">テナント</th>
-                <th className="px-3 py-2 text-left">種別</th>
-                <th className="px-3 py-2 text-left">宛先ドメイン</th>
-                <th className="px-3 py-2 text-left">プロバイダ</th>
-                <th className="px-3 py-2 text-left">エラー</th>
+                <th className="px-3 py-2 text-left">{t('emailFailuresColSentAt')}</th>
+                <th className="px-3 py-2 text-left">{t('emailFailuresColTenant')}</th>
+                <th className="px-3 py-2 text-left">{t('emailFailuresColType')}</th>
+                <th className="px-3 py-2 text-left">{t('emailFailuresColDomain')}</th>
+                <th className="px-3 py-2 text-left">{t('emailFailuresColProvider')}</th>
+                <th className="px-3 py-2 text-left">{t('emailFailuresColError')}</th>
               </tr>
             </thead>
             <tbody>
@@ -95,7 +97,7 @@ export default async function EmailFailuresPage({
                     {formatDateTime(r.sentAt)}
                   </td>
                   <td className="px-3 py-2 text-xs font-mono">
-                    {r.tenantId ?? <span className="text-muted-foreground">(システム)</span>}
+                    {r.tenantId ?? <span className="text-muted-foreground">{t('emailFailuresSystemPlaceholder')}</span>}
                   </td>
                   <td className="px-3 py-2 text-xs">{r.type}</td>
                   <td className="px-3 py-2 text-xs font-mono">{r.recipientDomain}</td>
@@ -104,7 +106,7 @@ export default async function EmailFailuresPage({
                     {r.errorMessage ? (
                       <code className="text-destructive">{r.errorMessage}</code>
                     ) : (
-                      <span className="text-muted-foreground">(エラーメッセージなし)</span>
+                      <span className="text-muted-foreground">{t('emailFailuresErrorMissing')}</span>
                     )}
                   </td>
                 </tr>
@@ -115,10 +117,10 @@ export default async function EmailFailuresPage({
       )}
 
       <details className="rounded border p-3 text-xs">
-        <summary className="cursor-pointer font-medium">フィルタオプション</summary>
+        <summary className="cursor-pointer font-medium">{t('emailFailuresFilterTitle')}</summary>
         <form method="get" className="mt-3 flex flex-wrap items-end gap-3">
           <label className="flex flex-col gap-1">
-            <span>過去 N 時間 (1〜168)</span>
+            <span>{t('emailFailuresFilterHoursLabel')}</span>
             <input
               type="number"
               name="hours"
@@ -129,7 +131,7 @@ export default async function EmailFailuresPage({
             />
           </label>
           <label className="flex flex-col gap-1">
-            <span>表示上限 (10〜500)</span>
+            <span>{t('emailFailuresFilterLimitLabel')}</span>
             <input
               type="number"
               name="limit"
@@ -143,7 +145,7 @@ export default async function EmailFailuresPage({
             type="submit"
             className="rounded bg-primary px-3 py-1 text-xs font-medium text-primary-foreground"
           >
-            適用
+            {t('emailFailuresFilterApply')}
           </button>
         </form>
       </details>

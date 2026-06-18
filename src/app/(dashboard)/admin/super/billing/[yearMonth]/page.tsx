@@ -16,26 +16,27 @@
 
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
+import { getTranslations } from 'next-intl/server';
 import { getMonthlyBillingDetail } from '@/services/billing-dashboard.service';
 import { ConfirmPaymentButton } from './confirm-payment-button';
 
 const STRIPE_DASHBOARD_BASE = 'https://dashboard.stripe.com';
 const VALID_YEAR_MONTH = /^\d{4}-\d{2}$/;
 
-const STATUS_OPTIONS = [
-  { value: '', label: '全て' },
-  { value: 'pending', label: '入金待ち (pending)' },
-  { value: 'paid', label: '入金確認済 (paid)' },
-  { value: 'failed', label: '引落失敗 (failed)' },
-  { value: 'refunded', label: '返金済 (refunded)' },
-  { value: 'canceled', label: '取消 (canceled)' },
-  { value: 'replaced_by_stripe', label: 'Stripe 一括置換 (replaced_by_stripe)' },
+const STATUS_OPTION_KEYS = [
+  { value: '', key: 'billingFilterAll' },
+  { value: 'pending', key: 'billingFilterStatusPending' },
+  { value: 'paid', key: 'billingFilterStatusPaid' },
+  { value: 'failed', key: 'billingFilterStatusFailed' },
+  { value: 'refunded', key: 'billingFilterStatusRefunded' },
+  { value: 'canceled', key: 'billingFilterStatusCanceled' },
+  { value: 'replaced_by_stripe', key: 'billingFilterStatusReplaced' },
 ] as const;
 
-const PAYMENT_METHOD_OPTIONS = [
-  { value: '', label: '全て' },
-  { value: 'credit_card', label: '💳 クレジットカード' },
-  { value: 'invoice', label: '📋 請求書 / 銀行振込' },
+const PAYMENT_METHOD_OPTION_KEYS = [
+  { value: '', key: 'billingFilterAll' },
+  { value: 'credit_card', key: 'billingMethodCreditCard' },
+  { value: 'invoice', key: 'billingMethodInvoice' },
 ] as const;
 
 export default async function BillingDetailPage({
@@ -45,8 +46,14 @@ export default async function BillingDetailPage({
   params: Promise<{ yearMonth: string }>;
   searchParams: Promise<{ status?: string; paymentMethod?: string }>;
 }) {
+  const t = await getTranslations('superAdmin');
   const { yearMonth } = await params;
   const { status, paymentMethod } = await searchParams;
+  const statusOptions = STATUS_OPTION_KEYS.map((o) => ({ value: o.value, label: t(o.key) }));
+  const paymentMethodOptions = PAYMENT_METHOD_OPTION_KEYS.map((o) => ({
+    value: o.value,
+    label: o.value === '' ? t(o.key) : t(o.key).replace(/:\s*$/, ''),
+  }));
 
   // YYYY-MM 形式バリデーション (= /YYYY-MM/ 以外のパスは 404)
   if (!VALID_YEAR_MONTH.test(yearMonth)) {
@@ -64,13 +71,13 @@ export default async function BillingDetailPage({
     <div className="space-y-4">
       <nav className="text-sm">
         <Link href="/admin/super/billing" className="text-info hover:underline">
-          ← サマリへ戻る
+          {t('billingDetailBackToSummary')}
         </Link>
       </nav>
 
       <div className="flex items-center justify-between gap-2">
         <h1 className="text-xl font-semibold">
-          請求詳細: <span className="font-mono">{yearMonth}</span>
+          {t('billingDetailTitle')}<span className="font-mono">{yearMonth}</span>
         </h1>
         {/* PR-V7a (C-5): CSV エクスポート (= Next.js dynamic slug 衝突回避で export/[yearMonth] 形式) */}
         <a
@@ -85,60 +92,62 @@ export default async function BillingDetailPage({
           download
           className="rounded-md border border-input bg-background px-3 py-1 text-xs font-medium hover:bg-accent"
         >
-          📥 CSV エクスポート
+          {t('billingDetailCsvExport')}
         </a>
       </div>
 
       {/* フィルタ (= GET form でクエリ string 反映) */}
       <form method="get" className="flex flex-wrap items-end gap-3 rounded-md border p-3">
         <FilterSelect
-          label="ステータス"
+          label={t('billingDetailFilterStatus')}
           name="status"
           value={status ?? ''}
-          options={STATUS_OPTIONS}
+          options={statusOptions}
         />
         <FilterSelect
-          label="支払方法"
+          label={t('billingDetailFilterPaymentMethod')}
           name="paymentMethod"
           value={paymentMethod ?? ''}
-          options={PAYMENT_METHOD_OPTIONS}
+          options={paymentMethodOptions}
         />
         <button
           type="submit"
           className="rounded-md bg-primary px-3 py-1 text-xs font-medium text-primary-foreground"
         >
-          絞り込み
+          {t('billingDetailFilterApply')}
         </button>
         <Link
           href={`/admin/super/billing/${yearMonth}`}
           className="text-xs text-muted-foreground underline-offset-2 hover:underline"
         >
-          フィルタクリア
+          {t('billingDetailFilterClear')}
         </Link>
       </form>
 
       <div className="rounded-md border bg-muted/30 p-3 text-sm">
-        絞り込み結果: <strong>{records.length} 件</strong> /{' '}
-        合計 (税込): <strong className="tabular-nums">{formatYen(totalAmount)}</strong>
+        {t('billingDetailResultsPrefix')}
+        {t.rich('billingDetailResultsCount', { count: records.length, strong: (chunks) => <strong>{chunks}</strong> })}
+        {t('billingDetailTotalPrefix')}
+        <strong className="tabular-nums">{formatYen(totalAmount)}</strong>
       </div>
 
       {/* 明細テーブル */}
       {records.length === 0 ? (
         <p className="rounded-md border p-4 text-sm text-muted-foreground">
-          該当する請求履歴がありません。
+          {t('billingDetailEmpty')}
         </p>
       ) : (
         <div className="overflow-x-auto rounded-md border">
           <table className="w-full text-sm">
             <thead className="bg-muted">
               <tr>
-                <th className="px-3 py-2 text-left">テナント</th>
-                <th className="px-3 py-2 text-left">支払方法</th>
-                <th className="px-3 py-2 text-right">金額 (税込)</th>
-                <th className="px-3 py-2 text-left">ステータス</th>
-                <th className="px-3 py-2 text-left">入金日</th>
-                <th className="px-3 py-2 text-left">失敗理由</th>
-                <th className="px-3 py-2 text-left">アクション</th>
+                <th className="px-3 py-2 text-left">{t('billingDetailColTenant')}</th>
+                <th className="px-3 py-2 text-left">{t('billingDetailColPaymentMethod')}</th>
+                <th className="px-3 py-2 text-right">{t('billingDetailColAmountIncl')}</th>
+                <th className="px-3 py-2 text-left">{t('billingDetailColStatus')}</th>
+                <th className="px-3 py-2 text-left">{t('billingDetailColPaidAt')}</th>
+                <th className="px-3 py-2 text-left">{t('billingDetailColFailReason')}</th>
+                <th className="px-3 py-2 text-left">{t('billingDetailColActions')}</th>
               </tr>
             </thead>
             <tbody>
@@ -149,7 +158,7 @@ export default async function BillingDetailPage({
                       {r.tenantName}
                       {r.tenantDeletedAt != null && (
                         <span className="ml-1 rounded bg-destructive/20 px-1 text-[10px] text-destructive">
-                          解約済
+                          {t('billingDetailTenantTerminated')}
                         </span>
                       )}
                     </div>
@@ -176,12 +185,12 @@ export default async function BillingDetailPage({
                         {/* PR-V7a (C-1): Smart Retries 次回試行日表示 */}
                         {r.nextPaymentAttempt && r.status === 'failed' && (
                           <div className="text-[10px] text-muted-foreground">
-                            次回リトライ: {formatDateTime(r.nextPaymentAttempt)}
+                            {t('billingDetailNextRetryPrefix')}{formatDateTime(r.nextPaymentAttempt)}
                           </div>
                         )}
                         {!r.nextPaymentAttempt && r.status === 'failed' && r.retryCount > 0 && (
                           <div className="text-[10px] text-destructive">
-                            ⚠️ リトライ枯渇 (= past_due 確定)
+                            {t('billingDetailRetryExhausted')}
                           </div>
                         )}
                       </div>
@@ -283,7 +292,7 @@ function getRowToneClass(status: string): string {
 function formatPaymentMethod(method: string): string {
   if (method === 'credit_card') return '💳 credit_card';
   if (method === 'invoice') return '📋 invoice';
-  if (method === 'bank_transfer') return '🏦 bank_transfer (旧)';
+  if (method === 'bank_transfer') return '🏦 bank_transfer (legacy)';
   return method;
 }
 

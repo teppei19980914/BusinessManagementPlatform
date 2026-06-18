@@ -62,7 +62,9 @@ export function SystemBannerBar({ banner }: SystemBannerBarProps) {
       className={`border-b px-4 py-2 text-sm ${BANNER_SEVERITY_CLASSES[banner.severity]}`}
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="whitespace-pre-wrap break-words">{linkifyNodes(banner.message)}</p>
+        <p className="whitespace-pre-wrap break-words [&_a]:text-current [&_a]:font-semibold">
+          {linkifyNodes(banner.message)}
+        </p>
         <button
           type="button"
           onClick={handleClose}

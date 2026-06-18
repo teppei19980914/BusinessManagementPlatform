@@ -35,6 +35,7 @@ import { prisma } from '@/lib/db';
 import { afterSafe } from '@/lib/after-safe';
 import { assertAssigneeTenant } from '@/lib/assignee-validation';
 import { generateAndPersistEntityEmbedding, generateAndPersistBatchEmbeddings } from './embedding.service';
+import { deleteAssetLinksForEntity } from './asset-link.service';
 // Prisma types used for Decimal handling in toRiskDTO
 import type { CreateRiskInput } from '@/lib/validators/risk';
 import type { Priority } from '@/types';
@@ -664,6 +665,21 @@ export async function updateRisk(
     if (!effectiveTitle || effectiveTitle.trim().length === 0) {
       throw new Error('PUBLIC_REQUIRES_TITLE');
     }
+    // v1.3.0 軽量入力 (2026-06-19): public 化時は「Embedding 対象 ∩ UI 入力欄あり」項目
+    //   (occurrence / cause / responsePolicy / content) も必須。validator は未送信を既存値維持で
+    //   通すため、API 直叩きで本文未送信のまま public 化する経路を service 層で塞ぐ。
+    const effOccurrence = input.occurrence !== undefined ? input.occurrence : existing.occurrence;
+    const effCause = input.cause !== undefined ? input.cause : existing.cause;
+    const effResponsePolicy = input.responsePolicy !== undefined ? input.responsePolicy : existing.responsePolicy;
+    const effContent = input.content !== undefined ? input.content : existing.content;
+    if (
+      !effOccurrence || effOccurrence.trim().length === 0
+      || !effCause || effCause.trim().length === 0
+      || !effResponsePolicy || effResponsePolicy.trim().length === 0
+      || !effContent || effContent.trim().length === 0
+    ) {
+      throw new Error('PUBLIC_REQUIRES_FIELDS');
+    }
   }
 
   // PR #5-c + PR D (2026-05-09 / #20): text フィールドが「実値として変わったか」を比較で判定。
@@ -839,7 +855,21 @@ export async function bulkUpdateRisksVisibilityFromList(
     (t) => t.reporterId === viewerUserId || t.assigneeId === viewerUserId,
   );
   const skippedNotOwned = targets.length - owned.length;
-  const ownedIds = owned.map((t) => t.id);
+  // v1.3.0 軽量入力 (2026-06-19): public 化は title + occurrence / cause / responsePolicy / content
+  //   (Embedding 対象 ∩ UI 入力欄あり) がすべて非空の行のみ対象。未充足行は draft のまま skip し、
+  //   単発 updateRisk の必須ルールと整合させる。draft 化 (公開取り下げ) は無条件で許可。
+  const eligible =
+    visibility === 'public'
+      ? owned.filter(
+          (t) =>
+            t.title.trim().length > 0
+            && (t.occurrence ?? '').trim().length > 0
+            && (t.cause ?? '').trim().length > 0
+            && (t.responsePolicy ?? '').trim().length > 0
+            && t.content.trim().length > 0,
+        )
+      : owned;
+  const ownedIds = eligible.map((t) => t.id);
 
   if (ownedIds.length === 0) {
     return { updatedIds: [], skippedNotOwned, skippedNotFound, embeddingsGenerated: 0 };
@@ -869,7 +899,7 @@ export async function bulkUpdateRisksVisibilityFromList(
   //   public→public のままや draft 維持時は API 呼出ゼロ (= Voyage 課金回避)。
   let embeddingsGenerated = 0;
   if (visibility === 'public') {
-    const eligibleForEmbedding = owned.filter(
+    const eligibleForEmbedding = eligible.filter(
       (t) => t.visibility === 'draft' && t.state === 'resolved',
     );
     if (eligibleForEmbedding.length > 0) {
@@ -963,6 +993,10 @@ export async function deleteRisk(
       data: { deletedAt: now },
     }),
   ]);
+
+  // v1.3.0 資産導線機能: 削除されたリスク/課題に紐づく手動リンクの孤児を除去。
+  //   asset_links はポリモーフィック (FK なし) のため cascade delete が効かない。
+  await deleteAssetLinksForEntity(commentEntityType, riskId, viewerTenantId);
 
   // ADR-0025 (2026-05-29): Beginner プラン超過状態からの DELETE で容量キャッシュを即時更新。
   //   循環参照回避のため dynamic import。fail-safe で throw しない。

@@ -25,7 +25,7 @@ export function AdminRiskDeleteButton({
 }) {
   const router = useRouter();
   const { withLoading } = useLoading();
-  const { showSuccess, showError } = useToast();
+  const { showSuccessKey, showErrorKey } = useToast();
   const tAction = useTranslations('action');
   const tCommon = useTranslations('common');
   return (
@@ -41,10 +41,10 @@ export function AdminRiskDeleteButton({
           fetch(`/api/risks/${riskId}`, { method: 'DELETE' }),
         );
         if (!res.ok) {
-          showError('リスク/課題の削除に失敗しました');
+          showErrorKey('risk.toastAdminDeleteFailed');
           return;
         }
-        showSuccess('リスク/課題を削除しました');
+        showSuccessKey('risk.toastAdminDeleteSuccess');
         router.refresh();
       }}
     >

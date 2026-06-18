@@ -2,6 +2,13 @@
 # Migrated from Vercel: 2026-05-18 (Vercel Hobby 商用不可のため Netlify Starter へ)
 # 詳細: docs/operations/DEPLOYMENT.md / docs/design/INFRASTRUCTURE.md §10
 
+# Deploy Preview: Dependabot PR はビルドをスキップ (credits 節約)。
+# [build].ignore は Deploy Preview コンテキストには適用されないため、専用セクションで設定する。
+# Netlify 仕様: https://docs.netlify.com/configure-builds/ignore-builds/
+# コミット author email に "dependabot" が含まれる場合は exit 0 (スキップ) を返す。
+[context.deploy-preview]
+  ignore = "git log --format='%ae' -1 | grep -q 'dependabot'"
+
 [build]
   # PR-V8.1 (2026-05-19): Prisma migrate deploy を build 時に組み込み (適用漏れ事故予防)。
   # 注: CI (GitHub Actions Lint/Test/Build) では DATABASE_URL がダミー (localhost:5432) の

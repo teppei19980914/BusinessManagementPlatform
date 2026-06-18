@@ -17,6 +17,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -38,6 +39,7 @@ type Props = {
 
 export function TenantDeleteButton({ tenantId, tenantName }: Props) {
   const router = useRouter();
+  const t = useTranslations('superAdmin');
   const { withLoading } = useLoading();
   const { showSuccess, showError } = useToast();
 
@@ -64,21 +66,21 @@ export function TenantDeleteButton({ tenantId, tenantName }: Props) {
       const message = json?.error?.message as string | undefined;
 
       if (code === 'MANAGEMENT_TENANT_FORBIDDEN') {
-        setError('管理テナント (運営内部) は削除できません。');
+        setError(t('tenantDeleteErrorManagement'));
       } else if (code === 'ALREADY_DELETED') {
-        setError('このテナントは既に削除済みです。');
+        setError(t('tenantDeleteErrorAlreadyDeleted'));
       } else if (code === 'TENANT_NOT_FOUND') {
-        setError('テナントが見つかりません。');
+        setError(t('tenantDeleteErrorNotFound'));
       } else if (code === 'FORBIDDEN') {
-        setError('削除権限がありません (super_admin のみ実行可能)。');
+        setError(t('tenantDeleteErrorForbidden'));
       } else {
-        setError(message ?? '削除に失敗しました。時間をおいて再度お試しください。');
+        setError(message ?? t('tenantDeleteErrorDefault'));
       }
-      showError('テナント削除に失敗しました');
+      showError(t('tenantDeleteToastFailed'));
       return;
     }
 
-    showSuccess(`テナント「${tenantName}」を削除しました`);
+    showSuccess(t('tenantDeleteToastSuccess', { name: tenantName }));
     setIsOpen(false);
     // 一覧に戻る (super_admin の listAllTenants は deletedAt: null フィルタで非表示になる)
     router.push('/admin/super/tenants');
@@ -100,14 +102,13 @@ export function TenantDeleteButton({ tenantId, tenantName }: Props) {
       }}
     >
       <DialogTrigger className="inline-flex items-center justify-center rounded-md bg-destructive px-4 py-2 text-sm font-medium text-destructive-foreground shadow-xs hover:bg-destructive/90">
-        🗑️ テナントを削除
+        {t('tenantDeleteButton')}
       </DialogTrigger>
       <DialogContent className="max-w-[min(90vw,32rem)]">
         <DialogHeader>
-          <DialogTitle>テナント削除の確認</DialogTitle>
+          <DialogTitle>{t('tenantDeleteDialogTitle')}</DialogTitle>
           <DialogDescription>
-            この操作は取り消しできません (本 PR では復元機能なし)。テナントを削除すると、
-            配下のユーザはログイン不可となり、すべての業務データが参照できなくなります。
+            {t('tenantDeleteDialogBody')}
           </DialogDescription>
         </DialogHeader>
 
@@ -115,30 +116,31 @@ export function TenantDeleteButton({ tenantId, tenantName }: Props) {
           {/* P-B (2026-05-08): 運営者の手動運用としてメール事前連絡が必要であることを明示 */}
           <div className="rounded border border-amber-300 bg-amber-50 p-3 text-sm dark:border-amber-900/40 dark:bg-amber-950/30">
             <p className="font-semibold text-amber-900 dark:text-amber-200">
-              ⚠ 削除前の運用上の手順
+              {t('tenantDeleteWarningTitle')}
             </p>
             <p className="mt-1 text-amber-900 dark:text-amber-200">
-              削除前に <strong>テナントの代表者 (請求先メール) へ削除予告メールを送信</strong>
-              し、削除実施日と既存データの取り扱いについて合意を取ってから本機能で削除してください。
-              本ダイアログからは自動でメールは送信されません。
+              {t.rich('tenantDeleteWarningBody', { strong: (chunks) => <strong>{chunks}</strong> })}
             </p>
           </div>
 
           <div className="rounded border border-destructive/30 bg-destructive/5 p-3 text-sm">
             <p>
-              <strong>削除対象:</strong> {tenantName}
+              {t.rich('tenantDeleteTargetLabel', {
+                name: tenantName,
+                strong: (chunks) => <strong>{chunks}</strong>,
+              })}
             </p>
             <p className="mt-1 text-muted-foreground">
-              users / projects / customers / knowledges / risksIssues /
-              retrospectives / memos / stakeholders / comments / attachments を
-              論理削除し、テナント自体も論理削除します。
-              api_call_logs / 月次履歴 / 監査ログは物理保持されます。
+              {t('tenantDeleteScopeBody')}
             </p>
           </div>
 
           <div className="space-y-2">
             <Label htmlFor="tenant-name-confirm">
-              削除を確定するには、テナント名「<strong>{tenantName}</strong>」を入力してください
+              {t.rich('tenantDeleteConfirmInputLabel', {
+                name: tenantName,
+                strong: (chunks) => <strong>{chunks}</strong>,
+              })}
             </Label>
             <Input
               id="tenant-name-confirm"
@@ -158,14 +160,14 @@ export function TenantDeleteButton({ tenantId, tenantName }: Props) {
 
         <div className="flex justify-end gap-2">
           <Button variant="outline" onClick={handleClose}>
-            キャンセル
+            {t('tenantDeleteCancel')}
           </Button>
           <Button
             variant="destructive"
             disabled={!canDelete}
             onClick={handleDelete}
           >
-            削除を実行
+            {t('tenantDeleteSubmit')}
           </Button>
         </div>
       </DialogContent>

@@ -81,7 +81,16 @@
       "PowerShell(Get-ChildItem -Recurse -Path \"C:\\\\Users\\\\SF02512\\\\GitHub\\\\Private\\\\BusinessManagementPlatform\\\\src\\\\app\\\\api\" -Filter \"route.ts\" | Where-Object { $_.FullName -match \"\\(comments|knowledge\\)\" } | Select-Object -ExpandProperty FullName)",
       "Read(//c/Users/SF02512/GitHub/Private/BusinessManagementPlatform/src/app/api/projects/**)",
       "WebFetch(domain:answers.netlify.com)",
-      "PowerShell($dir = \"c:\\\\Users\\\\SF02512\\\\GitHub\\\\Private\\\\BusinessManagementPlatform\\\\src\\\\app\\\\api\\\\projects\\\\[projectId]\\\\tasks\\\\workload\"; if \\(\\(Get-ChildItem $dir -Force\\).Count -eq 0\\) { Remove-Item $dir -Force; Write-Host \"dir removed\" } else { Get-ChildItem $dir })"
+      "PowerShell($dir = \"c:\\\\Users\\\\SF02512\\\\GitHub\\\\Private\\\\BusinessManagementPlatform\\\\src\\\\app\\\\api\\\\projects\\\\[projectId]\\\\tasks\\\\workload\"; if \\(\\(Get-ChildItem $dir -Force\\).Count -eq 0\\) { Remove-Item $dir -Force; Write-Host \"dir removed\" } else { Get-ChildItem $dir })",
+      "Skill(claude-api)",
+      "Skill(claude-api:*)",
+      "PowerShell(cd \"c:\\\\Users\\\\SF02512\\\\GitHub\\\\Private\\\\BusinessManagementPlatform\"; pnpm test 2>&1 | Select-Object -Last 30; echo \"EXIT: $LASTEXITCODE\")",
+      "PowerShell(cd \"c:\\\\Users\\\\SF02512\\\\GitHub\\\\Private\\\\BusinessManagementPlatform\"; pnpm build 2>&1 | Select-Object -Last 30; echo \"EXIT: $LASTEXITCODE\")",
+      "PowerShell(cd \"c:\\\\Users\\\\SF02512\\\\GitHub\\\\Private\\\\BusinessManagementPlatform\"; pnpm test 2>&1 | Select-Object -Last 15; echo \"EXIT: $LASTEXITCODE\")",
+      "PowerShell(cd \"c:\\\\Users\\\\SF02512\\\\GitHub\\\\Private\\\\BusinessManagementPlatform\"; pnpm test 2>&1 | Select-Object -Last 10; echo \"EXIT: $LASTEXITCODE\")",
+      "PowerShell(cd \"c:\\\\Users\\\\SF02512\\\\GitHub\\\\Private\\\\BusinessManagementPlatform\"; pnpm exec vitest run scripts/check-banned-i18n-patterns.test.ts 2>&1 | Select-Object -Last 25; Write-Output \"EXIT: $LASTEXITCODE\")",
+      "PowerShell(cd \"c:\\\\Users\\\\SF02512\\\\GitHub\\\\Private\\\\BusinessManagementPlatform\"; pnpm check:faq-embeddings-sync 2>&1 | Select-Object -Last 15; echo \"EXIT: $LASTEXITCODE\")",
+      "PowerShell(cd \"c:\\\\Users\\\\SF02512\\\\GitHub\\\\Private\\\\BusinessManagementPlatform\"; pnpm lint 2>&1 | tail -20; echo \"EXIT: $LASTEXITCODE\")"
     ],
     "additionalDirectories": [
       "C:\\Users\\SF02512\\GitHub\\Private\\HomePage\\src\\content\\product\\ja",

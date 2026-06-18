@@ -40,7 +40,7 @@ import {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.mocked(generateDailyNotifications).mockResolvedValue({ startCreated: 0, endCreated: 0 });
+  vi.mocked(generateDailyNotifications).mockResolvedValue({ endCreated: 0 });
   vi.mocked(cleanupReadNotifications).mockResolvedValue({ deleted: 0 });
   vi.mocked(deleteExpiredPreviews).mockResolvedValue(0);
   vi.mocked(updateAllStorageBytesUsed).mockResolvedValue(0);
@@ -93,7 +93,7 @@ describe('POST /api/cron/daily-notifications', () => {
 
   it('正しい Bearer なら generate + cleanup + 期限切れ preview + storage キャッシュ更新 を実行して 200', async () => {
     process.env.CRON_SECRET = 'test-cron-secret-32chars-or-more-xxxxxxxxxxxxxxxx';
-    vi.mocked(generateDailyNotifications).mockResolvedValue({ startCreated: 3, endCreated: 2 });
+    vi.mocked(generateDailyNotifications).mockResolvedValue({ endCreated: 2 });
     vi.mocked(cleanupReadNotifications).mockResolvedValue({ deleted: 5 });
     vi.mocked(deleteExpiredPreviews).mockResolvedValue(2);
     vi.mocked(updateAllStorageBytesUsed).mockResolvedValue(7);
@@ -104,7 +104,7 @@ describe('POST /api/cron/daily-notifications', () => {
     // ADR-0020 (2026-05-25): Grace 判定廃止 + 5 回目検証 R で drift 検知追加
     expect(json.data).toEqual({
       source: 'cron',
-      generated: { startCreated: 3, endCreated: 2 },
+      generated: { endCreated: 2 },
       cleaned: { deleted: 5 },
       expiredPreviewsDeleted: 2,
       storage: { bytesUpdated: 7, driftRatio: 0, driftLevel: 'ok' },

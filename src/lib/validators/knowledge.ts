@@ -8,11 +8,13 @@ import {
 } from '@/config';
 
 /**
- * 2026-05-11: ナレッジ作成スキーマ。
+ * 2026-05-11 / v1.3.0 軽量入力 (2026-06-19) 改訂: ナレッジ作成スキーマ。
  *
  * 公開範囲 (visibility) に応じて必須チェックを切り替える:
- *   - 'draft' (自分のみ): 一時保存的に必須項目を空でも保存可 (DB NOT NULL は default '' / 'other' で満たす)
- *   - 'public' (全メンバー): タイトル必須 + knowledgeType を含む必須項目を強制
+ *   - 'draft' (自分のみ): **タイトルのみ必須**。他項目は空でも保存可 (DB NOT NULL は default '' / 'other' で満たす)
+ *   - 'public' (全メンバー): タイトル + 「Embedding 対象 ∩ UI 入力欄あり」項目 (background / content / result) を必須化
+ *     (= 公開資産が提案エンジンで意味を持つよう本文の空公開を防ぐ)。
+ *     conclusion / recommendation は UI 入力欄が無い (インポート専用) ため必須対象外。embedding 合成には引き続き含む。
  */
 export const createKnowledgeSchema = z
   .object({
@@ -48,12 +50,24 @@ export const createKnowledgeSchema = z
     assigneeId: z.string().uuid().nullable().optional(),
   })
   .superRefine((data, ctx) => {
-    if (data.visibility === 'public' && (!data.title || data.title.trim().length === 0)) {
-      ctx.addIssue({
-        code: 'custom',
-        message: '「全メンバー」に公開する場合はタイトルを入力してください',
-        path: ['title'],
-      });
+    // v1.3.0 軽量入力 (2026-06-19): title は draft / public とも常に必須。
+    //   draft (自分のみ) でも「最低限タイトルは付ける」を強制し、一覧での識別性を担保する。
+    if (!data.title || data.title.trim().length === 0) {
+      ctx.addIssue({ code: 'custom', message: 'タイトルを入力してください', path: ['title'] });
+    }
+    // v1.3.0: public 化時は「Embedding 対象 ∩ UI 入力欄あり」項目 (背景 / 内容 / 結果) も必須。
+    //   公開資産が提案エンジンで意味を持つよう、本文が空のままの公開を防ぐ。
+    //   conclusion / recommendation は UI 入力欄が無い (インポート専用) ため必須対象外。
+    if (data.visibility === 'public') {
+      if (!data.background || data.background.trim().length === 0) {
+        ctx.addIssue({ code: 'custom', message: '「全メンバー」に公開する場合は背景を入力してください', path: ['background'] });
+      }
+      if (!data.content || data.content.trim().length === 0) {
+        ctx.addIssue({ code: 'custom', message: '「全メンバー」に公開する場合は内容を入力してください', path: ['content'] });
+      }
+      if (!data.result || data.result.trim().length === 0) {
+        ctx.addIssue({ code: 'custom', message: '「全メンバー」に公開する場合は結果を入力してください', path: ['result'] });
+      }
     }
   });
 
@@ -80,13 +94,23 @@ const baseUpdateKnowledgeSchema = z.object({
 });
 
 export const updateKnowledgeSchema = baseUpdateKnowledgeSchema.superRefine((data, ctx) => {
-  // visibility='public' に変更 / 維持する更新では title が空文字でないこと
-  if (data.visibility === 'public' && data.title !== undefined && data.title.trim().length === 0) {
-    ctx.addIssue({
-      code: 'custom',
-      message: '「全メンバー」に公開する場合はタイトルを入力してください',
-      path: ['title'],
-    });
+  // v1.3.0 軽量入力: title は常に必須。明示的に空へ更新しようとした場合のみ拒否 (undefined = 変更なし)。
+  if (data.title !== undefined && data.title.trim().length === 0) {
+    ctx.addIssue({ code: 'custom', message: 'タイトルを入力してください', path: ['title'] });
+  }
+  // v1.3.0: public 化 / 維持の更新で、背景 / 内容 / 結果を空文字へ更新しようとした場合は拒否。
+  //   フォーム未送信 (undefined) は既存値維持のためここでは弾かず、service 層ガードで最終検証する
+  //   (= API 直叩きで本文未送信のまま public 化する経路を防ぐ)。
+  if (data.visibility === 'public') {
+    if (data.background !== undefined && data.background.trim().length === 0) {
+      ctx.addIssue({ code: 'custom', message: '「全メンバー」に公開する場合は背景を入力してください', path: ['background'] });
+    }
+    if (data.content !== undefined && data.content.trim().length === 0) {
+      ctx.addIssue({ code: 'custom', message: '「全メンバー」に公開する場合は内容を入力してください', path: ['content'] });
+    }
+    if (data.result !== undefined && data.result.trim().length === 0) {
+      ctx.addIssue({ code: 'custom', message: '「全メンバー」に公開する場合は結果を入力してください', path: ['result'] });
+    }
   }
 });
 

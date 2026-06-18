@@ -42,11 +42,11 @@
   - frontmatter の `severity` は内容に応じて: `info` (新機能告知) / `warning` (注意喚起) / `critical` (緊急) / `maintenance` (メンテ予告)
   - **bug fix のみのパッチリリースは告知不要** (ユーザ体験への影響が無い場合)
 - [ ] **(5) ローカルゲート確認** — `pnpm lint && pnpm tsc --noEmit && pnpm test && pnpm e2e:coverage-check && pnpm build`
-- [ ] **(6) PR 作成 → CI 通過** — CI には **🤖 機能受け入れ回帰 (E2E)** が含まれる: 払い出し→全資産CRUD→解約→eligibility→チャット/ヘルプ配線 (`e2e/specs/19〜23`、[RELEASE_ACCEPTANCE_TEST.md](../../test/RELEASE_ACCEPTANCE_TEST.md) の 🤖 項目)。E2E が red の場合は merge しない
-- [ ] **(6.5) 👤 Deploy Preview で機能受け入れスモーク (数分・マージ判断)** — `deploy-preview-<PR番号>--tasukiba.netlify.app` で [RELEASE_ACCEPTANCE_TEST.md §9](../../test/RELEASE_ACCEPTANCE_TEST.md#9-数分の人間スモーク-毎リリース必須) の **SMK-1〜7** を実施。Deploy Preview は**実外部サービス + ステージング DB** 接続のため、実メール到達・実 Storage 添付・実 AI 品質を**本番 DB を汚さず**検証できる。FAIL なら merge しない
+- [ ] **(6) PR 作成 → CI 通過** — CI には **🤖 機能受け入れ回帰 (E2E)** が含まれる: 払い出し→全資産CRUD→解約→eligibility→チャット/ヘルプ配線→添付 CRUD (`e2e/specs/19〜26`、[RELEASE_ACCEPTANCE_TEST.md](../../test/RELEASE_ACCEPTANCE_TEST.md) の 🤖 項目)。E2E が red の場合は merge しない
+- [ ] **(6.5) Deploy Preview 確認 (メジャーリリース時のみ / 通常リリースは省略可)** — `deploy-preview-<PR番号>--tasukiba.netlify.app` で [RELEASE_ACCEPTANCE_TEST.md §1〜§6](../../test/RELEASE_ACCEPTANCE_TEST.md) のフル完走を実施。Deploy Preview は**実外部サービス + ステージング DB** 接続のため本番 DB を汚さず実連携 (実メール SMK-1) を検証できる。**通常リリース (weekly) は post-deploy-smoke.yml (step 7.5) が SMK-2〜5/7 を代替するため本ステップは省略可**
 - [ ] **(6.6) squash merge**
 - [ ] **(7) Netlify Production deploy 成功確認** ([COMMIT_AND_DEPLOY.md §10.5 squash merge 時の skip キーワード罠](./COMMIT_AND_DEPLOY.md))
-- [ ] **(7.5) 👤 本番で最終確認 (軽量・本番固有の差分のみ)** — 本番 `tasukiba.netlify.app` で SMK-2 (ログイン/Cookie)・SMK-7 (主要画面レンダリング) + 任意で実メール 1 通。Deploy Preview と本番は `NEXTAUTH_URL`/ドメイン/CONTEXT が異なり Cookie/認証・本番レンダリングは本番でしか確認できないため (破壊的操作は不要)。FAIL があれば原則ロールバック判断
+- [ ] **(7.5) 🤖 Post-Deploy Smoke が自動実行** — Netlify deploy 成功後に **`.github/workflows/post-deploy-smoke.yml`** が自動 trigger され、`e2e/smoke/production-smoke.spec.ts` が本番 URL を叩く。**人間は何もしなくてよい**。GitHub Actions の `post-deploy-smoke` job を確認して green であれば go。FAIL があれば Actions ログ + Artifact (HTML report / trace / video) で原因調査 → 必要であれば原則ロールバック判断。事前準備: Netlify Outgoing Webhook + GitHub Secrets 4 件の初期設定が済んでいること (`playwright.config.smoke.ts` コメント参照)
 - [ ] **(8) `/changelog` を本番で開き (ヘッダ AccountMenu「バージョンアップ情報」経由)、バージョン番号とリリース日が反映されていることを確認**
 - [ ] **(9) `/changelog` `/announcements` を本番で開き、新エントリが表示されることを確認** (`/announcements` はフッタ「お知らせ」リンク = ログイン後のみ導線)
 
@@ -98,7 +98,8 @@
 
 ## 6. 関連ドキュメント
 
-- [docs/test/RELEASE_ACCEPTANCE_TEST.md](../../test/RELEASE_ACCEPTANCE_TEST.md) — 機能受け入れテスト (払い出し→全資産CRUD→主要機能→解約のライフサイクル)。🤖 自動 E2E (毎 CI) + 👤 本番数分スモーク (§9、毎リリース) の 2 層。本書 §2.1 (6)(7.5) / §2.2 から参照
+- [docs/test/RELEASE_ACCEPTANCE_TEST.md](../../test/RELEASE_ACCEPTANCE_TEST.md) — 機能受け入れテスト (払い出し→全資産CRUD→主要機能→解約のライフサイクル)。🤖 CI E2E (毎 PR) + 🤖 Post-Deploy Smoke (毎リリース自動、§9) の 2 層。メジャーリリースのみ §1〜§6 フル完走。本書 §2.1 (6)(7.5) / §2.2 から参照
+- [.github/workflows/post-deploy-smoke.yml](../../../.github/workflows/post-deploy-smoke.yml) — Netlify deploy 後の本番 smoke 自動実行 (SMK-2/3/4/5/7)。設定手順は `playwright.config.smoke.ts` コメント参照
 - [docs/developer-guide/COMMIT_AND_DEPLOY.md](./COMMIT_AND_DEPLOY.md) — 日常コミット・デプロイのワークフロー
 - [docs/operations/PUBLIC_LAUNCH_CHECKLIST.md](../../archive/2026-06-01-pre-ops-reorg/PUBLIC_LAUNCH_CHECKLIST.md) — 一般公開前の包括チェックリスト
 - [docs/operations/GO_LIVE_RUNBOOK.md](../../archive/2026-06-01-pre-ops-reorg/GO_LIVE_RUNBOOK.md) — 2026-06-01 GA リリースの当日進行
@@ -114,3 +115,4 @@
 |---|---|
 | 2026-05-24 | 初版作成 (PR #439 / feat/app-header-footer-unification: 全画面共通フッタ削減により真値ファイルの集約場所が明確化されたため、リリース手順を独立ドキュメント化) |
 | 2026-06 | 機能受け入れゲートを統合 (test/release-acceptance-e2e): §2.1 (6) に 🤖 E2E 回帰注記 + (7.5) 本番 👤 数分スモークを追加 / §2.2 にフル完走を追加 / RELEASE_ACCEPTANCE_TEST.md を §6 関連ドキュメントに追加。粒度 = 🤖毎CI / 👤数分毎リリース / フルはメジャー or 主要経路変更時 |
+| 2026-06-15 | Post-Deploy Smoke 自動化により毎週リリースの人間テストをゼロ化: (6.5) を「メジャーリリースのみ」に限定 / (7.5) を 👤 手動 → 🤖 `post-deploy-smoke.yml` 自動実行に変更 / §6 に post-deploy-smoke.yml を追加 / E2E spec 範囲を 19〜26 に更新 |

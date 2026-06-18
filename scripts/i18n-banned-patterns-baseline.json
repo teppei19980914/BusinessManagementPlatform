@@ -1,0 +1,45 @@
+{
+  "$schema": "i18n-banned-patterns/v1",
+  "$description": "Per-file banned i18n pattern counts. Update only when intentional progress is made (P4/Phase 2 migration).",
+  "generatedAt": "1970-01-01",
+  "totalThrowError": 6,
+  "totalLegacyToast": 32,
+  "files": {
+    "src/app/(dashboard)/admin/users/users-client.tsx": {
+      "throwError": 0,
+      "legacyToast": 1
+    },
+    "src/app/(dashboard)/settings/tenant/migration-import/migration-wizard-client.tsx": {
+      "throwError": 0,
+      "legacyToast": 4
+    },
+    "src/app/(dashboard)/settings/tenant/tenant-settings-client.tsx": {
+      "throwError": 0,
+      "legacyToast": 27
+    },
+    "src/services/knowledge-sync-import.service.ts": {
+      "throwError": 1,
+      "legacyToast": 0
+    },
+    "src/services/memo-sync-import.service.ts": {
+      "throwError": 1,
+      "legacyToast": 0
+    },
+    "src/services/monthly-history-regenerate.service.ts": {
+      "throwError": 1,
+      "legacyToast": 0
+    },
+    "src/services/retrospective-sync-import.service.ts": {
+      "throwError": 1,
+      "legacyToast": 0
+    },
+    "src/services/risk-sync-import.service.ts": {
+      "throwError": 1,
+      "legacyToast": 0
+    },
+    "src/services/task-sync-import.service.ts": {
+      "throwError": 1,
+      "legacyToast": 0
+    }
+  }
+}

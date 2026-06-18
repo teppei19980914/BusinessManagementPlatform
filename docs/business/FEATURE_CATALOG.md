@@ -27,7 +27,7 @@
 | **プロジェクト管理** (CRUD + 状態遷移) | 「企画 → 完了の流れを 1 つで管理したい」 | `src/services/project.service.ts` / `src/app/(dashboard)/projects/` | [SCREENS §11.1-11.2](../specification/SCREENS.md) / [PROJECT_LIFECYCLE.md](./PROJECT_LIFECYCLE.md) |
 | **見積もり管理** | 「過去実績を踏まえた見積もりを作りたい」 | `src/services/estimate.service.ts` / `src/app/(dashboard)/projects/[projectId]/estimates/` | [SCREENS §11.3](../specification/SCREENS.md) |
 | **WBS / タスク管理** | 「タスクの階層構造と進捗をシンプルに」 | `src/services/task.service.ts` / `src/app/(dashboard)/projects/[projectId]/tasks/` | [SCREENS §11.4](../specification/SCREENS.md) |
-| **ガントチャート** | 「スケジュールの遅延を時系列で把握したい」 | `src/app/(dashboard)/projects/[projectId]/gantt/` | [SCREENS §11.5](../specification/SCREENS.md) |
+| **進捗確認 (旧称: ガントチャート)** | 「スケジュールの遅延を時系列で把握したい」「担当者ごとに直近の状況を一目で確認したい」 | `src/app/(dashboard)/projects/[projectId]/gantt/` | [SCREENS §11.5](../specification/SCREENS.md) |
 | **進捗・実績更新** | 「日々の進捗をワンクリックで」 | `src/services/task.service.ts` (updateProgress 系) | [SCREENS §11.4 / §11.6](../specification/SCREENS.md) |
 | **分析タブ (5 パネル)** | 「完了に向けた現在地と消化ペース、担当者の生産性・作業負担・日次の山積みをグラフで把握したい」(PM/PL + admin、v1.2.0)。表示名/概念: 進捗の遅れ・先行 (予実カーブ) / 消化ペースと効率 (週次消化工数) / 見積の精度 (予実差) / 作業量の偏り (作業負担) / 日別の負荷 (日次工数 8h ヒートマップ)。ツールバーで表示グラフ・対象期間を選択 | `src/services/analytics.service.ts` / `src/app/(dashboard)/projects/[projectId]/analysis/` / `src/components/charts/` | [SCREENS §11.5b](../specification/SCREENS.md) / [ADR-0038](../adr/0038-project-analytics-tab-and-generic-chart-foundation.md) |
 | **リスク・課題管理** | 「リスクと課題を統一フローで起票・追跡したい」 | `src/services/risk.service.ts` / `src/app/(dashboard)/projects/[projectId]/risks/` (+ プロジェクト外横断: `src/app/(dashboard)/risks/` / `issues/`) | [SCREENS §11.7](../specification/SCREENS.md) |
@@ -45,6 +45,8 @@
 | **AI ヘルプチャット (たすきフクロウ)** | 「使い方が分からない / FAQ を自然文で聞きたい」 | `src/services/help-search.service.ts` (FAQ/Guide RAG) / `src/app/api/help/chat/route.ts` / `src/app/(dashboard)/help/` / `src/components/help-chat/` | [ADR-0027](../adr/0027-help-ai-concierge.md) / [ADR-0028](../adr/0028-help-chat-rag-migration.md) / memory: project_faq_drives_ai_accuracy |
 | **LLM 自動タグ抽出** | 「タグ付けの手間を省きたい」 | `src/services/auto-tag.service.ts` / `src/lib/llm/metered.ts` | [GLOSSARY: LLM 自動タグ抽出](./GLOSSARY.md) / [ADR-0002](../adr/0002-tenant-billing-per-api-call.md) |
 | **embedding バックフィル** | 「縮退モード中に生成されなかった embedding を月初に補完」 | `src/services/embedding-backfill.service.ts` / `src/services/attachment-embedding-cron.service.ts` / `src/app/api/cron/attachment-embedding/route.ts` | [SUGGESTION_ENGINE.md §B-4](../design/SUGGESTION_ENGINE.md) / [ADR-0026](../adr/0026-embedding-async-generation.md) |
+| **資産導線 (昇華リンク・手動リンク) / v1.3.0** | 「リスクが顕在化したら課題に、課題が解消したら知見に、その都度ゼロから書き直すのが手間」「関連する過去資産を相互に辿れない」 | `src/services/promotion.service.ts` (リスク→課題 / 課題→ナレッジ昇華) / `src/services/asset-link.service.ts` (5 資産間の汎用手動リンク) / `src/components/common/promotion-badge-list.tsx` / `src/components/common/asset-link-section.tsx` / `src/components/dialogs/promote-*-dialog.tsx` | [DATA_MODEL.md §8.44-8.46](../design/DATA_MODEL.md) |
+| **WBS 完了バナー / v1.3.0** | 「タスクが完了しても振り返りを忘れてしまう」 | `src/services/task.service.ts` (`getWbsCompletionBannerState`) / `src/components/wbs-completion-banner.tsx` / `src/lib/wbs-completion-banner-dismiss-storage.ts` | [DATA_MODEL.md](../design/DATA_MODEL.md) |
 
 ---
 

@@ -115,7 +115,7 @@ export function MemosClient({
   };
   const router = useRouter();
   const { withLoading } = useLoading();
-  const { showSuccess, showError } = useToast();
+  const { showSuccessKey, showErrorKey } = useToast();
   // PR #119: session 連携フォーマッタ
   // 作成日時/更新日時は監査列のため秒まで表示 (formatDateTimeSeconds = 全画面共通の設計)
   const { formatDateTimeSeconds } = useFormatters();
@@ -238,7 +238,7 @@ export function MemosClient({
       const json = await res.json().catch(() => ({}));
       const msg = json.error?.message || json.error?.details?.[0]?.message || tMessage('createFailed');
       setError(msg);
-      showError('メモの作成に失敗しました');
+      showErrorKey('memo.toastCreateFailed');
       return;
     }
     const json = await res.json();
@@ -253,7 +253,7 @@ export function MemosClient({
     setStagedCreateAttachments([]);
     setCreateForm({ title: '', content: '', visibility: 'private' });
     setIsCreateOpen(false);
-    showSuccess('メモを作成しました');
+    showSuccessKey('memo.toastCreateSuccess');
     await reload();
   }
 
@@ -303,11 +303,11 @@ export function MemosClient({
       const json = await res.json().catch(() => ({}));
       const msg = json.error?.message || tMessage('updateFailed');
       setError(msg);
-      showError('メモの更新に失敗しました');
+      showErrorKey('memo.toastUpdateFailed');
       return;
     }
     setEditing(null);
-    showSuccess('メモを更新しました');
+    showSuccessKey('memo.toastUpdateSuccess');
     await reload();
   }
 
@@ -317,10 +317,10 @@ export function MemosClient({
       fetch(`/api/memos/${memo.id}`, { method: 'DELETE' }),
     );
     if (!res.ok) {
-      showError('メモの削除に失敗しました');
+      showErrorKey('memo.deleteFailed');
       return;
     }
-    showSuccess('メモを削除しました');
+    showSuccessKey('memo.deleteSuccess');
     await reload();
   }
 
@@ -337,7 +337,7 @@ export function MemosClient({
       }),
     );
     if (!res.ok) {
-      showError('メモのエクスポートに失敗しました');
+      showErrorKey('memo.toastExportFailed');
       return;
     }
     const csvText = await res.text();
@@ -368,10 +368,10 @@ export function MemosClient({
           listMyMemos が throw した場合、画面は空表示になるが新規作成等の操作は維持。 */}
       {dataLoadError && (
         <div className="rounded border border-destructive/30 bg-destructive/10 p-3 text-sm">
-          <p className="font-semibold">⚠ メモ一覧の読み込みに失敗しました</p>
+          <p className="font-semibold">{tMemo('loadFailedTitle')}</p>
           <p className="mt-1 text-muted-foreground">
-            一時的な問題の可能性があります。ページを再読み込みするか、しばらくしてから再試行してください。
-            問題が継続する場合は管理者にお問合せください。
+            {tMemo('loadFailedMessageRetry')}
+            {tMemo('loadFailedMessageContact')}
           </p>
         </div>
       )}
@@ -418,23 +418,18 @@ export function MemosClient({
                   </select>
                 </div>
                 <div className="space-y-2">
-                  <Label>
-                    {tField('title')}
-                    {/* 2026-05-11: 公開範囲 = 自分のみ なら任意 (一時保存可)、全メンバー なら必須 */}
-                    {createForm.visibility === 'private' && (
-                      <span className="ml-2 text-xs text-muted-foreground">{tMemo('contentOptional')}</span>
-                    )}
-                  </Label>
+                  {/* v1.3.0 軽量入力 (2026-06-19): タイトルは private / public とも常に必須 */}
+                  <Label>{tField('title')}</Label>
                   <Input
                     value={createForm.title}
                     onChange={(e) => updateCreateField('title', e.target.value)}
                     maxLength={150}
-                    required={createForm.visibility === 'public'}
+                    required
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label>{tField('body')} <span className="text-xs text-muted-foreground">{tMemo('contentOptional')}</span></Label>
-                  {/* refactor/list-create-content-optional (2026-04-27 #6): タイトル必須、本文は任意 */}
+                  {/* v1.3.0 軽量入力: 本文は private では任意、public では必須 (Embedding 対象 ∩ UI 入力欄あり) */}
+                  <Label>{tField('body')}{createForm.visibility === 'private' && <span className="ml-2 text-xs text-muted-foreground">{tMemo('contentOptional')}</span>}</Label>
                   <MarkdownTextarea
                     value={createForm.content}
                     onChange={(v) => updateCreateField('content', v)}
@@ -570,23 +565,18 @@ export function MemosClient({
                 </select>
               </div>
               <div className="space-y-2">
-                <Label>
-                  {tField('title')}
-                  {/* 2026-05-11: 編集時も visibility 連動で required を切替 */}
-                  {editForm.visibility === 'private' && (
-                    <span className="ml-2 text-xs text-muted-foreground">{tMemo('contentOptional')}</span>
-                  )}
-                </Label>
+                {/* v1.3.0 軽量入力 (2026-06-19): タイトルは private / public とも常に必須 */}
+                <Label>{tField('title')}</Label>
                 <Input
                   value={editForm.title}
                   onChange={(e) => updateEditField('title', e.target.value)}
                   maxLength={150}
-                  required={editForm.visibility === 'public'}
+                  required
                 />
               </div>
               <div className="space-y-2">
-                <Label>{tField('body')} <span className="text-xs text-muted-foreground">{tMemo('contentOptional')}</span></Label>
-                {/* refactor/list-create-content-optional (2026-04-27 #6): 編集時も本文は任意 */}
+                {/* v1.3.0 軽量入力: 本文は private では任意、public では必須 (Embedding 対象 ∩ UI 入力欄あり) */}
+                <Label>{tField('body')}{editForm.visibility === 'private' && <span className="ml-2 text-xs text-muted-foreground">{tMemo('contentOptional')}</span>}</Label>
                 <MarkdownTextarea
                   value={editForm.content}
                   onChange={(v) => updateEditField('content', v)}

@@ -15,19 +15,35 @@ describe('createKnowledgeSchema', () => {
     expect(createKnowledgeSchema.safeParse(validInput).success).toBe(true);
   });
 
-  // 2026-05-11: visibility 連動の必須チェックに変更。
-  //   - 「自分のみ」(draft) では title 空も許容 (一時保存)
-  //   - 「全メンバー」(public) ではタイトル必須
-  it('visibility=draft なら空タイトルを許容 (一時保存)', () => {
+  // v1.3.0 軽量入力 (2026-06-19): 必須チェックを刷新。
+  //   - draft / public とも title は常に必須
+  //   - public では title + 背景 / 内容 / 結果 (Embedding 対象 ∩ UI 入力欄あり) を必須化
+  it('visibility=draft でも空タイトルを拒否 (v1.3.0: title は常に必須)', () => {
     expect(
       createKnowledgeSchema.safeParse({ ...validInput, title: '', visibility: 'draft' }).success,
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it('visibility=public で空タイトルを拒否', () => {
     expect(
       createKnowledgeSchema.safeParse({ ...validInput, title: '', visibility: 'public' }).success,
     ).toBe(false);
+  });
+
+  it('visibility=public で背景 / 内容 / 結果のいずれかが空なら拒否 (v1.3.0)', () => {
+    expect(
+      createKnowledgeSchema.safeParse({ ...validInput, visibility: 'public', background: '' }).success,
+    ).toBe(false);
+    expect(
+      createKnowledgeSchema.safeParse({ ...validInput, visibility: 'public', content: '' }).success,
+    ).toBe(false);
+    expect(
+      createKnowledgeSchema.safeParse({ ...validInput, visibility: 'public', result: '' }).success,
+    ).toBe(false);
+  });
+
+  it('visibility=public で title + 背景 / 内容 / 結果がすべて揃えば受入れ (v1.3.0)', () => {
+    expect(createKnowledgeSchema.safeParse({ ...validInput, visibility: 'public' }).success).toBe(true);
   });
 
   it('タイトルが151文字の場合を拒否する', () => {

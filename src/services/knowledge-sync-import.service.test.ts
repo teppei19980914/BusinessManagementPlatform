@@ -60,12 +60,20 @@ describe('parseKnowledgeSyncImportCsv (T-22 Phase 22c)', () => {
   });
 
   it('不正な enum 値はデフォルトに丸められる', () => {
-    const csv = [HEADER_14, ',T,unknown,,,,,,xyz,bad,,,,bad'].join('\n');
+    // v1.3.0: visibility 既定(public)の検証なので、背景/内容/結果を埋めて draft 降格を回避する。
+    const csv = [HEADER_14, ',T,unknown,bg,ct,rs,,,xyz,bad,,,,bad'].join('\n');
     const rows = parseKnowledgeSyncImportCsv(csv);
     expect(rows[0].knowledgeType).toBe('other');
     expect(rows[0].reusability).toBe(null);
     expect(rows[0].devMethod).toBe(null);
     expect(rows[0].visibility).toBe('public');
+  });
+
+  // v1.3.0 軽量入力 (2026-06-19): public だが本文 (背景/内容/結果) が空なら draft へ降格。
+  it('public 指定でも本文が空なら draft へ降格 (v1.3.0)', () => {
+    const csv = [HEADER_14, ',T,best_practice,,,,,,,,,,,public'].join('\n');
+    const rows = parseKnowledgeSyncImportCsv(csv);
+    expect(rows[0].visibility).toBe('draft');
   });
 
   // fix/csv-import-multiline-text-data-loss: 旧実装は背景/内容/結果 (textarea 入力可) の

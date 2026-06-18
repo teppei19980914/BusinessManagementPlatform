@@ -7,6 +7,7 @@ import {
   filterTreeByStatus,
   findAncestorIds,
   findTaskInTree,
+  flattenActivities,
   UNASSIGNED_KEY,
 } from './task-tree-utils';
 
@@ -290,6 +291,37 @@ describe('findAncestorIds', () => {
 
   it('空ツリーでも空配列', () => {
     expect(findAncestorIds([], 'anything')).toEqual([]);
+  });
+});
+
+describe('flattenActivities (進捗確認ボード: 担当者を持つ ACT のみ抽出)', () => {
+  it('空ツリーは空配列を返す', () => {
+    expect(flattenActivities([])).toEqual([]);
+  });
+
+  it('フラットな ACT リストはそのまま全件返す', () => {
+    const tasks = [makeTask({ id: 'a' }), makeTask({ id: 'b' })];
+    expect(flattenActivities(tasks).map((t) => t.id)).toEqual(['a', 'b']);
+  });
+
+  it('WP は除外し、ネストした ACT のみ再帰的に収集する', () => {
+    const tree: TaskDTO[] = [
+      makeTask({
+        id: 'wp1',
+        type: 'work_package',
+        children: [
+          makeTask({ id: 'act1', type: 'activity', parentTaskId: 'wp1' }),
+          makeTask({
+            id: 'wp1-1',
+            type: 'work_package',
+            parentTaskId: 'wp1',
+            children: [makeTask({ id: 'act2', type: 'activity', parentTaskId: 'wp1-1' })],
+          }),
+        ],
+      }),
+      makeTask({ id: 'wp2', type: 'work_package', children: [] }),
+    ];
+    expect(flattenActivities(tree).map((t) => t.id)).toEqual(['act1', 'act2']);
   });
 });
 

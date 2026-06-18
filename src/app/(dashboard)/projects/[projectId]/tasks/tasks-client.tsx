@@ -199,7 +199,7 @@ function TaskTreeNodeImpl({
   // 従来あったローカル display state（即時反映用）は、編集ダイアログ化に伴い廃止。
   // CRUD 後の reload + stale-while-revalidate（PR #33）で UI が追従する。
   const t = useTranslations('wbs');
-  const { showSuccess, showError } = useToast();
+  const { showSuccessKey, showErrorKey } = useToast();
   const { formatDateOnly } = useFormatters();
   const unsetLabel = t('unsetShort');
 
@@ -272,7 +272,7 @@ function TaskTreeNodeImpl({
           子の担当者が混在 / 全員未アサインの場合は DTO 側 assigneeName が undefined
           となり '-' が表示される。
         */}
-        <td className="px-1.5 py-1.5 md:px-3 md:py-2 whitespace-nowrap">{task.assigneeName || '-'}</td>
+        <td className="px-1.5 py-1.5 md:px-3 md:py-2 whitespace-nowrap">{task.assigneeDisplayText || task.assigneeName || '-'}</td>
         <td className="px-1.5 py-1.5 md:px-3 md:py-2 whitespace-nowrap">
           <Badge variant={statusColors[task.status] || 'outline'}>
             {TASK_STATUSES[task.status as keyof typeof TASK_STATUSES] || task.status}
@@ -323,10 +323,10 @@ function TaskTreeNodeImpl({
                     fetch(`/api/projects/${projectId}/tasks/${task.id}`, { method: 'DELETE' }),
                   );
                   if (!res.ok) {
-                    showError(isWP ? 'WPの削除に失敗しました' : 'アクティビティの削除に失敗しました');
+                    showErrorKey(isWP ? 'wbs.toastWpDeleteFailed' : 'wbs.toastActivityDeleteFailed');
                     return;
                   }
-                  showSuccess(isWP ? 'WPを削除しました' : 'アクティビティを削除しました');
+                  showSuccessKey(isWP ? 'wbs.toastWpDeleteSuccess' : 'wbs.toastActivityDeleteSuccess');
                   await reload();
                 }}
               >
@@ -428,7 +428,7 @@ function TaskMobileCardImpl({
   attachmentsByEntity,
 }: Omit<TaskTreeNodeProps, 'canSelectForProgress' | 'isSelected' | 'selectedIds' | 'onToggleSelect'>) {
   const t = useTranslations('wbs');
-  const { showSuccess, showError } = useToast();
+  const { showSuccessKey, showErrorKey } = useToast();
   const { formatDateOnly } = useFormatters();
   const unsetLabel = t('unsetShort');
   const isWP = task.type === 'work_package';
@@ -488,7 +488,7 @@ function TaskMobileCardImpl({
             </div>
             <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
               <dt className="text-xs text-muted-foreground">{t('columnAssignee')}</dt>
-              <dd>{task.assigneeName || '-'}</dd>
+              <dd>{task.assigneeDisplayText || task.assigneeName || '-'}</dd>
               <dt className="text-xs text-muted-foreground">{t('columnStatus')}</dt>
               <dd>
                 <Badge variant={statusColors[task.status] || 'outline'} className="text-[10px]">
@@ -537,10 +537,10 @@ function TaskMobileCardImpl({
                     fetch(`/api/projects/${projectId}/tasks/${task.id}`, { method: 'DELETE' }),
                   );
                   if (!res.ok) {
-                    showError(isWP ? 'WPの削除に失敗しました' : 'アクティビティの削除に失敗しました');
+                    showErrorKey(isWP ? 'wbs.toastWpDeleteFailed' : 'wbs.toastActivityDeleteFailed');
                     return;
                   }
-                  showSuccess(isWP ? 'WPを削除しました' : 'アクティビティを削除しました');
+                  showSuccessKey(isWP ? 'wbs.toastWpDeleteSuccess' : 'wbs.toastActivityDeleteSuccess');
                   await reload();
                 }}
               >
@@ -595,7 +595,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
   const t = useTranslations('wbs');
   const router = useRouter();
   const { withLoading } = useLoading();
-  const { showSuccess, showError } = useToast();
+  const { showError, showSuccessKey, showErrorKey } = useToast();
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [error, setError] = useState('');
   // fix/wbs-filter-regression: モバイル時のフィルタ折りたたみ state (md+ では常時開)
@@ -888,11 +888,11 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
         message = json.error?.message || json.error?.details?.[0]?.message || message;
       } catch {}
       setEditError(message);
-      showError('タスクの更新に失敗しました');
+      showErrorKey('wbs.toastTaskUpdateFailed');
       return;
     }
     closeEditDialog();
-    showSuccess('タスクを更新しました');
+    showSuccessKey('wbs.toastTaskUpdateSuccess');
     await reload();
   }
 
@@ -1083,7 +1083,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
       const msg =
         json.error?.message
         || json.error?.details?.[0]?.message
-        || '一括複製に失敗しました';
+        || t('toastBulkDuplicateFailedDefault');
       setBulkDuplicateError(msg);
       showError(msg);
       return;
@@ -1094,9 +1094,9 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     const added = json.data?.added ?? 0;
     const renamed = json.data?.renamedCount ?? 0;
     if (renamed > 0) {
-      showSuccess(`${added} 件のタスクを複製しました (${renamed} 件は名称衝突のためリネーム)`);
+      showSuccessKey('wbs.toastBulkDuplicateSuccessWithRenamed', { added, renamed });
     } else {
-      showSuccess(`${added} 件のタスクを複製しました`);
+      showSuccessKey('wbs.toastBulkDuplicateSuccess', { added });
     }
     await reload();
     // total はトーストには出さない (renamed 件数の方がユーザに有用)
@@ -1141,9 +1141,9 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     setSelectedIds(new Set());
     const failed = result.failedIds.length;
     if (failed > 0) {
-      showError(`${failed} 件のタスク削除に失敗しました (${total} 件中)`);
+      showErrorKey('wbs.toastBulkDeletePartialFailed', { failed, total });
     } else {
-      showSuccess(`${total} 件のタスクを削除しました`);
+      showSuccessKey('wbs.toastBulkDeleteSuccess', { total });
     }
     await reload();
   }
@@ -1203,12 +1203,12 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     const err = await postBulkUpdate(updates);
     if (err) {
       setBulkEditError(err);
-      showError('タスクの一括更新 (計画) に失敗しました');
+      showErrorKey('wbs.toastBulkUpdatePlanFailed');
       return;
     }
     setIsBulkEditOpen(false);
     setSelectedIds(new Set());
-    showSuccess(`${total} 件のタスクの計画を一括更新しました`);
+    showSuccessKey('wbs.toastBulkUpdatePlanSuccess', { total });
     // ※ apply / values の明示リセットは不要。次回開く際に onOpenChange→
     //    handleBulkEditOpenChange(true) が必ずリセットを行うため。
     await reload();
@@ -1229,12 +1229,12 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     const err = await postBulkUpdate(updates);
     if (err) {
       setBulkActualError(err);
-      showError('タスクの一括更新 (実績) に失敗しました');
+      showErrorKey('wbs.toastBulkUpdateActualFailed');
       return;
     }
     setIsBulkActualOpen(false);
     setSelectedIds(new Set());
-    showSuccess(`${total} 件のタスクの実績を一括更新しました`);
+    showSuccessKey('wbs.toastBulkUpdateActualSuccess', { total });
     // ※ 同上。リセットは onOpenChange 経由
     await reload();
   }
@@ -1261,7 +1261,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
       }),
     );
     if (!res.ok) {
-      showError('WBS のエクスポートに失敗しました');
+      showErrorKey('wbs.toastExportFailed');
       return;
     }
     const csvText = await res.text();
@@ -1273,7 +1273,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     a.download = `wbs-${new Date().toISOString().split('T')[0]}.csv`;
     a.click();
     URL.revokeObjectURL(url);
-    showSuccess('WBS をエクスポートしました');
+    showSuccessKey('wbs.toastExportSuccess');
   }
 
   // feat/wbs-overwrite-import: 上書きインポートダイアログ state
@@ -1386,7 +1386,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
       const json = await res.json();
       const msg = json.error?.message || json.error?.details?.[0]?.message || t('createFailed');
       setError(msg);
-      showError(createType === 'work_package' ? 'WPの作成に失敗しました' : 'アクティビティの作成に失敗しました');
+      showErrorKey(createType === 'work_package' ? 'wbs.toastWpCreateFailed' : 'wbs.toastActivityCreateFailed');
       return;
     }
 
@@ -1405,7 +1405,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     setParentTaskId('');
     // fix/quick-ux item 8: 連続起票でも担当者は自分にリセット
     setForm({ name: '', description: '', notes: '', assigneeId: userId, plannedStartDate: '', plannedEndDate: '', plannedEffort: 0 });
-    showSuccess(createType === 'work_package' ? 'WPを作成しました' : 'アクティビティを作成しました');
+    showSuccessKey(createType === 'work_package' ? 'wbs.toastWpCreateSuccess' : 'wbs.toastActivityCreateSuccess');
     await reload();
   }
 

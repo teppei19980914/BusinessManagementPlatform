@@ -10,6 +10,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import { useToast } from '@/components/toast-provider';
 import { Button } from '@/components/ui/button';
 
@@ -21,13 +22,13 @@ export type StripeDlqRetryButtonProps = {
 
 export function StripeDlqRetryButton({ kind, id, label }: StripeDlqRetryButtonProps) {
   const router = useRouter();
+  const t = useTranslations('superAdmin');
   const { showSuccess, showError } = useToast();
   const [submitting, setSubmitting] = useState(false);
 
   const handleClick = async () => {
     const confirmed = window.confirm(
-      `${kind === 'webhook' ? 'Webhook event' : 'Usage Record queue 行'} を再投入しますか?\n` +
-        '（retryCount=0, nextSendAt/nextRetryAt=now に reset）',
+      kind === 'webhook' ? t('stripeDlqRetryConfirmWebhook') : t('stripeDlqRetryConfirmUsage'),
     );
     if (!confirmed) return;
 
@@ -38,13 +39,13 @@ export function StripeDlqRetryButton({ kind, id, label }: StripeDlqRetryButtonPr
       });
       const json = await res.json().catch(() => null);
       if (!res.ok) {
-        showError(json?.error?.message ?? '再投入に失敗しました');
+        showError(json?.error?.message ?? t('stripeDlqRetryErrorDefault'));
         return;
       }
-      showSuccess('再投入しました');
+      showSuccess(t('stripeDlqRetryToastSuccess'));
       router.refresh();
     } catch {
-      showError('通信エラー');
+      showError(t('stripeDlqRetryNetworkError'));
     } finally {
       setSubmitting(false);
     }
@@ -58,7 +59,7 @@ export function StripeDlqRetryButton({ kind, id, label }: StripeDlqRetryButtonPr
       onClick={handleClick}
       disabled={submitting}
     >
-      {submitting ? '処理中…' : label}
+      {submitting ? t('stripeDlqRetryProcessing') : label}
     </Button>
   );
 }

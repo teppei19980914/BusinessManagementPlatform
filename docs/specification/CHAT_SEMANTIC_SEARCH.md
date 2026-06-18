@@ -27,6 +27,7 @@
 - **Level 1 のみ実装**: 意味検索 → 結果カード表示。LLM による要約・回答生成は **行わない** (将来の Pro プラン差別化価値として温存)。
 - 会話履歴は **同一タブ内のセッション中のみ保持** (sessionStorage 経由 / DB 保管なし / タブを閉じる・ログアウト・履歴クリアで消去)。詳細は §2.7。
 - 種別フィルタ UI は **出さない** (5 資産デフォルト全網羅、カードに種別バッジで識別)。
+- **添付ファイル本文の検索 (ADR-0021, 2026-05-26)**: クエリにファイル系キーワード (`FILE_SCOPE_KEYWORDS`) を検出した場合のみ、5 資産ではなく **添付ファイル本文 (`Attachment.content_embedding`) を検索する** file scope に切替える (詳細は §2.8)。これにより「埋もれた添付ファイルを中身で探す」UX を提供する。
 
 ---
 
@@ -42,14 +43,16 @@
 3. サーバ側:
    a. getAuthenticatedUser() で viewerTenantId / userId 取得
    b. レート制限チェック (LLM_RATE_LIMIT 流用)
-   c. generateEmbedding({ text, inputType: 'query', featureUnit: 'chat-semantic-search' })
+   c. detectFileScopeQuery(query) で file scope 判定 (= クエリにファイル系キーワードを含むか。§2.8)
+   d. generateEmbedding({ text, inputType: 'query', featureUnit: 'chat-semantic-search' })
       └ Voyage 1 回呼出 + ApiCallLog 1 件記録
-   d. 5 資産に対して pgvector Cosine 類似度検索を並列実行 (Promise.all)
+   e. **file scope = false (通常)**: 5 資産に対して pgvector Cosine 類似度検索を並列実行 (Promise.all)
       - tenantId フィルタ = 自テナントのみ (2026-06-05 単一テナント化、MANAGEMENT_TENANT_ID 越境参照は撤去)
       - deletedAt IS NULL + content_embedding IS NOT NULL
       - visibility='public' のみ (Memo のみ自分の private も含む)
-   e. 各資産で SUGGESTION_DEFAULT_LIMIT=50 件取得 → assignPercentileTiers で tier 分類
-   f. レスポンス組み立て (5 資産別 + tier 分類済 + totalCount)
+   e'. **file scope = true**: `attachments` のみを pgvector 検索 (5 資産は検索せず空配列。§2.8)
+   f. 各テーブルで SUGGESTION_DEFAULT_LIMIT=50 件取得 → assignPercentileTiers で tier 分類
+   g. レスポンス組み立て (5 資産別 + attachments + fileScopeApplied + tier 分類済 + totalCount)
    ↓
 4. クライアント:
    - tier 順 (strong → medium → weak、weak は折りたたみ) で表示
@@ -145,6 +148,34 @@
 4. **pg_trgm fallback**: 既存 `similarity()` を 5 資産に適用してテキスト類似度のみで検索結果を返す
 
 これは既存 [`suggestRelatedIssuesForText`](../../src/services/suggestion.service.ts) の縮退設計と同じ思想。
+
+### 2.8 添付ファイル本文検索 (file scope / ADR-0021 §9.5, 2026-05-26)
+
+「埋もれた添付ファイルを中身で探す」ためのスコープ。アップロード済みファイルはテキスト抽出 → Voyage embedding を生成して `Attachment.content_embedding` に索引化されており (生成は [attachment-embedding.service.ts](../../src/services/attachment-embedding.service.ts)、抽出は [file-text-extraction.service.ts](../../src/services/file-text-extraction.service.ts))、本スコープはその embedding を検索する。
+
+**either/or 切替 (5 資産との排他)**: 通常検索 (5 資産) と添付ファイル検索は排他で、両方を同時には返さない。`detectFileScopeQuery()` がクエリ内にファイル系キーワードを検出したら attachment のみ検索し、5 資産は空配列になる。逆にキーワードが無ければ従来どおり 5 資産検索で、`attachments` は常に空配列。UI は `fileScopeApplied` フラグで表示を切替える ([chat-panel.tsx](../../src/components/chat-semantic-search/chat-panel.tsx))。
+
+**file scope キーワード** (`FILE_SCOPE_KEYWORDS`, [file-storage-pricing.ts](../../src/config/file-storage-pricing.ts)、case-insensitive 部分一致):
+
+> ファイル / file / files / 添付 / 添付ファイル / attachment / attachments / PDF / Excel / xlsx / Word / docx / 資料 / 文書 / document / documents / docs
+
+**検索対象の条件** (pgvector / [chat-search.service.ts](../../src/services/chat-search.service.ts) `pgvectorSearch('attachments', …)`):
+
+| 条件 | 値 | 理由 |
+|---|---|---|
+| `tenant_id` | 自テナントのみ | テナント越境防止 (5 資産と同方針、§5) |
+| `deleted_at` | IS NULL | 論理削除済みは除外 |
+| `storage_provider` | `'supabase'` | 本体アップロードされたファイルのみ (URL のみの旧 Attachment は対象外) |
+| `embedding_status` | `'completed'` | テキスト抽出 + embedding 生成に成功したものだけ |
+| `content_embedding` | IS NOT NULL | 同上 |
+
+**対応形式** (`EMBEDDING_SUPPORTED_EXTENSIONS`): PDF / Excel (.xlsx/.xls) / CSV / テキスト (.txt/.md/.json) / Word (.docx)。画像・ZIP 等のテキスト抽出不能ファイルは `embedding_status='unsupported'` となり本文検索の対象にならない。
+
+**縮退モード**: embedding 生成失敗時は pg_trgm fallback だが、添付には本文カラムが無いため **`display_name` のみの類似度判定** に縮退する (精度は落ちるが機能停止しない)。
+
+**認可**: 検索ヒットはあくまで自テナントの添付。結果カードから実ファイルを開く際は、親エンティティの認可 + Pre-signed URL 発行で別途検証する (チャット結果の hit 自体を信頼しない。§4 T-CS-14 と同方針)。
+
+**設計判断 (なぜ either/or か)**: 添付ファイルと 5 資産は粒度・用途が異なる (ファイル = 中身を探す / 資産 = 知見を探す) ため、混在表示すると tier 分類のスコア基準がぶれる。明示的キーワードでユーザの意図 (ファイルを探したい) を判定し、スコープを切替える方が結果が読みやすい。将来「混在表示」「専用導線」を検討する場合は §9 のスコープ外案件として再評価する。
 
 ---
 

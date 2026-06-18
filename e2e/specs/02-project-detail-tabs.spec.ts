@@ -116,7 +116,7 @@ test.describe('@feature:project:detail Step 7 タブ render', () => {
       // PC viewport: 個別タブが visible
       // 2026-04-30 (Task 1): WBS管理 / ガントチャートは PC では独立タブ
       await expect(page.getByRole('tab', { name: 'WBS管理' })).toBeVisible();
-      await expect(page.getByRole('tab', { name: 'ガントチャート' })).toBeVisible();
+      await expect(page.getByRole('tab', { name: '進捗確認' })).toBeVisible();
       await expect(page.getByRole('tab', { name: 'リスク一覧' })).toBeVisible();
       await expect(page.getByRole('tab', { name: '課題一覧' })).toBeVisible();
       await expect(page.getByRole('tab', { name: '振り返り一覧' })).toBeVisible();
@@ -146,7 +146,7 @@ test.describe('@feature:project:detail Step 7 タブ render', () => {
     // PR #167: 同パターンが「リスク/課題/振り返り/ナレッジ/参考」(資産プルダウン) にも存在。
     const directlyClickableTabs = isMobile
       ? ['概要', '見積もり']
-      : ['概要', '見積もり', 'WBS管理', 'ガントチャート', 'リスク一覧', '課題一覧', '振り返り一覧', 'ナレッジ一覧', '参考'];
+      : ['概要', '見積もり', 'WBS管理', '進捗確認', 'リスク一覧', '課題一覧', '振り返り一覧', 'ナレッジ一覧', '参考'];
     for (const name of directlyClickableTabs) {
       const tab = page.getByRole('tab', { name });
       await tab.click();
@@ -160,7 +160,7 @@ test.describe('@feature:project:detail Step 7 タブ render', () => {
       // KDD §5.X+139 (本 PR): menuitem click 後 React onClick → setState が伝播しない
       //   microtask race の対策として、click 前後で「menuitem が visible」「menu が close」
       //   の 2 段 explicit wait を挿入。force:true は hit-test 回避のため維持。
-      const progressTabsViaMenu = ['WBS管理', 'ガントチャート'];
+      const progressTabsViaMenu = ['WBS管理', '進捗確認'];
       for (const name of progressTabsViaMenu) {
         await page.getByRole('button', { name: '進捗管理メニューを開く' }).click({ force: true });
         const menuItem = page.getByRole('menuitem', { name });
@@ -215,9 +215,9 @@ test.describe('@feature:project:detail Step 7 タブ render', () => {
       // PR #167 mobile: 資産プルダウン visible (個別タブは hidden)
       await expect(page.getByRole('button', { name: '資産メニューを開く' })).toBeVisible();
     } else {
-      // 2026-04-30 (Task 1) PC: WBS管理 / ガントチャートは独立タブとして visible
+      // 2026-04-30 (Task 1) PC: WBS管理 / 進捗確認は独立タブとして visible
       await expect(page.getByRole('tab', { name: 'WBS管理' })).toBeVisible();
-      await expect(page.getByRole('tab', { name: 'ガントチャート' })).toBeVisible();
+      await expect(page.getByRole('tab', { name: '進捗確認' })).toBeVisible();
       await expect(page.getByRole('tab', { name: 'リスク一覧' })).toBeVisible();
       await expect(page.getByRole('tab', { name: '課題一覧' })).toBeVisible();
       await expect(page.getByRole('tab', { name: '振り返り一覧' })).toBeVisible();

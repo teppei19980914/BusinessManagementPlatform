@@ -236,7 +236,6 @@ describe('PR9 業務操作の詳細手順 FAQ invariant', () => {
       'csv-date-format',
       'csv-multiline-cells',
       'csv-encoding',
-      'csv-tags-syntax',
       'csv-row-and-file-limits',
       'csv-error-recovery',
     ];

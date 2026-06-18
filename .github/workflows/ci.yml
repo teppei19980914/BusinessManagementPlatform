@@ -89,6 +89,13 @@ jobs:
         # 詳細: docs/i18n/CONVENTIONS.md §10 / scripts/check-no-hardcoded-jp.ts
         run: pnpm check:no-hardcoded-jp
 
+      - name: Banned i18n patterns check (P9 退行防止)
+        # throw new Error('<JP>') / showError('<JP>') / showSuccess('<JP>') の混入を検知。
+        # AppError/showErrorKey 移行が完了していない既知ファイルはベースラインで許容し、増加のみ FAIL。
+        # 全移行完了後 (P4/P8 完了時) に --strict へ昇格させる。
+        # 詳細: docs/i18n/HANDOFF_PHASE2.md §P9 / scripts/check-banned-i18n-patterns.ts
+        run: pnpm check:banned-i18n-patterns
+
       - name: FAQ embeddings sync check (★生命線★ ADR-0028 / 2026-05-30)
         # ADR-0028 (RAG 移行) の 4 層防御の Layer 1。
         # src/config/faq-content.ts / guide-content.ts の構造健全性 (id 重複 / 文字数超過 /

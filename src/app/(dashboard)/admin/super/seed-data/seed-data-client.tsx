@@ -8,6 +8,7 @@
  */
 
 import { useState } from 'react';
+import { useTranslations } from 'next-intl';
 import type { SeedCandidate } from '@/services/sample-curation.service';
 
 export function SeedDataCurationClient({
@@ -15,6 +16,7 @@ export function SeedDataCurationClient({
 }: {
   initialCandidates: SeedCandidate[];
 }) {
+  const t = useTranslations('superAdmin');
   const [candidates, setCandidates] = useState<SeedCandidate[]>(initialCandidates);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState('');
@@ -29,12 +31,12 @@ export function SeedDataCurationClient({
         body: JSON.stringify({ entityType: c.type, entityId: c.id, isSampleData: next }),
       });
       if (!res.ok) {
-        setError('切替に失敗しました。時間をおいて再度お試しください。');
+        setError(t('seedCurationToggleErrorDefault'));
         return;
       }
       setCandidates((prev) => prev.map((x) => (x.id === c.id ? { ...x, isSampleData: next } : x)));
     } catch {
-      setError('通信エラーが発生しました。');
+      setError(t('seedCurationNetworkError'));
     } finally {
       setBusyId(null);
     }
@@ -51,10 +53,9 @@ export function SeedDataCurationClient({
         className="rounded-md border border-warning/40 bg-warning/10 p-3 text-sm"
         data-testid="seed-curation-warning"
       >
-        <p className="font-semibold">⚠ 注意</p>
+        <p className="font-semibold">{t('seedCurationWarningTitle')}</p>
         <p className="mt-1 text-muted-foreground">
-          「サンプルにする」にした項目は、<strong>すべてのテナントのスターターデータ取込で複製されます</strong>。
-          運営の実データや機密を含む項目をサンプルにしないでください。
+          {t.rich('seedCurationWarningBody', { strong: (chunks) => <strong>{chunks}</strong> })}
         </p>
       </div>
 
@@ -63,11 +64,13 @@ export function SeedDataCurationClient({
       )}
 
       <p className="text-sm text-muted-foreground">
-        現在サンプル指定: <strong>{sampleCount}</strong> 件 / 全 {candidates.length} 件
+        {t('seedCurationSampleCountPrefix')}
+        {t.rich('seedCurationSampleCount', { count: sampleCount, strong: (chunks) => <strong>{chunks}</strong> })}
+        {t('seedCurationSampleCountTotal', { total: candidates.length })}
       </p>
 
-      <CandidateTable title="プロジェクト" items={projects} busyId={busyId} onToggle={toggle} />
-      <CandidateTable title="ナレッジ" items={knowledge} busyId={busyId} onToggle={toggle} />
+      <CandidateTable title={t('seedCurationSectionProjects')} items={projects} busyId={busyId} onToggle={toggle} />
+      <CandidateTable title={t('seedCurationSectionKnowledge')} items={knowledge} busyId={busyId} onToggle={toggle} />
     </div>
   );
 }
@@ -83,13 +86,14 @@ function CandidateTable({
   busyId: string | null;
   onToggle: (c: SeedCandidate, next: boolean) => void;
 }) {
+  const t = useTranslations('superAdmin');
   return (
     <section className="rounded border p-4">
       <h2 className="text-base font-semibold">
-        {title} ({items.length})
+        {t('seedCurationSectionTitle', { title, count: items.length })}
       </h2>
       {items.length === 0 ? (
-        <p className="mt-2 text-sm text-muted-foreground">対象がありません。</p>
+        <p className="mt-2 text-sm text-muted-foreground">{t('seedCurationEmpty')}</p>
       ) : (
         <ul className="mt-3 divide-y">
           {items.map((c) => (
@@ -103,7 +107,7 @@ function CandidateTable({
                   onChange={(e) => onToggle(c, e.target.checked)}
                   data-testid={`seed-toggle-${c.id}`}
                 />
-                サンプルにする
+                {t('seedCurationToggleLabel')}
               </label>
             </li>
           ))}

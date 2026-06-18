@@ -164,7 +164,14 @@ export function parseKnowledgeSyncImportCsv(csvText: string): KnowledgeSyncImpor
     const processTags = COL.processTags >= 0 ? parseTags(fields[COL.processTags]) : [];
     const businessDomainTags = COL.businessDomainTags >= 0 ? parseTags(fields[COL.businessDomainTags]) : [];
     const visibilityRaw = (fields[COL.visibility] ?? '').trim();
-    const visibility = (VALID_VISIBILITIES.has(visibilityRaw) ? visibilityRaw : 'public') as 'draft' | 'public';
+    let visibility = (VALID_VISIBILITIES.has(visibilityRaw) ? visibilityRaw : 'public') as 'draft' | 'public';
+    // v1.3.0 軽量入力 (2026-06-19): 本文 (背景/内容/結果) が全て空の public は「実質タイトルのみ公開」で
+    //   提案エンジンに空資産が乗るため draft へ降格する。UI 作成/更新は全必須だが、import (一括移行) は
+    //   過去資産や旧フォーマットを救うため「本文が全く無い public のみ降格」という緩和ルールを採る
+    //   (title は空行スキップ済みのため非空が保証される)。
+    if (visibility === 'public' && !background && !content && !result) {
+      visibility = 'draft';
+    }
 
     rows.push({
       tempRowIndex: csvRowIndex,

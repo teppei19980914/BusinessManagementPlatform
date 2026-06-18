@@ -9,6 +9,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -69,6 +70,7 @@ export function TenantCreateForm({
   stripeEnabled: boolean;
 }) {
   const router = useRouter();
+  const t = useTranslations('superAdmin');
   const { withLoading } = useLoading();
   const { showSuccess, showError } = useToast();
 
@@ -137,19 +139,19 @@ export function TenantCreateForm({
     if (!res.ok) {
       const code = json?.error?.code as string | undefined;
       const message = json?.error?.message as string | undefined;
-      if (code === 'SLUG_CONFLICT') setError('この組織 ID は既に使用されています。別の ID を入力してください。');
+      if (code === 'SLUG_CONFLICT') setError(t('tenantCreateErrorSlugConflict'));
       // ADR-0016 (2026-05-20): EMAIL_CONFLICT は廃止 (tenant-scoped 一意化で発生不能)
       // ADR-0016 (2026-05-20): BEGINNER_REQUIRES_UPGRADE = サーバ側 defense-in-depth
-      else if (code === 'BEGINNER_REQUIRES_UPGRADE') setError(message ?? 'このメールアドレスは既に登録履歴があるため、Expert または Pro プランをご選択ください。');
-      else if (code === 'EMAIL_SEND_FAILED') setError('招待メール送信に失敗したためテナント作成を取り消しました。メールアドレスを確認のうえ再試行してください。');
-      else if (code === 'VALIDATION_ERROR') setError(message ?? '入力内容に誤りがあります。');
-      else setError(message ?? '作成に失敗しました。');
-      showError('テナント作成に失敗しました');
+      else if (code === 'BEGINNER_REQUIRES_UPGRADE') setError(message ?? t('tenantCreateErrorBeginnerRequiresUpgrade'));
+      else if (code === 'EMAIL_SEND_FAILED') setError(t('tenantCreateErrorEmailSendFailed'));
+      else if (code === 'VALIDATION_ERROR') setError(message ?? t('tenantCreateErrorValidation'));
+      else setError(message ?? t('tenantCreateErrorDefault'));
+      showError(t('tenantCreateToastFailed'));
       return;
     }
 
     const newTenantId = json?.data?.tenantId as string;
-    showSuccess(`テナント「${form.name}」を作成しました。初期管理者に招待メールを送信しました。`);
+    showSuccess(t('tenantCreateToastSuccess', { name: form.name }));
     router.push(`/admin/super/tenants/${newTenantId}`);
     router.refresh();
   }
@@ -161,9 +163,9 @@ export function TenantCreateForm({
       )}
 
       <fieldset className="space-y-4 rounded border p-4">
-        <legend className="text-sm font-semibold">基本情報</legend>
+        <legend className="text-sm font-semibold">{t('tenantCreateBasicInfoLegend')}</legend>
         <div className="space-y-2">
-          <Label htmlFor="name">表示用テナント名 *</Label>
+          <Label htmlFor="name">{t('tenantCreateLabelName')}</Label>
           <Input
             id="name"
             value={form.name}
@@ -173,21 +175,21 @@ export function TenantCreateForm({
           />
         </div>
         <div className="space-y-2">
-          <Label htmlFor="slug">組織 ID *</Label>
+          <Label htmlFor="slug">{t('tenantCreateLabelSlug')}</Label>
           <Input
             id="slug"
             value={form.slug}
             onChange={(e) => setForm({ ...form, slug: e.target.value.toLowerCase() })}
-            placeholder="例: customer-abc"
+            placeholder={t('tenantCreateSlugPlaceholder')}
             pattern="[a-z0-9](?:[-a-z0-9]{1,58}[a-z0-9])?"
             required
           />
           <p className="text-xs text-muted-foreground">
-            英小文字・数字・ハイフン、3〜60 文字。後から変更不可。
+            {t('tenantCreateSlugHint')}
           </p>
         </div>
         <div className="space-y-2">
-          <Label htmlFor="plan">プラン *</Label>
+          <Label htmlFor="plan">{t('tenantCreateLabelPlan')}</Label>
           <select
             id="plan"
             value={form.plan}
@@ -195,11 +197,11 @@ export function TenantCreateForm({
             className={nativeSelectClass}
           >
             <option value="beginner" disabled={beginnerAvailable === false}>
-              Beginner (¥0、プロジェクト作成/更新 月 50 回まで無料、5 席、90 日試用)
-              {beginnerAvailable === false ? ' — このメールは既登録のため選択不可' : ''}
+              {t('tenantCreatePlanBeginner')}
+              {beginnerAvailable === false ? t('tenantCreatePlanBeginnerUnavailableSuffix') : ''}
             </option>
-            <option value="expert">Expert (プロジェクト作成/更新 ¥10/call、資産入力・チャットは無料)</option>
-            <option value="pro">Pro (プロジェクト + なぜ機能 ¥15/call、Sonnet)</option>
+            <option value="expert">{t('tenantCreatePlanExpert')}</option>
+            <option value="pro">{t('tenantCreatePlanPro')}</option>
           </select>
           {beginnerAvailable === false && eligibilityHint && (
             <p
@@ -211,19 +213,17 @@ export function TenantCreateForm({
           )}
           <p className="text-xs text-muted-foreground">
             {/* ADR-0016 (2026-05-20): P-B 強化 — 既登録 email は Beginner 不可 (abuse 防止) */}
-            <strong>注意</strong>: Beginner で作成 → 試用 90 日後に読み取り専用モードに移行。
-            Expert / Pro で作成 → 例外的に Beginner 試用対象外として開設 (= 後で Beginner にダウングレード不可)。
-            既登録メールアドレスの場合は Beginner 選択不可 (Expert/Pro のみ)。
+            <strong>{t('tenantCreatePlanHintNoticeBold')}</strong>{t('tenantCreatePlanHintBody')}
           </p>
         </div>
       </fieldset>
 
       <fieldset className="space-y-4 rounded border p-4">
-        <legend className="text-sm font-semibold">請求先情報 (必須)</legend>
+        <legend className="text-sm font-semibold">{t('tenantCreateBillingLegend')}</legend>
 
         {/* 2026-05-09 (PR C / #5): 個人 / 法人 切替 */}
         <div className="space-y-2">
-          <Label>請求先種別 *</Label>
+          <Label>{t('tenantCreateLabelBillingType')}</Label>
           <div className="flex gap-4 text-sm">
             <label className="flex items-center gap-1.5">
               <input
@@ -233,7 +233,7 @@ export function TenantCreateForm({
                 checked={form.billingType === 'corporate'}
                 onChange={() => setForm({ ...form, billingType: 'corporate' })}
               />
-              法人
+              {t('tenantCreateBillingTypeCorporate')}
             </label>
             <label className="flex items-center gap-1.5">
               <input
@@ -243,14 +243,14 @@ export function TenantCreateForm({
                 checked={form.billingType === 'individual'}
                 onChange={() => setForm({ ...form, billingType: 'individual', billingCompanyName: '' })}
               />
-              個人
+              {t('tenantCreateBillingTypeIndividual')}
             </label>
           </div>
         </div>
 
         {form.billingType === 'corporate' && (
           <div className="space-y-2">
-            <Label htmlFor="billingCompanyName">会社名 / 法人名 *</Label>
+            <Label htmlFor="billingCompanyName">{t('tenantCreateLabelCompanyName')}</Label>
             <Input
               id="billingCompanyName"
               value={form.billingCompanyName}
@@ -263,7 +263,7 @@ export function TenantCreateForm({
 
         <div className="space-y-2">
           <Label htmlFor="billingContactName">
-            {form.billingType === 'corporate' ? '請求担当者名 *' : 'お名前 *'}
+            {form.billingType === 'corporate' ? t('tenantCreateLabelContactNameCorporate') : t('tenantCreateLabelContactNameIndividual')}
           </Label>
           <Input
             id="billingContactName"
@@ -274,7 +274,7 @@ export function TenantCreateForm({
           />
         </div>
         <div className="space-y-2">
-          <Label htmlFor="billingContactEmail">請求先メール *</Label>
+          <Label htmlFor="billingContactEmail">{t('tenantCreateLabelContactEmail')}</Label>
           <Input
             id="billingContactEmail"
             type="email"
@@ -287,49 +287,49 @@ export function TenantCreateForm({
 
         {/* 2026-05-09 (PR C / #8): 住所をサブフィールドに分割 */}
         <div className="space-y-2">
-          <Label htmlFor="billingPostalCode">郵便番号 *</Label>
+          <Label htmlFor="billingPostalCode">{t('tenantCreateLabelPostalCode')}</Label>
           <Input
             id="billingPostalCode"
             value={form.billingPostalCode}
             onChange={(e) => setForm({ ...form, billingPostalCode: e.target.value })}
             maxLength={10}
-            placeholder="例: 100-0001"
+            placeholder={t('tenantCreatePostalCodePlaceholder')}
             pattern="\d{3}-?\d{4}"
             required
           />
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div className="space-y-2">
-            <Label htmlFor="billingPrefecture">都道府県 *</Label>
-            <Input id="billingPrefecture" value={form.billingPrefecture} onChange={(e) => setForm({ ...form, billingPrefecture: e.target.value })} maxLength={20} placeholder="例: 東京都" required />
+            <Label htmlFor="billingPrefecture">{t('tenantCreateLabelPrefecture')}</Label>
+            <Input id="billingPrefecture" value={form.billingPrefecture} onChange={(e) => setForm({ ...form, billingPrefecture: e.target.value })} maxLength={20} placeholder={t('tenantCreatePrefecturePlaceholder')} required />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="billingCity">市区町村 *</Label>
-            <Input id="billingCity" value={form.billingCity} onChange={(e) => setForm({ ...form, billingCity: e.target.value })} maxLength={100} placeholder="例: 千代田区" required />
+            <Label htmlFor="billingCity">{t('tenantCreateLabelCity')}</Label>
+            <Input id="billingCity" value={form.billingCity} onChange={(e) => setForm({ ...form, billingCity: e.target.value })} maxLength={100} placeholder={t('tenantCreateCityPlaceholder')} required />
           </div>
         </div>
         <div className="space-y-2">
-          <Label htmlFor="billingStreetAddress">番地・町名 *</Label>
-          <Input id="billingStreetAddress" value={form.billingStreetAddress} onChange={(e) => setForm({ ...form, billingStreetAddress: e.target.value })} maxLength={200} placeholder="例: 千代田1-1" required />
+          <Label htmlFor="billingStreetAddress">{t('tenantCreateLabelStreet')}</Label>
+          <Input id="billingStreetAddress" value={form.billingStreetAddress} onChange={(e) => setForm({ ...form, billingStreetAddress: e.target.value })} maxLength={200} placeholder={t('tenantCreateStreetPlaceholder')} required />
         </div>
         {/* 2026-05-09 (#10): 任意 */}
         <div className="space-y-2">
-          <Label htmlFor="billingBuildingName">建物名・部屋番号 (任意)</Label>
-          <Input id="billingBuildingName" value={form.billingBuildingName} onChange={(e) => setForm({ ...form, billingBuildingName: e.target.value })} maxLength={200} placeholder="例: 〇〇ビル 5F" />
+          <Label htmlFor="billingBuildingName">{t('tenantCreateLabelBuilding')}</Label>
+          <Input id="billingBuildingName" value={form.billingBuildingName} onChange={(e) => setForm({ ...form, billingBuildingName: e.target.value })} maxLength={200} placeholder={t('tenantCreateBuildingPlaceholder')} />
         </div>
 
         <div className="space-y-2">
-          <Label htmlFor="billingPhoneNumber">電話番号 (任意)</Label>
+          <Label htmlFor="billingPhoneNumber">{t('tenantCreateLabelPhone')}</Label>
           <Input
             id="billingPhoneNumber"
             value={form.billingPhoneNumber}
             onChange={(e) => setForm({ ...form, billingPhoneNumber: e.target.value })}
             maxLength={20}
-            placeholder="例: 03-1234-5678"
+            placeholder={t('tenantCreatePhonePlaceholder')}
           />
         </div>
         <div className="space-y-2">
-          <Label htmlFor="paymentMethod">支払い方法 *</Label>
+          <Label htmlFor="paymentMethod">{t('tenantCreateLabelPaymentMethod')}</Label>
           <select
             id="paymentMethod"
             value={form.paymentMethod}
@@ -339,26 +339,25 @@ export function TenantCreateForm({
             className={nativeSelectClass}
           >
             {/* 2026-05-15: 旧 'invoice'（請求書送付）と 'bank_transfer'（銀行振込）を「銀行振込」に統合 (内部値 'invoice')。 */}
-            <option value="invoice">銀行振込</option>
+            <option value="invoice">{t('tenantCreatePaymentInvoice')}</option>
             {/* feat/db-storage-overage-subscription-items (2026-05-30): Stripe Subscription Item
                 5 項目化完遂と invariant 一致担保により、feat/credit-card-pending の読み取り専用を解除。
                 feat/credit-card-ui-guard (2026-05-30): STRIPE_ENABLED=false の場合は option を
                 disabled 化 (= サーバ側 403 ガードと整合、KDD §5.X+184)。 */}
             <option value="credit_card" disabled={!stripeEnabled}>
-              {stripeEnabled ? 'クレジットカード' : 'クレジットカード (準備中)'}
+              {stripeEnabled ? t('tenantCreatePaymentCreditCardAvailable') : t('tenantCreatePaymentCreditCardPreparing')}
             </option>
           </select>
         </div>
       </fieldset>
 
       <fieldset className="space-y-4 rounded border p-4">
-        <legend className="text-sm font-semibold">初期管理者 (= 招待メール送付先)</legend>
+        <legend className="text-sm font-semibold">{t('tenantCreateInitialAdminLegend')}</legend>
         <p className="text-xs text-muted-foreground">
-          このテナントの最初の admin ユーザを 1 名作成します。指定したメールアドレスに招待メールが送信され、
-          リンクをクリックしてパスワードを設定するとログインできるようになります。
+          {t('tenantCreateInitialAdminDescription')}
         </p>
         <div className="space-y-2">
-          <Label htmlFor="initialAdminName">氏名 *</Label>
+          <Label htmlFor="initialAdminName">{t('tenantCreateLabelAdminName')}</Label>
           <Input
             id="initialAdminName"
             value={form.initialAdminName}
@@ -368,7 +367,7 @@ export function TenantCreateForm({
           />
         </div>
         <div className="space-y-2">
-          <Label htmlFor="initialAdminEmail">メールアドレス *</Label>
+          <Label htmlFor="initialAdminEmail">{t('tenantCreateLabelAdminEmail')}</Label>
           <Input
             id="initialAdminEmail"
             type="email"
@@ -382,9 +381,9 @@ export function TenantCreateForm({
 
       <div className="flex justify-end gap-2">
         <Button type="button" variant="outline" onClick={() => router.back()}>
-          キャンセル
+          {t('tenantCreateCancel')}
         </Button>
-        <Button type="submit">テナントを作成</Button>
+        <Button type="submit">{t('tenantCreateSubmit')}</Button>
       </div>
     </form>
   );

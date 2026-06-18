@@ -29,6 +29,8 @@ import {
 import { useDialogFullscreen } from '@/components/ui/use-dialog-fullscreen';
 import { MarkdownDisplay } from '@/components/ui/markdown-textarea';
 import { AttachmentList } from '@/components/attachments/attachment-list';
+// v1.3.0 資産導線機能: 手動リンクセクション
+import { AssetLinkSection } from '@/components/common/asset-link-section';
 import { CommentSection } from '@/components/comments/comment-section';
 import { useFormatters } from '@/lib/use-formatters';
 import type { MemoDTO } from '@/services/memo.service';
@@ -96,6 +98,8 @@ export function MemoViewDialog({ memo, open, onOpenChange }: Props) {
               canEdit={false}
               label={tMemo('referenceUrl')}
             />
+            {/* v1.3.0 資産導線機能: 手動リンク (リスク/課題/ナレッジ/振り返り/メモ 5 資産間) */}
+            <AssetLinkSection entityType="memo" entityId={memo.id} isPublic={memo.visibility === 'public'} />
             {/* PR #213: コメント機能。CommentSection は fieldset 外に配置。
                 認可は API 側で visibility-aware に判定される (public memo は誰でも投稿可、
                 draft memo は作成者本人のみ)。 */}

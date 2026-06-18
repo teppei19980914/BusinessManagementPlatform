@@ -35,6 +35,7 @@ import { prisma } from '@/lib/db';
 import { afterSafe } from '@/lib/after-safe';
 import { assertAssigneeTenant } from '@/lib/assignee-validation';
 import { generateAndPersistEntityEmbedding, generateAndPersistBatchEmbeddings } from './embedding.service';
+import { deleteAssetLinksForEntity } from './asset-link.service';
 import type { CreateRetrospectiveInput } from '@/lib/validators/retrospective';
 
 export type RetroDTO = {
@@ -516,6 +517,27 @@ export async function updateRetrospective(
   // feat/asset-assignee-expansion (2026-05-26) severity-1 越境防御
   await assertAssigneeTenant(input.assigneeId, tenantId);
 
+  // v1.3.0 軽量入力 (2026-06-19) defense-in-depth: public 化する更新で「Embedding 対象 ∩ UI 入力欄あり」の
+  //   5 セクション (計画総括 / 実績総括 / 良かった点 / 課題 / 改善事項) が空になる場合は拒否。
+  //   実施日 (conductedDate) は常に任意。validator は未送信を既存値維持で通すため、API 直叩きで
+  //   本文未送信のまま public 化する経路を service 層で塞ぐ (提案エンジンの空公開防止)。
+  if (input.visibility === 'public') {
+    const effPlan = input.planSummary !== undefined ? input.planSummary : existing.planSummary;
+    const effActual = input.actualSummary !== undefined ? input.actualSummary : existing.actualSummary;
+    const effGood = input.goodPoints !== undefined ? input.goodPoints : existing.goodPoints;
+    const effProblems = input.problems !== undefined ? input.problems : existing.problems;
+    const effImprovements = input.improvements !== undefined ? input.improvements : existing.improvements;
+    if (
+      !effPlan || effPlan.trim().length === 0
+      || !effActual || effActual.trim().length === 0
+      || !effGood || effGood.trim().length === 0
+      || !effProblems || effProblems.trim().length === 0
+      || !effImprovements || effImprovements.trim().length === 0
+    ) {
+      throw new Error('PUBLIC_REQUIRES_FIELDS');
+    }
+  }
+
   // PR #5-c + PR D (2026-05-09 / #20): text フィールドが「実値として変わったか」を比較で判定。
   const textFieldsChanging =
     (input.planSummary !== undefined && input.planSummary !== existing.planSummary) ||
@@ -633,6 +655,10 @@ export async function deleteRetrospective(
     }),
   ]);
 
+  // v1.3.0 資産導線機能: 削除された振り返りに紐づく手動リンクの孤児を除去。
+  //   asset_links はポリモーフィック (FK なし) のため cascade delete が効かない。
+  await deleteAssetLinksForEntity('retrospective', retroId, viewerTenantId);
+
   // ADR-0025 (2026-05-29): Beginner プラン超過状態からの DELETE で容量キャッシュを即時更新。
   //   循環参照回避のため dynamic import。fail-safe で throw しない。
   const { maybeRecalcAfterBeginnerDelete } = await import('@/services/tenant-storage.service');
@@ -686,7 +712,21 @@ export async function bulkUpdateRetrospectivesVisibilityFromList(
     (t) => t.createdBy === viewerUserId || t.assigneeId === viewerUserId,
   );
   const skippedNotOwned = targets.length - owned.length;
-  const ownedIds = owned.map((t) => t.id);
+  // v1.3.0 軽量入力 (2026-06-19): public 化は 5 セクション (計画総括 / 実績総括 / 良かった点 / 課題 / 改善事項)
+  //   = Embedding 対象 ∩ UI 入力欄あり がすべて非空の行のみ対象。未充足行は draft のまま skip し、
+  //   単発 updateRetrospective の必須ルールと整合させる。draft 化 (公開取り下げ) は無条件で許可。
+  const eligible =
+    visibility === 'public'
+      ? owned.filter(
+          (t) =>
+            t.planSummary.trim().length > 0
+            && t.actualSummary.trim().length > 0
+            && t.goodPoints.trim().length > 0
+            && t.problems.trim().length > 0
+            && t.improvements.trim().length > 0,
+        )
+      : owned;
+  const ownedIds = eligible.map((t) => t.id);
 
   if (ownedIds.length === 0) {
     return { updatedIds: [], skippedNotOwned, skippedNotFound, embeddingsGenerated: 0 };
@@ -713,7 +753,7 @@ export async function bulkUpdateRetrospectivesVisibilityFromList(
   //     - public→public はそもそも text 変更なし → 生成しない (LLM 課金回避)
   let embeddingsGenerated = 0;
   if (visibility === 'public') {
-    const eligibleForEmbedding = owned.filter((t) => t.visibility === 'draft');
+    const eligibleForEmbedding = eligible.filter((t) => t.visibility === 'draft');
     if (eligibleForEmbedding.length > 0) {
       const items = eligibleForEmbedding.map((t) => ({
         table: 'retrospectives' as const,

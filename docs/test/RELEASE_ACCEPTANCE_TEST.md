@@ -18,8 +18,9 @@
 | 👤 | 人間が**本番環境**で確認 (自動化が原理的に肩代わりできない領域) | 毎リリースの数分スモーク ([§9](#9-数分の人間スモーク-毎リリース必須)) |
 | 🤖+👤 | 配線は 🤖 自動 / 品質・実連携は 👤 | 両方 |
 
-> **自動 E2E のカバー範囲** (test/release-acceptance-e2e): 払い出し完全フロー (e2e/specs/19) / 層2・層1 eligibility (20) / セルフ解約 (21) / 初回オンボーディング (22) / チャット・ヘルプ配線 (23、embedding・LLM スタブ前提)。
-> **スタブの限界**: チャット意味検索の関連度・ヘルプ回答品質・実 Stripe 決済・実メール到達・添付の実 Supabase Storage は **スタブでは検証できず 👤 に残る**。
+> **自動 E2E のカバー範囲 (CI: e2e.yml)**: 払い出し完全フロー (e2e/specs/19) / 層2・層1 eligibility (20) / セルフ解約 (21) / 初回オンボーディング (22) / チャット・ヘルプ配線 (23、スタブ前提) / signup UX friction (24) / 外部 API インポート (25) / URL リンク型添付 CRUD (26)。
+> **Post-Deploy Smoke (post-deploy-smoke.yml)**: SMK-2 ログイン/Cookie / SMK-3 資産作成一覧反映 / SMK-4 実 Supabase Storage アップロード往復 / SMK-5 AI ヘルプ品質 (実 Claude + 実 Voyage) / SMK-7 主要画面レンダリング — **本番 URL に対して Netlify deploy 成功後に自動実行**。
+> **自動化の限界**: SMK-1 実メール到達は CI (spec 19) で staging 担保 + 本番 Resend 設定は不変のため省略。SMK-6 実 Stripe 決済は別手順 ([STRIPE_PAYMENT_TEST_PROCEDURE.md](./STRIPE_PAYMENT_TEST_PROCEDURE.md))。
 
 ---
 
@@ -213,7 +214,7 @@ example+rel03@example.com   ← 3 回目 ...
 
 | 区分 | 基準 |
 |---|---|
-| **go** (通常リリース) | 🤖 自動 E2E が CI で green + [§9 数分の人間スモーク](#9-数分の人間スモーク-毎リリース必須) (SMK-1〜7) がすべて PASS |
+| **go** (通常リリース) | 🤖 CI E2E (e2e.yml) が green + 🤖 [§9 Post-Deploy Smoke](#9-post-deploy-smoke-自動実行---e2esmoke) (post-deploy-smoke.yml) が green。**人間テスト不要** |
 | **go** (メジャー / 主要経路変更時) | 上記に加え §1〜§4 + §6 のフル完走がすべて PASS。§5 は推奨 |
 | **conditional go** | 必須項目 PASS、軽微な表示崩れ等のみ FAIL で、リリース後即時修正の合意がある |
 | **no-go** | 払い出し・資産 CRUD・主要機能・解約のいずれかでデータ不整合 / 課金不整合 / セキュリティ境界 (権限・テナント越境) の FAIL がある |
@@ -224,31 +225,37 @@ example+rel03@example.com   ← 3 回目 ...
 
 ---
 
-## 9. 数分の人間スモーク (毎リリース必須)
+## 9. Post-Deploy Smoke (自動実行) — 🤖 (e2e/smoke/)
 
-> 🤖 自動 E2E (毎 CI) が機構回帰を守るため、**毎リリースの人手はここだけ**に圧縮できる。
-> これらは**自動化が原理的に肩代わりできない領域** (実環境・実外部連携・AI 品質・実メール)。**プラスエイリアス** ([§0.5](#05-単一受信箱で繰り返すコツプラスエイリアス必読)) を使えば 1 受信箱で繰り返せる。
+> **週次リリース (通常)**: 本節の SMK-2〜5/7 は `.github/workflows/post-deploy-smoke.yml` が **Netlify deploy 成功後に自動実行**する。人間は毎週リリースで何もしなくてよい。
+> **メジャーリリース**: 本節の自動 smoke に加え §1〜§4 + §6 のフル完走を人間が実施する ([§8](#8-go--no-go-判定) 参照)。
 
-### 実施環境 (2 段階)
+### 自動実行の仕組み
 
-| 段階 | 環境 | 対象 | 理由 |
+| 項目 | 内容 |
+|---|---|
+| ワークフロー | `.github/workflows/post-deploy-smoke.yml` |
+| トリガー | `push: branches: [main]` (5 分待機後に実行) + `workflow_dispatch` |
+| テスト本体 | `e2e/smoke/production-smoke.spec.ts` + `playwright.config.smoke.ts` |
+| 実行コマンド | `pnpm exec playwright test --config=playwright.config.smoke.ts` |
+| 必須 Secrets | `SMOKE_BASE_URL` / `SMOKE_TENANT_SLUG` / `SMOKE_ADMIN_EMAIL` / `SMOKE_ADMIN_PASSWORD` |
+
+> **Netlify webhook は不要**: Netlify の HTTP POST request はカスタム Authorization ヘッダーを設定できないため、push トリガー + 5 分待機方式を採用。
+> **スモーク専用アカウント要件**: MFA (TOTP) が無効であること (30 秒ごとに変化するため自動化不可)、admin 権限を持つこと。
+
+### SMK カバレッジ
+
+| # | スモーク項目 | 自動化 | 備考 |
 |---|---|---|---|
-| **① マージ判断 (主)** | **Deploy Preview / staging** (`deploy-preview-<PR番号>--tasukiba.netlify.app` 等) | **SMK-1〜7 全部** | **実外部サービス (Voyage/Anthropic/メール/Supabase Storage) + ステージング DB** に接続済のため、実連携を検証でき**本番 DB を汚さない** (払い出し→解約の破壊的ライフサイクルも安全)。本プロジェクトの人間 UAT 環境 ([DEPLOYMENT.md](../operations/develop/DEPLOYMENT.md)) |
-| **② 本番デプロイ後 (最終確認)** | **本番** (`tasukiba.netlify.app`) | **SMK-2 (ログイン/Cookie)・SMK-7 (主要画面レンダリング)** + 任意で SMK-1 (実メール 1 通) | Deploy Preview は `NEXTAUTH_URL`/ドメイン/CONTEXT が本番と異なり、**Cookie/認証・本番固有レンダリングは本番でしか最終確認できない** (Netlify Set-Cookie の既知の罠)。破壊的操作は不要、軽量に |
+| **SMK-1** | 実メール到達 | 🤖 CI (spec 19) で staging 担保 | 本番は Resend 設定不変のため省略。inbox provider は CI 専用ファイルシステム方式のため本番 smoke での再現不可 |
+| **SMK-2** | ログイン / Cookie / セッション | 🤖 post-deploy-smoke | ログイン → /projects 到達 + Cookie 確認 |
+| **SMK-3** | 資産作成 → 一覧反映 | 🤖 post-deploy-smoke | URL リンク型添付作成 → 削除で資産 CRUD を代替 |
+| **SMK-4** | ファイル添付往復 (実 Supabase Storage) | 🤖 post-deploy-smoke | 2 フェーズアップロード (presigned PUT) → DL (302 signed URL) → 削除 |
+| **SMK-5** | チャット / AI ヘルプの品質 | 🤖 post-deploy-smoke | 既知 FAQ 質問 → 期待キーワード確認 (実 Claude + 実 Voyage) |
+| **SMK-6** | Stripe 決済 (クレジットカード払い提供時のみ) | 👤 手動 (別手順) | [STRIPE_PAYMENT_TEST_PROCEDURE.md](./STRIPE_PAYMENT_TEST_PROCEDURE.md) |
+| **SMK-7** | 主要画面の本番レンダリング | 🤖 post-deploy-smoke | /projects + /settings/tenant が 500 なく表示 |
 
-> つまり **主検証は Deploy Preview/staging、本番では「本番固有の差分」だけ最終確認**する。Deploy Preview の `DATABASE_URL` が staging を指すこと (= 本番非汚染) は事前に `netlify env:list --context deploy-preview` で担保されている前提。
-
-| # | 👤 スモーク項目 | 確認ポイント | 結果 |
-|---|---|---|---|
-| **SMK-1** | 実エイリアスで `/signup` → 払い出し | **実際に検証メールが受信箱に届く** (SMTP/Resend 設定・到達性・リンク正当性)。🤖 はメールを inbox provider でバイパスするため未検証 | |
-| **SMK-2** | メールのリンクで setup-password → ログイン | 初回オンボーディングモーダルが本番で表示される | |
-| **SMK-3** | 資産を 1 つ作成 → 一覧反映 | 本番環境 (Netlify standalone) でレンダリング・保存が正常 | |
-| **SMK-4** | ファイル添付を 1 往復 | アップロード → ダウンロード → 削除が**実 Supabase Storage**で成功 (signed URL 権限・容量反映) | |
-| **SMK-5** | チャット意味検索に 1 問 + ヘルプに 1 問 | **回答の関連度・品質が妥当** (実 Voyage embedding / 実 Claude。スタブでは未検証) | |
-| **SMK-6** | (クレジットカード払いを提供する場合のみ) 決済 | [STRIPE_PAYMENT_TEST_PROCEDURE.md](./STRIPE_PAYMENT_TEST_PROCEDURE.md) の該当 TC | |
-| **SMK-7** | 主要画面の本番レンダリング | /projects / /settings/tenant / 各一覧が 500 や Cookie 不整合なく表示 | |
-
-> 所要 ~数分。FAIL があれば原則 no-go。フル完走 (§1〜§8) はメジャーリリース or signup・課金・資産経路を触ったリリース時に実施する。
+> **SMK-6 のみ** 👤 手動に残る。週次リリースでは SKIP 可 (クレジットカード払い未提供のため)。
 
 ---
 

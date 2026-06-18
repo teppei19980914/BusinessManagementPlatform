@@ -171,11 +171,20 @@
 - [x] `/api/projects/[projectId]/retrospectives/bulk` (PATCH 一括 visibility, PR #162 → PR #165 → UI_PATTERNS §35) — e2e/specs/10-project-list-bulk-update.spec.ts
 - [x] `/api/projects/[projectId]/knowledge/bulk` (PATCH 一括 visibility, PR #162 → PR #165 → UI_PATTERNS §35) — e2e/specs/10-project-list-bulk-update.spec.ts
 
+### 資産導線 (v1.3.0 / 昇華リンク・手動リンク・WBS完了バナー)
+- [ ] `/api/promotions` (GET) — skip: 昇華関係の取得 (4 パターン)。risk/issue/knowledge 各 CRUD 詳細ダイアログ同様 UI E2E は後続 PR、tenantId 越境防止 + クエリ振り分けは src/app/api/promotions/route.test.ts で担保
+- [ ] `/api/promotions/risk-to-issue` (POST) — skip: リスク→課題昇華。認可 (実メンバー + risk:create) / source 検証 (NOT_FOUND, INVALID_SOURCE_TYPE, SOURCE_NOT_PUBLIC) / audit log は src/app/api/promotions/risk-to-issue/route.test.ts + src/services/promotion.service.test.ts で担保
+- [ ] `/api/promotions/issue-to-knowledge` (POST) — skip: 課題→ナレッジ昇華。projectIds 指定時のメンバー検証 / source 検証 / audit log は src/app/api/promotions/issue-to-knowledge/route.test.ts + src/services/promotion.service.test.ts で担保
+- [ ] `/api/asset-links` (GET/POST) — skip: Risk/Issue/Knowledge/Retrospective/Memo 5 資産間の汎用手動リンク。SELF_LINK_FORBIDDEN / NOT_FOUND / ALREADY_LINKED の分岐は src/app/api/asset-links/route.test.ts + src/services/asset-link.service.test.ts で担保
+- [ ] `/api/asset-links/[linkId]` (DELETE) — skip: 作成者本人のみ削除可 (404/403 を区別しない info-leak 防止)。src/app/api/asset-links/[linkId]/route.test.ts で担保
+- [ ] `/api/asset-links/candidates` (GET) — skip: 手動リンク追加 UI の候補検索 (公開可視のみ、自己除外)。src/app/api/asset-links/candidates/route.test.ts + src/services/asset-link.service.test.ts (searchLinkCandidates) で担保
+- [x] WBS 完了バナー (`/projects/[projectId]` ヘッダー、独立 page.tsx は持たないため上記 pages 一覧の同エントリに同居) — **e2e/specs/27-wbs-completion-banner.spec.ts** (全 ACT が completed のみで表示 + 実 PM/TL のみのロールゲート + ×破棄のセッション内維持 + 別セッション再表示)。表示判定 (getWbsCompletionBannerState) は src/services/task.service.test.ts、sessionStorage 破棄ロジックは src/lib/wbs-completion-banner-dismiss-storage.test.ts で担保
+
 ### チャット意味検索 (PR #373 仕様 / 本機能で新設)
-- [x] `/api/chat/search` (POST) — 認証・単一テナント参照 (自テナントのみ)・縮退モード・visibility フィルタは単体テスト src/services/chat-search.service.test.ts + route.test.ts で担保。E2E 配線は **e2e/specs/23-chat-help.spec.ts** (FAB → 検索タブ → クエリ送信 → ユーザバブル表示)。※ query embedding は CI で EMBEDDING_PROVIDER=stub の決定論的疑似ベクトルを使用 (実 Voyage の関連度は 👤 人間スモークに残る、docs/test/RELEASE_ACCEPTANCE_TEST.md)
+- [x] `/api/chat/search` (POST) — 認証・単一テナント参照 (自テナントのみ)・縮退モード・visibility フィルタは単体テスト src/services/chat-search.service.test.ts + route.test.ts で担保。E2E 配線は **e2e/specs/23-chat-help.spec.ts** (FAB → 検索タブ → クエリ送信 → ユーザバブル表示)。※ query embedding は CI で EMBEDDING_PROVIDER=stub の決定論的疑似ベクトルを使用 (実 Voyage の関連度は **e2e/smoke/production-smoke.spec.ts** SMK-5 で post-deploy 自動検証)
 
 ### たすきフクロウ AI ヘルプチャット (ADR-0027 / 2026-05-29 PR5 で新設)
-- [x] `/api/help/chat` (POST) — 権限フィルタ (開示 4 段) は src/config/faq-content.test.ts + guide-content.test.ts で担保 (21 ケース)。E2E 配線は **e2e/specs/23-chat-help.spec.ts** (FAB → ヘルプタブ → 質問 → アシスタント回答バブル)。※ LLM は CI で LLM_PROVIDER=stub の定型 JSON 応答を使用 (実 Claude の回答品質は 👤 人間スモークに残る)。faq_embeddings は CI 未 seed のため RAG hits=0 だが LLM 経路自体は通る
+- [x] `/api/help/chat` (POST) — 権限フィルタ (開示 4 段) は src/config/faq-content.test.ts + guide-content.test.ts で担保 (21 ケース)。E2E 配線は **e2e/specs/23-chat-help.spec.ts** (FAB → ヘルプタブ → 質問 → アシスタント回答バブル)。※ LLM は CI で LLM_PROVIDER=stub の定型 JSON 応答を使用 (実 Claude の回答品質は **e2e/smoke/production-smoke.spec.ts** SMK-5 で post-deploy 自動検証: 既知 FAQ 質問「パスワードの強度要件は?」→ キーワード「10」確認)
 
 ### メモ
 - [x] `/api/memos` (GET/POST) — e2e/specs/04-personal-features.spec.ts (PR #94 / POST 作成 + GET は /memos と /all-memos の画面経由)
@@ -185,7 +194,11 @@
 - [ ] `/api/memos/export` — skip: T-22 Phase 22d で新設、4 列 CSV 出力。E2E は sync-import と往復編集サイクルでまとめてカバー予定 (後続 PR)
 
 ### 添付
-- [ ] `/api/attachments/*` — skip (👤 人間スモーク): ファイル添付 (upload→finalize→download→delete) は実 Supabase Storage の signed URL PUT / 容量課金 / 耐久に依存し、決定論的スタブでは本質を検証できない (storage スタブの実装コスト/本番アップロード経路への変更リスクが高く、🤖 化しても 👤 確認は減らない、test/release-acceptance-e2e 振り分け判断)。upload/finalize の認可・サイズ判定は単体テスト (route.test.ts) で担保し、実経路は docs/test/RELEASE_ACCEPTANCE_TEST.md の 👤 項目 (本番数分スモーク) で確認する
+- [x] `/api/attachments` (POST、URL リンク型) — **e2e/specs/26-file-attachment.spec.ts** (test/release-acceptance-e2e / 2026-06 / URL リンク型添付の CRUD: POST → GET 一覧確認 → DELETE → 不在確認。CI エフェメラル環境では Supabase Storage 接続がないため URL リンク型で代替)
+- [x] `/api/attachments?entityType=...&entityId=...` (GET) — e2e/specs/26-file-attachment.spec.ts (同上)
+- [x] `/api/attachments/[id]` (DELETE) — e2e/specs/26-file-attachment.spec.ts (同上)
+- [x] `/api/attachments/upload` (POST, Phase 1: presigned URL 取得) + `/api/attachments/finalize` (POST, Phase 2: レコード作成) + `/api/attachments/[id]/download` (GET, signed URL リダイレクト) — **e2e/smoke/production-smoke.spec.ts** (SMK-4 / 実 Supabase Storage 2 フェーズアップロード往復 → DL 302 確認 → 削除。CI 外の post-deploy-smoke.yml で本番 URL に対して毎リリース自動実行)
+- [ ] `/api/attachments/batch` (POST、一覧の添付列バッチ取得) — skip: 一覧画面の添付列を N+1 回避でまとめ取りする**読み取り専用ヘルパ** (PR #67)。認可/IDOR (memo/project/task/estimate/risk/retrospective/knowledge の各 entityType をテナント + メンバーシップ + visibility で個別検証、無効 ID は lenient filter) は unit test `src/app/api/attachments/batch/route.test.ts` で網羅。各一覧画面の描画時に間接実行され、単体添付 CRUD は spec 26 でカバー済のため E2E 専用ケースは設けない
 
 ### コメント (PR #199)
 - [ ] `/api/comments` (GET/POST) — skip: MVP は単体テスト (`src/services/comment.service.test.ts` + `src/lib/validators/comment.test.ts`) でカバー、E2E は各 entity の編集 dialog spec 経由で後続 PR
@@ -294,6 +307,22 @@
 - [ ] `/api/tenants/me/billing/stripe/portal` (POST) — skip: Stripe Customer Portal リダイレクト経路、v2 で検討 (PR-S3)。単体テストで Customer 未登録時 + 認可を網羅
 - [ ] `/api/tenants/me/billing/stripe/verify` (POST) — skip: Stripe SetupIntent ベースのカード検証、v2 で検討 (PR-S3)。単体テストで verifyTenantCard を網羅
 - [ ] `/api/webhooks/stripe` (POST) — skip: Stripe からの外部 POST 受信のため E2E から起動できない (PR-S4)。**Stripe signature 検証が唯一の認可** (Cookie 認証を通さず PUBLIC_PATHS 経由)。単体テストで 503/400/200/500 + 冪等性 + retryCount + 全 event type ハンドラを網羅
+
+---
+
+## Post-Deploy Production Smoke (e2e/smoke/ — post-deploy-smoke.yml)
+
+> CI の `e2e.yml` とは独立したワークフロー (`.github/workflows/post-deploy-smoke.yml`)。
+> Netlify deploy 成功後に `playwright.config.smoke.ts` で実 URL を叩く。
+> 人間スモーク SMK-2/3/4/5/7 を自動化し、毎週リリースの人間テストをゼロにする。
+
+- [x] **SMK-2 ログイン / Cookie / セッション** — e2e/smoke/production-smoke.spec.ts (ログイン → /projects URL 到達 + `<main>` 可視確認)
+- [x] **SMK-3 資産作成 → 一覧反映** — e2e/smoke/production-smoke.spec.ts (URL リンク型添付作成 + DELETE で資産 CRUD 代替)
+- [x] **SMK-4 実 Supabase Storage ファイル添付往復** — e2e/smoke/production-smoke.spec.ts (POST /api/attachments/upload → PUT presigned URL → POST /api/attachments/finalize → GET download 302 → DELETE)
+- [x] **SMK-5 AI ヘルプチャット品質ゲート** — e2e/smoke/production-smoke.spec.ts (FAB → ヘルプタブ → 「パスワードの強度要件は?」→ 回答に「10」を含む。実 Claude + 実 Voyage。CI スタブでは検証できない領域)
+- [x] **SMK-7 主要画面の本番レンダリング** — e2e/smoke/production-smoke.spec.ts (/projects + /settings/tenant が 500 なくレンダリング)
+- [ ] **SMK-1 実メール到達** — CI (e2e/specs/19-signup-lifecycle.spec.ts) で staging 担保 / 本番 smoke では省略 (inbox provider はファイルシステム方式のため本番 Resend 経路に非適用)
+- [ ] **SMK-6 Stripe 決済** — 👤 手動 (クレジットカード払い提供時のみ。[STRIPE_PAYMENT_TEST_PROCEDURE.md](./STRIPE_PAYMENT_TEST_PROCEDURE.md))
 
 ---
 

@@ -94,8 +94,10 @@ describe('クレジットカード払い UI ガード (feat/credit-card-ui-guard
     );
   });
 
-  it('tenant-create-form.tsx: stripeEnabled=false 時のラベルに「準備中」表記がある', () => {
-    expect(tenantCreateFormSource).toMatch(/クレジットカード \(準備中\)/);
+  it('tenant-create-form.tsx: stripeEnabled=false 時のラベルに「準備中」表記がある (i18n key で参照)', () => {
+    // i18n 化 (PR i18n-zero-hardcode P3-7) で literal は messages/*/superAdmin.json に移動。
+    // ソースが key を経由していることを確認する (= disabled 状態のラベルが区別されている)。
+    expect(tenantCreateFormSource).toMatch(/tenantCreatePaymentCreditCardPreparing/);
   });
 
   it('page.tsx (admin/super/tenants/new): isStripeEnabled() を呼んで TenantCreateForm に渡す', () => {
@@ -117,8 +119,10 @@ describe('退行検知: 旧「無条件 enable」が復活していない', () =
   });
 
   it('tenant-create-form.tsx: 無条件 enable な credit_card option がない', () => {
+    // i18n 化後はラベルが t() 経由になるため文字列リテラルは登場しない。
+    // 「disabled 属性を持たない credit_card option」がないことだけを確認する。
     expect(tenantCreateFormSource).not.toMatch(
-      /<option\s+value="credit_card"\s*>\s*クレジットカード\s*<\/option>/,
+      /<option\s+value="credit_card"\s*>/,
     );
   });
 });
@@ -128,7 +132,9 @@ describe('整合性: 銀行振込 (invoice) は常に enable のまま', () => {
     expect(tenantSettingsSource).toMatch(/<option\s+value="invoice"\s*>\s*銀行振込/);
   });
 
-  it('tenant-create-form.tsx: invoice option は無条件 enable', () => {
-    expect(tenantCreateFormSource).toMatch(/<option\s+value="invoice"\s*>\s*銀行振込/);
+  it('tenant-create-form.tsx: invoice option は無条件 enable (= disabled 属性なし)', () => {
+    // i18n 化でラベルは t() 経由 (= literal は messages/*/superAdmin.json)。
+    // 「disabled 属性が付いていない invoice option」が存在することを確認する。
+    expect(tenantCreateFormSource).toMatch(/<option\s+value="invoice"(?!\s+disabled)/);
   });
 });

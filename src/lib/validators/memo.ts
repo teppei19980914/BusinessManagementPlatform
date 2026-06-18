@@ -6,9 +6,9 @@ import { TITLE_MAX_LENGTH, MEMO_CONTENT_MAX_LENGTH } from '@/config';
  *   - 'private' (既定): 作成者のみ閲覧可 (= 「自分のみ」、一時保存の意味も持つ)
  *   - 'public'        : 全ログインユーザが「全メモ」画面で閲覧可 (= 「全メンバー」、編集/削除は作成者のみ)
  *
- * 2026-05-11: 「自分のみ」は一時保存のような UX として、必須項目を緩める方針に変更。
- *   - visibility='private' のとき: タイトル空も許容 (DB は NOT NULL 制約のため '' で保存)
- *   - visibility='public' のとき : 従来どおり「タイトル必須」をバリデーション
+ * 2026-05-11 / v1.3.0 軽量入力 (2026-06-19) 改訂:
+ *   - visibility='private' (自分のみ): **タイトルのみ必須** (本文は任意)
+ *   - visibility='public'  (全メンバー): タイトル + 本文 (content = Embedding 対象 ∩ UI 入力欄あり) を必須化
  *
  * モジュール内限定。外部 API は `createMemoSchema` / `updateMemoSchema` を通じて型を公開する。
  */
@@ -19,9 +19,9 @@ const MEMO_VISIBILITIES = ['private', 'public'] as const;
  *
  * タグは持たせない (PR #70 要件): メモは業務知見の一時置き場で、共有資産化判断は人間の目で行う。
  *
- * 2026-05-11: 必須チェックを visibility 連動に変更。
- *   - title は zod 上は常に optional + 空文字 default (DB NOT NULL を満たすため)
- *   - visibility='public' のとき superRefine で title.length >= 1 を検証
+ * 2026-05-11 / v1.3.0 (2026-06-19): 必須チェックを visibility 連動に変更。
+ *   - title は zod 上は空文字 default (DB NOT NULL を満たすため) だが superRefine で常に length >= 1 を強制
+ *   - visibility='public' のとき superRefine で content (本文) も length >= 1 を検証
  */
 export const createMemoSchema = z
   .object({
@@ -37,12 +37,15 @@ export const createMemoSchema = z
     assigneeId: z.string().uuid().nullable().optional(),
   })
   .superRefine((data, ctx) => {
-    if (data.visibility === 'public' && (!data.title || data.title.trim().length === 0)) {
-      ctx.addIssue({
-        code: 'custom',
-        message: '「全メンバー」に公開する場合はタイトルを入力してください',
-        path: ['title'],
-      });
+    // v1.3.0 軽量入力 (2026-06-19): title は private (自分のみ) / public とも常に必須。
+    if (!data.title || data.title.trim().length === 0) {
+      ctx.addIssue({ code: 'custom', message: 'タイトルを入力してください', path: ['title'] });
+    }
+    // v1.3.0: public 化時は「Embedding 対象 ∩ UI 入力欄あり」項目の本文 (content) も必須。
+    if (data.visibility === 'public') {
+      if (!data.content || data.content.trim().length === 0) {
+        ctx.addIssue({ code: 'custom', message: '「全メンバー」に公開する場合は本文を入力してください', path: ['content'] });
+      }
     }
   });
 
@@ -56,14 +59,16 @@ const baseUpdateMemoSchema = z.object({
 });
 
 export const updateMemoSchema = baseUpdateMemoSchema.superRefine((data, ctx) => {
-  // 2026-05-11: 更新時に visibility が指定された場合のみチェック (= 部分更新でも整合)。
-  //   visibility='public' に変更 / 維持する場合は title が空でないこと
-  if (data.visibility === 'public' && data.title !== undefined && data.title.trim().length === 0) {
-    ctx.addIssue({
-      code: 'custom',
-      message: '「全メンバー」に公開する場合はタイトルを入力してください',
-      path: ['title'],
-    });
+  // v1.3.0 軽量入力: title は常に必須。明示的に空へ更新しようとした場合のみ拒否 (undefined = 変更なし)。
+  if (data.title !== undefined && data.title.trim().length === 0) {
+    ctx.addIssue({ code: 'custom', message: 'タイトルを入力してください', path: ['title'] });
+  }
+  // v1.3.0: public 化 / 維持の更新で本文 (content) を空へ更新しようとした場合は拒否。
+  //   フォーム未送信 (undefined) は既存値維持。本文未送信での public 化は service 層ガードで最終検証。
+  if (data.visibility === 'public') {
+    if (data.content !== undefined && data.content.trim().length === 0) {
+      ctx.addIssue({ code: 'custom', message: '「全メンバー」に公開する場合は本文を入力してください', path: ['content'] });
+    }
   }
 });
 

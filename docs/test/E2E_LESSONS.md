@@ -3,7 +3,7 @@
 - 初版作成日: 2026-04-22
 - 対象 PR: #90 (基盤) → #92 (Steps 1-6) → #93 (Step 7) → #94 (Step 8) → #95 (Steps 9-12)
   → #96 (視覚回帰 + WBS/Gantt/見積) → #97/#99 (session race hotfix) 以降も継続追記
-- 罠パターン数: **35+ 個** (§4.1 〜 §4.59、欠番あり)
+- 罠パターン数: **42+ 個** (§4.1 〜 §4.67、欠番あり)
 
 ## 1. この文書の位置付け
 
@@ -3841,6 +3841,249 @@ fixture が **生 SQL** や **直接 ORM の create で tenantId を明示** し
 - ADR: [docs/adr/0024-explicit-tenant-id-no-db-default.md](../adr/0024-explicit-tenant-id-no-db-default.md)
 - KDD: [docs/knowledge/KDD_PATTERNS.md §5.X+169](../knowledge/KDD_PATTERNS.md)
 - post-mortem: [docs/operations/post-mortems/2026-05-28-tenant-id-default-silent-fallthrough.md](../operations/post-mortems/2026-05-28-tenant-id-default-silent-fallthrough.md)
+
+### 4.61 `calcCoefficient` の整数出力 ─ regex は整数形式と小数形式の両方に対応する (PR #525 で遭遇)
+
+#### 症状
+
+```
+expect(locator).toBeVisible()  Timed out
+locator: page.getByRole('dialog').getByText(/16\.0\s*h/)
+```
+
+#### 原因
+
+`calcCoefficient` は `Math.round(x * 10) / 10` を返す。全係数が 1.0 のとき `16 × 1.0 × 1.0 × 1.0 = 16` となり、JS の `number` 型は **整数 `16`** を返す (`16.0` ではない)。
+
+i18n テンプレート `"計算結果: {value}h"` に `value=16` を渡すと `"計算結果: 16h"` が生成される。`/16\.0\s*h/` はマッチしない。
+
+#### 対策
+
+```ts
+// NG: 小数点必須の regex
+await expect(page.getByRole('dialog').getByText(/16\.0\s*h/)).toBeVisible();
+
+// OK: 小数点を省略可能にする
+await expect(page.getByRole('dialog').getByText(/16\.?0?\s*h/)).toBeVisible();
+
+// さらに堅牢: 数値ではなくラベルの存在だけ確認 (具体値は unit test に任せる)
+await expect(page.getByRole('dialog').getByText(/計算結果/)).toBeVisible();
+```
+
+#### 一般化
+
+`Math.round` / `Math.round(x * 10) / 10` は整数を整数のまま返す。`toFixed(1)` は `"16.0"` を返すが両者を混同しやすい。表示値を regex でアサートするときは整数・小数の両形式を考慮する。
+
+---
+
+### 4.62 ダイアログ内複数 `<select>` は `locator('select').first()` が DOM 順で掴む ─ `id`/`htmlFor` + `getByLabel` で一意識別する (PR #525 で遭遇)
+
+#### 症状
+
+```
+Error: locator.selectOption: waiting for locator('select').first()
+  optionMatcher.value === 'winactor': did not find some options
+```
+
+意図: 「開発ツール」セレクトで `winactor` を選択。実際: DOM 最初のカテゴリセレクトを掴んでいた。
+
+#### 原因
+
+`locator('select').first()` は **DOM ツリーの深さ優先探索で最初に出現した要素** を返す。視覚的な "最初" とは一致しない。
+
+本ダイアログの DOM 順:
+```
+Dialog
+├── [0] カテゴリ <select>       ← locator('select').first() がここを掴む
+├── [1] 工数単位 <select>
+└── CoefficientForm コンポーネント
+    ├── [2] 開発ツール <select> ← 意図した対象
+    ├── [3] 規模 <select>
+    └── [4] 難易度 <select>
+```
+
+#### 対策
+
+`<select>` に `id` を付け、対応 `<Label>` に `htmlFor` を設定して `getByLabel` で識別する。
+
+```tsx
+// coefficient-form.tsx (修正後)
+<Label htmlFor="coeff-tool-select">{t('toolSelection')}</Label>
+<select id="coeff-tool-select" ...>
+```
+
+```ts
+// E2E (修正後)
+const toolSelect = page.getByRole('dialog').getByLabel('開発ツール');
+await toolSelect.selectOption('winactor');
+```
+
+サブコンポーネント内の `<select>` も同様。`nth(N)` による DOM 順位指定はコンポーネント構造変更で容易に壊れる。**`<select>` には必ず `id`/`htmlFor` を付ける** を規則とする。
+
+---
+
+### 4.63 `getByText` substring マッチでバッジ文字列と項目名が衝突し strict mode violation になる (PR #525 で遭遇)
+
+#### 症状
+
+```
+Error: strict mode violation: locator.getByText('WinActor') resolved to 2 elements:
+  1) <span class="badge">WinActor</span>
+  2) <td>WinActor自動化工程</td>
+```
+
+#### 原因
+
+`getByText` はデフォルトで部分一致 (substring match) を行う。`row.getByText('WinActor')` は「バッジ `<span>WinActor</span>`」と「セル `<td>WinActor自動化工程</td>`」の両方にマッチし、strict mode エラーになる。
+
+#### 対策
+
+```ts
+// NG
+await expect(row.getByText('WinActor')).toBeVisible();
+
+// OK: 完全一致のみ
+await expect(row.getByText('WinActor', { exact: true })).toBeVisible();
+```
+
+#### 一般化
+
+バッジ / ステータス文字列が項目名のプレフィックスになりうる場合は `{ exact: true }` を常に付ける。特に固有名詞が短い (「手動」「係数」「WinActor」等) ほど substring 衝突のリスクが高い。
+
+---
+
+### 4.64 モバイル viewport でダイアログがビューポートを超えると内部要素がボタンを遮る ─ `force: true` パターン (PR #525 で遭遇)
+
+#### 症状
+
+```
+Error: chromium-mobile のみ
+  <button>追加</button> が intercept される
+  intercepted by: <div class="...calcPreview...">
+```
+
+#### 原因
+
+モバイル viewport (`375×812px`) では係数フォームダイアログが `max-h-[90vh]` を超えてスクロール可能になる。このとき calcPreview の `<div>` が「追加」ボタンの上に重なり、Playwright の通常クリック (ポインタイベントチェック) が失敗する。
+
+#### 対策
+
+```ts
+// NG: 通常クリック → mobile では intercept エラー
+await addBtn.click();
+
+// OK: disabled 確認 → force: true
+const addBtn = page.getByRole('dialog').getByRole('button', { name: '追加' });
+await expect(addBtn).not.toBeDisabled({ timeout: 5_000 });
+await addBtn.click({ force: true });
+```
+
+`force: true` はポインタイベントチェックをバイパスして DOM に直接クリックイベントをディスパッチする。**`not.toBeDisabled()` で有効性を先に確認してから使う** のが安全パターン。
+
+---
+
+### 4.65 `page.waitForResponse` のデフォルトタイムアウトは `actionTimeout` を継承する ─ モバイルでは必ず明示 `timeout` を指定する (PR #525 で遭遇)
+
+#### 症状
+
+```
+Error: chromium-mobile のみ
+  page.waitForResponse: Timeout 10000ms exceeded.
+  url includes /api/projects/.../estimates/ && method === 'PATCH'
+```
+
+#### 原因
+
+`playwright.config.ts` に `use: { actionTimeout: 10_000 }` が設定されている。`page.waitForResponse` はオプション未指定の場合 **`actionTimeout` をデフォルトとして使う** (Playwright 1.60 の挙動)。
+
+モバイルでは「スクロール → クリック」の追加処理で 10 秒のほとんどを消費し、API レスポンスを待つ余裕が残らない。
+
+#### 対策
+
+```ts
+// NG: デフォルト (actionTimeout=10s) に依存
+const res = page.waitForResponse(
+  (r) => r.url().includes('/estimates/') && r.request().method() === 'PATCH',
+);
+
+// OK: 明示的タイムアウト
+const res = page.waitForResponse(
+  (r) => r.url().includes('/estimates/') && r.request().method() === 'PATCH',
+  { timeout: 30_000 },
+);
+```
+
+**`waitForResponse` は常に `{ timeout: 30_000 }` を明示する。** `actionTimeout` はインタラクション用であり、ネットワーク往復を含む操作には不十分。
+
+---
+
+### 4.66 モバイル viewport の多カラムテーブルで横スクロール時に他列 `<td>` がアクションボタンを遮る (PR #525 で遭遇)
+
+#### 症状
+
+```
+Error: chromium-mobile のみ
+  <button>確定</button> intercept
+  intercepted by: <td class="sticky ...">
+```
+
+#### 原因
+
+13 カラム以上のテーブルではモバイルで横スクロールが必要になる。Playwright がアクション列 (最終列) のボタンをクリックしようとすると、スクロール位置によって他列の `<td>` がポインタイベントを横取りする。`overflow-x-auto` ラッパがあっても Playwright の自動スクロールと競合する。
+
+#### 対策
+
+```ts
+// NG: 通常クリック → mobile では intercept エラー
+await row.getByRole('button', { name: '確定' }).click();
+
+// OK: force: true でポインタイベントチェックをバイパス
+await row.getByRole('button', { name: '確定' }).click({ force: true });
+await row.getByRole('button', { name: '削除' }).click({ force: true });
+```
+
+多カラムテーブルのアクションボタンは `{ force: true }` を標準パターンとする。disabled になるケースがある場合は `not.toBeDisabled()` を先行アサートする。
+
+#### 関連
+
+- §4.64 (モバイル dialog overflow → force: true の基本パターン)
+
+---
+
+### 4.67 `mode: 'serial', retries: 0` は失敗テストの後続を全スキップする ─ 1 修正ごとに次の失敗が露出する連鎖を事前に想定する (PR #525 で遭遇)
+
+#### 症状
+
+CI で test N が FAILED → test N+1〜 が SKIPPED。修正して再 push → test N+1 が FAILED → 以降 SKIPPED。このサイクルが複数ラウンド続く。
+
+#### 原因
+
+`test.describe.configure({ mode: 'serial', retries: 0 })` はブラウザセッション / DB ステートを共有するテスト群で使われる。失敗後に broken state で後続を実行しないよう全スキップする設計。
+
+副作用として **「最初の 1 つを直すたびに次の地雷が露出する」** デバッグ体験になる。
+
+#### 対策
+
+**ラウンド数を事前見積もりする。** serial describe で N 個が SKIPPED になっていたら、最低でも N ラウンドを覚悟する。
+
+**まとめ修正で効率化する。** 失敗テストのコードを先読みして後続の潜在失敗を察知し、複数の修正を 1 push にバッチする。
+
+#### 本 PR での実例
+
+| ラウンド | 露出した失敗 | 原因 | 修正 |
+|---|---|---|---|
+| 1 | `/16\.0\s*h/` regex | calcCoefficient 整数出力 | §4.61 |
+| 2 | `getByLabel('項目名')` timeout | `id`/`htmlFor` なし | §4.62 + §4.3 再発 |
+| 3 | `selectOption('winactor')` not found | `select.first()` = 誤対象 | §4.62 |
+| 4 | `getByText(/見積工数/)` not visible | ダイアログ種別誤り (coeff ≠ direct) | §4.62 応用 |
+| 5 | `getByText('WinActor')` strict violation | substring マッチ衝突 | §4.63 |
+| 6 | 「追加」ボタン intercept (mobile) | dialog overflow | §4.64 |
+| 7 | `waitForResponse` timeout (mobile) | actionTimeout 不足 | §4.65 |
+| 8 | 確定/削除ボタン intercept (mobile) | 多カラムテーブル横スクロール | §4.66 |
+
+#### 関連
+
+- §4.64 / §4.65 / §4.66 — 本 PR で順次露出した mobile 固有の失敗群
 
 ---
 

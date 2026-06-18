@@ -27,11 +27,11 @@ describe('createRiskSchema', () => {
     expect(createRiskSchema.safeParse(validIssue).success).toBe(true);
   });
 
-  // 2026-05-11: visibility 連動の必須チェックに変更。
-  //   - 「自分のみ」(draft、既定) では title 空も許容 (一時保存)
-  //   - 「全メンバー」(public) では件名必須
-  it('visibility=draft (既定) なら空件名を許容 (一時保存)', () => {
-    expect(createRiskSchema.safeParse({ ...validRisk, title: '' }).success).toBe(true);
+  // v1.3.0 軽量入力 (2026-06-19): 必須チェックを刷新。
+  //   - draft / public とも件名 (title) は常に必須
+  //   - public では title + occurrence / cause / responsePolicy / content を必須化
+  it('visibility=draft でも空件名を拒否 (v1.3.0: 件名は常に必須)', () => {
+    expect(createRiskSchema.safeParse({ ...validRisk, title: '' }).success).toBe(false);
   });
 
   it('visibility=public で空件名を拒否', () => {
@@ -80,11 +80,12 @@ describe('createRiskSchema', () => {
 
   // PR #60: 公開範囲とリスク脅威/好機分類
   it('有効な公開範囲を受け入れる', () => {
-    // feat/risk-issue-4-section (2026-05-26): public 時は occurrence 必須化したため
-    //   public ケースには occurrence を明示する。
+    // v1.3.0: public 時は occurrence / cause / responsePolicy / content (Embedding 対象 ∩ UI 入力欄あり)
+    //   を必須化したため、public ケースにはこれらを明示する (validRisk.content は既に非空)。
+    const publicFields = { occurrence: 'サンプル事象', cause: 'サンプル原因', responsePolicy: 'サンプル対応策' };
     for (const v of ['draft', 'public']) {
       expect(
-        createRiskSchema.safeParse({ ...validRisk, visibility: v, occurrence: 'サンプル事象' }).success,
+        createRiskSchema.safeParse({ ...validRisk, visibility: v, ...publicFields }).success,
       ).toBe(true);
     }
   });
@@ -108,13 +109,30 @@ describe('createRiskSchema', () => {
     ).toBe(true);
   });
 
-  it('visibility=public + occurrence あり + title あり → 受入れ', () => {
+  it('visibility=public で cause / responsePolicy / content のいずれかが空なら拒否 (v1.3.0)', () => {
+    const base = {
+      ...validRisk,
+      visibility: 'public' as const,
+      occurrence: '事象',
+      cause: '原因',
+      responsePolicy: '対応策',
+      content: 'メモ',
+    };
+    expect(createRiskSchema.safeParse({ ...base, cause: '' }).success).toBe(false);
+    expect(createRiskSchema.safeParse({ ...base, responsePolicy: '' }).success).toBe(false);
+    expect(createRiskSchema.safeParse({ ...base, content: '' }).success).toBe(false);
+  });
+
+  it('visibility=public + 必須項目 (件名/事象/原因/対応策/メモ) すべてあり → 受入れ (v1.3.0)', () => {
     expect(
       createRiskSchema.safeParse({
         ...validRisk,
         visibility: 'public',
         title: '件名',
         occurrence: '発生した事象',
+        cause: '原因',
+        responsePolicy: '対応策',
+        content: 'メモ',
       }).success,
     ).toBe(true);
   });

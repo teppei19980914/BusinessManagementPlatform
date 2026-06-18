@@ -14,6 +14,8 @@
 
 提案候補のスコープは一律 **「公開範囲: 全メンバー」** に限定する (Knowledge/RiskIssue/Retrospective: `visibility='public'` / Memo: `visibility='public'`)。「公開範囲: 自分のみ」のデータは提案エンジン対象外 (embedding 生成も行わない)。
 
+> 🆕 **v1.3.0 (2026-06-19) 軽量入力 — 公開資産の完全性担保**: 「全メンバー」へ公開する資産は、**Embedding 対象 ∩ UI 入力欄あり** の本文項目を必須化する (Knowledge=背景/内容/結果、RiskIssue=発生事象/原因/対応策/メモ、Retrospective=計画総括/実績総括/良かった点/課題/改善事項、Memo=本文)。`title` は draft/public 常時必須、実施日・担当者は常時任意。「自分のみ (draft/private)」は title のみ必須で気軽に下書き可。これにより**本文が空の public 資産が提案エンジンに無意味な空ベクトルとして乗ることを防ぐ**。担保は全書き込み経路で多層化: validator (create/update superRefine) + service 層ガード (`PUBLIC_REQUIRES_FIELDS`) + 一括公開フィルタ (本文空行を skip) + CSV sync-import の draft 降格 (本文が全く無い public 行のみ。旧 16 列形式や過去資産を救う緩和ルール)。embedding 合成 (`composeXText`) は**無変更**で、conclusion/recommendation/responseDetail/knowledgeToShare 等の「インポート専用 (UI 入力欄なし) 項目」は引き続き合成に含む (= 必須化対象外だが信号としては利用)。
+
 ### A. API 呼び出しトリガー (誰がいつ何を呼ぶか)
 
 提案機能の API 呼び出しは **3 つのトリガー** に分類される。これ以外の操作で外部 API は呼ばれない。

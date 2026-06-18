@@ -94,7 +94,7 @@ export function SettingsClient({
 }: Props) {
   const router = useRouter();
   const { withLoading } = useLoading();
-  const { showSuccess, showError } = useToast();
+  const { showSuccessKey, showErrorKey } = useToast();
   const { update: updateSession } = useSession();
   const tSetting = useTranslations('setting');
   const tField = useTranslations('field');
@@ -127,14 +127,14 @@ export function SettingsClient({
       const json = await res.json().catch(() => ({}));
       const msg = json.error?.message || tSetting('themeSaveFailed');
       setThemeError(msg);
-      showError('テーマ設定の保存に失敗しました');
+      showErrorKey('setting.toastThemeSaveFailed');
       return;
     }
     // セッション JWT に反映 → layout.tsx 側の <html data-theme> を next refresh で更新
     // (React の immutability ルール上、クライアントから直接 document を書き換えない)
     await updateSession({ themePreference: next });
     setThemeSuccess(tSetting('themeChanged'));
-    showSuccess('テーマ設定を保存しました');
+    showSuccessKey('setting.toastThemeSaveSuccess');
     router.refresh();
   }
 
@@ -158,11 +158,11 @@ export function SettingsClient({
     if (!res.ok) {
       const json = await res.json().catch(() => ({}));
       setLogoutOthersError(json.error?.message || tSetting('logoutOtherDevicesFailed'));
-      showError('他の端末のログアウトに失敗しました');
+      showErrorKey('setting.toastSignOutOthersFailed');
       return;
     }
     setLogoutOthersSuccess(tSetting('logoutOtherDevicesSuccess'));
-    showSuccess('他のすべての端末からログアウトしました');
+    showSuccessKey('setting.toastSignOutOthersSuccess');
   }
 
   // MFA
@@ -201,12 +201,12 @@ export function SettingsClient({
     if (!res.ok) {
       const msg = json.error?.message || tMessage('passwordChangeFailed');
       setPwError(msg);
-      showError('パスワードの変更に失敗しました');
+      showErrorKey('setting.toastPasswordChangeFailed');
       return;
     }
 
     setPwSuccess(tMessage('passwordChanged'));
-    showSuccess('パスワードを変更しました');
+    showSuccessKey('setting.toastPasswordChangeSuccess');
     setPwForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
   }
 
@@ -241,13 +241,13 @@ export function SettingsClient({
     if (!res.ok) {
       const msg = json.error?.message || tSetting('mfaCodeVerifyFailed');
       setMfaError(msg);
-      showError('MFA の有効化に失敗しました');
+      showErrorKey('setting.toastMfaEnableFailed');
       return;
     }
 
     setMfaStep('idle');
     setTotpCode('');
-    showSuccess('MFA を有効化しました');
+    showSuccessKey('setting.toastMfaEnableSuccess');
     router.refresh();
   }
 
@@ -294,7 +294,7 @@ export function SettingsClient({
       setMfaStep('idle');
       setDisableCurrentPassword('');
       setDisableTotpCode('');
-      showSuccess('MFA を無効化しました');
+      showSuccessKey('setting.toastMfaDisableSuccess');
       router.refresh();
       return;
     }
@@ -314,7 +314,7 @@ export function SettingsClient({
     } else {
       setMfaError(fallbackMsg);
     }
-    showError('MFA の無効化に失敗しました');
+    showErrorKey('setting.toastMfaDisableFailed');
   }
 
   return (
@@ -323,10 +323,10 @@ export function SettingsClient({
           prisma.user.findUnique が throw した場合、フォールバック値で UI 描画継続。 */}
       {dataLoadError && (
         <div className="rounded border border-destructive/30 bg-destructive/10 p-3 text-sm">
-          <p className="font-semibold">⚠ 設定情報の読み込みに失敗しました</p>
+          <p className="font-semibold">{tSetting('loadFailedTitle')}</p>
           <p className="mt-1 text-muted-foreground">
-            一時的な問題の可能性があります。ページを再読み込みするか、しばらくしてから再試行してください。
-            問題が継続する場合は管理者にお問合せください。
+            {tSetting('loadFailedMessageRetry')}
+            {tSetting('loadFailedMessageContact')}
           </p>
         </div>
       )}

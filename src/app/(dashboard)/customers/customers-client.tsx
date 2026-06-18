@@ -91,7 +91,7 @@ export function CustomersClient({ initialCustomers, initialKeyword = '' }: Props
   const tCommon = useTranslations('common');
   const { formatDateTimeSeconds } = useFormatters();
   const { withLoading } = useLoading();
-  const { showSuccess, showError } = useToast();
+  const { showSuccessKey, showErrorKey } = useToast();
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [form, setForm] = useState<FormState>(emptyForm);
   const [error, setError] = useState('');
@@ -137,13 +137,13 @@ export function CustomersClient({ initialCustomers, initialKeyword = '' }: Props
       const json = await res.json().catch(() => ({}));
       const msg = json.error?.message || t('createFailed');
       setError(msg);
-      showError('顧客の登録に失敗しました');
+      showErrorKey('customer.toastCreateFailed');
       return;
     }
 
     setIsDialogOpen(false);
     setForm(emptyForm);
-    showSuccess('顧客を登録しました');
+    showSuccessKey('customer.toastCreateSuccess');
     router.refresh();
   }
 
@@ -162,10 +162,10 @@ export function CustomersClient({ initialCustomers, initialKeyword = '' }: Props
       const json = await res.json().catch(() => ({}));
       const msg = json.error?.message || t('deleteFailed');
       window.alert(msg);
-      showError('顧客の削除に失敗しました');
+      showErrorKey('customer.toastDeleteFailed');
       return;
     }
-    showSuccess('顧客を削除しました');
+    showSuccessKey('customer.toastDeleteSuccess');
     router.refresh();
   }
 

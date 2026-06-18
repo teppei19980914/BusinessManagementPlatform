@@ -14,6 +14,8 @@ import { VISIBILITIES } from '@/types';
 import { DialogAttachmentSection } from '@/components/common/dialog-attachment-section';
 // PR feat/asset-multi-linking-ui (Phase 2): 紐付け済プロジェクト表示 + 解除ボタン
 import { LinkedProjectsSection } from '@/components/common/linked-projects-section';
+// v1.3.0 資産導線機能: 手動リンクセクション
+import { AssetLinkSection } from '@/components/common/asset-link-section';
 // PR #199: コメントセクション (旧 retrospective_comments を polymorphic comments テーブルに統合)
 import { CommentSection } from '@/components/comments/comment-section';
 import { DateFieldWithActions } from '@/components/ui/date-field-with-actions';
@@ -186,15 +188,12 @@ export function RetrospectiveEditDialog({
             <div className="space-y-2">
               <Label>
                 {tField('conductedDate')}
-                {/* 2026-05-11: 公開範囲 = 自分のみ (draft) なら任意。空のまま draft 保存可 (= サーバ側で当日日付が default 補完される) */}
-                {form.visibility === 'draft' && (
-                  <span className="ml-2 text-xs text-muted-foreground">{tRetro('optional')}</span>
-                )}
+                {/* v1.3.0 軽量入力 (2026-06-19): 実施日は日付項目のため常に任意 (空でもサーバ側で当日日付を default 補完) */}
+                <span className="ml-2 text-xs text-muted-foreground">{tRetro('optional')}</span>
               </Label>
               <DateFieldWithActions
                 value={form.conductedDate}
                 onChange={(v) => setForm({ ...form, conductedDate: v })}
-                required={form.visibility === 'public'}
                 hideClear
               />
             </div>
@@ -214,7 +213,7 @@ export function RetrospectiveEditDialog({
               </select>
             </div>
           )}
-          {/* refactor/list-create-content-optional (2026-04-27 #6): 5 セクションは全て任意 */}
+          {/* v1.3.0 軽量入力 (2026-06-19): 5 セクションは draft では任意、public では必須 (Embedding 対象 ∩ UI 入力欄あり) */}
           {([
             { key: 'planSummary', label: tRetro('planSummary'), rows: 3 },
             { key: 'actualSummary', label: tRetro('actualSummary'), rows: 3 },
@@ -223,7 +222,7 @@ export function RetrospectiveEditDialog({
             { key: 'improvements', label: tRetro('improvementsTable'), rows: 3 },
           ] as const).map(({ key, label, rows }) => (
             <div key={key} className="space-y-2">
-              <Label>{label} <span className="text-xs text-muted-foreground">{tRetro('optional')}</span></Label>
+              <Label>{label}{form.visibility === 'draft' && <span className="ml-2 text-xs text-muted-foreground">{tRetro('optional')}</span>}</Label>
               {readOnly ? (
                 <div className="rounded-md border border-input bg-background px-3 py-2 text-sm">
                   <MarkdownDisplay value={form[key]} />
@@ -257,6 +256,8 @@ export function RetrospectiveEditDialog({
               onChanged={onSaved}
             />
           )}
+          {/* v1.3.0 資産導線機能: 手動リンク (リスク/課題/ナレッジ/振り返り/メモ 5 資産間) */}
+          <AssetLinkSection entityType="retrospective" entityId={retro.id} isPublic={retro.visibility === 'public'} />
           {!readOnly && <Button type="submit" className="w-full">{t('save')}</Button>}
           {/* PR #199: コメント。fieldset disabled の外に配置することで readOnly でも投稿可。 */}
           <CommentSection entityType="retrospective" entityId={retro.id} mutationsLocked={closedProject} />

@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { LOGIN_ROUTE } from '@/config';
 import { getProject } from '@/services/project.service';
 import { listCustomers } from '@/services/customer.service';
+import { getWbsCompletionBannerState } from '@/services/task.service';
 import { checkMembershipWithActualRole } from '@/lib/permissions';
 import { recordError } from '@/services/error-log.service';
 import { getTenantTodayString } from '@/lib/tenant-time';
@@ -48,9 +49,10 @@ export default async function ProjectDetailPage({ params }: Props) {
   let membership: Awaited<ReturnType<typeof checkMembershipWithActualRole>> | null = null;
   let project: Awaited<ReturnType<typeof getProject>> = null;
   let customers: Awaited<ReturnType<typeof listCustomers>> = [];
+  let wbsCompletionBanner: Awaited<ReturnType<typeof getWbsCompletionBannerState>> = { shouldShow: false };
   let dataLoadError = false;
   try {
-    [membership, project, customers] = await Promise.all([
+    [membership, project, customers, wbsCompletionBanner] = await Promise.all([
       checkMembershipWithActualRole(
         projectId,
         session.user.id,
@@ -61,6 +63,8 @@ export default async function ProjectDetailPage({ params }: Props) {
       getProject(projectId, session.user.tenantId, session.user.systemRole),
       // PR #111-2: 編集ダイアログの顧客セレクト用マスタ
       listCustomers(session.user.tenantId),
+      // v1.3.0 資産導線機能: WBS 完了バナーの表示判定 (全 ACT が completed/on_hold のみか)
+      getWbsCompletionBannerState(projectId, session.user.tenantId),
     ]);
   } catch (error) {
     dataLoadError = true;
@@ -119,6 +123,11 @@ export default async function ProjectDetailPage({ params }: Props) {
   const canCreateOwnedList =
     membership.actualProjectRole === 'pm_tl'
     || membership.actualProjectRole === 'member';
+  // v1.3.0 資産導線機能: WBS 完了バナーは実 ProjectMember ロールが pm_tl の場合のみ表示
+  //   (admin 短絡を受けない actualProjectRole を使用)。
+  //   project-detail-client.tsx 内のローカル変数 isActualPmTl (edit/delete ボタン用、
+  //   admin を明示的に除外する別意図の判定) と紛らわしいため、prop 名は区別する。
+  const isActualProjectPmTl = membership.actualProjectRole === 'pm_tl';
 
   // feat/gantt-initial-scroll-and-locale (2026-05-29):
   //   ガントタブ・振り返りタブが lazy load 後に必要とする tenant TZ/locale/today を server で確定。
@@ -141,6 +150,9 @@ export default async function ProjectDetailPage({ params }: Props) {
       today={today}
       tenantTimeZone={tenantTimeZone}
       tenantLocale={tenantLocale}
+      // v1.3.0 資産導線機能: WBS 完了バナー
+      wbsCompletionBannerShouldShow={wbsCompletionBanner.shouldShow}
+      isActualProjectPmTl={isActualProjectPmTl}
     />
   );
 }

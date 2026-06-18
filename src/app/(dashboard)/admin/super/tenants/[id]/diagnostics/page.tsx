@@ -16,6 +16,7 @@
 
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
+import { getTranslations } from 'next-intl/server';
 import { getAuthenticatedUser } from '@/lib/api-helpers';
 import { isSuperAdmin } from '@/lib/permissions/role';
 import { getTenantDiagnostics } from '@/services/tenant-diagnostics.service';
@@ -34,6 +35,7 @@ export default async function TenantDiagnosticsPage({
     notFound();
   }
 
+  const t = await getTranslations('superAdmin');
   const { id } = await params;
   const data = await getTenantDiagnostics(id);
   if (!data) notFound();
@@ -45,7 +47,7 @@ export default async function TenantDiagnosticsPage({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h1 className="text-2xl font-bold">
-            個別テナント診断: {basic.name}
+            {t('tenantDiagnosticsTitle', { name: basic.name })}
           </h1>
           <div className="font-mono text-xs text-muted-foreground">{basic.id}</div>
         </div>
@@ -54,46 +56,46 @@ export default async function TenantDiagnosticsPage({
             href={`/admin/super/tenants/${basic.id}`}
             className="rounded border px-3 py-1 text-sm hover:bg-background"
           >
-            テナント詳細へ
+            {t('tenantDiagnosticsBackToDetail')}
           </Link>
           <Link
             href="/admin/super/diagnostics"
             className="rounded border px-3 py-1 text-sm hover:bg-background"
           >
-            診断ダッシュボードへ戻る
+            {t('tenantDiagnosticsBackToDashboard')}
           </Link>
         </div>
       </div>
 
       {/* 1. 基本情報 */}
       <section className="space-y-2">
-        <h2 className="text-lg font-bold">テナント基本情報</h2>
+        <h2 className="text-lg font-bold">{t('tenantDiagnosticsBasicTitle')}</h2>
         <dl className="grid grid-cols-2 gap-2 rounded border p-4 text-sm sm:grid-cols-4">
-          <Stat label="プラン" value={basic.plan} />
-          <Stat label="TZ" value={basic.timezone} />
+          <Stat label={t('tenantDiagnosticsStatPlan')} value={basic.plan} />
+          <Stat label={t('tenantDiagnosticsStatTz')} value={basic.timezone} />
           <Stat
-            label="作成日"
+            label={t('tenantDiagnosticsStatCreatedAt')}
             value={basic.createdAt.toISOString().split('T')[0]}
           />
           <Stat
-            label="削除日"
+            label={t('tenantDiagnosticsStatDeletedAt')}
             value={basic.deletedAt?.toISOString().split('T')[0] ?? '-'}
           />
           <Stat
-            label="counter (現在値)"
+            label={t('tenantDiagnosticsStatCounter')}
             value={basic.currentMonthApiCallCount.toLocaleString()}
             emphasis
           />
           <Stat
-            label="cost counter"
+            label={t('tenantDiagnosticsStatCostCounter')}
             value={`¥${basic.currentMonthApiCostJpy.toLocaleString()}`}
           />
           <Stat
-            label="lastResetAt"
-            value={basic.lastResetAt?.toISOString() ?? '記録なし'}
+            label={t('tenantDiagnosticsStatLastResetAt')}
+            value={basic.lastResetAt?.toISOString() ?? t('tenantDiagnosticsStatLastResetEmpty')}
           />
           <Stat
-            label="updatedAt"
+            label={t('tenantDiagnosticsStatUpdatedAt')}
             value={basic.updatedAt.toISOString()}
           />
         </dl>
@@ -101,10 +103,10 @@ export default async function TenantDiagnosticsPage({
 
       {/* 2. 整合性 */}
       <section className="space-y-2">
-        <h2 className="text-lg font-bold">counter vs ApiCallLog SUM 整合性</h2>
+        <h2 className="text-lg font-bold">{t('tenantDiagnosticsReconcileTitle')}</h2>
         {reconcile == null ? (
           <div className="rounded border bg-muted/30 p-3 text-sm text-muted-foreground">
-            テナント不在のため reconcile 不可
+            {t('tenantDiagnosticsReconcileMissing')}
           </div>
         ) : (
           <div
@@ -116,46 +118,52 @@ export default async function TenantDiagnosticsPage({
           >
             <div className="mb-2 flex items-center justify-between">
               <div className="font-semibold">
-                {reconcile.hasDrift ? '🚨 drift 検出' : '✅ 整合'}
+                {reconcile.hasDrift ? t('tenantDiagnosticsDriftDetected') : t('tenantDiagnosticsDriftConsistent')}
               </div>
               {reconcile.hasDrift && <RepairDriftButton tenantId={basic.id} />}
             </div>
             <dl className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
               <Stat
-                label="counter (Tenant.currentMonthApiCallCount)"
+                label={t('tenantDiagnosticsStatCachedCallCount')}
                 value={reconcile.cachedCallCount.toLocaleString()}
               />
               <Stat
-                label="ApiCallLog SUM (真値)"
+                label={t('tenantDiagnosticsStatReconciledCallCount')}
                 value={reconcile.reconciledCallCount.toLocaleString()}
               />
               <Stat
-                label="呼出回数の差"
-                value={`${reconcile.driftCallCount >= 0 ? '+' : ''}${reconcile.driftCallCount.toLocaleString()} 件`}
+                label={t('tenantDiagnosticsStatDriftCallCount')}
+                value={t('tenantDiagnosticsStatDriftCallCountValue', {
+                  sign: reconcile.driftCallCount >= 0 ? '+' : '',
+                  count: reconcile.driftCallCount.toLocaleString(),
+                })}
                 emphasis={reconcile.hasDrift}
               />
               <Stat
-                label="呼出 drift 比率"
+                label={t('tenantDiagnosticsStatDriftCallRatio')}
                 value={`${(reconcile.driftCallRatio * 100).toFixed(2)}%`}
               />
               <Stat
-                label="cost counter"
+                label={t('tenantDiagnosticsStatCachedCostJpy')}
                 value={`¥${reconcile.cachedCostJpy.toLocaleString()}`}
               />
               <Stat
-                label="ApiCallLog cost SUM"
+                label={t('tenantDiagnosticsStatReconciledCostJpy')}
                 value={`¥${reconcile.reconciledCostJpy.toLocaleString()}`}
               />
               <Stat
-                label="費用の差"
-                value={`${reconcile.driftCostJpy >= 0 ? '+' : ''}¥${reconcile.driftCostJpy.toLocaleString()}`}
+                label={t('tenantDiagnosticsStatDriftCostJpy')}
+                value={t('tenantDiagnosticsStatDriftCostJpyValue', {
+                  sign: reconcile.driftCostJpy >= 0 ? '+' : '',
+                  value: reconcile.driftCostJpy.toLocaleString(),
+                })}
               />
               <Stat
-                label="費用 drift 比率"
+                label={t('tenantDiagnosticsStatDriftCostRatio')}
                 value={`${(reconcile.driftCostRatio * 100).toFixed(2)}%`}
               />
               <Stat
-                label="月境界 (テナント TZ)"
+                label={t('tenantDiagnosticsStatMonthStart')}
                 value={reconcile.monthStart.toISOString()}
               />
             </dl>
@@ -165,19 +173,19 @@ export default async function TenantDiagnosticsPage({
 
       {/* 3. 直近 30 日の日別 ApiCallLog */}
       <section className="space-y-2">
-        <h2 className="text-lg font-bold">直近 30 日の API 呼出時系列</h2>
+        <h2 className="text-lg font-bold">{t('tenantDiagnosticsDailyApiTitle')}</h2>
         {dailyApiCalls.length === 0 ? (
           <div className="rounded border bg-muted/30 p-3 text-sm text-muted-foreground">
-            直近 30 日に ApiCallLog の記録はありません。
+            {t('tenantDiagnosticsDailyApiEmpty')}
           </div>
         ) : (
           <div className="overflow-x-auto rounded border">
             <table className="w-full text-sm">
               <thead className="bg-muted/50">
                 <tr>
-                  <th className="px-3 py-2 text-left">日付 (UTC)</th>
-                  <th className="px-3 py-2 text-right">呼出回数</th>
-                  <th className="px-3 py-2 text-right">cost (合計)</th>
+                  <th className="px-3 py-2 text-left">{t('tenantDiagnosticsDailyColDate')}</th>
+                  <th className="px-3 py-2 text-right">{t('tenantDiagnosticsDailyColCount')}</th>
+                  <th className="px-3 py-2 text-right">{t('tenantDiagnosticsDailyColCost')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -191,7 +199,7 @@ export default async function TenantDiagnosticsPage({
               </tbody>
               <tfoot className="bg-muted/30 font-semibold">
                 <tr>
-                  <td className="px-3 py-2">合計 (30 日)</td>
+                  <td className="px-3 py-2">{t('tenantDiagnosticsDailyTotalLabel')}</td>
                   <td className="px-3 py-2 text-right">
                     {dailyApiCalls.reduce((s, d) => s + d.count, 0).toLocaleString()}
                   </td>
@@ -209,27 +217,25 @@ export default async function TenantDiagnosticsPage({
       {/* 4. counter 書き換え系 audit_log */}
       <section className="space-y-2">
         <h2 className="text-lg font-bold">
-          counter 書き換え系 audit_log (直近 30 日)
+          {t('tenantDiagnosticsAuditTitle')}
         </h2>
         <p className="text-xs text-muted-foreground">
-          repair-api-usage / recalculate-self / recalculate / monthly-reset のいずれかの operation を含む audit_log を抽出しています。
-          「なぜ counter が書き換わったか」の追跡に使えます。
+          {t('tenantDiagnosticsAuditDescription')}
         </p>
         {counterWriteAudits.length === 0 ? (
           <div className="rounded border bg-muted/30 p-3 text-sm text-muted-foreground">
-            該当する audit_log はありません。
-            (= 直近 30 日で counter は書き換えられていない = 手動 SQL や未追跡の経路で書き換えられている可能性があります)
+            {t('tenantDiagnosticsAuditEmpty')}
           </div>
         ) : (
           <div className="overflow-x-auto rounded border">
             <table className="w-full text-sm">
               <thead className="bg-muted/50">
                 <tr>
-                  <th className="px-3 py-2 text-left">時刻</th>
+                  <th className="px-3 py-2 text-left">{t('tenantDiagnosticsAuditColTime')}</th>
                   <th className="px-3 py-2 text-left">action</th>
-                  <th className="px-3 py-2 text-left">userId</th>
-                  <th className="px-3 py-2 text-left">operation</th>
-                  <th className="px-3 py-2 text-left">before → after</th>
+                  <th className="px-3 py-2 text-left">{t('tenantDiagnosticsAuditColUserId')}</th>
+                  <th className="px-3 py-2 text-left">{t('tenantDiagnosticsAuditColOperation')}</th>
+                  <th className="px-3 py-2 text-left">{t('tenantDiagnosticsAuditColBeforeAfter')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -261,20 +267,20 @@ export default async function TenantDiagnosticsPage({
 
       {/* 5. 月次履歴 */}
       <section className="space-y-2">
-        <h2 className="text-lg font-bold">月次履歴 (過去 6 ヶ月)</h2>
+        <h2 className="text-lg font-bold">{t('tenantDiagnosticsMonthlyTitle')}</h2>
         <p className="text-xs text-muted-foreground">
-          tenant_monthly_usage_history に保存されたスナップショット。月初リセット cron 直前の counter 値を記録。
+          {t('tenantDiagnosticsMonthlyDescription')}
         </p>
         {monthlyHistory.length === 0 ? (
           <div className="rounded border bg-muted/30 p-3 text-sm text-muted-foreground">
-            スナップショット記録なし
+            {t('tenantDiagnosticsMonthlyEmpty')}
           </div>
         ) : (
           <div className="overflow-x-auto rounded border">
             <table className="w-full text-sm">
               <thead className="bg-muted/50">
                 <tr>
-                  <th className="px-3 py-2 text-left">月</th>
+                  <th className="px-3 py-2 text-left">{t('tenantDiagnosticsMonthlyColMonth')}</th>
                   <th className="px-3 py-2 text-left">plan</th>
                   <th className="px-3 py-2 text-right">apiCallCount</th>
                   <th className="px-3 py-2 text-right">apiCostJpy</th>

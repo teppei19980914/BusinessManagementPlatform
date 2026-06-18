@@ -61,6 +61,22 @@ export function filterTreeByStatus(nodes: TaskDTO[], selected: Set<string>): Tas
   return result;
 }
 
+/**
+ * ツリーから type==='activity' (担当者を持つ実タスク) のみを再帰的に収集する。
+ * WP は担当者を持たないため、担当者別の集計・表示では対象外にする。
+ */
+export function flattenActivities(nodes: TaskDTO[]): TaskDTO[] {
+  const result: TaskDTO[] = [];
+  const walk = (list: TaskDTO[]) => {
+    for (const node of list) {
+      if (node.type === 'activity') result.push(node);
+      if (node.children && node.children.length > 0) walk(node.children);
+    }
+  };
+  walk(nodes);
+  return result;
+}
+
 /** ツリーから全 ID を再帰的に収集する */
 export function collectAllIds(nodes: TaskDTO[]): string[] {
   const ids: string[] = [];
