@@ -111,7 +111,7 @@ test.describe('@feature:project:wbs-completion-banner WBS 完了バナー (v1.3.
 
   test('全 ACT が completed になると実 PM/TL にバナーが表示される', async ({ browser }) => {
     const patchRes = await adminPage.request.patch(`/api/projects/${projectId}/tasks/${actId}`, {
-      data: { status: 'completed' },
+      data: { status: 'completed', actualEffort: 1 },
     });
     expect(patchRes.ok(), `ACT complete: ${await patchRes.text()}`).toBeTruthy();
 
