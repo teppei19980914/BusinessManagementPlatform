@@ -36,12 +36,11 @@ const TENANT_SLUG = process.env.SMOKE_TENANT_SLUG ?? '';
 const ADMIN_EMAIL = process.env.SMOKE_ADMIN_EMAIL ?? '';
 const ADMIN_PASSWORD = process.env.SMOKE_ADMIN_PASSWORD ?? '';
 
-if (!TENANT_SLUG || !ADMIN_EMAIL || !ADMIN_PASSWORD) {
-  throw new Error(
-    'SMOKE_TENANT_SLUG / SMOKE_ADMIN_EMAIL / SMOKE_ADMIN_PASSWORD が未設定です。' +
-      'GitHub Secrets または .env.smoke に設定してください。',
-  );
-}
+// 必須環境変数が未設定の場合は全テストをスキップ (pre-deploy CI ではスモークは実行しない)。
+// post-deploy-smoke.yml が本番 Secrets 付きで実行するときのみアクティブになる。
+// NOTE: トップレベル throw にするとモジュール読み込み時に Playwright が落ちるため、
+//       testIgnore の有無に関わらず pre-deploy CI 全体が fail する。
+const CREDS_MISSING = !TENANT_SLUG || !ADMIN_EMAIL || !ADMIN_PASSWORD;
 
 /** 認証済 page.request で POST し、ok でなければ詳細付きで throw する。 */
 async function apiPost(page: Page, url: string, data: Record<string, unknown>) {
@@ -55,6 +54,11 @@ async function apiPost(page: Page, url: string, data: Record<string, unknown>) {
 test.describe.configure({ mode: 'serial', retries: 1 });
 
 test.describe('post-deploy production smoke', () => {
+  test.skip(
+    CREDS_MISSING,
+    'SMOKE_TENANT_SLUG / SMOKE_ADMIN_EMAIL / SMOKE_ADMIN_PASSWORD が未設定 — post-deploy-smoke.yml でのみ実行',
+  );
+
   // 各テストで共有するクリーンアップリスト (失敗時も afterEach で削除)
   const cleanupItems: Array<{ type: 'attachment' | 'memo' | 'project'; id: string }> = [];
 
