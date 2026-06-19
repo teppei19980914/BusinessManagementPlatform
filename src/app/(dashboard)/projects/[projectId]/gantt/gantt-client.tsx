@@ -31,7 +31,7 @@ import { useTranslations } from 'next-intl';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tooltip } from '@/components/ui/tooltip';
-import { filterTreeByAssignee, filterTreeByStatus, taskStatusColors, UNASSIGNED_KEY } from '@/lib/task-tree-utils';
+import { filterTreeByAssignee, filterTreeByStatus, flattenActivities, taskStatusColors, UNASSIGNED_KEY } from '@/lib/task-tree-utils';
 import { TASK_STATUSES } from '@/types';
 import type { TaskDTO } from '@/services/task.service';
 import type { MemberDTO } from '@/services/member.service';
@@ -45,6 +45,34 @@ import { getJapaneseHoliday } from '@/lib/jp-holidays';
 import { useFormatters } from '@/lib/use-formatters';
 
 const ALL_STATUS_KEYS = Object.keys(TASK_STATUSES) as Array<keyof typeof TASK_STATUSES>;
+
+/** 表示切替チップ (ガント表示 / 担当者別確認)。analysis タブの複数選択チップと同方式で両方同時表示できる。 */
+const VIEW_OPTIONS: { key: string; labelKey: string }[] = [
+  { key: 'chart', labelKey: 'viewChartLabel' },
+  { key: 'board', labelKey: 'viewBoardLabel' },
+];
+
+/** 担当者別確認ボードの対象ウィンドウ (today を基準に前後 N 日)。 */
+const BOARD_WINDOW_DAYS = 3;
+
+type BoardAssigneeGroup = {
+  assigneeKey: string;
+  assigneeName: string;
+  done: TaskDTO[];
+  inProgress: TaskDTO[];
+  upcoming: TaskDTO[];
+  onHold: TaskDTO[];
+};
+
+/** 予定終了日を過ぎても未完了 (進行中 or 未着手) なタスクを遅延として強調する。バー描画の isDelayed と同じ定義。 */
+function isTaskAnomalous(task: TaskDTO, today: string): boolean {
+  return (
+    task.status !== 'completed'
+    && task.status !== 'on_hold'
+    && !!task.plannedEndDate
+    && task.plannedEndDate < today
+  );
+}
 
 type Props = {
   projectId: string;
@@ -63,6 +91,8 @@ type Props = {
   tenantTimeZone: string;
   /** Tenant locale (BCP 47、月ヘッダの言語表記切替に使用) */
   tenantLocale: string;
+  /** マイタスク等のプロジェクト横断ビューでは担当者別確認ボードを非表示にする (プロジェクト単位の機能) */
+  hideBoard?: boolean;
 };
 
 /**
@@ -186,6 +216,7 @@ export function GanttClient({
   today,
   tenantTimeZone,
   tenantLocale,
+  hideBoard = false,
 }: Props) {
   const t = useTranslations('gantt');
   // feat/gantt-initial-scroll-and-locale: 月ヘッダは Intl.DateTimeFormat で tenant locale 直接生成
@@ -309,6 +340,59 @@ export function GanttClient({
     setStatusFilter(() => new Set());
   }, [setStatusFilter]);
 
+  // --- 表示切替 (ガント表示 / 担当者別確認) ---
+  const [visibleViews, setVisibleViews] = useSessionState<string[]>(
+    `gantt:${projectId}:visible-views`,
+    () => ['chart', 'board'],
+  );
+  const toggleView = useCallback((key: string) => {
+    setVisibleViews((prev) => (prev.includes(key) ? prev.filter((v) => v !== key) : [...prev, key]));
+  }, [setVisibleViews]);
+
+  // --- 担当者別確認ボード: today ± BOARD_WINDOW_DAYS の ACT を担当者ごとに
+  //     終わった/やっている/これから/保留 に分類する。担当者フィルタのみ尊重し、
+  //     状況フィルタは無視する (ボード自身が status × 日付で分類するため)。
+  const progressBoardGroups = useMemo<BoardAssigneeGroup[]>(() => {
+    const activities = flattenActivities(tree).filter((task) => {
+      const key = task.assigneeId ?? UNASSIGNED_KEY;
+      return isAllAssigneesSelected || assigneeFilter.has(key);
+    });
+    const windowStart = addDaysISO(today, -BOARD_WINDOW_DAYS);
+    const windowEnd = addDaysISO(today, BOARD_WINDOW_DAYS);
+    const groups = new Map<string, BoardAssigneeGroup>();
+    const groupFor = (task: TaskDTO) => {
+      const key = task.assigneeId ?? UNASSIGNED_KEY;
+      let group = groups.get(key);
+      if (!group) {
+        group = {
+          assigneeKey: key,
+          assigneeName: task.assigneeDisplayText || task.assigneeName || t('unassigned'),
+          done: [],
+          inProgress: [],
+          upcoming: [],
+          onHold: [],
+        };
+        groups.set(key, group);
+      }
+      return group;
+    };
+    for (const task of activities) {
+      if (task.status === 'on_hold') {
+        groupFor(task).onHold.push(task);
+      } else if (task.status === 'completed') {
+        const completedOn = task.actualEndDate || task.plannedEndDate;
+        if (completedOn && completedOn >= windowStart && completedOn <= windowEnd) {
+          groupFor(task).done.push(task);
+        }
+      } else if (task.status === 'in_progress') {
+        groupFor(task).inProgress.push(task);
+      } else if (!task.plannedStartDate || task.plannedStartDate <= windowEnd) {
+        groupFor(task).upcoming.push(task);
+      }
+    }
+    return [...groups.values()].sort((a, b) => a.assigneeName.localeCompare(b.assigneeName, tenantLocale));
+  }, [tree, assigneeFilter, isAllAssigneesSelected, today, tenantLocale, t]);
+
   const filteredTree = useMemo(() => {
     let t = tree;
     if (!isAllAssigneesSelected) t = filterTreeByAssignee(t, assigneeFilter);
@@ -423,6 +507,33 @@ export function GanttClient({
 
   return (
     <div className="space-y-4">
+      {/* 表示切替 (ガント表示 / 担当者別確認)。hideBoard=true のマイタスク等では非表示 */}
+      {!hideBoard && (
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs font-medium text-muted-foreground">{t('viewToggleLabel')}</span>
+        {VIEW_OPTIONS.map((opt) => {
+          const on = visibleViews.includes(opt.key);
+          return (
+            <button
+              key={opt.key}
+              type="button"
+              onClick={() => toggleView(opt.key)}
+              aria-pressed={on}
+              className={
+                on
+                  ? 'rounded-full border border-foreground bg-foreground px-3 py-1 text-xs font-medium text-background'
+                  : 'rounded-full border border-border bg-background px-3 py-1 text-xs text-muted-foreground hover:bg-accent'
+              }
+            >
+              {t(opt.labelKey)}
+            </button>
+          );
+        })}
+      </div>
+      )}
+
+      {visibleViews.includes('chart') && (
+      <div className="space-y-4">
       {/* Phase A 要件 6: h2 ページタイトル削除 (タブ名と重複のため) */}
       <div className="flex items-center justify-end">
         {/* PR #68: タスク名列の幅リセット (日付列は固定) */}
@@ -621,6 +732,25 @@ export function GanttClient({
         </div>
       </div>
       )}
+      </div>
+      )}
+
+      {!hideBoard && visibleViews.includes('board') && (
+        <div className="space-y-3">
+          <p className="text-xs text-muted-foreground">
+            {t('boardWindowNote', { days: BOARD_WINDOW_DAYS })}
+          </p>
+          {progressBoardGroups.length === 0 ? (
+            <p className="py-8 text-center text-muted-foreground">{t('boardNoAssignees')}</p>
+          ) : (
+            <div className="space-y-3">
+              {progressBoardGroups.map((group) => (
+                <ProgressBoardCard key={group.assigneeKey} group={group} today={today} />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -747,8 +877,8 @@ function GanttRow({
               {TASK_STATUSES[task.status as keyof typeof TASK_STATUSES] || task.status}
             </Badge>
             <span className="text-[10px] text-muted-foreground">{task.progressRate}%</span>
-            {task.assigneeName && (
-              <span className="truncate text-[10px] text-muted-foreground">{task.assigneeName}</span>
+            {(task.assigneeDisplayText || task.assigneeName) && (
+              <span className="truncate text-[10px] text-muted-foreground">{task.assigneeDisplayText || task.assigneeName}</span>
             )}
           </div>
         </div>
@@ -794,5 +924,69 @@ function GanttRow({
         </div>
       </div>
     </Tooltip>
+  );
+}
+
+const BOARD_COLUMNS: { key: keyof Omit<BoardAssigneeGroup, 'assigneeKey' | 'assigneeName'>; labelKey: string }[] = [
+  { key: 'done', labelKey: 'boardColumnDone' },
+  { key: 'inProgress', labelKey: 'boardColumnInProgress' },
+  { key: 'upcoming', labelKey: 'boardColumnUpcoming' },
+  { key: 'onHold', labelKey: 'boardColumnOnHold' },
+];
+
+type ProgressBoardCardProps = {
+  group: BoardAssigneeGroup;
+  today: string;
+};
+
+/**
+ * 担当者 1 名分のカード。終わった/やっている/これから/保留 の 4 列で構成する。
+ * 進行中・これから の列で予定終了日を過ぎているタスクは「遅延」バッジで強調する
+ * (PM がヒアリング時に何を聞けばいいか一目で分かるようにするための core 機能)。
+ */
+function ProgressBoardCard({ group, today }: ProgressBoardCardProps) {
+  const t = useTranslations('gantt');
+  const { formatDateOnly } = useFormatters();
+
+  return (
+    <div className="rounded-lg border p-3">
+      <div className="mb-2 text-sm font-semibold">{group.assigneeName}</div>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
+        {BOARD_COLUMNS.map((col) => {
+          const tasks = group[col.key];
+          return (
+            <div key={col.key} className="space-y-1.5">
+              <div className="text-[11px] font-medium text-muted-foreground">{t(col.labelKey)}</div>
+              {tasks.length === 0 ? (
+                <p className="text-[11px] text-muted-foreground/70">{t('boardColumnEmpty')}</p>
+              ) : (
+                tasks.map((task) => {
+                  const anomalous = col.key !== 'done' && col.key !== 'onHold' && isTaskAnomalous(task, today);
+                  return (
+                    <div key={task.id} className="rounded border bg-card px-2 py-1.5 text-xs">
+                      <div className="flex items-center gap-1">
+                        <span className="truncate font-medium" title={task.name}>
+                          {task.name}
+                        </span>
+                        {anomalous && (
+                          <Badge variant="destructive" className="shrink-0 px-1 py-0 text-[10px]">
+                            {t('legendDelayed')}
+                          </Badge>
+                        )}
+                      </div>
+                      {task.plannedEndDate && (
+                        <div className="mt-0.5 text-[10px] text-muted-foreground">
+                          {formatDateOnly(task.plannedEndDate)}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }

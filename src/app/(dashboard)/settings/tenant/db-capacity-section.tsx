@@ -19,6 +19,7 @@
  *   - 親: src/app/(dashboard)/settings/tenant/page.tsx
  */
 
+import { getTranslations } from 'next-intl/server';
 import { prisma } from '@/lib/db';
 import {
   BEGINNER_DB_FREE_TIER_BYTES,
@@ -61,14 +62,21 @@ function formatDateJa(d: Date | null): string {
   return d.toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
 }
 
-const LEVEL_BADGES: Record<DbCapacityWarningLevel, { label: string; color: string }> = {
-  none: { label: '正常', color: 'bg-green-100 text-green-800' },
-  l1: { label: 'Level 1 (1GB 到達)', color: 'bg-blue-100 text-blue-800' },
-  l2: { label: 'Level 2 (10GB 到達)', color: 'bg-yellow-100 text-yellow-800' },
-  l3: { label: 'Level 3 (50GB 到達 / 監視アラート)', color: 'bg-red-100 text-red-800' },
+const LEVEL_BADGE_COLORS: Record<DbCapacityWarningLevel, string> = {
+  none: 'bg-green-100 text-green-800',
+  l1: 'bg-blue-100 text-blue-800',
+  l2: 'bg-yellow-100 text-yellow-800',
+  l3: 'bg-red-100 text-red-800',
+};
+const LEVEL_BADGE_KEYS: Record<DbCapacityWarningLevel, string> = {
+  none: 'dbCapacityLevelNone',
+  l1: 'dbCapacityLevelL1',
+  l2: 'dbCapacityLevelL2',
+  l3: 'dbCapacityLevelL3',
 };
 
 export async function DbCapacitySection({ tenantId }: { tenantId: string }) {
+  const t = await getTranslations('tenantSettings');
   const data = await prisma.tenant.findFirst({
     where: { id: tenantId, deletedAt: null },
     select: {
@@ -99,8 +107,9 @@ export async function DbCapacitySection({ tenantId }: { tenantId: string }) {
   // 現在値で classify (= 表示用の現状ステータス、Expert/Pro 用)
   const currentLevel = classifyDbCapacityLevel(typed.storageBytesPeakThisMonth);
   const safeLevel: DbCapacityWarningLevel =
-    currentLevel in LEVEL_BADGES ? currentLevel : 'none';
-  const badge = LEVEL_BADGES[safeLevel];
+    currentLevel in LEVEL_BADGE_COLORS ? currentLevel : 'none';
+  const badgeColor = LEVEL_BADGE_COLORS[safeLevel];
+  const badgeLabel = t(LEVEL_BADGE_KEYS[safeLevel]);
 
   // 進捗率: Beginner は 50MB 基準、Expert/Pro は 50GB (L3 監視アラート閾値) 基準
   //   2026-05-31: 50GB は累積ハードキャップではなく監視アラート閾値 (ADR-0030、write は止めない)
@@ -123,11 +132,11 @@ export async function DbCapacitySection({ tenantId }: { tenantId: string }) {
           id="db-capacity-section-title"
           className="text-lg font-semibold text-gray-900"
         >
-          DB 容量{isBeginner ? ' (Beginner プラン 無料枠 50MB)' : ' (従量課金)'}
+          {isBeginner ? t('dbCapacityTitleBeginner') : t('dbCapacityTitleStandard')}
         </h2>
         {!isBeginner && (
-          <span className={`rounded-full px-3 py-1 text-xs font-medium ${badge.color}`}>
-            {badge.label}
+          <span className={`rounded-full px-3 py-1 text-xs font-medium ${badgeColor}`}>
+            {badgeLabel}
           </span>
         )}
         {isBeginner && beginnerOverFreeTier && (
@@ -135,17 +144,17 @@ export async function DbCapacitySection({ tenantId }: { tenantId: string }) {
             className="rounded-full bg-red-100 px-3 py-1 text-xs font-medium text-red-800"
             data-testid="beginner-db-quota-exceeded-badge"
           >
-            無料枠超過 (write ブロック中)
+            {t('dbCapacityBeginnerOverFreeBadge')}
           </span>
         )}
         {isBeginner && !beginnerOverFreeTier && beginnerNearFreeTier && (
           <span className="rounded-full bg-yellow-100 px-3 py-1 text-xs font-medium text-yellow-800">
-            無料枠の 80% に到達
+            {t('dbCapacityBeginnerNearFreeBadge')}
           </span>
         )}
         {isBeginner && !beginnerNearFreeTier && (
           <span className="rounded-full bg-green-100 px-3 py-1 text-xs font-medium text-green-800">
-            無料枠内
+            {t('dbCapacityBeginnerWithinFreeBadge')}
           </span>
         )}
       </div>
@@ -157,17 +166,18 @@ export async function DbCapacitySection({ tenantId }: { tenantId: string }) {
           role="alert"
           data-testid="beginner-db-block-banner"
         >
-          <p className="font-semibold">⚠ Beginner プランの DB 無料枠 (50MB) を超えました</p>
+          <p className="font-semibold">{t('dbCapacityBeginnerOverFreeBannerTitle')}</p>
           <p className="mt-1">
-            新規作成 / 更新は停止しています (削除のみ可)。不要なデータを削除すると自動的に再集計され、再び書込み可能になります。反映されない場合は画面上部の{' '}
-            <strong>[DB 容量 / API 利用量を再集計]</strong> ボタンをご利用ください。
+            {t.rich('dbCapacityBeginnerOverFreeBannerBody', {
+              strong: (chunks) => <strong>{chunks}</strong>,
+            })}
           </p>
           <p className="mt-1 text-xs">
-            または{' '}
+            {t('dbCapacityBeginnerOverFreeBannerUpgradeLeading')}
             <a href="?tab=overview" className="font-semibold underline">
-              Expert プランへアップグレード
-            </a>{' '}
-            すれば 50GB まで継続利用できます (¥50/GB tier、超過時のみ従量課金)。
+              {t('dbCapacityBeginnerOverFreeBannerUpgradeLink')}
+            </a>
+            {t('dbCapacityBeginnerOverFreeBannerUpgradeTrailing')}
           </p>
         </div>
       )}
@@ -175,30 +185,30 @@ export async function DbCapacitySection({ tenantId }: { tenantId: string }) {
       {/* 主要数値 */}
       <dl className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <div>
-          <dt className="text-sm font-medium text-gray-500">現在の使用量</dt>
+          <dt className="text-sm font-medium text-gray-500">{t('dbCapacityCurrentUsage')}</dt>
           <dd className="mt-1 text-2xl font-semibold text-gray-900">
             {formatBytes(typed.storageBytesUsed)}
           </dd>
           <p className="mt-1 text-xs text-gray-500">
-            最新: {formatDateJa(typed.storageBytesUsedAt)}
+            {t('dbCapacityLatestPrefix', { value: formatDateJa(typed.storageBytesUsedAt) })}
           </p>
         </div>
         <div>
-          <dt className="text-sm font-medium text-gray-500">月中ピーク (請求根拠)</dt>
+          <dt className="text-sm font-medium text-gray-500">{t('dbCapacityPeakLabel')}</dt>
           <dd className="mt-1 text-2xl font-semibold text-gray-900">
             {formatBytes(typed.storageBytesPeakThisMonth)}
           </dd>
           <p className="mt-1 text-xs text-gray-500">
-            到達: {formatDateJa(typed.storageBytesPeakAt)}
+            {t('dbCapacityReachedPrefix', { value: formatDateJa(typed.storageBytesPeakAt) })}
           </p>
         </div>
         <div>
-          <dt className="text-sm font-medium text-gray-500">想定請求額 (当月)</dt>
+          <dt className="text-sm font-medium text-gray-500">{t('dbCapacityEstimatedJpy')}</dt>
           <dd className="mt-1 text-2xl font-semibold text-gray-900">
             {formatJpy(estimatedJpy)}
           </dd>
           <p className="mt-1 text-xs text-gray-500">
-            月末 cron で確定 (税抜)
+            {t('dbCapacityEstimatedJpyHint')}
           </p>
         </div>
       </dl>
@@ -209,9 +219,9 @@ export async function DbCapacitySection({ tenantId }: { tenantId: string }) {
           <span>0</span>
           <span>
             {isBeginner
-              ? `Beginner 無料枠 ${BEGINNER_DB_FREE_TIER_BYTES / SI_MB_BYTES}MB`
-              : '50GB (L3 監視アラート閾値)'}{' '}
-            ({usagePercent.toFixed(1)}%)
+              ? t('dbCapacityBeginnerFreeTierLabel', { sizeMb: BEGINNER_DB_FREE_TIER_BYTES / SI_MB_BYTES })
+              : t('dbCapacityStandardL3Label')}
+            {t('dbCapacityUsagePercentSuffix', { percent: usagePercent.toFixed(1) })}
           </span>
         </div>
         <div className="h-2 w-full overflow-hidden rounded-full bg-gray-200">
@@ -232,7 +242,7 @@ export async function DbCapacitySection({ tenantId }: { tenantId: string }) {
                       : 'bg-green-500'
             }`}
             style={{ width: `${usagePercent}%` }}
-            aria-label={`使用率 ${usagePercent.toFixed(1)}%`}
+            aria-label={t('dbCapacityUsageAria', { percent: usagePercent.toFixed(1) })}
           />
         </div>
       </div>
@@ -240,44 +250,53 @@ export async function DbCapacitySection({ tenantId }: { tenantId: string }) {
       {/* 料金体系の説明 */}
       <details className="mt-6 rounded border border-gray-200 bg-gray-50 p-4">
         <summary className="cursor-pointer text-sm font-medium text-gray-700">
-          {isBeginner ? 'Beginner プランの容量ルールを表示' : '料金体系を表示'}
+          {isBeginner ? t('dbCapacityRulesBeginnerSummary') : t('dbCapacityRulesStandardSummary')}
         </summary>
         <div className="mt-3 space-y-2 text-sm text-gray-600">
           {isBeginner ? (
             <>
               <p>
-                <strong>無料枠:</strong> {BEGINNER_DB_FREE_TIER_BYTES / SI_MB_BYTES}MB
-                (Beginner プラン)
+                {t.rich('dbCapacityBeginnerRuleFreeTier', {
+                  strong: (chunks) => <strong>{chunks}</strong>,
+                  sizeMb: BEGINNER_DB_FREE_TIER_BYTES / SI_MB_BYTES,
+                })}
               </p>
               <p>
-                <strong>超過時の挙動:</strong> 新規作成 / 更新が停止 (削除のみ可)、overage
-                課金は<strong>発生しません</strong> (ADR-0025)
+                {t.rich('dbCapacityBeginnerRuleOverflow', {
+                  strong: (chunks) => <strong>{chunks}</strong>,
+                })}
               </p>
               <p>
-                <strong>削除後:</strong> 容量キャッシュが自動的に再集計され (debounce 30
-                秒)、再び書込み可能になります
+                {t.rich('dbCapacityBeginnerRuleRecalc', {
+                  strong: (chunks) => <strong>{chunks}</strong>,
+                })}
               </p>
               <p className="text-xs text-gray-500">
-                Expert / Pro プランへアップグレードすると 50GB まで継続利用可能 (¥50/GB
-                tier、超過時のみ従量課金)。
+                {t('dbCapacityBeginnerRuleUpgrade')}
               </p>
             </>
           ) : (
             <>
               <p>
-                <strong>無料枠:</strong> {DB_CAPACITY_FREE_TIER_BYTES / SI_MB_BYTES}MB まで
+                {t.rich('dbCapacityStandardRuleFreeTier', {
+                  strong: (chunks) => <strong>{chunks}</strong>,
+                  sizeMb: DB_CAPACITY_FREE_TIER_BYTES / SI_MB_BYTES,
+                })}
               </p>
               <p>
-                <strong>超過料金:</strong> 1GB ごとに ¥50 (税抜、1MB 未満は繰上)
+                {t.rich('dbCapacityStandardRuleOverage', {
+                  strong: (chunks) => <strong>{chunks}</strong>,
+                })}
               </p>
               <p className="text-xs text-gray-500">
-                例: 100MB → ¥50 / 1GB → ¥50 / 1.5GB → ¥100 /{' '}
-                {DB_CAPACITY_L1_USER_WARNING_BYTES / SI_GB_BYTES}GB → 月通知あり (Level 1) /{' '}
-                {DB_CAPACITY_L2_ADMIN_ALERT_BYTES / SI_GB_BYTES}GB → 管理者通知 (Level 2) /{' '}
-                {DB_CAPACITY_L3_HARD_CAP_BYTES / SI_GB_BYTES}GB → 監視アラート (Level 3)
+                {t('dbCapacityStandardRuleExamples', {
+                  l1Gb: DB_CAPACITY_L1_USER_WARNING_BYTES / SI_GB_BYTES,
+                  l2Gb: DB_CAPACITY_L2_ADMIN_ALERT_BYTES / SI_GB_BYTES,
+                  l3Gb: DB_CAPACITY_L3_HARD_CAP_BYTES / SI_GB_BYTES,
+                })}
               </p>
               <p className="text-xs text-gray-500">
-                2026-05-31: 累積ハードキャップは撤去 (ADR-0030)。容量超過で書込が止まることはなく、使った分だけ従量課金されます。
+                {t('dbCapacityStandardRuleNote')}
               </p>
             </>
           )}

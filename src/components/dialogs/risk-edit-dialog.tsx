@@ -16,6 +16,11 @@ import { NAME_MAX_LENGTH, MEDIUM_TEXT_MAX_LENGTH } from '@/config';
 import { DialogAttachmentSection } from '@/components/common/dialog-attachment-section';
 // PR feat/asset-multi-linking-ui (Phase 2): 紐付け済プロジェクト表示 + 解除ボタン
 import { LinkedProjectsSection } from '@/components/common/linked-projects-section';
+// v1.3.0 資産導線機能: 昇華バッジ (読み取り専用) + 手動リンクセクション + 昇華ダイアログ
+import { PromotionBadgeList } from '@/components/common/promotion-badge-list';
+import { AssetLinkSection } from '@/components/common/asset-link-section';
+import { PromoteRiskToIssueDialog } from '@/components/dialogs/promote-risk-to-issue-dialog';
+import { PromoteIssueToKnowledgeDialog } from '@/components/dialogs/promote-issue-to-knowledge-dialog';
 // PR #199: コメントセクション (entityType は risk.type='risk'|'issue' に追従)
 import { CommentSection } from '@/components/comments/comment-section';
 import { DateFieldWithActions } from '@/components/ui/date-field-with-actions';
@@ -98,10 +103,13 @@ export function RiskEditDialog({
   const t = useTranslations('action');
   const tField = useTranslations('field');
   const tRisk = useTranslations('risk');
+  const tPromotion = useTranslations('promotion');
   const { withLoading } = useLoading();
   const { showSuccessKey, showErrorKey } = useToast();
   // feat/dialog-fullscreen-toggle: 全画面トグル (90vw × 90vh)。state は dialog ローカル。
   const { fullscreenClassName, FullscreenToggle } = useDialogFullscreen();
+  // v1.3.0 資産導線機能: 昇華ダイアログの開閉
+  const [promoteOpen, setPromoteOpen] = useState(false);
   const [form, setForm] = useState({
     title: '',
     // feat/risk-issue-4-section (2026-05-26): 4 セクション化
@@ -150,6 +158,9 @@ export function RiskEditDialog({
   }
 
   if (!risk) return null;
+
+  // v1.3.0 資産導線機能: 昇華ダイアログに渡す project context (PATCH と同じ優先順位)
+  const promoteProjectId = currentProjectId ?? risk.projectId ?? risk.linkedProjects?.[0]?.id ?? null;
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -212,6 +223,7 @@ export function RiskEditDialog({
     ? (risk.type === 'risk' ? tRisk('detailRisk') : tRisk('detailIssue'))
     : (risk.type === 'risk' ? tRisk('editRisk') : tRisk('editIssue'));
   return (
+    <>
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className={`max-w-[min(90vw,36rem)] max-h-[80vh] overflow-x-hidden overflow-y-auto ${fullscreenClassName}`}>
         <DialogHeader>
@@ -244,18 +256,13 @@ export function RiskEditDialog({
             )}
           </div>
           <div className="space-y-2">
-            <Label>
-              {tField('title')}
-              {/* 2026-05-11: 公開範囲 = 自分のみ (draft) なら任意、全メンバー (public) なら必須 */}
-              {form.visibility === 'draft' && (
-                <span className="ml-2 text-xs text-muted-foreground">{tRisk('optional')}</span>
-              )}
-            </Label>
+            {/* v1.3.0 軽量入力 (2026-06-19): 件名は draft / public とも常に必須 */}
+            <Label>{tField('title')}</Label>
             <Input
               value={form.title}
               onChange={(e) => setForm({ ...form, title: e.target.value })}
               maxLength={NAME_MAX_LENGTH}
-              required={form.visibility === 'public'}
+              required
             />
           </div>
           {/* feat/risk-issue-4-section (2026-05-26): 4 セクション化 (issue/risk で type 別ラベル)
@@ -270,12 +277,14 @@ export function RiskEditDialog({
               value: string,
               prevValue: string,
               onChange: (v: string) => void,
-              isOccurrence = false,
+              // v1.3.0 軽量入力 (2026-06-19): public 化時に必須化する項目 (Embedding 対象 ∩ UI 入力欄あり)。
+              //   occurrence / cause / responsePolicy / content(memo) は true、result は false。
+              requiredWhenPublic = false,
             ) => (
               <div className="space-y-2">
                 <Label>
                   {tField(labelKey)}
-                  {(!isOccurrence || form.visibility !== 'public') && (
+                  {(!requiredWhenPublic || form.visibility !== 'public') && (
                     <span className="ml-2 text-xs text-muted-foreground">{tRisk('optional')}</span>
                   )}
                 </Label>
@@ -297,10 +306,10 @@ export function RiskEditDialog({
             return (
               <>
                 {renderSection(labels.occurrence, form.occurrence, risk.occurrence ?? '', (v) => setForm({ ...form, occurrence: v }), true)}
-                {renderSection(labels.cause, form.cause, risk.cause ?? '', (v) => setForm({ ...form, cause: v }))}
-                {renderSection(labels.countermeasure, form.responsePolicy, risk.responsePolicy ?? '', (v) => setForm({ ...form, responsePolicy: v }))}
-                {renderSection('memo', form.content, risk.content, (v) => setForm({ ...form, content: v }))}
-                {/* 2026-06-02: 結果を編集可能に追加 */}
+                {renderSection(labels.cause, form.cause, risk.cause ?? '', (v) => setForm({ ...form, cause: v }), true)}
+                {renderSection(labels.countermeasure, form.responsePolicy, risk.responsePolicy ?? '', (v) => setForm({ ...form, responsePolicy: v }), true)}
+                {renderSection('memo', form.content, risk.content, (v) => setForm({ ...form, content: v }), true)}
+                {/* 2026-06-02: 結果を編集可能に追加。result は Embedding 対象外のため常に任意 (requiredWhenPublic=false) */}
                 {renderSection('result', form.result, risk.result ?? '', (v) => setForm({ ...form, result: v }))}
               </>
             );
@@ -362,6 +371,31 @@ export function RiskEditDialog({
               onChanged={onSaved}
             />
           )}
+          {/* v1.3.0 資産導線機能: 昇華バッジ (双方向の昇華済み/昇華元を読み取り専用表示) */}
+          {risk.type === 'risk' ? (
+            <PromotionBadgeList titleKey="promotedIssuesTitle" queryParams={`fromType=risk&fromId=${risk.id}`} />
+          ) : (
+            <>
+              <PromotionBadgeList titleKey="sourceRisksTitle" queryParams={`toType=issue&toId=${risk.id}`} />
+              <PromotionBadgeList titleKey="promotedKnowledgeTitle" queryParams={`fromType=issue&fromId=${risk.id}`} />
+            </>
+          )}
+          {/* v1.3.0 資産導線機能: 昇華ボタン (公開済みの場合のみ。draft は昇華不可) */}
+          {!readOnly && (
+            risk.visibility === 'public' ? (
+              <Button type="button" variant="outline" className="w-full" onClick={() => setPromoteOpen(true)}>
+                {risk.type === 'risk' ? tPromotion('promoteToIssueButton') : tPromotion('promoteToKnowledgeButton')}
+              </Button>
+            ) : (
+              <p className="text-xs text-muted-foreground">{tPromotion('needPublicToPromote')}</p>
+            )
+          )}
+          {/* v1.3.0 資産導線機能: 手動リンク (リスク/課題/ナレッジ/振り返り/メモ 5 資産間) */}
+          <AssetLinkSection
+            entityType={risk.type === 'issue' ? 'issue' : 'risk'}
+            entityId={risk.id}
+            isPublic={risk.visibility === 'public'}
+          />
           {!readOnly && <Button type="submit" className="w-full">{t('save')}</Button>}
           {/* PR #199: コメント。fieldset disabled の外に配置することで readOnly でも投稿可。 */}
           <CommentSection
@@ -372,5 +406,26 @@ export function RiskEditDialog({
         </form>
       </DialogContent>
     </Dialog>
+    {/* v1.3.0 資産導線機能: 昇華ダイアログ (project context が取れない孤立データでは出さない) */}
+    {promoteProjectId && risk.type === 'risk' && (
+      <PromoteRiskToIssueDialog
+        risk={risk}
+        projectId={promoteProjectId}
+        members={members}
+        open={promoteOpen}
+        onOpenChange={setPromoteOpen}
+        onPromoted={onSaved}
+      />
+    )}
+    {risk.type === 'issue' && (
+      <PromoteIssueToKnowledgeDialog
+        issue={risk}
+        projectId={promoteProjectId}
+        open={promoteOpen}
+        onOpenChange={setPromoteOpen}
+        onPromoted={onSaved}
+      />
+    )}
+    </>
   );
 }

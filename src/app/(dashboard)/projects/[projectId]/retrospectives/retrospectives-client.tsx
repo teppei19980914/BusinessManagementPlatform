@@ -354,38 +354,35 @@ export function RetrospectivesClient({ projectId, retros, members, canCreate, cu
                   <div className="space-y-2">
                     <Label>
                       {tRetro('conductedDate')}
-                      {/* 2026-05-11: 公開範囲 = 自分のみ (draft) なら任意 (サーバ側で当日日付を default 補完) */}
-                      {form.visibility === 'draft' && (
-                        <span className="ml-2 text-xs text-muted-foreground">{tRetro('optional')}</span>
-                      )}
+                      {/* v1.3.0 軽量入力 (2026-06-19): 実施日は常に任意 (空でもサーバ側で当日日付を default 補完) */}
+                      <span className="ml-2 text-xs text-muted-foreground">{tRetro('optional')}</span>
                     </Label>
                     <DateFieldWithActions
                       value={form.conductedDate}
                       onChange={(v) => setForm({ ...form, conductedDate: v })}
-                      required={form.visibility === 'public'}
                       hideClear
                     />
                   </div>
                 </div>
-                {/* refactor/list-create-content-optional (2026-04-27 #6): 5 セクションは全て任意 (実施日のみ必須) */}
+                {/* v1.3.0 軽量入力 (2026-06-19): 5 セクションは draft では任意、public では必須 (Embedding 対象 ∩ UI 入力欄あり)。実施日は常に任意。 */}
                 <div className="space-y-2">
-                  <Label>{tRetro('planSummary')} <span className="text-xs text-muted-foreground">{tRetro('optional')}</span></Label>
+                  <Label>{tRetro('planSummary')}{form.visibility === 'draft' && <span className="ml-2 text-xs text-muted-foreground">{tRetro('optional')}</span>}</Label>
                   <MarkdownTextarea value={form.planSummary} onChange={(v) => setForm({ ...form, planSummary: v })} rows={3} maxLength={2000} />
                 </div>
                 <div className="space-y-2">
-                  <Label>{tRetro('actualSummary')} <span className="text-xs text-muted-foreground">{tRetro('optional')}</span></Label>
+                  <Label>{tRetro('actualSummary')}{form.visibility === 'draft' && <span className="ml-2 text-xs text-muted-foreground">{tRetro('optional')}</span>}</Label>
                   <MarkdownTextarea value={form.actualSummary} onChange={(v) => setForm({ ...form, actualSummary: v })} rows={3} maxLength={2000} />
                 </div>
                 <div className="space-y-2">
-                  <Label>{tRetro('goodPoints')} <span className="text-xs text-muted-foreground">{tRetro('optional')}</span></Label>
+                  <Label>{tRetro('goodPoints')}{form.visibility === 'draft' && <span className="ml-2 text-xs text-muted-foreground">{tRetro('optional')}</span>}</Label>
                   <MarkdownTextarea value={form.goodPoints} onChange={(v) => setForm({ ...form, goodPoints: v })} rows={3} maxLength={3000} />
                 </div>
                 <div className="space-y-2">
-                  <Label>{tRetro('problems')} <span className="text-xs text-muted-foreground">{tRetro('optional')}</span></Label>
+                  <Label>{tRetro('problems')}{form.visibility === 'draft' && <span className="ml-2 text-xs text-muted-foreground">{tRetro('optional')}</span>}</Label>
                   <MarkdownTextarea value={form.problems} onChange={(v) => setForm({ ...form, problems: v })} rows={3} maxLength={3000} />
                 </div>
                 <div className="space-y-2">
-                  <Label>{tRetro('improvements')} <span className="text-xs text-muted-foreground">{tRetro('optional')}</span></Label>
+                  <Label>{tRetro('improvements')}{form.visibility === 'draft' && <span className="ml-2 text-xs text-muted-foreground">{tRetro('optional')}</span>}</Label>
                   <MarkdownTextarea value={form.improvements} onChange={(v) => setForm({ ...form, improvements: v })} rows={3} maxLength={3000} />
                 </div>
                 {/* PR #67: 作成と同時に議事録・発表資料等の関連 URL を登録可能 */}

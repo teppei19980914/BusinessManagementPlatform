@@ -228,8 +228,11 @@ UI 文言の多言語対応は **next-intl** で実装する。メッセージ�
 | 項目 | 内容 |
 |---|---|
 | ライブラリ | next-intl (App Router、サーバ設定 `src/i18n/request.ts` の `getRequestConfig`) |
-| 対応ロケール | **`ja` (日本語) / `en-US` (英語)** の 2 つ。`src/i18n/request.ts#SUPPORTED_LOCALES` (= messages/ のファイル名) |
-| メッセージカタログ | `src/i18n/messages/ja.json` / `src/i18n/messages/en-US.json`。両者は同一キー構造 (`action` / `nav` / `field` / `message` 等のネスト) で、`src/i18n/messages.test.ts` がキー集合の整合をテストで保証 |
+| 対応ロケール | **`ja` (日本語) / `en-US` (英語)** の 2 つ (v1.3.0 時点)。`src/i18n/request.ts#SUPPORTED_LOCALES` (= messages/ のファイル名) |
+| メッセージカタログ構造 | **主カタログ + 分野別サブカタログ** のハイブリッド分割。`src/i18n/load-messages.ts` が読込時に shallow merge し、namespace 衝突を検出して early-fail |
+| 主カタログ | `src/i18n/messages/{ja,en-US}.json` (`action` / `nav` / `field` / `message` / `project` / `wbs` / `error` / `validation` 等のネスト、~1700 key) |
+| サブカタログ | `src/i18n/messages/{ja,en-US}/{email,help,guide,faq,superAdmin}.json` (各 1 top-level namespace、v1.3.0 で `superAdmin` を追加) |
+| 整合性検証 | `src/i18n/messages.test.ts` が両 locale の key 集合一致 + ICU placeholder 一致を強制 (18 tests) |
 | 既定ロケール | `ja` (`DEFAULT_LOCALE`)。未認証ページ・ロケール未解決時に適用 |
 | BCP 47 ↔ ファイル名 | `src/config/i18n.ts` は BCP 47 形式 (`ja-JP` / `en-US`) を扱い、`request.ts#toMessagesFilename` が messages/ ファイル名 (`ja` / `en-US`) に変換 (`ja-JP` / 未知ロケールは `ja` にフォールバック) |
 
@@ -241,7 +244,31 @@ UI 文言の多言語対応は **next-intl** で実装する。メッセージ�
 
 > ロケール変更は JWT 再署名で全経路 (middleware / SSR / client) に透過反映する (`/api/tenants/me/i18n` → `reissueAuthJwtOnResponse`、[SECURITY.md §9.4.4.1](./SECURITY.md))。タイムゾーンも同じ 3 段フォールバック (`resolveTimezone`)。DB は常に UTC 保存し描画時に TZ/locale を解決する。
 
-**現状の方針 (MVP)**: プロダクトは **ja 中心** で開発・運用している。`en-US` カタログは既に全キーが翻訳済で `src/config/i18n.ts#SELECTABLE_LOCALES` も `'en-US': true` (Phase C 完了 / PR #175) のため UI のロケール選択肢としても **選択可能**。ただし MVP の主対象は日本語ユーザであり、英語は周辺対応の位置づけ。新規 UI 文言を追加する際は **ja / en-US 両方** にキーを追加すること (`messages.test.ts` がキー集合の欠落を検知する)。
+**AppError + i18n 連携 (v1.2.0 で導入)**:
+
+サーバ層のエラーは [`src/lib/errors/app-error.ts`](../../src/lib/errors/app-error.ts) の `AppError(code, params, httpStatus?)` を throw する。route 層の [`src/lib/api-error-handler.ts#withErrorHandler`](../../src/lib/api-error-handler.ts) が catch し、`getTranslations('error')` 経由で **ロケールに応じた message** を JSON response に含めて返す。
+- 60+ ErrorCode をユニオン型で集約 (例: `TENANT_NOT_FOUND` / `BEGINNER_WRITE_BLOCKED`)
+- カタログ key: `error.<CODE>` で対応文言を 1:1 マッピング (両 locale で必須)
+- 詳細は [docs/i18n/CONVENTIONS.md §5 §7](../i18n/CONVENTIONS.md)
+
+**Toast 統合パターン (v1.2.0 で確立)**:
+
+Client Component の `useToast()` フックは下記 4 メソッドを公開する:
+- `showSuccessKey(key, params)` / `showErrorKey(key, params)` — **新規利用 (推奨)**: カタログ key で発火
+- `showSuccess(literal)` / `showError(literal)` — **後方互換** (v1.4.0 以降で段階的に撤去予定)
+
+**退行防止 (v1.2.0 で導入、v1.3.0 で強化)**:
+
+- `scripts/check-no-hardcoded-jp.ts` が `src/` 配下のハードコード日本語をスキャンし、`scripts/i18n-baseline.json` と比較して **退行を CI で fail** させる
+- v1.3.0 リリース時点で 4449 行 / 218 ファイルが残存 (主要画面の i18n 化完了後、対象 file は v1.4.0 以降で順次削減)
+- 新規 PR でカタログ未経由の JP 文字列が混入すると即 fail
+- **v1.3.0 追加**: `.husky/pre-commit` hook — `check-no-hardcoded-jp` + `check-banned-i18n-patterns` を **全 git コミット**（人手の IDE/ターミナルコミット含む）で自動実行。`.claude/settings.json` hooks は Claude Code ツール呼出時のみ発火するため、git 層の pre-commit が唯一の全経路カバー手段 (詳細: [KDD §5.X+212](../knowledge/KDD_PATTERNS.md))
+- **v1.3.0 追加**: `scripts/check-banned-i18n-patterns.ts` — `throw new Error('<JP>')` / `showError('<JP>')` / `showSuccess('<JP>')` のような意味的に禁止されたパターンを構文レベルで検知。`scripts/i18n-banned-patterns-baseline.json` で既存 9 ファイルの既知違反を許容し、増加のみ fail (詳細: [HANDOFF_PHASE2.md §P9](../i18n/HANDOFF_PHASE2.md))
+
+**新規言語の追加** (中国語・ベトナム語等への拡張時): [docs/i18n/ADD_NEW_LOCALE.md](../i18n/ADD_NEW_LOCALE.md) 参照。
+- コード変更は 3 ファイルのみ (`src/config/i18n.ts` / `src/i18n/request.ts` / `src/i18n/messages.test.ts`)
+- 残りは **メッセージカタログの翻訳作業** (~2000 key) で完結
+- 機械翻訳ドラフト → ネイティブ確認 → catalog parity test pass で本番投入可能
 
 ---
 

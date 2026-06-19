@@ -11,19 +11,16 @@
 
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 
 export function RepairDriftButton({ tenantId }: { tenantId: string }) {
   const router = useRouter();
+  const t = useTranslations('superAdmin');
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
 
   const onClick = () => {
-    if (
-      !window.confirm(
-        `テナント ${tenantId} の counter を ApiCallLog SUM で上書きします。\n\n`
-        + `この操作は audit_log に記録されます。実行しますか?`,
-      )
-    ) {
+    if (!window.confirm(t('repairDriftConfirm', { tenantId }))) {
       return;
     }
     setError(null);
@@ -35,13 +32,13 @@ export function RepairDriftButton({ tenantId }: { tenantId: string }) {
         );
         if (!res.ok) {
           const text = await res.text();
-          setError(`修復失敗: ${res.status} ${text}`);
+          setError(t('repairDriftErrorPrefix', { message: `${res.status} ${text}` }));
           return;
         }
         // 成功 → ダッシュボード再描画
         router.refresh();
       } catch (e) {
-        setError(`修復失敗: ${e instanceof Error ? e.message : String(e)}`);
+        setError(t('repairDriftErrorPrefix', { message: e instanceof Error ? e.message : String(e) }));
       }
     });
   };
@@ -54,7 +51,7 @@ export function RepairDriftButton({ tenantId }: { tenantId: string }) {
         disabled={isPending}
         className="rounded bg-red-600 px-3 py-1 text-xs font-semibold text-white hover:bg-red-700 disabled:opacity-50"
       >
-        {isPending ? '修復中...' : '修復する'}
+        {isPending ? t('repairDriftInProgress') : t('repairDriftSubmit')}
       </button>
       {error && <div className="text-xs text-red-700">{error}</div>}
     </div>

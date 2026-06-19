@@ -27,11 +27,13 @@ import jaEmail from './messages/ja/email.json';
 import jaHelp from './messages/ja/help.json';
 import jaGuide from './messages/ja/guide.json';
 import jaFaq from './messages/ja/faq.json';
+import jaSuperAdmin from './messages/ja/superAdmin.json';
 import enMessages from './messages/en-US.json';
 import enEmail from './messages/en-US/email.json';
 import enHelp from './messages/en-US/help.json';
 import enGuide from './messages/en-US/guide.json';
 import enFaq from './messages/en-US/faq.json';
+import enSuperAdmin from './messages/en-US/superAdmin.json';
 import { mergeMessagesStrict, MESSAGE_SUBFILES } from './load-messages';
 
 type AnyObject = { [k: string]: unknown };
@@ -168,6 +170,7 @@ describe('messages catalog — sub-file namespace rule', () => {
     { name: 'help', ja: jaHelp as AnyObject, en: enHelp as AnyObject },
     { name: 'guide', ja: jaGuide as AnyObject, en: enGuide as AnyObject },
     { name: 'faq', ja: jaFaq as AnyObject, en: enFaq as AnyObject },
+    { name: 'superAdmin', ja: jaSuperAdmin as AnyObject, en: enSuperAdmin as AnyObject },
   ];
 
   it.each(cases)('sub-file "$name" has exactly one top-level namespace = $name', ({ name, ja, en }) => {
@@ -188,6 +191,7 @@ describe('messages catalog — ja/en-US parity', () => {
     { source: 'ja/help.json', messages: jaHelp as AnyObject },
     { source: 'ja/guide.json', messages: jaGuide as AnyObject },
     { source: 'ja/faq.json', messages: jaFaq as AnyObject },
+    { source: 'ja/superAdmin.json', messages: jaSuperAdmin as AnyObject },
   ]);
   const enFull = mergeMessagesStrict([
     { source: 'en-US.json', messages: enMessages as AnyObject },
@@ -195,6 +199,7 @@ describe('messages catalog — ja/en-US parity', () => {
     { source: 'en-US/help.json', messages: enHelp as AnyObject },
     { source: 'en-US/guide.json', messages: enGuide as AnyObject },
     { source: 'en-US/faq.json', messages: enFaq as AnyObject },
+    { source: 'en-US/superAdmin.json', messages: enSuperAdmin as AnyObject },
   ]);
 
   const jaFlat = flatten(jaFull as AnyObject);
@@ -267,6 +272,7 @@ describe('messages catalog — loader collision detection', () => {
         { source: 'ja/help.json', messages: jaHelp as AnyObject },
         { source: 'ja/guide.json', messages: jaGuide as AnyObject },
         { source: 'ja/faq.json', messages: jaFaq as AnyObject },
+        { source: 'ja/superAdmin.json', messages: jaSuperAdmin as AnyObject },
       ]),
     ).not.toThrow();
   });
@@ -279,6 +285,7 @@ describe('messages catalog — loader collision detection', () => {
         { source: 'en-US/help.json', messages: enHelp as AnyObject },
         { source: 'en-US/guide.json', messages: enGuide as AnyObject },
         { source: 'en-US/faq.json', messages: enFaq as AnyObject },
+        { source: 'en-US/superAdmin.json', messages: enSuperAdmin as AnyObject },
       ]),
     ).not.toThrow();
   });

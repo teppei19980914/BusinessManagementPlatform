@@ -372,23 +372,18 @@ export function ProjectKnowledgeClient({
                     </div>
                   </div>
                   <div className="space-y-2">
-                    <Label>
-                      {tKnowledge('fieldTitle')}
-                      {/* 2026-05-11: 公開範囲 = 自分のみ (draft) なら任意、全メンバー (public) なら必須 */}
-                      {form.visibility === 'draft' && (
-                        <span className="ml-2 text-xs text-muted-foreground">{tKnowledge('optional')}</span>
-                      )}
-                    </Label>
+                    {/* v1.3.0 軽量入力 (2026-06-19): タイトルは draft / public とも常に必須 */}
+                    <Label>{tKnowledge('fieldTitle')}</Label>
                     <Input
                       value={form.title}
                       onChange={(e) => setForm({ ...form, title: e.target.value })}
                       maxLength={150}
-                      required={form.visibility === 'public'}
+                      required
                     />
                   </div>
-                  {/* refactor/list-create-content-optional (2026-04-27 #6): タイトル必須、3 セクションは任意 */}
+                  {/* v1.3.0 軽量入力: 背景 / 内容 / 結果は draft では任意、public では必須 (Embedding 対象 ∩ UI 入力欄あり) */}
                   <div className="space-y-2">
-                    <Label>{tKnowledge('background')} <span className="text-xs text-muted-foreground">{tKnowledge('optional')}</span></Label>
+                    <Label>{tKnowledge('background')}{form.visibility === 'draft' && <span className="ml-2 text-xs text-muted-foreground">{tKnowledge('optional')}</span>}</Label>
                     <MarkdownTextarea
                       value={form.background}
                       onChange={(v) => setForm({ ...form, background: v })}
@@ -397,7 +392,7 @@ export function ProjectKnowledgeClient({
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label>{tKnowledge('content')} <span className="text-xs text-muted-foreground">{tKnowledge('optional')}</span></Label>
+                    <Label>{tKnowledge('content')}{form.visibility === 'draft' && <span className="ml-2 text-xs text-muted-foreground">{tKnowledge('optional')}</span>}</Label>
                     <MarkdownTextarea
                       value={form.content}
                       onChange={(v) => setForm({ ...form, content: v })}
@@ -406,7 +401,7 @@ export function ProjectKnowledgeClient({
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label>{tKnowledge('result')} <span className="text-xs text-muted-foreground">{tKnowledge('optional')}</span></Label>
+                    <Label>{tKnowledge('result')}{form.visibility === 'draft' && <span className="ml-2 text-xs text-muted-foreground">{tKnowledge('optional')}</span>}</Label>
                     <MarkdownTextarea
                       value={form.result}
                       onChange={(v) => setForm({ ...form, result: v })}

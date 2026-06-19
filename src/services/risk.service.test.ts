@@ -25,6 +25,8 @@ vi.mock('@/lib/db', () => ({
     attachment: { updateMany: vi.fn() },
     // PR fix/visibility-auth-matrix: deleteRisk が comment.updateMany を $transaction 内で呼ぶ
     comment: { updateMany: vi.fn() },
+    // v1.3.0 資産導線機能: deleteRisk が deleteAssetLinksForEntity 経由で呼ぶ (count 読み取りのため既定値必須)
+    assetLink: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
     $transaction: vi.fn((ops: unknown[]) => Promise.all(ops)),
   },
 }));
@@ -671,12 +673,15 @@ describe('updateRisk', () => {
   // 「visibility='public' AND state='resolved' AND (state 遷移 or text 変更)」のみ embedding
   // ================================================================
   describe('visibility × state × embedding 生成判定', () => {
+    // v1.3.0: public 化は occurrence / cause / responsePolicy / content 非空が条件のため、
+    //   public 遷移テストが PUBLIC_REQUIRES_FIELDS で弾かれないよう既存値を埋める。
     const baseExisting = {
       reporterId: 'u-1',
       title: '既存',
       content: '既存内容',
-      cause: null,
-      responsePolicy: null,
+      occurrence: '既存事象',
+      cause: '既存原因',
+      responsePolicy: '既存対応策',
       responseDetail: null,
     };
 
@@ -865,10 +870,12 @@ describe('bulkUpdateRisksVisibilityFromList', () => {
   });
 
   it('reporter 本人のレコードのみ visibility 更新される (他人の混入は skip)', async () => {
+    // v1.3.0: public 化は occurrence/cause/responsePolicy/content 非空が条件のため mock で埋める。
+    const pub = { title: 't', occurrence: 'o', cause: 'c', responsePolicy: 'rp', content: 'ct' };
     vi.mocked(prisma.riskIssue.findMany).mockResolvedValue([
-      { id: 'r-1', reporterId: 'u-1', assigneeId: null },
-      { id: 'r-2', reporterId: 'u-1', assigneeId: null },
-      { id: 'r-3', reporterId: 'u-OTHER', assigneeId: null }, // 他人
+      { id: 'r-1', reporterId: 'u-1', assigneeId: null, ...pub },
+      { id: 'r-2', reporterId: 'u-1', assigneeId: null, ...pub },
+      { id: 'r-3', reporterId: 'u-OTHER', assigneeId: null, ...pub }, // 他人
     ] as never);
     vi.mocked(prisma.riskIssue.updateMany).mockResolvedValue({ count: 2 } as never);
 
@@ -907,10 +914,12 @@ describe('bulkUpdateRisksVisibilityFromList', () => {
 
   // feat/asset-assignee-expansion (2026-05-26): 担当者も bulk visibility 更新可能
   it('担当者本人のレコードも visibility 更新対象に含まれる', async () => {
+    // v1.3.0: public 化は occurrence/cause/responsePolicy/content 非空が条件のため mock で埋める。
+    const pub = { title: 't', occurrence: 'o', cause: 'c', responsePolicy: 'rp', content: 'ct' };
     vi.mocked(prisma.riskIssue.findMany).mockResolvedValue([
-      { id: 'r-1', reporterId: 'u-creator', assigneeId: 'u-1' }, // u-1 が担当者
-      { id: 'r-2', reporterId: 'u-1', assigneeId: null },        // u-1 が作成者
-      { id: 'r-3', reporterId: 'u-OTHER', assigneeId: 'u-OTHER' }, // 第3者
+      { id: 'r-1', reporterId: 'u-creator', assigneeId: 'u-1', ...pub }, // u-1 が担当者
+      { id: 'r-2', reporterId: 'u-1', assigneeId: null, ...pub },        // u-1 が作成者
+      { id: 'r-3', reporterId: 'u-OTHER', assigneeId: 'u-OTHER', ...pub }, // 第3者
     ] as never);
     vi.mocked(prisma.riskIssue.updateMany).mockResolvedValue({ count: 2 } as never);
 
@@ -939,7 +948,8 @@ describe('bulkUpdateRisksVisibilityFromList', () => {
 
   it('存在しない / 削除済 / 別プロジェクトの id は skippedNotFound にカウント', async () => {
     vi.mocked(prisma.riskIssue.findMany).mockResolvedValue([
-      { id: 'r-1', reporterId: 'u-1' },
+      // v1.3.0: public 化は occurrence/cause/responsePolicy/content 非空が条件
+      { id: 'r-1', reporterId: 'u-1', title: 't', occurrence: 'o', cause: 'c', responsePolicy: 'rp', content: 'ct' },
     ] as never);
     vi.mocked(prisma.riskIssue.updateMany).mockResolvedValue({ count: 1 } as never);
 
@@ -963,7 +973,7 @@ describe('bulkUpdateRisksVisibilityFromList', () => {
   describe('embedding 生成 (コスト最適化)', () => {
     it('visibility=draft への変更は embedding を生成しない (Voyage 課金回避)', async () => {
       vi.mocked(prisma.riskIssue.findMany).mockResolvedValue([
-        { id: 'r-1', reporterId: 'u-1', visibility: 'public', state: 'resolved', title: 't', content: 'c', cause: null, responsePolicy: null, responseDetail: null },
+        { id: 'r-1', reporterId: 'u-1', visibility: 'public', state: 'resolved', title: 't', content: 'c', occurrence: 'o', cause: 'cz', responsePolicy: 'rp', responseDetail: null },
       ] as never);
       vi.mocked(prisma.riskIssue.updateMany).mockResolvedValue({ count: 1 } as never);
 
@@ -974,7 +984,7 @@ describe('bulkUpdateRisksVisibilityFromList', () => {
 
     it('public→public のままなら embedding を生成しない (text 変更なしのため)', async () => {
       vi.mocked(prisma.riskIssue.findMany).mockResolvedValue([
-        { id: 'r-1', reporterId: 'u-1', visibility: 'public', state: 'resolved', title: 't', content: 'c', cause: null, responsePolicy: null, responseDetail: null },
+        { id: 'r-1', reporterId: 'u-1', visibility: 'public', state: 'resolved', title: 't', content: 'c', occurrence: 'o', cause: 'cz', responsePolicy: 'rp', responseDetail: null },
       ] as never);
       vi.mocked(prisma.riskIssue.updateMany).mockResolvedValue({ count: 1 } as never);
 
@@ -985,7 +995,7 @@ describe('bulkUpdateRisksVisibilityFromList', () => {
 
     it('draft→public でも state≠resolved なら embedding を生成しない (提案エンジン対象外)', async () => {
       vi.mocked(prisma.riskIssue.findMany).mockResolvedValue([
-        { id: 'r-1', reporterId: 'u-1', visibility: 'draft', state: 'open', title: 't', content: 'c', cause: null, responsePolicy: null, responseDetail: null },
+        { id: 'r-1', reporterId: 'u-1', visibility: 'draft', state: 'open', title: 't', content: 'c', occurrence: 'o', cause: 'cz', responsePolicy: 'rp', responseDetail: null },
       ] as never);
       vi.mocked(prisma.riskIssue.updateMany).mockResolvedValue({ count: 1 } as never);
 
@@ -996,12 +1006,12 @@ describe('bulkUpdateRisksVisibilityFromList', () => {
 
     it('draft→public 遷移 + state=resolved の行のみ batch で 1 ApiCallLog 集約', async () => {
       vi.mocked(prisma.riskIssue.findMany).mockResolvedValue([
-        { id: 'r-1', reporterId: 'u-1', visibility: 'draft', state: 'resolved', title: 't1', content: 'c1', cause: null, responsePolicy: null, responseDetail: null },
-        { id: 'r-2', reporterId: 'u-1', visibility: 'draft', state: 'resolved', title: 't2', content: 'c2', cause: null, responsePolicy: null, responseDetail: null },
+        { id: 'r-1', reporterId: 'u-1', visibility: 'draft', state: 'resolved', title: 't1', content: 'c1', occurrence: 'o', cause: 'cz', responsePolicy: 'rp', responseDetail: null },
+        { id: 'r-2', reporterId: 'u-1', visibility: 'draft', state: 'resolved', title: 't2', content: 'c2', occurrence: 'o', cause: 'cz', responsePolicy: 'rp', responseDetail: null },
         // 既に public な行は除外される (text 変更なしのため)
-        { id: 'r-3', reporterId: 'u-1', visibility: 'public', state: 'resolved', title: 't3', content: 'c3', cause: null, responsePolicy: null, responseDetail: null },
+        { id: 'r-3', reporterId: 'u-1', visibility: 'public', state: 'resolved', title: 't3', content: 'c3', occurrence: 'o', cause: 'cz', responsePolicy: 'rp', responseDetail: null },
         // state≠resolved も除外される (提案エンジン対象外)
-        { id: 'r-4', reporterId: 'u-1', visibility: 'draft', state: 'in_progress', title: 't4', content: 'c4', cause: null, responsePolicy: null, responseDetail: null },
+        { id: 'r-4', reporterId: 'u-1', visibility: 'draft', state: 'in_progress', title: 't4', content: 'c4', occurrence: 'o', cause: 'cz', responsePolicy: 'rp', responseDetail: null },
       ] as never);
       vi.mocked(prisma.riskIssue.updateMany).mockResolvedValue({ count: 4 } as never);
       vi.mocked(generateAndPersistBatchEmbeddings).mockResolvedValue({ generated: 2, failed: 0, costJpy: 1 });

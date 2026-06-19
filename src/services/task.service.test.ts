@@ -6,6 +6,8 @@ vi.mock('@/lib/db', () => ({
   prisma: {
     task: {
       findMany: vi.fn(),
+      // v1.3.0 資産導線機能: getWbsCompletionBannerState が COUNT 2 本で判定する
+      count: vi.fn(),
     },
     project: {
       findMany: vi.fn(),
@@ -37,6 +39,7 @@ import {
   isWpAggregationEqual,
   previewActivityWorkload,
   listMyTaskProjects,
+  getWbsCompletionBannerState,
   type WpAggregationChild,
   type WpAggregationResult,
 } from './task.service';
@@ -58,6 +61,7 @@ function childFixture(overrides: Partial<WpAggregationChild>): WpAggregationChil
     actualEndDate: null,
     status: 'not_started',
     assigneeId: null,
+    assigneeName: null,
     ...overrides,
   };
 }
@@ -222,6 +226,7 @@ describe('aggregateWpFromChildren', () => {
       actualEndDate: null,
       status: 'not_started',
       assigneeId: null,
+      assigneeDisplayText: null,
     });
   });
 
@@ -341,6 +346,49 @@ describe('aggregateWpFromChildren', () => {
     expect(aggregateWpFromChildren(children).status).toBe('not_started');
   });
 
+  it('completed と on_hold の混在 (in_progress なし) → on_hold', () => {
+    const children = [
+      childFixture({ status: 'completed' }),
+      childFixture({ status: 'on_hold' }),
+    ];
+    expect(aggregateWpFromChildren(children).status).toBe('on_hold');
+  });
+
+  it('completed 複数 + on_hold (in_progress なし) → on_hold', () => {
+    const children = [
+      childFixture({ status: 'completed' }),
+      childFixture({ status: 'completed' }),
+      childFixture({ status: 'on_hold' }),
+    ];
+    expect(aggregateWpFromChildren(children).status).toBe('on_hold');
+  });
+
+  it('completed + on_hold + not_started (in_progress なし) → on_hold', () => {
+    const children = [
+      childFixture({ status: 'completed' }),
+      childFixture({ status: 'on_hold' }),
+      childFixture({ status: 'not_started' }),
+    ];
+    expect(aggregateWpFromChildren(children).status).toBe('on_hold');
+  });
+
+  it('completed + not_started (on_hold も in_progress もなし) → in_progress', () => {
+    const children = [
+      childFixture({ status: 'completed' }),
+      childFixture({ status: 'not_started' }),
+    ];
+    expect(aggregateWpFromChildren(children).status).toBe('in_progress');
+  });
+
+  it('in_progress + on_hold + completed → in_progress (in_progress が最優先)', () => {
+    const children = [
+      childFixture({ status: 'in_progress' }),
+      childFixture({ status: 'on_hold' }),
+      childFixture({ status: 'completed' }),
+    ];
+    expect(aggregateWpFromChildren(children).status).toBe('in_progress');
+  });
+
   // --- 担当者集約 (uniform-assignee) ---
   it('子の担当者がすべて同一（user-A）なら親の担当者も user-A', () => {
     const children = [
@@ -375,6 +423,45 @@ describe('aggregateWpFromChildren', () => {
   it('子が 1 件のみで user-A なら親も user-A（単一子のケース）', () => {
     const children = [childFixture({ assigneeId: 'user-A' })];
     expect(aggregateWpFromChildren(children).assigneeId).toBe('user-A');
+  });
+
+  // --- 複数担当者表示テキスト (assigneeDisplayText) ---
+  it('全員未アサイン → assigneeDisplayText は null', () => {
+    const children = [childFixture({ assigneeId: null }), childFixture({ assigneeId: null })];
+    expect(aggregateWpFromChildren(children).assigneeDisplayText).toBeNull();
+  });
+
+  it('担当者が 1 人のみ → assigneeDisplayText は null (assigneeName で表示)', () => {
+    const children = [
+      childFixture({ assigneeId: 'user-A', assigneeName: '田中' }),
+      childFixture({ assigneeId: 'user-A', assigneeName: '田中' }),
+    ];
+    expect(aggregateWpFromChildren(children).assigneeDisplayText).toBeNull();
+  });
+
+  it('担当者が 2 人 → "田中 +1" 形式の assigneeDisplayText', () => {
+    const children = [
+      childFixture({ assigneeId: 'user-A', assigneeName: '田中' }),
+      childFixture({ assigneeId: 'user-B', assigneeName: '鈴木' }),
+    ];
+    expect(aggregateWpFromChildren(children).assigneeDisplayText).toBe('田中 +1');
+  });
+
+  it('担当者が 3 人 → "田中 +2" 形式の assigneeDisplayText', () => {
+    const children = [
+      childFixture({ assigneeId: 'user-A', assigneeName: '田中' }),
+      childFixture({ assigneeId: 'user-B', assigneeName: '鈴木' }),
+      childFixture({ assigneeId: 'user-C', assigneeName: '佐藤' }),
+    ];
+    expect(aggregateWpFromChildren(children).assigneeDisplayText).toBe('田中 +2');
+  });
+
+  it('同一担当者 + null 混在でも uniqueIds が 1 件なら assigneeDisplayText は null', () => {
+    const children = [
+      childFixture({ assigneeId: 'user-A', assigneeName: '田中' }),
+      childFixture({ assigneeId: null, assigneeName: null }),
+    ];
+    expect(aggregateWpFromChildren(children).assigneeDisplayText).toBeNull();
   });
 });
 
@@ -480,6 +567,7 @@ describe('isWpAggregationEqual', () => {
     actualEndDate: null,
     status: 'in_progress',
     assigneeId: 'user-A',
+    assigneeDisplayText: null,
   };
 
   it('全フィールド同値なら true', () => {
@@ -530,6 +618,17 @@ describe('isWpAggregationEqual', () => {
   it('assigneeId: undefined と null は同値扱い', () => {
     const result: WpAggregationResult = { ...baseResult, assigneeId: null };
     const current = { ...baseResult, assigneeId: null as string | null };
+    expect(isWpAggregationEqual(current, result)).toBe(true);
+  });
+
+  it('assigneeDisplayText が異なれば false', () => {
+    const current = { ...baseResult, assigneeDisplayText: '田中 +1' };
+    expect(isWpAggregationEqual(current, baseResult)).toBe(false);
+  });
+
+  it('assigneeDisplayText: undefined と null は同値扱い', () => {
+    const result: WpAggregationResult = { ...baseResult, assigneeDisplayText: null };
+    const current = { ...baseResult, assigneeDisplayText: undefined as string | null | undefined };
     expect(isWpAggregationEqual(current, result)).toBe(true);
   });
 });
@@ -776,5 +875,52 @@ describe('listMyTaskProjects (PR-3 perf: N+1 解消の同等性検証)', () => {
     const secondCall = vi.mocked(prisma.task.findMany).mock.calls[1]![0]!;
     const where = secondCall.where as { project?: { tenantId: string } };
     expect(where.project).toEqual({ tenantId: TENANT });
+  });
+});
+
+describe('getWbsCompletionBannerState (v1.3.0 資産導線機能)', () => {
+  const WBS_PROJECT = '00000000-0000-4000-8000-000000000099';
+  const WBS_TENANT = '00000000-0000-0000-0000-000000000099';
+
+  beforeEach(() => vi.clearAllMocks());
+
+  it('ACT が 0 件なら表示しない (対象タスクが無い)', async () => {
+    vi.mocked(prisma.task.count).mockResolvedValueOnce(0).mockResolvedValueOnce(0);
+    const result = await getWbsCompletionBannerState(WBS_PROJECT, WBS_TENANT);
+    expect(result).toEqual({ shouldShow: false });
+  });
+
+  it('ACT が 1 件以上あり、全て completed/on_hold のみなら表示する', async () => {
+    vi.mocked(prisma.task.count).mockResolvedValueOnce(3).mockResolvedValueOnce(0);
+    const result = await getWbsCompletionBannerState(WBS_PROJECT, WBS_TENANT);
+    expect(result).toEqual({ shouldShow: true });
+  });
+
+  it('completed/on_hold 以外の status が 1 件でもあれば表示しない', async () => {
+    vi.mocked(prisma.task.count).mockResolvedValueOnce(3).mockResolvedValueOnce(1);
+    const result = await getWbsCompletionBannerState(WBS_PROJECT, WBS_TENANT);
+    expect(result).toEqual({ shouldShow: false });
+  });
+
+  it('count クエリは type=activity / deletedAt=null / 自テナントに絞り込む (越境防止)', async () => {
+    vi.mocked(prisma.task.count).mockResolvedValueOnce(1).mockResolvedValueOnce(0);
+    await getWbsCompletionBannerState(WBS_PROJECT, WBS_TENANT);
+
+    const totalCall = vi.mocked(prisma.task.count).mock.calls[0]![0]!;
+    expect(totalCall.where).toEqual({
+      projectId: WBS_PROJECT,
+      type: 'activity',
+      deletedAt: null,
+      project: { tenantId: WBS_TENANT },
+    });
+
+    const incompleteCall = vi.mocked(prisma.task.count).mock.calls[1]![0]!;
+    expect(incompleteCall.where).toEqual({
+      projectId: WBS_PROJECT,
+      type: 'activity',
+      deletedAt: null,
+      project: { tenantId: WBS_TENANT },
+      status: { notIn: ['completed', 'on_hold'] },
+    });
   });
 });

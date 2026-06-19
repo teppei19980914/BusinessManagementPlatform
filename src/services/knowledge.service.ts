@@ -37,6 +37,7 @@ import { assertAssigneeTenant } from '@/lib/assignee-validation';
 import { generateAndPersistEntityEmbedding, generateAndPersistBatchEmbeddings } from './embedding.service';
 // ADR-0025 (2026-05-29): DELETE 後に Beginner プランのテナント容量を自動再集計するための hook
 import { maybeRecalcAfterBeginnerDelete } from './tenant-storage.service';
+import { deleteAssetLinksForEntity } from './asset-link.service';
 import type { Prisma } from '@/generated/prisma/client';
 import type { CreateKnowledgeInput } from '@/lib/validators/knowledge';
 
@@ -561,6 +562,19 @@ export async function updateKnowledge(
     if (!effectiveTitle || effectiveTitle.trim().length === 0) {
       throw new Error('PUBLIC_REQUIRES_TITLE');
     }
+    // v1.3.0 軽量入力 (2026-06-19): public 化時は「Embedding 対象 ∩ UI 入力欄あり」項目
+    //   (背景 / 内容 / 結果) も必須。validator は未送信 (undefined) を既存値維持として通すため、
+    //   API 直叩きで本文未送信のまま public 化する経路を service 層で塞ぐ (提案エンジンの空公開防止)。
+    const effBackground = input.background !== undefined ? input.background : existing.background;
+    const effContent = input.content !== undefined ? input.content : existing.content;
+    const effResult = input.result !== undefined ? input.result : existing.result;
+    if (
+      !effBackground || effBackground.trim().length === 0
+      || !effContent || effContent.trim().length === 0
+      || !effResult || effResult.trim().length === 0
+    ) {
+      throw new Error('PUBLIC_REQUIRES_FIELDS');
+    }
   }
 
   // PR #5-c + PR D (2026-05-09 / #20): text フィールドが「実値として変わったか」を比較で判定。
@@ -702,6 +716,10 @@ export async function deleteKnowledge(
     }),
   ]);
 
+  // v1.3.0 資産導線機能: 削除されたナレッジに紐づく手動リンクの孤児を除去。
+  //   asset_links はポリモーフィック (FK なし) のため cascade delete が効かない。
+  await deleteAssetLinksForEntity('knowledge', knowledgeId, viewerTenantId);
+
   // ADR-0025 (2026-05-29): Beginner プラン超過状態からの DELETE で容量キャッシュを即時更新。
   //   transaction commit 後に呼ぶ (= isolation level race 回避)。fail-safe で throw しない。
   await maybeRecalcAfterBeginnerDelete(viewerTenantId);
@@ -775,7 +793,16 @@ export async function bulkUpdateKnowledgeVisibilityFromList(
   let skippedEmptyTitle = 0;
   if (visibility === 'public') {
     const beforeCount = eligible.length;
-    eligible = eligible.filter((t) => t.title.trim().length > 0);
+    // v1.3.0 軽量入力 (2026-06-19): public 化は title + 背景 / 内容 / 結果 (Embedding 対象 ∩ UI 入力欄あり)
+    //   がすべて非空の行のみ対象。未充足行は draft のまま skip し、単発 update の必須ルールと整合させる
+    //   (skippedEmptyTitle は「公開に必要な項目が未充足のため skip した件数」を表す)。
+    eligible = eligible.filter(
+      (t) =>
+        t.title.trim().length > 0
+        && t.background.trim().length > 0
+        && t.content.trim().length > 0
+        && t.result.trim().length > 0,
+    );
     skippedEmptyTitle = beforeCount - eligible.length;
   }
   const ownedIds = eligible.map((t) => t.id);

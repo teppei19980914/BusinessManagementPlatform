@@ -1,10 +1,10 @@
 # データモデルとテーブル定義 (Program Design)
 
-本ドキュメントは **`prisma/schema.prisma` (42 model) と実 Postgres (Supabase) の完全ミラー** を目的とした基盤文書です。1 ファイルで全テーブルの構造・インデックス・FK ポリシー・PostgreSQL 拡張・RLS・ベクトル検索の実装まで把握できることをゴールとします。
+本ドキュメントは **`prisma/schema.prisma` (46 model) と実 Postgres (Supabase) の完全ミラー** を目的とした基盤文書です。1 ファイルで全テーブルの構造・インデックス・FK ポリシー・PostgreSQL 拡張・RLS・ベクトル検索の実装まで把握できることをゴールとします。
 
 > ⚠️ **最終的な真値は [prisma/schema.prisma](../../prisma/schema.prisma) と実 DB**。本ドキュメントは schema を 1:1 に転記し設計判断を補足したものです。schema に存在しないカラム・テーブルは記載しません (推測でカラムを足さない方針)。マイグレーション戦略は [../operations/DB_MIGRATION_PROCEDURE.md](../operations/develop/DB_MIGRATION_PROCEDURE.md) を参照。
 
-最終再生成: 2026-05-31 (schema.prisma 42 model + Supabase introspection 照合)。
+最終再生成: 2026-06-19 (v1.3.0 資産導線機能で risk_issue_promotions / issue_knowledge_promotions / asset_links を追加、schema.prisma 46 model + Supabase introspection 照合)。
 
 ---
 
@@ -17,13 +17,13 @@
 - [§5. RLS とテナント分離](#5-rls-とテナント分離)
 - [§6. FK onDelete ポリシー](#6-fk-ondelete-ポリシー)
 - [§7. ER 図](#7-er-図)
-- [§8. テーブル定義 (§8.1〜§8.42)](#8-テーブル定義)
+- [§8. テーブル定義 (§8.1〜§8.46)](#8-テーブル定義)
 - [§14. 初期データ・シード設計](#14-初期データシード設計)
 - [§15. インデックス戦略](#15-インデックス戦略)
 
 ---
 
-## §1. テーブル一覧 (43 + Prisma 管理表)
+## §1. テーブル一覧 (46 + Prisma 管理表)
 
 | # | 物理名 | 日本語名 | 区分 |
 |---|---|---|---|
@@ -70,6 +70,9 @@
 | 8.41 | `faq_embeddings` | FAQ embedding | embedding / RAG |
 | 8.42 | `guide_embeddings` | ガイド embedding | embedding / RAG |
 | 8.43 | `system_banners` | システム周知バナー (グローバル) | 運用 |
+| 8.44 | `risk_issue_promotions` | リスク→課題 昇華リンク | 業務 / M2M |
+| 8.45 | `issue_knowledge_promotions` | 課題→ナレッジ 昇華リンク | 業務 / M2M |
+| 8.46 | `asset_links` | 資産間 汎用手動リンク (5 資産) | 業務 / M2M |
 | — | `_prisma_migrations` | Prisma マイグレーション管理表 (65 行) | システム |
 
 > `_prisma_migrations` は Prisma Migrate が管理するシステム表で `public` スキーマに存在する (適用済みマイグレーションのチェックサム・適用時刻を記録)。アプリは直接参照せず、本ドキュメントでは存在のみ注記。
@@ -161,7 +164,8 @@ ADR-0015 (アプリ層 cascade) に基づき、FK の onDelete は以下の方�
 | 担当者 (`assignee_id`) / `stakeholders.user_id` / `memos.assignee_id` / `knowledges.assignee_id` / `retrospectives.assignee_id` | **SET NULL** | 担当者 User 物理削除時は担当解除し本体は残す |
 | `projects.customer_id` → `customers.id` | **SET NULL** | Customer 物理削除時、論理削除済 Project の customer_id を dangling にしない |
 | `risks_issues.project_id` / `retrospectives.project_id` (作成元 PJ) | **SET NULL** | M2M 化に伴い「作成元 PJ」の audit 用途。作成元 PJ 物理削除で NULL 化 (orphan 許容) |
-| M2M 中間 (`knowledge_projects` / `retrospective_projects` / `risk_issue_projects`) | **CASCADE** | リンク両端の物理削除でリンク行を自動削除 |
+| M2M 中間 (`knowledge_projects` / `retrospective_projects` / `risk_issue_projects` / `risk_issue_promotions` / `issue_knowledge_promotions`) | **CASCADE** | リンク両端の物理削除でリンク行を自動削除 |
+| `asset_links.tenant_id` | **NO ACTION** | ポリモーフィック (entity ID 列に FK 無し) だが tenant_id は他テーブルと同じ NO ACTION で統一。entity 削除時の孤立リンクは各エンティティの delete service から `deleteAssetLinksForEntity` を呼んでアプリ層で除去 (v1.3.0 資産導線機能) |
 | `mentions.comment_id` → `comments.id` | **CASCADE** | コメント削除でメンションも物理削除 |
 | `sessions.user_id` → `users.id` | **CASCADE** | User 削除でセッション破棄 |
 | その他の参照 (token 系の user_id/tenant_id 等) | NO ACTION / RESTRICT | Prisma 既定。アプリ層で整合性を担保 |
@@ -206,6 +210,14 @@ erDiagram
     retrospectives ||--o{ retrospective_projects : "linked"
     projects ||--o{ knowledge_projects : "linked"
     knowledges ||--o{ knowledge_projects : "linked"
+
+    %% v1.3.0 資産導線機能: 昇華リンク (M:N, 再昇華ブロックなし) + 汎用手動リンク。
+    risks_issues ||--o{ risk_issue_promotions : "promoted-from (risk, CASCADE)"
+    risks_issues ||--o{ risk_issue_promotions : "promoted-to (issue, CASCADE)"
+    risks_issues ||--o{ issue_knowledge_promotions : "promoted-from (issue, CASCADE)"
+    knowledges ||--o{ issue_knowledge_promotions : "promoted-to (CASCADE)"
+    %% asset_links は entity 列がポリモーフィック (FK 無し) のため tenant のみ線を引く。
+    tenants ||--o{ asset_links : "scoped"
 
     %% comments / attachments / notifications は polymorphic (entity_type + entity_id)。
     %% FK を持たないため線は引かない。comments ||--o{ mentions は FK あり。
@@ -526,6 +538,7 @@ User × Project の中間テーブル。プロジェクトごとに異なる pro
 | 説明 | description | TEXT | YES | NULL | |
 | 区分 | category | VARCHAR(30) | NO | - | |
 | 担当者 | assignee_id | UUID | YES | NULL | FK→users.id (SET NULL)。WP は null、ACT は必須 |
+| 担当者集約表示 | assignee_display_text | VARCHAR(200) | YES | NULL | WP 専用。配下 ACT の担当者が 2 名以上いる場合のみ設定される表示テキスト (例: "田中 +2")。担当者が 0 人または全員同一の場合は null (migration `20260619_add_task_assignee_display_text`) |
 | 開始予定日 | planned_start_date | DATE | YES | NULL | WP は子から自動計算 |
 | 終了予定日 | planned_end_date | DATE | YES | NULL | WP は子から自動計算 |
 | 開始実績日 | actual_start_date | DATE | YES | NULL | |
@@ -895,7 +908,7 @@ polymorphic (entity_type + entity_id) で 7 種 (issue/task/risk/retrospective/k
 | ID | id | UUID | NO | gen_random_uuid() | 主キー |
 | テナント | tenant_id | UUID | NO | - | FK→tenants.id |
 | ユーザ | user_id | UUID | NO | - | FK→users.id (受信者) |
-| 種別 | type | VARCHAR(40) | NO | - | task_start_due 等 |
+| 種別 | type | VARCHAR(40) | NO | - | task_end_due 等 |
 | エンティティ種別 | entity_type | VARCHAR(30) | NO | - | |
 | エンティティ ID | entity_id | UUID | NO | - | |
 | タイトル | title | VARCHAR(200) | NO | - | |
@@ -1165,6 +1178,53 @@ withMeteredLLM が INSERT、5 分 cron で Stripe へ送信。apiCallLogId を i
 **インデックス**: `idx_system_banners_active` (enabled, start_at, end_at) — 表示判定 (getActiveBanner) と重複判定 (1 本制約 / assertNoOverlap) の hot path 用。
 
 > **1 本制約**: enabled なバナー同士の表示期間は重複不可 (service 層で担保)。ある時点で表示される帯は最大 1 本。
+
+---
+
+### 8.44 risk_issue_promotions（リスク→課題 昇華リンク / v1.3.0 資産導線機能）
+
+リスクが顕在化した際に「課題として昇華」操作で 1 行追加される M:N リンク。新規課題は既存の `createRisk` (type='issue') を再利用して作成し、本テーブルは昇華元/昇華先の関連だけを記録する。M:N かつ再昇華の system 側ブロックはない (UI でバッジ表示し人間の判断に委ねる)。
+
+| 論理名 | 物理名 | 型 | NULL | デフォルト | 説明 |
+|---|---|---|---|---|---|
+| リスク | risk_id | UUID | NO | - | FK→risks_issues.id (**CASCADE**)。複合 PK の一部 |
+| 課題 | issue_id | UUID | NO | - | FK→risks_issues.id (**CASCADE**)。複合 PK の一部 |
+| 作成日時 | created_at | TIMESTAMPTZ | NO | now() | |
+| 作成者 | created_by | UUID | NO | - | FK→users.id。昇華操作を行った User |
+
+**PK**: (risk_id, issue_id) — 同じ組の重複昇華は許可しない (DB 制約)。**インデックス**: `idx_risk_issue_promotions_risk` (risk_id) / `idx_risk_issue_promotions_issue` (issue_id)
+
+### 8.45 issue_knowledge_promotions（課題→ナレッジ 昇華リンク / v1.3.0 資産導線機能）
+
+課題が解消した際に「ナレッジとして昇華」操作で 1 行追加される M:N リンク。新規ナレッジは既存の `createKnowledge` を再利用して作成する。8.44 と同設計 (M:N、再昇華ブロックなし)。
+
+| 論理名 | 物理名 | 型 | NULL | デフォルト | 説明 |
+|---|---|---|---|---|---|
+| 課題 | issue_id | UUID | NO | - | FK→risks_issues.id (**CASCADE**)。複合 PK の一部 |
+| ナレッジ | knowledge_id | UUID | NO | - | FK→knowledges.id (**CASCADE**)。複合 PK の一部 |
+| 作成日時 | created_at | TIMESTAMPTZ | NO | now() | |
+| 作成者 | created_by | UUID | NO | - | FK→users.id。昇華操作を行った User |
+
+**PK**: (issue_id, knowledge_id)。**インデックス**: `idx_issue_knowledge_promotions_issue` (issue_id) / `idx_issue_knowledge_promotions_knowledge` (knowledge_id)
+
+### 8.46 asset_links（資産間 汎用手動リンク / v1.3.0 資産導線機能）
+
+Risk / Issue / Knowledge / Retrospective / Memo の 5 資産間で「既存 ↔ 既存」を結ぶ汎用手動リンク。昇華リンク (8.44/8.45) とは別経路で、新規レコードは作成しない。リンク対象は公開可視 (visibility='public') の資産のみに service 層で限定する。
+
+| 論理名 | 物理名 | 型 | NULL | デフォルト | 説明 |
+|---|---|---|---|---|---|
+| ID | id | UUID | NO | gen_random_uuid() | 主キー |
+| テナント | tenant_id | UUID | NO | - | FK→tenants.id (**NO ACTION**、他テーブルと統一) |
+| リンク元種別 | from_entity_type | VARCHAR(20) | NO | - | 'risk' / 'issue' / 'knowledge' / 'retrospective' / 'memo' |
+| リンク元 ID | from_entity_id | UUID | NO | - | ポリモーフィックのため FK 無し |
+| リンク先種別 | to_entity_type | VARCHAR(20) | NO | - | 同上 5 種 |
+| リンク先 ID | to_entity_id | UUID | NO | - | ポリモーフィックのため FK 無し |
+| 作成日時 | created_at | TIMESTAMPTZ | NO | now() | |
+| 作成者 | created_by | UUID | NO | - | FK→users.id。リンクの解除可否判定 (作成者本人のみ) に使用 |
+
+**インデックス**: `idx_asset_links_from` (tenant_id, from_entity_type, from_entity_id) / `idx_asset_links_to` (tenant_id, to_entity_type, to_entity_id)
+
+> **対称重複防止**: A→B と B→A は同一リンクとみなし、作成時にアプリ層で両方向を検索して既存なら `ALREADY_LINKED` で弾く。**孤立リンク**: entity 削除時、各エンティティの delete service 関数 (`deleteRisk`/`deleteKnowledge`/`deleteRetrospective`/`deleteMemo`) から `deleteAssetLinksForEntity` を呼んで同時にクリーンアップする (FK が無いため DB cascade に依存できない)。
 
 ---
 

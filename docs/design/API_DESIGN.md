@@ -252,7 +252,7 @@
 
 | パス | メソッド | 認可 | 概要 |
 |---|---|---|---|
-| /api/chat/search | POST | 認証 | 5 資産横断の意味検索 (embedding cosine + keyword filter)。§16 参照 |
+| /api/chat/search | POST | 認証 | 5 資産横断の意味検索 (embedding cosine)。ファイル系キーワード検出時は添付ファイル本文のみ検索 (file scope)。§16 参照 |
 | /api/help/chat | POST | 認証 | たすきフクロウ AI ヘルプチャット (FaqEmbedding/GuideEmbedding RAG、ADR-0028)。viewer の systemRole から isTenantAdmin 判定 |
 
 #### テナント (自己, tenants/me) — 12 route
@@ -478,10 +478,11 @@
 
 ### 16.2 意味検索 (embedding cosine — `/api/chat/search`)
 
-`chat-search.service` が **5 資産** (knowledge / risk・issue / retrospective / memo / attachment) の `content_embedding` (vector(1024)、Voyage embedding) に対し **cosine 類似** で意味検索する。
+`chat-search.service` が **5 資産** (project / knowledge / risk・issue / retrospective / memo) の `content_embedding` (vector(1024)、Voyage embedding) に対し **cosine 類似** で意味検索する。
 
+- **添付ファイル本文検索 (ADR-0021, file scope)**: クエリにファイル系キーワード (`FILE_SCOPE_KEYWORDS`: ファイル / 添付 / PDF / Excel / Word / 資料 / 文書 等) を `detectFileScopeQuery` で検出した場合のみ、5 資産を検索せず **`attachments` (`Attachment.content_embedding`) のみ** を検索する (either/or 排他切替、5 資産とは同時に返さない)。対象は `storage_provider='supabase'` かつ `embedding_status='completed'` の添付に限る。詳細は [CHAT_SEMANTIC_SEARCH.md §2.8](../specification/CHAT_SEMANTIC_SEARCH.md)。
 - **重要 (性能注記)**: **pgvector の vector index は未作成** (Supabase introspection で 0 件) → 類似検索は **ブルートフォース全走査**。現規模では許容範囲だが、データ増加時は IVFFlat / HNSW index 追加を検討。
-- keyword filter との **併用**: クエリ条件で対象資産種別・テナント (`where.tenantId`) を絞り込んだうえで embedding 距離順に並べる。
+- テナント絞り込み: クエリ条件でテナント (`where.tenantId`) を絞り込んだうえで embedding 距離順に並べる。
 - `visibility='draft'` のエンティティは embedding を生成しないため意味検索の対象外。
 - 課金: 検索クエリの embedding 生成は `withMeteredLLM` で 1 業務操作 = 1 ApiCallLog に集約 (EMBEDDING 課金分類)。
 

@@ -23,7 +23,7 @@ export function AdminKnowledgeDeleteButton({
 }) {
   const router = useRouter();
   const { withLoading } = useLoading();
-  const { showSuccess, showError } = useToast();
+  const { showSuccessKey, showErrorKey } = useToast();
   const tAction = useTranslations('action');
   const tCommon = useTranslations('common');
   return (
@@ -39,10 +39,10 @@ export function AdminKnowledgeDeleteButton({
           fetch(`/api/knowledge/${knowledgeId}`, { method: 'DELETE' }),
         );
         if (!res.ok) {
-          showError('ナレッジの削除に失敗しました');
+          showErrorKey('knowledge.toastDeleteFailed');
           return;
         }
-        showSuccess('ナレッジを削除しました');
+        showSuccessKey('knowledge.toastDeleteSuccess');
         router.refresh();
       }}
     >

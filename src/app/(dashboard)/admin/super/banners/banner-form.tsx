@@ -9,6 +9,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { useLoading } from '@/components/loading-overlay';
@@ -46,8 +47,9 @@ export function BannerForm({
   initial?: BannerFormInitial;
 }) {
   const router = useRouter();
+  const t = useTranslations('superAdmin');
   const { withLoading } = useLoading();
-  const { showSuccess, showError } = useToast();
+  const { showSuccessKey, showErrorKey } = useToast();
 
   const [message, setMessage] = useState(initial?.message ?? '');
   const [severity, setSeverity] = useState<BannerSeverity>(initial?.severity ?? 'medium');
@@ -61,13 +63,13 @@ export function BannerForm({
     setError('');
 
     if (!startAt || !endAt) {
-      setError('表示開始日時と終了日時を入力してください。');
+      setError(t('bannerDateRangeRequired'));
       return;
     }
     const startIso = new Date(startAt).toISOString();
     const endIso = new Date(endAt).toISOString();
     if (new Date(startIso) >= new Date(endIso)) {
-      setError('表示終了日時は開始日時より後にしてください。');
+      setError(t('bannerEndAfterStart'));
       return;
     }
 
@@ -87,17 +89,17 @@ export function BannerForm({
       const code = json?.error?.code as string | undefined;
       const apiMessage = json?.error?.message as string | undefined;
       if (code === 'OVERLAP') {
-        setError(apiMessage ?? '表示期間が他の有効なバナーと重複しています。期間をずらすか、重複するバナーを取り下げてください。');
+        setError(apiMessage ?? t('bannerOverlapError'));
       } else if (code === 'VALIDATION_ERROR' || code === 'INVALID_PERIOD') {
-        setError(apiMessage ?? '入力内容に誤りがあります。');
+        setError(apiMessage ?? t('bannerInvalidInput'));
       } else {
-        setError(apiMessage ?? '保存に失敗しました。');
+        setError(apiMessage ?? t('bannerSaveFailedDefault'));
       }
-      showError('バナーの保存に失敗しました');
+      showErrorKey('superAdmin.toastBannerSaveFailed');
       return;
     }
 
-    showSuccess(mode === 'create' ? 'バナーを作成しました。' : 'バナーを更新しました。');
+    showSuccessKey(mode === 'create' ? 'superAdmin.toastBannerCreateSuccess' : 'superAdmin.toastBannerUpdateSuccess');
     router.push('/admin/super/banners');
     router.refresh();
   }
@@ -109,7 +111,7 @@ export function BannerForm({
       )}
 
       <div className="space-y-2">
-        <Label htmlFor="message">メッセージ * (最大 500 文字)</Label>
+        <Label htmlFor="message">{t('bannerMessageLabel')}</Label>
         <textarea
           id="message"
           value={message}
@@ -118,13 +120,13 @@ export function BannerForm({
           rows={3}
           required
           className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-          placeholder="例: 6/15 0:00〜3:00 にメンテナンスを実施します。一時的にご利用いただけません。"
+          placeholder={t('bannerMessagePlaceholder')}
         />
-        <p className="text-xs text-muted-foreground">{message.length} / 500 文字</p>
+        <p className="text-xs text-muted-foreground">{t('bannerMessageCounter', { count: message.length })}</p>
       </div>
 
       <div className="space-y-2">
-        <Label htmlFor="severity">緊急度 *</Label>
+        <Label htmlFor="severity">{t('bannerSeverityLabel')}</Label>
         <select
           id="severity"
           value={severity}
@@ -134,16 +136,20 @@ export function BannerForm({
           {BANNER_SEVERITIES.map((s) => (
             <option key={s} value={s}>
               {BANNER_SEVERITY_LABELS[s]}
-              {s === 'high' ? '（赤）' : s === 'medium' ? '（黄）' : '（青）'}
+              {s === 'high'
+                ? t('bannerSeveritySuffixRed')
+                : s === 'medium'
+                  ? t('bannerSeveritySuffixYellow')
+                  : t('bannerSeveritySuffixBlue')}
             </option>
           ))}
         </select>
-        <p className="text-xs text-muted-foreground">高=赤 / 中=黄 / 低=青 で帯が塗られます。</p>
+        <p className="text-xs text-muted-foreground">{t('bannerSeverityHint')}</p>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="space-y-2">
-          <Label htmlFor="startAt">表示開始日時 * (JST)</Label>
+          <Label htmlFor="startAt">{t('bannerStartDateLabel')}</Label>
           <input
             id="startAt"
             type="datetime-local"
@@ -154,7 +160,7 @@ export function BannerForm({
           />
         </div>
         <div className="space-y-2">
-          <Label htmlFor="endAt">表示終了日時 * (JST)</Label>
+          <Label htmlFor="endAt">{t('bannerEndDateLabel')}</Label>
           <input
             id="endAt"
             type="datetime-local"
@@ -174,15 +180,15 @@ export function BannerForm({
           onChange={(e) => setEnabled(e.target.checked)}
         />
         <Label htmlFor="enabled" className="font-normal">
-          このバナーを有効にする（チェックを外すと取り下げ状態で保存。期間内でも表示されません）
+          {t('bannerEnabledLabel')}
         </Label>
       </div>
 
       <div className="flex justify-end gap-2">
         <Button type="button" variant="outline" onClick={() => router.back()}>
-          キャンセル
+          {t('bannerCancel')}
         </Button>
-        <Button type="submit">{mode === 'create' ? 'バナーを作成' : '変更を保存'}</Button>
+        <Button type="submit">{mode === 'create' ? t('bannerSubmitCreate') : t('bannerSubmitUpdate')}</Button>
       </div>
     </form>
   );

@@ -26,11 +26,11 @@ describe('createMemoSchema', () => {
     expect(createMemoSchema.safeParse({ ...valid, visibility: 'project' }).success).toBe(false);
   });
 
-  // 2026-05-11: visibility 連動の必須チェックに変更。
-  //   - 「自分のみ」(private、既定) では title 空も許容 (一時保存的に保存可)
-  //   - 「全メンバー」(public) ではタイトル必須
-  it('visibility=private (既定) なら空タイトルを許容 (一時保存)', () => {
-    expect(createMemoSchema.safeParse({ ...valid, title: '' }).success).toBe(true);
+  // v1.3.0 軽量入力 (2026-06-19): 必須チェックを刷新。
+  //   - private / public とも title は常に必須
+  //   - public では title + 本文 (content = Embedding 対象 ∩ UI 入力欄あり) を必須化
+  it('visibility=private でも空タイトルを拒否 (v1.3.0: title は常に必須)', () => {
+    expect(createMemoSchema.safeParse({ ...valid, title: '' }).success).toBe(false);
   });
 
   it('visibility=public で空タイトルを拒否', () => {
@@ -42,6 +42,12 @@ describe('createMemoSchema', () => {
   it('visibility=public で空白のみのタイトルも拒否 (trim 検証)', () => {
     expect(
       createMemoSchema.safeParse({ ...valid, title: '   ', visibility: 'public' }).success,
+    ).toBe(false);
+  });
+
+  it('visibility=public で空本文を拒否 (v1.3.0: public は本文必須)', () => {
+    expect(
+      createMemoSchema.safeParse({ ...valid, content: '', visibility: 'public' }).success,
     ).toBe(false);
   });
 
@@ -78,7 +84,11 @@ describe('updateMemoSchema', () => {
     expect(updateMemoSchema.safeParse({ visibility: 'public', title: '' }).success).toBe(false);
   });
 
-  it('visibility=private への変更時に title を空文字にしても許容 (一時保存)', () => {
-    expect(updateMemoSchema.safeParse({ visibility: 'private', title: '' }).success).toBe(true);
+  it('visibility=private への変更でも title を空文字にすると拒否 (v1.3.0: title は常に必須)', () => {
+    expect(updateMemoSchema.safeParse({ visibility: 'private', title: '' }).success).toBe(false);
+  });
+
+  it('visibility=public への変更時に本文を空文字にすると拒否 (v1.3.0: public は本文必須)', () => {
+    expect(updateMemoSchema.safeParse({ visibility: 'public', title: 'ok', content: '' }).success).toBe(false);
   });
 });

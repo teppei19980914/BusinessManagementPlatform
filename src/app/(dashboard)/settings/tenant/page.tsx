@@ -15,6 +15,7 @@
 import { auth } from '@/lib/auth';
 import { redirect } from 'next/navigation';
 import Link from 'next/link';
+import { getTranslations } from 'next-intl/server';
 import { LOGIN_ROUTE } from '@/config';
 import { isTenantAdmin } from '@/lib/permissions';
 import { getTenantSelfInfo } from '@/services/tenant-self.service';
@@ -42,6 +43,7 @@ import { TenantSettingsClient } from './tenant-settings-client';
 export default async function TenantSettingsPage() {
   const session = await auth();
   if (!session) redirect(LOGIN_ROUTE);
+  const tTenant = await getTranslations('tenantSettings');
 
   // PR-X1 (2026-05-07): テナント管理者 (admin) のみアクセス可。
   // super_admin は管理テナント所属で本画面の対象外、general は権限なし。
@@ -123,17 +125,17 @@ export default async function TenantSettingsPage() {
     return (
       <div className="space-y-4">
         <div className="rounded border border-destructive/30 bg-destructive/10 p-4 text-sm">
-          <p className="font-semibold">⚠ テナント設定の読み込みに失敗しました</p>
+          <p className="font-semibold">{tTenant('loadFailedTitle')}</p>
           <p className="mt-1 text-muted-foreground">
-            一時的な問題の可能性があります。ページを再読み込みするか、しばらくしてから再試行してください。
-            問題が継続する場合は管理者にお問合せください。
+            {tTenant('loadFailedMessageRetry')}
+            {tTenant('loadFailedMessageContact')}
           </p>
         </div>
         <Link
           href="/settings"
           className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-xs hover:bg-primary/90"
         >
-          設定画面へ戻る
+          {tTenant('backToSettings')}
         </Link>
       </div>
     );

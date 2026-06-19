@@ -13,6 +13,9 @@ import {
 } from '@/components/ui/dialog';
 import { KNOWLEDGE_TYPES, VISIBILITIES } from '@/types';
 import { DialogAttachmentSection } from '@/components/common/dialog-attachment-section';
+// v1.3.0 資産導線機能: 昇華元課題バッジ (読み取り専用) + 手動リンクセクション
+import { PromotionBadgeList } from '@/components/common/promotion-badge-list';
+import { AssetLinkSection } from '@/components/common/asset-link-section';
 // PR #199: コメントセクション
 import { CommentSection } from '@/components/comments/comment-section';
 // feat/dialog-fullscreen-toggle: 文字量が多い編集 dialog 向けの全画面トグル
@@ -178,18 +181,13 @@ export function KnowledgeEditDialog({
             </div>
           </div>
           <div className="space-y-2">
-            <Label>
-              {tKnowledge('fieldTitle')}
-              {/* 2026-05-11: 公開範囲 = 自分のみ (draft) なら任意、全メンバー (public) なら必須 */}
-              {form.visibility === 'draft' && (
-                <span className="ml-2 text-xs text-muted-foreground">{tKnowledge('optional')}</span>
-              )}
-            </Label>
+            {/* v1.3.0 軽量入力 (2026-06-19): タイトルは draft / public とも常に必須 */}
+            <Label>{tKnowledge('fieldTitle')}</Label>
             <Input
               value={form.title}
               onChange={(e) => setForm({ ...form, title: e.target.value })}
               maxLength={150}
-              required={form.visibility === 'public'}
+              required
             />
           </div>
           {/* feat/asset-assignee-expansion (2026-05-26): 担当者 selector (members 受領時のみ表示)。
@@ -209,7 +207,7 @@ export function KnowledgeEditDialog({
           )}
           {/* refactor/list-create-content-optional (2026-04-27 #6): 編集時も背景/内容/結果は任意 */}
           <div className="space-y-2">
-            <Label>{tKnowledge('background')} <span className="text-xs text-muted-foreground">{tKnowledge('optional')}</span></Label>
+            <Label>{tKnowledge('background')}{form.visibility === 'draft' && <span className="ml-2 text-xs text-muted-foreground">{tKnowledge('optional')}</span>}</Label>
             {readOnly ? (
               <div className="rounded-md border border-input bg-background px-3 py-2 text-sm">
                 <MarkdownDisplay value={form.background} />
@@ -225,7 +223,7 @@ export function KnowledgeEditDialog({
             )}
           </div>
           <div className="space-y-2">
-            <Label>{tKnowledge('content')} <span className="text-xs text-muted-foreground">{tKnowledge('optional')}</span></Label>
+            <Label>{tKnowledge('content')}{form.visibility === 'draft' && <span className="ml-2 text-xs text-muted-foreground">{tKnowledge('optional')}</span>}</Label>
             {readOnly ? (
               <div className="rounded-md border border-input bg-background px-3 py-2 text-sm">
                 <MarkdownDisplay value={form.content} />
@@ -241,7 +239,7 @@ export function KnowledgeEditDialog({
             )}
           </div>
           <div className="space-y-2">
-            <Label>{tKnowledge('result')} <span className="text-xs text-muted-foreground">{tKnowledge('optional')}</span></Label>
+            <Label>{tKnowledge('result')}{form.visibility === 'draft' && <span className="ml-2 text-xs text-muted-foreground">{tKnowledge('optional')}</span>}</Label>
             {readOnly ? (
               <div className="rounded-md border border-input bg-background px-3 py-2 text-sm">
                 <MarkdownDisplay value={form.result} />
@@ -269,6 +267,10 @@ export function KnowledgeEditDialog({
             }}
             mainLabel={tKnowledge('referenceLinks')}
           />
+          {/* v1.3.0 資産導線機能: 昇華元課題バッジ (読み取り専用、双方向表示の片側) */}
+          <PromotionBadgeList titleKey="sourceIssuesTitle" queryParams={`toType=knowledge&toId=${knowledge.id}`} />
+          {/* v1.3.0 資産導線機能: 手動リンク (リスク/課題/ナレッジ/振り返り/メモ 5 資産間) */}
+          <AssetLinkSection entityType="knowledge" entityId={knowledge.id} isPublic={knowledge.visibility === 'public'} />
           {!readOnly && <Button type="submit" className="w-full">{t('save')}</Button>}
           {/* PR #199: コメント。readOnly でも投稿可 (fieldset 外配置)。 */}
           <CommentSection entityType="knowledge" entityId={knowledge.id} mutationsLocked={closedProject} />

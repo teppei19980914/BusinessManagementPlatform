@@ -4103,7 +4103,7 @@ model Notification {
 }
 ```
 
-`type` (例: `task_start_due`) と `entityType` (例: `task`) の 2 軸で polymorphic 拡張可。
+`type` (例: `task_end_due`) と `entityType` (例: `task`) の 2 軸で polymorphic 拡張可。
 `dedupeKey` の UNIQUE 制約で「同タスク × 同種別 × 同日」の 2 重生成を **DB レベルで** 弾く。
 
 ##### 2. flat query + partial index で全タスク seq scan 回避
@@ -4119,13 +4119,10 @@ prisma.task.findMany({
 });
 ```
 
-ユーザの「**WBS の階層構造で再帰探索しないように細心の注意**」要望に対応するため、partial index 2 本を追加:
+ユーザの「**WBS の階層構造で再帰探索しないように細心の注意**」要望に対応するため、partial index を追加:
 
 ```sql
-CREATE INDEX idx_tasks_planned_start_due ON tasks (planned_start_date)
-  WHERE deleted_at IS NULL AND type = 'activity'
-    AND assignee_id IS NOT NULL AND status = 'not_started';
-
+-- v1.3.0 で開始通知廃止。idx_tasks_planned_start_due は DB に残存するが使用されない (migration 不変)。
 CREATE INDEX idx_tasks_planned_end_due ON tasks (planned_end_date)
   WHERE deleted_at IS NULL AND type = 'activity'
     AND assignee_id IS NOT NULL AND status <> 'completed';
@@ -20145,3 +20142,101 @@ WBS 一括編集で 100 件以上を選択して「適用」すると「一括�
 
 ### 関連
 - ADR-0035 / `src/lib/run-chunked-bulk.ts` / `src/lib/validators/task.ts` (bulkUpdateTaskSchema) / `tasks-client.tsx` (postBulkUpdate)
+
+---
+
+## §5.X+211: chromium-mobile 固有の E2E 連鎖失敗 — 3 種のポインタイベント遮蔽パターンと waitForResponse タイムアウト (PR #525 / 2026-06-12)
+
+### 事象
+
+`08-estimates.spec.ts` (見積管理 E2E) において、`chromium` では全通過するが `chromium-mobile` でのみ失敗するテストが `mode: 'serial', retries: 0` による連鎖スキップで隠れ、1 修正ごとに次の失敗が露出するパターンで 8 ラウンドの CI サイクルが発生した。
+
+### 根本原因の分類
+
+| パターン | 症状 | 原因 |
+|---|---|---|
+| Dialog overflow | ダイアログ内ボタンが `intercept by <div>` | `max-h-[90vh]` 超えで内部要素がオーバーレイ |
+| 多カラムテーブル | テーブルのアクションボタンが `intercept by <td>` | 13+ 列で横スクロール時に隣列 td が競合 |
+| waitForResponse timeout | `Timeout 10000ms exceeded` | `actionTimeout=10s` がデフォルトになり mobile のスクロール分で消費される |
+
+### 確立した修正パターン
+
+```ts
+// 1. Dialog 内ボタン: force: true (事前に not.toBeDisabled() 確認)
+await expect(btn).not.toBeDisabled({ timeout: 5_000 });
+await btn.click({ force: true });
+
+// 2. テーブルのアクションボタン: force: true (pointer events 回避)
+await row.getByRole('button', { name: '確定' }).click({ force: true });
+
+// 3. waitForResponse: 明示的 timeout
+const res = page.waitForResponse(
+  (r) => r.url().includes('/estimates/') && r.request().method() === 'PATCH',
+  { timeout: 30_000 },
+);
+```
+
+### serial モード連鎖の教訓
+
+`mode: 'serial', retries: 0` の describe では失敗後に後続が全スキップされる。N 個の SKIPPED が見えたら最低 N ラウンドのデバッグサイクルを想定する。後続テストコードを先読みして潜在失敗を察知し、複数修正を 1 push にバッチするのが効率的。
+
+### 関連
+
+- E2E_LESSONS §4.61 (calcCoefficient 整数出力)
+- E2E_LESSONS §4.62 (複数 `<select>` の DOM 順問題)
+- E2E_LESSONS §4.63 (`getByText` substring strict mode violation)
+- E2E_LESSONS §4.64 (Dialog overflow → force: true)
+- E2E_LESSONS §4.65 (waitForResponse actionTimeout)
+- E2E_LESSONS §4.66 (多カラムテーブル mobile pointer events)
+- E2E_LESSONS §4.67 (serial 連鎖デバッグ戦略)
+
+---
+
+## §5.X+212: ハードコード復活防止は「git レベルの pre-commit hook」と「意味的パターン禁止スクリプト」の 2 層で構成する — `.claude/settings.json` hooks だけでは人間コミット経路を捕捉できない (v1.3.0 / P9 / 2026-06-17)
+
+### 事象
+
+`src/i18n/messages/*.json` カタログへの集約を義務付けても、人間開発者が IDE から直接 `git commit` した際に以下のアンチパターンが混入するリスクが残っていた:
+1. `throw new Error('日本語テキスト')` — AppError への移行を忘れた Service 層の例外
+2. `showError('日本語テキスト')` / `showSuccess('日本語テキスト')` — `showErrorKey` / `showSuccessKey` への移行を忘れた UI 層のトースト
+
+既存の CI ゲート (`pnpm check:no-hardcoded-jp`) は GitHub Actions 上で走るため、コミット後に検知される。さらに `.claude/settings.json` の `PreToolUse` hooks は **Claude Code 経由のツール呼び出し時のみ発火** し、`git commit` コマンドを IDE ターミナルから直接実行する主開発フローでは一切発火しない。
+
+### 解決策: 2 層の防御
+
+**Layer 1 — git レベル pre-commit hook (husky)**
+- `pnpm add -D husky` → `pnpm exec husky init` で `.husky/` を作成
+- `.husky/pre-commit` に `pnpm check:no-hardcoded-jp` と `pnpm check:banned-i18n-patterns` を追記
+- `package.json` に `"prepare": "husky"` を追加 (次回 `pnpm install` 後も自動初期化)
+- 全開発者の `git commit` (IDE / ターミナル問わず) をインターセプト → CI より手前で検知
+
+**Layer 2 — 意味的パターン禁止スクリプト (`scripts/check-banned-i18n-patterns.ts`)**
+- `throw new Error(` と JP 文字が同行に存在 → throwError カウント
+- `show(?:Error|Success)(?!Key)\s*\(` と JP 文字が同行に存在 → legacyToast カウント
+- 既知ファイルはベースライン (`scripts/i18n-banned-patterns-baseline.json`) で許容し、**増加のみ FAIL**
+- `src/app/api/**` と `src/lib/**` は現状 throwError=0 → 事実上 zero-tolerance として機能
+
+### 設計上の重要な判断: zero-tolerance vs baseline-tolerance の分け方
+
+| パス | throwError baseline | 判断 |
+|---|---|---|
+| `src/app/api/**` | 0 (全 route が AppError 済) | zero-tolerance — ベースライン 0 = 追加即 FAIL |
+| `src/lib/**` | 0 | zero-tolerance (同上) |
+| `src/services/**` | 6 (sync-import 系 P4 未対応) | baseline-tolerance — P4 完了時に 0 更新 |
+| UI 全体 (legacyToast) | 32 (P3-6 残 未対応 2 ファイル) | baseline-tolerance — P3-6 完了時に 0 更新 |
+
+legacy `showError` / `showSuccess` を即 zero-tolerance にしなかった理由: Phase 2 時点では後方互換のため残存しており、一斉禁止は既存コードを全部壊す。段階移行中は「増やさない」を守り、完全移行後に `--strict` 化する。
+
+### 適用ルール
+
+- `pre-commit` に 2 つのチェックを追加したら、コミット前に自動実行されることを確認してから運用に入る
+- **新しい言語やプラットフォームで開発環境をセットアップするたびに `pnpm install` (= `prepare` で husky が走る) を実行する** ことを README / CONTRIBUTING.md に明記する
+- `.claude/settings.json` の hooks と husky hooks は **独立した仕組み** — Claude Code が claude-code 経由でのみ守れる制約は、人間コミット経路では無力
+- P10 (全 i18n 化完了) 後: `check:no-hardcoded-jp` を `--strict` 化 / `check:banned-i18n-patterns` を `--strict` 化
+
+### 関連
+
+- `scripts/check-banned-i18n-patterns.ts` — 本 KDD で確立した意味的パターン禁止スクリプト
+- `scripts/i18n-banned-patterns-baseline.json` — 既知違反ファイルのカウントを保持するベースライン
+- `.husky/pre-commit` — git レベル pre-commit hook
+- `docs/i18n/HANDOFF_PHASE2.md §P9` — P9 全体の実装記録と次セッション用 TODO

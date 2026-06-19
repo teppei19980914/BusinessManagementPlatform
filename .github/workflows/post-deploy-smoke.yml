@@ -1,0 +1,113 @@
+# Post-Deploy Production Smoke Test
+#
+# 目的:
+#   main への push 後、Netlify deploy 完了を待ってから e2e/smoke/production-smoke.spec.ts を
+#   自動実行し、毎リリースの人間スモーク (SMK-2/3/4/5/7) を完全自動化する。
+#   本ワークフローが green = 「人間がスモークテストを実施した」と同等の go/no-go 根拠になる。
+#
+# トリガー:
+#   - push to main : 本番 deploy 後 5 分待機してから自動実行
+#   - workflow_dispatch : 手動実行 (任意の URL を指定可)
+#
+# Netlify webhook は不要。
+#   Netlify の「HTTP POST request」はカスタム Authorization ヘッダーを設定できないため、
+#   GitHub API の repository_dispatch には使用不可。
+#   push トリガー + 待機で同等の自動化を実現する。
+#
+# 必須 GitHub Secrets:
+#   SMOKE_BASE_URL       : 本番 URL (例: https://tasukiba.com)
+#   SMOKE_TENANT_SLUG    : スモークテスト用テナントの組織 ID
+#   SMOKE_ADMIN_EMAIL    : スモークテスト用アカウントのメールアドレス (MFA 無効であること)
+#   SMOKE_ADMIN_PASSWORD : スモークテスト用アカウントのパスワード
+#
+# スモークテスト専用アカウント要件:
+#   - MFA (TOTP) が無効であること (TOTP コードは 30 秒ごとに変化するため自動化不可)
+#   - admin 権限を持つこと (settings/tenant + attachment 操作に必要)
+#   - テストが作成したデータは afterEach クリーンアップで自動削除される
+#
+# 関連:
+#   - e2e/smoke/production-smoke.spec.ts : スモーク本体
+#   - playwright.config.smoke.ts          : Playwright 設定 (実 URL, webServer なし)
+#   - docs/test/RELEASE_ACCEPTANCE_TEST.md §8 : go/no-go 判定基準
+
+name: Post-Deploy Smoke
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      smoke_base_url:
+        description: 'スモーク対象 URL (空の場合は Secret の SMOKE_BASE_URL を使用)'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: Production Smoke Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      # workflow_dispatch の入力が空の場合は Secret にフォールバック
+      SMOKE_BASE_URL: ${{ github.event.inputs.smoke_base_url || secrets.SMOKE_BASE_URL }}
+      SMOKE_TENANT_SLUG: ${{ secrets.SMOKE_TENANT_SLUG }}
+      SMOKE_ADMIN_EMAIL: ${{ secrets.SMOKE_ADMIN_EMAIL }}
+      SMOKE_ADMIN_PASSWORD: ${{ secrets.SMOKE_ADMIN_PASSWORD }}
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma Client
+        # smoke は実 DB に接続しないが、prisma generate が必要なモジュールを参照する
+        # fixture が import するため generate のみ実行 (migrate は不要)
+        run: pnpm prisma generate
+
+      - name: Wait for Netlify deploy (5 min)
+        # push トリガー時のみ待機。Netlify の通常 deploy は 3〜5 分で完了する。
+        # workflow_dispatch の場合は既に deploy 済みと見なしてスキップ。
+        if: github.event_name == 'push'
+        run: |
+          echo "Netlify deploy 完了待機中 (300 秒)..."
+          sleep 300
+          echo "待機完了。smoke テスト開始。"
+
+      - name: Install Playwright browsers
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Run production smoke tests
+        run: pnpm exec playwright test --config=playwright.config.smoke.ts
+
+      - name: Upload smoke HTML report
+        # 失敗時も必ずアップロードして原因調査を可能にする
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: smoke-report-${{ github.run_id }}
+          path: playwright-report-smoke/
+          retention-days: 14
+
+      - name: Upload smoke test-results (traces / screenshots / videos)
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: smoke-test-results-${{ github.run_id }}
+          path: test-results/
+          retention-days: 14

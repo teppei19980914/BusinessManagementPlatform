@@ -41,7 +41,7 @@ service 層を読む前に、以下 3 つの横断的な約束事を理解して
 | ファイル | 責務 | 主要 export | 課金 | テナント分離 |
 |---|---|---|---|---|
 | `project.service.ts` | プロダクトのトップエンティティ。プロジェクト CRUD + 状態遷移 + 自動タグ/embedding 連携 | `listProjects` / `createProject` / `getProject` / `updateProject` / `changeProjectStatus` / `deleteProjectCascade` / `extractTagsAndEmbedForProject` | ○ (タグ抽出/embedding) | ○ |
-| `task.service.ts` | 最大・最複雑の service。WBS (WP→ACT 階層) と進捗・工数・ガント・CSV を担う | `listTasks` / `listTasksWithTree` / `createTask` / `updateTask` / `bulkUpdateTasks` / `bulkDeleteTasks` (ADR-0035) / `updateTaskProgress` / `recalculateAllProjectWps` / `getAssigneeDailyWorkload` / `exportWbs` | — | ○ |
+| `task.service.ts` | 最大・最複雑の service。WBS (WP→ACT 階層) と進捗・工数・ガント・CSV を担う | `listTasks` / `listTasksWithTree` / `createTask` / `updateTask` / `bulkUpdateTasks` / `bulkDeleteTasks` (ADR-0035) / `updateTaskProgress` / `recalculateAllProjectWps` / `getAssigneeDailyWorkload` / `exportWbs` / `getWbsCompletionBannerState` (v1.3.0 資産導線機能、全 ACT が completed/on_hold のみか判定) | — | ○ |
 | `task-duplicate.service.ts` | WBS タスクの一括複製 (最大 100 件、名前衝突回避) | `duplicateTasks` / `pickNonConflictingName` (`MAX_DUPLICATE_AT_ONCE=100`) | — | (project 経由) |
 | `analytics.service.ts` | 分析タブ 5 パネルのデータソース (v1.2.0): (1) WBS 予実カーブ (ACT 件数累積の予定線/実績線 + 本日サマリ)、(2) 担当者別 週次消化工数 (完了 ACT の実績工数を週×担当者で SUM + 工数効率)、(3) 担当者別 予定 vs 実績工数 (完了+実工数入力済 ACT を担当者別に予定/実績 SUM)、(4) 担当者別 作業負担 (未完了 ACT の予定工数を担当者×状態で SUM + 個人ペース比=実績÷予定)、(5) 担当者別 日次工数 (未完了 ACT の予定工数を予定期間で均等按分し担当者×日付(本日以降)で SUM、`classifyWorkloadLevel` で 7h/8h 閾値判定するヒートマップ)。ドメイン数値のみ返し表示は持たない。本日/本日週はテナント TZ。**対象期間 (`AnalyticsRange`)** を任意で受け、(1) は points をクリップ、(2)(3) は実績完了日で対象 ACT を絞り再集計、(5) は未来の終端を絞る ((4) は現在スナップショットのため非対応)。 | `getWbsCompletionCurve` / `getAssigneeWeeklyEffort` / `getAssigneeEffortVariance` / `getAssigneeWorkload` / `getAssigneeDailyCapacity` (+ `AnalyticsRange`) | — | ○ (project 経由) |
 | `estimate.service.ts` | プロジェクト工数見積もり明細の CRUD + 確定 | `listEstimates` / `createEstimate` / `confirmEstimate` / `deleteEstimate` | — | ○ |
@@ -60,6 +60,8 @@ service 層を読む前に、以下 3 つの横断的な約束事を理解して
 | `customer.service.ts` | 顧客 (Project の 1:N 親エンティティ) の CRUD + cascade 削除 | `listCustomers` / `getCustomer` / `createCustomer` / `updateCustomer` / `deleteCustomerCascade` | — | ○ |
 | `attachment.service.ts` | 添付リンク (外部 URL のみ保持) の CRUD + エンティティ別認可解決 | `listAttachments` / `createAttachment` / `updateAttachment` / `deleteAttachment` / `authorizeForAttachmentEntity` / `getEntityVisibility` | — | (エンティティ経由) |
 | `comment.service.ts` | ポリモーフィック (entity_type+entity_id) で 7 種エンティティへのコメント | `listComments` / `createComment` / `updateComment` / `deleteComment` / `resolveEntityForComment` / `softDeleteCommentsForEntity` | — | (エンティティ経由) |
+| `promotion.service.ts` | v1.3.0 資産導線機能。リスク→課題 / 課題→ナレッジの「昇華」(既存 createRisk/createKnowledge を再利用して新規作成 + 昇華リンクを記録)。昇華元は visibility='public' 限定、M:N で再昇華の system 側ブロックなし | `promoteRiskToIssue` / `promoteIssueToKnowledge` / `getPromotedIssues` / `getSourceRisks` / `getPromotedKnowledge` / `getSourceIssues` | — | ○ |
+| `asset-link.service.ts` | v1.3.0 資産導線機能。Risk/Issue/Knowledge/Retrospective/Memo 5 資産間の汎用手動リンク (既存↔既存、新規作成なし)。リンク対象は公開可視のみ、A↔B 対称重複防止 | `createAssetLink` / `deleteAssetLink` / `getAssetLinks` / `searchLinkCandidates` / `deleteAssetLinksForEntity` / `getPubliclyVisibleFilter` / `isPublicEntity` | — | ○ |
 
 ## 3. 提案エンジン / embedding
 
@@ -78,7 +80,7 @@ service 層を読む前に、以下 3 つの横断的な約束事を理解して
 
 | ファイル | 責務 | 主要 export | 課金 | テナント分離 |
 |---|---|---|---|---|
-| `chat-search.service.ts` | 自然文クエリで 5 資産を横断意味検索 (pgvector + pg_trgm fallback) | `chatSemanticSearch` | ○ | ○ |
+| `chat-search.service.ts` | 自然文クエリで 5 資産を横断意味検索 (pgvector + pg_trgm fallback)。クエリにファイル系キーワード (`FILE_SCOPE_KEYWORDS`) を検出した場合は添付ファイル本文 (`Attachment.content_embedding`) のみを検索する file scope に切替 (ADR-0021 §9.5、5 資産は空) | `chatSemanticSearch` | ○ | ○ |
 | `help-search.service.ts` | たすきフクロウ AI ヘルプの RAG 検索 (FaqEmbedding/GuideEmbedding, ADR-0028) | `searchHelpContent` / `composeFaqContentText` / `composeGuideContentText` / `computeContentHash` / `buildRagPromptSection` / `mapVisibleToFlags` | ○ (検索 embedding) | (visibleTo フラグ) |
 | `guide-role.service.ts` | /guide でロールに合った使い方だけを提示するためのロール判定 | `resolveGuideRole` | — | (user 経由) |
 

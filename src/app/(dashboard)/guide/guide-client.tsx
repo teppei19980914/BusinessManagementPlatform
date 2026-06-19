@@ -118,8 +118,8 @@ export function GuideClient({ role, systemRole, userName }: Props) {
             プロジェクトの作業を <strong>WP (作業パッケージ)</strong> →{' '}
             <strong>Activity (実作業)</strong> の階層で分解したもの。担当者・予定工数は Activity に付与します。
           </GlossaryItem>
-          <GlossaryItem term="ガントチャート">
-            タスクを時間軸で並べた工程表。期日超過・並列稼働を視覚的に把握できます。
+          <GlossaryItem term="進捗確認 (旧称: ガントチャート)">
+            タスクを時間軸で並べた工程表 (ガント表示) と、担当者ごとの直近の状況をまとめたボード (担当者別確認) で進捗を可視化する画面。期日超過・並列稼働を視覚的に把握できます。
           </GlossaryItem>
           <GlossaryItem term="リスク / 課題">
             リスク = まだ発生していない潜在的な障害。課題 = すでに発生したブロッカー。
@@ -217,7 +217,7 @@ function FlowDiagram() {
     {
       n: 2,
       title: 'WBS で作業分解',
-      body: '作業を WP → Activity に分解し、担当者と予定工数を設定。ガントチャートで進捗を可視化',
+      body: '作業を WP → Activity に分解し、担当者と予定工数を設定。進捗確認で進捗を可視化',
     },
     {
       n: 3,
@@ -428,7 +428,7 @@ function PmActions() {
           WBS タブで作業を <strong>WP → Activity</strong> に分解。Activity に担当者・予定工数・期間を設定。
         </li>
         <li>
-          ガントチャートで並列稼働状況・期日超過を確認、必要なら工数集計でメンバーの過負荷を検知。
+          進捗確認 (ガント表示・担当者別確認) で並列稼働状況・期日超過・各メンバーの直近の状況を確認、必要なら工数集計でメンバーの過負荷を検知。
         </li>
         <li>
           発生し得る不確実性は{' '}
@@ -510,7 +510,7 @@ function ViewerActions() {
         書き込みは行えませんが、関係者にプロジェクトの状況を共有する用途で使います (役員・営業担当など)。
       </p>
       <ol className="list-decimal space-y-1.5 pl-6 text-sm">
-        <li>プロジェクト概要・WBS・ガントチャートを <strong>閲覧のみ</strong> 可能。</li>
+        <li>プロジェクト概要・WBS・進捗確認を <strong>閲覧のみ</strong> 可能。</li>
         <li>リスク・課題・ナレッジ・振り返りも閲覧可能 (公開範囲に応じて)。</li>
         <li>コメントの新規投稿は不可。質問は別途メンバー経由で書き込んでもらう運用。</li>
         <li>マイタスク画面は使えません (担当タスクが付与されないため)。</li>

@@ -29,7 +29,7 @@ import type { Locale } from './request';
  *   2. 本配列に名前を追加
  *   3. docs/i18n/CONVENTIONS.md §2 にも記載
  */
-export const MESSAGE_SUBFILES = ['email', 'help', 'guide', 'faq'] as const;
+export const MESSAGE_SUBFILES = ['email', 'help', 'guide', 'faq', 'superAdmin'] as const;
 export type MessageSubfile = (typeof MESSAGE_SUBFILES)[number];
 
 interface NamespaceObject {

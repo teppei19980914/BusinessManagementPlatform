@@ -37,6 +37,7 @@ process.env.INBOX_DIR = INBOX_DIR;
 
 export default defineConfig({
   testDir: './e2e',
+  testIgnore: [/smoke\//], // e2e/smoke/ は post-deploy smoke 専用 (post-deploy-smoke.yml のみで実行)
   fullyParallel: false, // serial describe を尊重するため default false
   forbidOnly: isCI, // CI で test.only() を禁止
   retries: isCI ? 2 : 0, // flaky 対策。CI では 2 回まで retry
@@ -147,6 +148,10 @@ export default defineConfig({
         /21-tenant-self-delete\.spec\.ts/,
         /22-onboarding\.spec\.ts/,
         /23-chat-help\.spec\.ts/,
+        // test/release-acceptance-e2e (2026-06): 添付 CRUD は API フロー検証 (entityType/entityId
+        //   の認可・storageProvider 判定) で mobile viewport 固有の挙動と無関係。
+        //   chromium project でのみ実行する。
+        /26-file-attachment\.spec\.ts/,
       ],
     },
   ],

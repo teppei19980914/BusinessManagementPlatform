@@ -121,4 +121,37 @@ test.describe('@feature:project:gantt ガントチャート (PR #96)', () => {
     ).toBeVisible({ timeout: 10_000 });
     await snapshotStep(page, 'gantt-filters-visible');
   });
+
+  test('v1.3.0: 表示切替チップ (ガント表示 / 担当者別確認) が表示される', async () => {
+    const page = sharedPage;
+    await page.goto(`/projects/${projectId}/gantt`);
+    await page.waitForLoadState('networkidle');
+    // v1.3.0: aria-pressed 付きのトグルチップが 2 個レンダリングされること
+    await expect(
+      page.getByRole('button', { name: 'ガント表示' }),
+    ).toBeVisible({ timeout: 10_000 });
+    await expect(
+      page.getByRole('button', { name: '担当者別確認' }),
+    ).toBeVisible({ timeout: 10_000 });
+    // 両方 ON の初期状態では aria-pressed="true"
+    await expect(page.getByRole('button', { name: 'ガント表示' })).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.getByRole('button', { name: '担当者別確認' })).toHaveAttribute('aria-pressed', 'true');
+    await snapshotStep(page, 'gantt-view-toggle-chips');
+  });
+
+  test('v1.3.0: 担当者別確認ボードに担当者カードと直近タスクが表示される', async () => {
+    const page = sharedPage;
+    // beforeAll で作成した ACT は plannedStartDate=today / status=not_started なので
+    // 「これから」列に表示される (today <= windowEnd = today+3 の範囲内)
+    // 担当者カードのヘッダにメンバー名が、列ヘッダに「これから」が表示されることを確認
+    await expect(
+      page.locator('div').filter({ hasText: MEMBER_NAME }).first(),
+    ).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText('これから').first()).toBeVisible({ timeout: 10_000 });
+    // ACT 名がボードカード内に表示されること
+    await expect(
+      page.locator('span').filter({ hasText: ACT_NAME }).first(),
+    ).toBeVisible({ timeout: 10_000 });
+    await snapshotStep(page, 'gantt-progress-board-card');
+  });
 });

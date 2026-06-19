@@ -19,19 +19,16 @@
 
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 
 export function RepairOwnDriftButton() {
   const router = useRouter();
+  const t = useTranslations('tenantSettings');
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
 
   const onClick = () => {
-    if (
-      !window.confirm(
-        '自テナントの API 呼出カウンタを ApiCallLog 集計値 (真値) で上書きします。\n\n'
-        + 'この操作は監査ログに記録されます。実行しますか?',
-      )
-    ) {
+    if (!window.confirm(t('repairConfirm'))) {
       return;
     }
     setError(null);
@@ -42,13 +39,13 @@ export function RepairOwnDriftButton() {
         });
         if (!res.ok) {
           const text = await res.text();
-          setError(`修復失敗: ${res.status} ${text}`);
+          setError(t('repairErrorPrefix', { message: `${res.status} ${text}` }));
           return;
         }
         // 成功 → 画面再描画
         router.refresh();
       } catch (e) {
-        setError(`修復失敗: ${e instanceof Error ? e.message : String(e)}`);
+        setError(t('repairErrorPrefix', { message: e instanceof Error ? e.message : String(e) }));
       }
     });
   };
@@ -61,7 +58,7 @@ export function RepairOwnDriftButton() {
         disabled={isPending}
         className="rounded bg-red-600 px-3 py-1 text-xs font-semibold text-white hover:bg-red-700 disabled:opacity-50"
       >
-        {isPending ? '修復中...' : '不整合を修復'}
+        {isPending ? t('repairInProgress') : t('repairButton')}
       </button>
       {error && <span className="text-xs text-red-700">{error}</span>}
     </span>

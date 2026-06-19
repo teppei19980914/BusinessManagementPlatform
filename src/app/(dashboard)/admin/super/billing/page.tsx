@@ -12,79 +12,81 @@
  */
 
 import Link from 'next/link';
+import { getTranslations } from 'next-intl/server';
 import { getBillingSummary, getRecentMonths } from '@/services/billing-dashboard.service';
 
 const RECENT_MONTHS_COUNT = 6;
 
 export default async function BillingDashboardPage() {
+  const t = await getTranslations('superAdmin');
   const months = getRecentMonths(RECENT_MONTHS_COUNT);
   const summaries = await getBillingSummary(months);
   const currentMonth = summaries[0];
 
   return (
     <div className="space-y-6">
-      <h1 className="text-xl font-semibold">請求ダッシュボード</h1>
+      <h1 className="text-xl font-semibold">{t('billingDashboardTitle')}</h1>
       <p className="text-sm text-muted-foreground">
-        テナント別の月次請求ステータス・引落結果・売上集計を確認できます。
-        データソースは <code className="rounded bg-muted px-1">BillingHistory</code>{' '}
-        テーブル (= Stripe Webhook 経由で自動更新)。
+        {t('billingDashboardDescription')}
+        <code className="rounded bg-muted px-1">BillingHistory</code>
+        {t('billingDashboardDescriptionTail')}
       </p>
 
       {/* 当月サマリ */}
       {currentMonth && (
         <section className="space-y-3">
           <h2 className="text-lg font-semibold">
-            当月 ({currentMonth.yearMonth}) サマリ
+            {t('billingCurrentMonthTitle', { month: currentMonth.yearMonth })}
           </h2>
           <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
             <SummaryCard
-              label="請求総額 (税込)"
+              label={t('billingCardTotalAmount')}
               value={formatYen(currentMonth.totalAmount)}
               tone="neutral"
             />
             <SummaryCard
-              label="入金確認済"
+              label={t('billingCardPaid')}
               value={formatYen(currentMonth.paidAmount)}
-              subValue={`${currentMonth.countByStatus.paid ?? 0} 件`}
+              subValue={t('billingCardCountSuffix', { count: currentMonth.countByStatus.paid ?? 0 })}
               tone="success"
             />
             <SummaryCard
-              label="入金待ち"
+              label={t('billingCardPending')}
               value={formatYen(currentMonth.pendingAmount)}
-              subValue={`${currentMonth.countByStatus.pending ?? 0} 件`}
+              subValue={t('billingCardCountSuffix', { count: currentMonth.countByStatus.pending ?? 0 })}
               tone="neutral"
             />
             <SummaryCard
-              label="引落失敗"
+              label={t('billingCardFailed')}
               value={formatYen(currentMonth.failedAmount)}
-              subValue={`${currentMonth.countByStatus.failed ?? 0} 件`}
+              subValue={t('billingCardCountSuffix', { count: currentMonth.countByStatus.failed ?? 0 })}
               tone={(currentMonth.countByStatus.failed ?? 0) > 0 ? 'error' : 'neutral'}
             />
             <SummaryCard
-              label="Stripe 一括置換済"
+              label={t('billingCardReplaced')}
               value={formatYen(currentMonth.replacedAmount)}
-              subValue={`${currentMonth.countByStatus.replaced_by_stripe ?? 0} 件`}
+              subValue={t('billingCardCountSuffix', { count: currentMonth.countByStatus.replaced_by_stripe ?? 0 })}
               tone="neutral"
             />
           </div>
 
           {/* 支払方法別内訳 */}
           <div className="rounded-md border p-3 text-sm">
-            <h3 className="mb-2 font-semibold">支払方法別 (件数)</h3>
+            <h3 className="mb-2 font-semibold">{t('billingByPaymentMethodTitle')}</h3>
             <div className="flex flex-wrap gap-4 text-xs">
               <span>
-                💳 クレジットカード:{' '}
-                <strong>{currentMonth.countByPaymentMethod.credit_card ?? 0} 件</strong>
+                {t('billingMethodCreditCard')}
+                {t.rich('billingMethodCountStrong', { count: currentMonth.countByPaymentMethod.credit_card ?? 0, strong: (chunks) => <strong>{chunks}</strong> })}
               </span>
               <span>
-                📋 請求書 / 銀行振込:{' '}
-                <strong>{currentMonth.countByPaymentMethod.invoice ?? 0} 件</strong>
+                {t('billingMethodInvoice')}
+                {t.rich('billingMethodCountStrong', { count: currentMonth.countByPaymentMethod.invoice ?? 0, strong: (chunks) => <strong>{chunks}</strong> })}
               </span>
               {currentMonth.countByPaymentMethod.bank_transfer != null
                 && currentMonth.countByPaymentMethod.bank_transfer > 0 && (
                   <span>
-                    🏦 旧 bank_transfer:{' '}
-                    <strong>{currentMonth.countByPaymentMethod.bank_transfer} 件</strong>
+                    {t('billingMethodBankTransferLegacy')}
+                    {t.rich('billingMethodCountStrong', { count: currentMonth.countByPaymentMethod.bank_transfer, strong: (chunks) => <strong>{chunks}</strong> })}
                   </span>
                 )}
             </div>
@@ -94,27 +96,27 @@ export default async function BillingDashboardPage() {
             href={`/admin/super/billing/${currentMonth.yearMonth}`}
             className="inline-flex items-center text-sm text-info underline-offset-2 hover:underline"
           >
-            → 当月の詳細を表示
+            {t('billingCurrentMonthDetailsLink')}
           </Link>
         </section>
       )}
 
       {/* 過去 6 ヶ月推移 */}
       <section className="space-y-2">
-        <h2 className="text-lg font-semibold">直近 {RECENT_MONTHS_COUNT} ヶ月推移</h2>
+        <h2 className="text-lg font-semibold">{t('billingRecentMonthsTitle', { count: RECENT_MONTHS_COUNT })}</h2>
         {summaries.length === 0 ? (
-          <p className="text-sm text-muted-foreground">請求履歴がまだありません。</p>
+          <p className="text-sm text-muted-foreground">{t('billingHistoryEmpty')}</p>
         ) : (
           <div className="overflow-x-auto rounded-md border">
             <table className="w-full text-sm">
               <thead className="bg-muted">
                 <tr>
-                  <th className="px-3 py-2 text-left">対象月</th>
-                  <th className="px-3 py-2 text-right">請求総額</th>
-                  <th className="px-3 py-2 text-right">入金確認済</th>
-                  <th className="px-3 py-2 text-right">入金待ち</th>
-                  <th className="px-3 py-2 text-right">引落失敗</th>
-                  <th className="px-3 py-2 text-left">アクション</th>
+                  <th className="px-3 py-2 text-left">{t('billingColMonth')}</th>
+                  <th className="px-3 py-2 text-right">{t('billingColTotalAmount')}</th>
+                  <th className="px-3 py-2 text-right">{t('billingColPaid')}</th>
+                  <th className="px-3 py-2 text-right">{t('billingColPending')}</th>
+                  <th className="px-3 py-2 text-right">{t('billingColFailed')}</th>
+                  <th className="px-3 py-2 text-left">{t('billingColActions')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -142,7 +144,7 @@ export default async function BillingDashboardPage() {
                         href={`/admin/super/billing/${s.yearMonth}`}
                         className="text-info underline-offset-2 hover:underline"
                       >
-                        詳細 →
+                        {t('billingDetailLink')}
                       </Link>
                     </td>
                   </tr>

@@ -94,6 +94,18 @@ export async function PATCH(
         { status: 400 },
       );
     }
+    // v1.3.0 軽量入力 (2026-06-19): public 化を試みたが背景 / 内容 / 結果が空 (input + DB 共に) のケース
+    if (msg === 'PUBLIC_REQUIRES_FIELDS') {
+      return NextResponse.json(
+        {
+          error: {
+            code: 'PUBLIC_REQUIRES_FIELDS',
+            message: '「全メンバー」に公開する場合は背景・内容・結果をすべて入力してください',
+          },
+        },
+        { status: 400 },
+      );
+    }
     // feat/asset-assignee-expansion (2026-05-26) severity-1 越境防御: 他テナントのユーザを担当者指定
     if (msg === 'ASSIGNEE_TENANT_MISMATCH') {
       return NextResponse.json(

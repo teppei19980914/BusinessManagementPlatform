@@ -67,7 +67,7 @@ export function CustomerDetailClient({ customer, projects }: Props) {
   const tAction = useTranslations('action');
   const tProject = useTranslations('project');
   const { withLoading } = useLoading();
-  const { showSuccess, showError } = useToast();
+  const { showSuccessKey, showErrorKey } = useToast();
   const { formatDateOnly } = useFormatters();
 
   // --- 編集ダイアログ ---
@@ -113,11 +113,11 @@ export function CustomerDetailClient({ customer, projects }: Props) {
       const json = await res.json().catch(() => ({}));
       const msg = json.error?.message || t('editFailed');
       setEditError(msg);
-      showError('顧客の更新に失敗しました');
+      showErrorKey('customer.toastUpdateFailed');
       return;
     }
     setIsEditOpen(false);
-    showSuccess('顧客を更新しました');
+    showSuccessKey('customer.toastUpdateSuccess');
     router.refresh();
   }
 
@@ -153,10 +153,10 @@ export function CustomerDetailClient({ customer, projects }: Props) {
       const json = await res.json().catch(() => ({}));
       const msg = json.error?.message || t('deleteFailed');
       window.alert(msg);
-      showError('顧客の削除に失敗しました');
+      showErrorKey('customer.toastDeleteFailed');
       return;
     }
-    showSuccess('顧客を削除しました');
+    showSuccessKey('customer.toastDeleteSuccess');
     router.push('/customers');
   }
 

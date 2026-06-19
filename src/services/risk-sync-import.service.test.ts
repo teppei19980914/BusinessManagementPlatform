@@ -79,13 +79,21 @@ describe('parseRiskSyncImportCsv (T-22 Phase 22a)', () => {
   });
 
   it('不正な enum 値はデフォルトに丸められる (impact=medium / state=open / visibility=public)', () => {
-    const csv = [HEADER_16, ',unknown,T,,,xyz,,,,,,bad,,,bad,nope'].join('\n');
+    // v1.3.0: visibility 既定(public)の検証なので、本文 (content) を埋めて draft 降格を回避する。
+    const csv = [HEADER_16, ',unknown,T,内容あり,,xyz,,,,,,bad,,,bad,nope'].join('\n');
     const rows = parseRiskSyncImportCsv(csv);
     expect(rows[0].type).toBe('risk'); // unknown → 'risk' (default)
     expect(rows[0].impact).toBe('medium');
     expect(rows[0].state).toBe('open');
     expect(rows[0].visibility).toBe('public');
     expect(rows[0].riskNature).toBe(null);
+  });
+
+  // v1.3.0 軽量入力 (2026-06-19): public だが本文が全て空なら draft へ降格。
+  it('public 指定でも本文が全て空なら draft へ降格 (v1.3.0)', () => {
+    const csv = [HEADER_16, ',risk,件名のみ,,,medium,,,,,,open,,,public,threat'].join('\n');
+    const rows = parseRiskSyncImportCsv(csv);
+    expect(rows[0].visibility).toBe('draft');
   });
 
   // fix/csv-import-multiline-text-data-loss: 内容/原因/対応方針/対応詳細/結果/教訓 は textarea

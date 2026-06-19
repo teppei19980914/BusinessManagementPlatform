@@ -8,6 +8,7 @@
  */
 
 import Link from 'next/link';
+import { getTranslations } from 'next-intl/server';
 import {
   listAllTenants,
   getDefaultTenantOwnSummary,
@@ -17,23 +18,25 @@ import {
 import { reconcileAllTenantsApiUsage } from '@/services/api-usage-recalc.service';
 
 export default async function SuperAdminTenantsListPage() {
+  const t = await getTranslations('superAdmin');
   const [tenants, defaultTenant, reconciles] = await Promise.all([
     listAllTenants(),
     getDefaultTenantOwnSummary(),
     reconcileAllTenantsApiUsage(),
   ]);
   const reconcileByTenant = new Map(reconciles.map((r) => [r.tenantId, r]));
+  const apiSumTitle = t('tenantsColApiSumTitle');
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">全テナント一覧</h1>
+        <h1 className="text-2xl font-bold">{t('tenantsListTitle')}</h1>
         {/* P-G (2026-05-08): 新規テナント払い出し導線 */}
         <Link
           href="/admin/super/tenants/new"
           className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-xs hover:bg-primary/90"
         >
-          + 新規テナント払い出し
+          {t('tenantsListNewTenantLink')}
         </Link>
       </div>
 
@@ -41,14 +44,14 @@ export default async function SuperAdminTenantsListPage() {
       <DefaultTenantRow defaultTenant={defaultTenant} />
 
       <section className="space-y-2">
-        <h2 className="text-lg font-semibold">顧客テナント</h2>
+        <h2 className="text-lg font-semibold">{t('tenantsListCustomerTenantsTitle')}</h2>
         <p className="text-sm text-muted-foreground">
-          管理テナント (運営内部) と Default テナント (運営者自身) は表示しません。tenantSeq 昇順で表示。
+          {t('tenantsListCustomerTenantsDescription')}
         </p>
 
         {tenants.length === 0 ? (
           <p className="rounded border p-8 text-center text-muted-foreground">
-            顧客テナントはまだ登録されていません。
+            {t('tenantsListCustomerEmpty')}
           </p>
         ) : (
           <div className="overflow-x-auto">
@@ -56,38 +59,42 @@ export default async function SuperAdminTenantsListPage() {
               <thead>
                 <tr className="border-b text-left">
                   <th className="p-2">#</th>
-                  <th className="p-2">テナント名</th>
-                  <th className="p-2">プラン</th>
-                  <th className="p-2 text-right" title="ApiCallLog 集計値 (請求書根拠と同じ真値、PR-V8.1)">今月 API 呼出</th>
-                  <th className="p-2 text-right" title="ApiCallLog 集計値 (請求書根拠と同じ真値、PR-V8.1)">今月 API 費用</th>
-                  <th className="p-2 text-right" title="counter と SUM の乖離。値があれば修復が必要">drift</th>
-                  <th className="p-2 text-right">ユーザ数</th>
-                  <th className="p-2">作成日</th>
+                  <th className="p-2">{t('tenantsColTenantName')}</th>
+                  <th className="p-2">{t('tenantsColPlan')}</th>
+                  <th className="p-2 text-right" title={apiSumTitle}>{t('tenantsColApiCallThisMonth')}</th>
+                  <th className="p-2 text-right" title={apiSumTitle}>{t('tenantsColApiCostThisMonth')}</th>
+                  <th className="p-2 text-right" title={t('tenantsColDriftTitle')}>{t('tenantsColDrift')}</th>
+                  <th className="p-2 text-right">{t('tenantsColUserCount')}</th>
+                  <th className="p-2">{t('tenantsColCreatedAt')}</th>
                 </tr>
               </thead>
               <tbody>
-                {tenants.map((t) => {
+                {tenants.map((tenant) => {
                   // ★ PR-V8.1: ApiCallLog SUM (真値) を表示。counter (currentMonth*) は内部 cache
-                  const r = reconcileByTenant.get(t.id);
-                  const sumCall = r?.reconciledCallCount ?? t.currentMonthApiCallCount;
-                  const sumCost = r?.reconciledCostJpy ?? t.currentMonthApiCostJpy;
+                  const r = reconcileByTenant.get(tenant.id);
+                  const sumCall = r?.reconciledCallCount ?? tenant.currentMonthApiCallCount;
+                  const sumCost = r?.reconciledCostJpy ?? tenant.currentMonthApiCostJpy;
                   return (
-                    <tr key={t.id} className="border-b hover:bg-muted/30">
-                      <td className="p-2">{t.tenantSeq ?? '-'}</td>
+                    <tr key={tenant.id} className="border-b hover:bg-muted/30">
+                      <td className="p-2">{tenant.tenantSeq ?? '-'}</td>
                       <td className="p-2">
-                        <Link href={`/admin/super/tenants/${t.id}`} className="text-info hover:underline">
-                          {t.name}
+                        <Link href={`/admin/super/tenants/${tenant.id}`} className="text-info hover:underline">
+                          {tenant.name}
                         </Link>
                       </td>
-                      <td className="p-2 capitalize">{t.plan}</td>
+                      <td className="p-2 capitalize">{tenant.plan}</td>
                       <td className="p-2 text-right">{sumCall.toLocaleString()}</td>
                       <td className="p-2 text-right">¥{sumCost.toLocaleString()}</td>
                       <td className="p-2 text-right">
                         {r?.hasDrift ? (
                           <Link
-                            href={`/admin/super/tenants/${t.id}/diagnostics`}
+                            href={`/admin/super/tenants/${tenant.id}/diagnostics`}
                             className="text-red-700 hover:underline dark:text-red-300"
-                            title={`counter ${t.currentMonthApiCallCount} vs SUM ${sumCall} (差 ${t.currentMonthApiCallCount - sumCall} 件)`}
+                            title={t('tenantsDriftRowTitle', {
+                              counter: tenant.currentMonthApiCallCount,
+                              sum: sumCall,
+                              diff: tenant.currentMonthApiCallCount - sumCall,
+                            })}
                           >
                             ⚠ {(r.driftRatio * 100).toFixed(0)}%
                           </Link>
@@ -95,8 +102,8 @@ export default async function SuperAdminTenantsListPage() {
                           <span className="text-muted-foreground">-</span>
                         )}
                       </td>
-                      <td className="p-2 text-right">{t.activeUserCount}</td>
-                      <td className="p-2">{t.createdAt.toISOString().split('T')[0]}</td>
+                      <td className="p-2 text-right">{tenant.activeUserCount}</td>
+                      <td className="p-2">{tenant.createdAt.toISOString().split('T')[0]}</td>
                     </tr>
                   );
                 })}
@@ -113,32 +120,33 @@ export default async function SuperAdminTenantsListPage() {
  * 2026-05-11: Default テナント (運営者自身) を 1 行で表示。請求対象外なので
  * 「(請求対象外)」を費用欄に表示し、顧客テナントとの区別を視覚的に明確化する。
  */
-function DefaultTenantRow({
+async function DefaultTenantRow({
   defaultTenant,
 }: {
   defaultTenant: DefaultTenantOwnSummary | null;
 }) {
+  const t = await getTranslations('superAdmin');
   return (
     <section className="space-y-2 rounded border border-info/40 bg-info/5 p-4">
-      <h2 className="text-lg font-semibold">Default テナント (運営者自身)</h2>
+      <h2 className="text-lg font-semibold">{t('tenantsDefaultTenantTitle')}</h2>
       <p className="text-xs text-muted-foreground">
-        運営者自身のテナント。顧客集計には含まれません (= 請求対象外)
+        {t('tenantsDefaultTenantDescription')}
       </p>
       {!defaultTenant ? (
         <p className="text-sm text-muted-foreground">
-          Default テナントが存在しません (seed 未投入または削除済)。
+          {t('tenantsDefaultTenantMissing')}
         </p>
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full border-collapse text-sm">
             <thead>
               <tr className="border-b text-left">
-                <th className="p-2">テナント名</th>
-                <th className="p-2">プラン</th>
-                <th className="p-2 text-right">今月 API 呼出</th>
-                <th className="p-2 text-right">今月 API 費用</th>
-                <th className="p-2 text-right">ユーザ数</th>
-                <th className="p-2">作成日</th>
+                <th className="p-2">{t('tenantsColTenantName')}</th>
+                <th className="p-2">{t('tenantsColPlan')}</th>
+                <th className="p-2 text-right">{t('tenantsColApiCallThisMonth')}</th>
+                <th className="p-2 text-right">{t('tenantsColApiCostThisMonth')}</th>
+                <th className="p-2 text-right">{t('tenantsColUserCount')}</th>
+                <th className="p-2">{t('tenantsColCreatedAt')}</th>
               </tr>
             </thead>
             <tbody>
@@ -161,7 +169,7 @@ function DefaultTenantRow({
                 </td>
                 <td className="p-2 text-right">
                   ¥{defaultTenant.currentMonthApiCostJpy.toLocaleString()}
-                  <span className="ml-1 text-xs text-muted-foreground">(請求対象外)</span>
+                  <span className="ml-1 text-xs text-muted-foreground">{t('tenantsDefaultTenantNotBilled')}</span>
                 </td>
                 <td className="p-2 text-right">{defaultTenant.activeUserCount}</td>
                 <td className="p-2">{defaultTenant.createdAt.toISOString().split('T')[0]}</td>

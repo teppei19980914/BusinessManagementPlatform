@@ -1,10 +1,16 @@
-# i18n ゼロハードコード化 — Phase 2 引き継ぎ
+# i18n ゼロハードコード化 — 進捗ハンドオフ
 
-> **作成日**: 2026-06-12
-> **前提リリース**: v1.2.x (Phase 1 同梱)
-> **対象ブランチ**: 次リリース用 (`week/2026-w25` 等)
+> **作成日**: 2026-06-12 / **最終更新**: 2026-06-19 (v1.3.0 リリース前)
+> **対象ブランチ**: `week/2026-w25` (v1.3.0 リリースブランチ)
 >
-> Phase 1 では i18n の **基盤** (AppError / toast wrapper / カタログ分割 / CI gate) と **主要な dialogs / 共通 components / projects 画面群** を移行しました。Phase 2 以降で **残りの全画面・サーバ・外部出力・データ層** を網羅的に対応します。
+> Phase 1 (v1.2.0 同梱) で i18n の **基盤** (AppError / toast wrapper / カタログ分割 / CI gate) と **主要な dialogs / 共通 components / projects 画面群** を投入。
+> Phase 2 (v1.3.0 同梱) で **設定画面・admin/super 画面群・customers/memos/my-tasks** など UI 層の大部分を i18n 化。
+> 残作業 (help/guide/auth/global-error/サーバ層/メール/データ層/test 整備など) は **v1.4.0 以降** で段階対応。
+>
+> 関連:
+> - [GLOSSARY.md](./GLOSSARY.md) — 訳語正本
+> - [CONVENTIONS.md](./CONVENTIONS.md) — key 命名規約
+> - [ADD_NEW_LOCALE.md](./ADD_NEW_LOCALE.md) — 新規言語追加手順 (中国語・ベトナム語等の拡張時に参照)
 
 ---
 
@@ -42,42 +48,78 @@
 
 ---
 
-## Phase 2 残作業 (順序付き)
+## Phase 2 完了範囲 (v1.3.0 リリースで同梱予定)
 
-### P3-4: WBS 系 client (大物単独)
-- `src/app/(dashboard)/projects/[projectId]/tasks/tasks-client.tsx`
-  - 15+ toast literals (WP 削除 / ACT 削除 / タスク更新 / 一括更新計画 等)
-  - WBS 名・ハードコード 19 JP 行
-  - 推定 1-2 h
+### 新規 sub-file: `messages/<locale>/superAdmin.json`
+- admin/super 画面群が大規模なため、専用 sub-file として分離 (~250 key、両 locale)
+- `load-messages.ts` の `MESSAGE_SUBFILES` に `'superAdmin'` を追加
+- 主カタログ 1 ファイルへの集中を避け、merge conflict 耐性を向上
 
-### P3-5: 全画面ルート + 個別 entity 画面
-- `src/app/(dashboard)/customers/` (customers-client / [customerId]/customer-detail-client)
-- `src/app/(dashboard)/memos/memos-client.tsx` (6 toast)
-- `src/app/(dashboard)/my-tasks/my-tasks-client.tsx`
-- `src/app/(dashboard)/knowledge/admin-delete-button.tsx`
-- `src/app/(dashboard)/retrospectives/admin-delete-button.tsx`
-- `src/app/(dashboard)/risks/admin-delete-button.tsx`
-- 推定 2-3 h
+### UI 移行
+- **P3-4 tasks-client.tsx**: WBS 系 15+ toast + 19 JP 行を t() 化
+- **P3-5 entity 横断**:
+  - `customers-client` / `[customerId]/customer-detail-client`
+  - `memos-client`
+  - `my-tasks-client` (load failed banner)
+  - `knowledge/admin-delete-button` / `retrospectives/admin-delete-button` / `risks/admin-delete-button`
+  - `knowledge-client` (linkedMoreSuffix)
+  - `all-retrospectives-table` / `all-risks-table` (linkedProjectsTitle ×2)
+- **P3-6 settings**:
+  - `settings-client.tsx` (テーマ / MFA / パスワード / load failed banner)
+  - `tenant/page.tsx` (load failed) + `tenant/loading.tsx` (集計中表示)
+  - `tenant/repair-own-drift-button.tsx` (counter 修復確認)
+  - `tenant/stripe-payment-method-section.tsx` (~38 key、Stripe Checkout 動線 + カード状態表示)
+  - `tenant/db-capacity-section.tsx` (DB 容量プラン詳細 ~30 key)
+  - `tenant/file-storage-section.tsx` (添付容量 ~25 key、db-capacity と同型構造)
+  - `tenant/billing/page.tsx` (請求履歴 ~20 key)
+  - `tenant/migration-import/page.tsx` (移行ガイド)
+- **P3-7 admin/super (14 file)**:
+  - `db-capacity-alerts-card` / `file-storage-alerts-card` (drift/anomaly/Level table)
+  - `banners/{banner-form, banners-list-client, page}` (システムバナー管理)
+  - `tenants/page` (一覧 + Default テナント)
+  - `tenants/[id]/{tenant-delete-button, tenant-suspend-button}` (削除/停止/再開ダイアログ)
+  - `tenants/[id]/diagnostics/page` (個別テナント診断 ~45 key)
+  - `tenants/new/tenant-create-form` (~50 key、新規テナント払い出しフォーム)
+  - `billing/page` + `billing/[yearMonth]/page` + `billing/[yearMonth]/confirm-payment-button` (請求ダッシュボード)
+  - `stripe-dlq/page` + `stripe-dlq/retry-button` (DLQ 監視 + 再投入)
+  - `email-failures/page` + `cron-history/page` (運用監視)
+  - `seed-data/{page, seed-data-client}` (スターターデータ管理)
+  - `layout.tsx` (super_admin ナビゲーション)
+  - `diagnostics/repair-drift-button` (counter drift 修復)
+- **admin (テナント管理)**:
+  - `admin/users/users-client.tsx` の super_admin 系 toast 2 件
 
-### P3-6: Settings (8 file)
-- `settings-client.tsx`
-- `tenant-settings-client.tsx` (285 JP 行、最大物の一つ)
-- `stripe-payment-method-section.tsx`
-- `file-storage-section.tsx` / `db-capacity-section.tsx`
-- `migration-import/wizard-client.tsx` / `api-import/api-import-wizard-client.tsx` / `external-import/wizard-client.tsx`
-- 推定 6-8 h
+### 定量効果 (Phase 2 単体)
+- JP 行数: **5103 → 4449** (-654 行、-12.8%)
+- 対象 file 数: **266 → 218** (-48 file)
+- 新規カタログ key 追加: ~500 key (両 locale)
+- 累計 (Phase 1+2): **5242 → 4449** (-793 行、-15.1%)
+- カタログ parity test: 18 tests pass、catalog 同期維持
 
-### P3-7: Admin / Super (14 file)
-- `admin/super/page.tsx` (175 JP 行)
+### CI / 退行防止
+- `pnpm check:no-hardcoded-jp` を CI 必須ジョブで baseline 比較 (退行検知 = 即 fail)
+- baseline は Phase 2 完了時点で 4449 行 / 218 ファイルでロック
+- 新規 PR でハードコード JP を導入すると即時検出される
+
+---
+
+## v1.4.0 以降の残作業 (順序付き)
+
+### P3-6 残: Settings (3 file)
+- `tenant-settings-client.tsx` (~280 JP 行、最大物の一つ)
+- `migration-import/migration-wizard-client.tsx` (~80 行)
+- `api-import/api-import-wizard-client.tsx` (~50 行)
+- 推定 4-6 h
+
+### P3-7 残: Admin / Super (大物 page)
+- `admin/super/page.tsx` (172 行 — super_admin ダッシュボードのトップ)
 - `admin/super/diagnostics/page.tsx` (95 行)
 - `admin/super/tenants/[id]/page.tsx` (79 行)
-- `tenants/new/tenant-create-form.tsx`
-- `tenants/[id]/tenant-suspend-button.tsx` / `tenant-delete-button.tsx`
-- `usage/page.tsx`, `banners/`, `billing/`, `email-failures/`, `cron-history/`, `stripe-dlq/`, `seed-data/`
-- `admin/users/users-client.tsx`
-- 推定 8-10 h
+- `admin/super/usage/page.tsx` (60 行)
+- 関連 API route (export/route.ts 等)
+- 推定 4-6 h
 
-### P3-8: Help / Guide (336 JP 行、大物)
+### P3-8: Help / Guide (466 JP 行、大物)
 - `src/app/(dashboard)/help/help-client.tsx` (341 行)
 - `src/app/(dashboard)/guide/guide-client.tsx` (125 行)
 - カタログは `messages/ja/help.json` `messages/ja/guide.json` (Phase 1 で空 placeholder 作成済)
@@ -136,11 +178,12 @@
 - **P8-4**: E2E に `loginAs(user, {locale})` helper + `e2e/specs/{i18n-locale-switch,i18n-en-smoke,i18n-ja-smoke}.spec.ts` 新規
 - **P8-5**: `e2e/visual/` baseline を ja/en-US 両系統で再生成 (`[gen-visual]` 空 commit ルール準拠、settings/dashboard/customers/auth 4 ドメイン × 2 locale)
 
-### P9: 退行防止 (推定 2 h)
-- **P9-1**: `pnpm check:no-hardcoded-jp` を CI の必須ジョブに昇格 (現在は実行のみ、`--strict` モードへ切替)
-- **P9-2**: pre-commit hook 追加 (`.claude/settings.json` または `.husky`)
-- **P9-3**: `scripts/check-banned-i18n-patterns.ts` 追加 (`throw new Error('JP')` / `toast(literal)` を AST level で禁止)
-- **P9-4**: `docs/knowledge/KDD_PATTERNS.md` に「ハードコード復活防止」セクション追加
+### P9: 退行防止 ✅ **v1.3.0 完了 (2026-06-19)**
+
+- **P9-1** ✅: `pnpm check:no-hardcoded-jp` は v1.2.0 で CI 必須ジョブとして昇格済み。`--strict` モードへの昇格は P3-6 以降の i18n 化完了後 (v1.4.0 以降) に実施予定。
+- **P9-2** ✅: `.husky/pre-commit` hook を追加。`pnpm check:no-hardcoded-jp` + `pnpm check:banned-i18n-patterns` を全 git コミット（IDE/ターミナルからの人手コミット含む）で自動実行。`.claude/settings.json` hooks は Claude Code ツール呼出時のみ発火するため、git 層の pre-commit が唯一の全経路カバー手段（詳細: [KDD §5.X+212](../../docs/knowledge/KDD_PATTERNS.md)）。
+- **P9-3** ✅: `scripts/check-banned-i18n-patterns.ts` + `scripts/i18n-banned-patterns-baseline.json` を追加。`throw new Error('<JP>')` / `showError('<JP>')` / `showSuccess('<JP>')` の構文的禁止パターンを検知。既存 9 ファイル（throwError=6、legacyToast=32 箇所）はベースラインで許容し増加のみ fail。CI にも追加済み (`ci.yml` の "Banned i18n patterns check (P9 退行防止)" ステップ)。テスト 15 件 (`scripts/check-banned-i18n-patterns.test.ts`) 全 PASS。
+- **P9-4** ✅: `docs/knowledge/KDD_PATTERNS.md §5.X+212` に「ハードコード復活防止」セクション追加。`.claude/settings.json` hooks と git-level hooks の違い、zero-tolerance vs baseline-tolerance の設計判断、新環境での `pnpm install` 必須ルールを記録。
 
 ### P10: 最終検証 (推定 2-4 h)
 - **P10-1**: フルスキャン再実行 (期待: src/+prisma/seed* の JP 0、tests は data-testid 化、scripts は英語化)
@@ -150,18 +193,18 @@
 
 ---
 
-## Phase 2 開始手順
+## v1.4.0 開始手順
 
-1. main 最新化後、新規ブランチを切る
+1. main 最新化後、新規ブランチを切る (週次ブランチ命名)
    ```powershell
    git checkout main; git pull
-   git checkout -b week/2026-w25
+   git checkout -b week/2026-w26  # 例
    ```
-2. JP gate baseline を最新化
+2. JP gate baseline を最新化 (現状 4449 で固定済)
    ```powershell
    pnpm check:no-hardcoded-jp:update-baseline
    ```
-3. 上記 P3-4 から順次実施
+3. 残作業の小物から順次実施 (上記 P3-6 残 / P3-7 残 → P3-8 → ... の順を推奨)
 4. 各 chunk 完了時に `pnpm test src/i18n/messages.test.ts` でカタログ parity 確認 (両 locale で key 集合・ICU placeholder が一致しているか)
 
 ---
@@ -186,9 +229,19 @@
 - P10-1 のフルスキャンで 0 を確認してから
 
 ### messages/ 構造
-- 現状: `ja.json` + `ja/{email,help,guide,faq}.json` の 5 ファイル
-- 必要に応じて分割追加可 (例: `ja/admin.json` を新設して admin/super namespace を移動)
+- 現状 (v1.3.0 時点): `ja.json` + `ja/{email,help,guide,faq,superAdmin}.json` の 6 ファイル (en-US も同じ)
+- v1.3.0 で `superAdmin` sub-file を新規追加 (admin/super 画面群が 700+ 行と大規模だったため分離)
+- 必要に応じてさらに分割追加可 (例: `ja/help.json` に help-client の翻訳を移動)
 - 追加時は `src/i18n/load-messages.ts` の `MESSAGE_SUBFILES` 配列に追記 + 両 locale で対称作成 + messages.test.ts の `cases` 配列にも追加
+
+### 新規言語の追加 (中国語・ベトナム語等)
+- 詳細は **[ADD_NEW_LOCALE.md](./ADD_NEW_LOCALE.md)** を参照
+- 基盤が整っているため、コード変更は 3 ファイルのみ:
+  - `src/config/i18n.ts` (SUPPORTED_LOCALES / SELECTABLE_LOCALES に追加)
+  - `src/i18n/request.ts` (toMessagesFilename にマッピング)
+  - `src/i18n/messages.test.ts` (parity test を 3 言語対応に拡張)
+- 残りは **メッセージカタログの翻訳作業 (~2000 key)** のみ
+- 機械翻訳 (Claude API / DeepL 等) でドラフトを一括生成可。ICU placeholder と `<strong>` タグの保持に注意
 
 ---
 

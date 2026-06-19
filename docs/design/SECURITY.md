@@ -197,12 +197,10 @@ function checkPermission(
 **重複抑止**: `dedupeKey = '{type}:{taskId}:{YYYY-MM-DD}'` を UNIQUE 制約で DB レベルに弾く。
 cron が同日に複数回呼ばれても安全 (`createMany skipDuplicates: true`)。
 
-**パフォーマンス**: WBS 階層 traversal を完全回避するため、partial index 2 本を migration で追加:
+**パフォーマンス**: WBS 階層 traversal を完全回避するため、partial index を migration で追加:
 
 ```sql
-CREATE INDEX idx_tasks_planned_start_due ON tasks (planned_start_date)
-  WHERE deleted_at IS NULL AND type='activity'
-    AND assignee_id IS NOT NULL AND status='not_started';
+-- v1.3.0 以降は終了通知のみ。idx_tasks_planned_start_due は開始通知廃止後も DB に残存 (migration 不変、害なし)。
 CREATE INDEX idx_tasks_planned_end_due ON tasks (planned_end_date)
   WHERE deleted_at IS NULL AND type='activity'
     AND assignee_id IS NOT NULL AND status<>'completed';

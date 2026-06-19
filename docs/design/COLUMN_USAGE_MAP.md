@@ -229,7 +229,7 @@
 > - 列順: **ユーザ名（User.name）| メールアドレス（User.email）| ロール（projectRole、例 PM/TL）| 作成者（assignedBy 氏名解決）| 作成日時 | 更新者（updatedBy、未更新「—」）| 更新日時（未更新「—」）| 操作**。
 > - ユーザ名・メールは User テーブル参照（ProjectMember 自体は保持しない）。
 
-## Task（WBS）— `/projects/[id]/tasks`（WBS管理タブ）, `/projects/[id]/gantt`（ガントチャートタブ）, `/my-tasks`（マイタスク）
+## Task（WBS）— `/projects/[id]/tasks`（WBS管理タブ）, `/projects/[id]/gantt`（進捗確認タブ、旧称: ガントチャートタブ）, `/my-tasks`（マイタスク）
 | 画面表示名 | 内部名 | 意味・用途 | 象限 | 根拠 | 要否 |
 |---|---|---|---|---|---|
 | - | id | 主キー(UUID自動採番) | ③ | schema:734 | 必要（UI非表示・内部管理用） |
@@ -325,7 +325,7 @@
 | - | tenantId | 所属テナント(FK、分離境界) | ③ | schema:808 | 必要（UI非表示・内部管理用） |
 | - | projectId | 作成元プロジェクト(M:N中間経由で複数紐付け) | ② | schema:813 | 必要（UI非表示・内部管理用） |
 | 種別（リスク/課題） | type | リスク/課題の別 | ② | COLUMN_USAGE_MAP | 必要（一覧/編集画面表示） |
-| 件名 | title | 件名(公開時必須) | ① | risk-edit-dialog.tsx:244 | 必要（一覧/編集画面表示） |
+| 件名 | title | 件名(v1.3.0: 常時必須。発生事象/原因/対応策/メモは公開時必須) | ① | risk-edit-dialog.tsx | 必要（一覧/編集画面表示） |
 | 発生事象（課題）/ 考えられる事象（リスク） | occurrence | 発生事象(issue)/考えられる事象(risk) | ① | risk-edit-dialog.tsx:289 | 必要（一覧/編集画面表示） |
 | メモ | content | メモ(旧「内容」をリネーム) | ① | risk-edit-dialog.tsx:292 | 必要（編集画面表示） |
 | 直接原因（課題）/ 考えられる原因（リスク） | cause | 原因(任意) | ① | risk-edit-dialog.tsx:290 | 必要（一覧/編集画面表示） |
@@ -402,7 +402,7 @@
 |---|---|---|---|---|---|
 | - | id | 主キー(UUID自動採番) | ③ | schema:948 | 必要（UI非表示・内部管理用） |
 | - | tenantId | 所属テナント(FK、分離境界) | ③ | schema:952 | 必要（UI非表示・内部管理用） |
-| タイトル | title | ナレッジタイトル(公開時必須) | ① | knowledge-edit-dialog.tsx:169 | 必要（一覧/編集画面表示） |
+| タイトル | title | ナレッジタイトル(v1.3.0: 常時必須。背景/内容/結果は公開時必須) | ① | knowledge-edit-dialog.tsx | 必要（一覧/編集画面表示） |
 | 種別 | knowledgeType | ナレッジの種別 | ① | knowledge-edit-dialog.tsx:178 | 必要（一覧/編集画面表示） |
 | 背景 | background | 背景(入力) | ① | knowledge-edit-dialog.tsx:206 | 不要（contentに統合＋embedding再生成すれば提案影響なし。※NOT NULL→migration要） |
 | 内容 | content | 内容(入力) | ① | knowledge-edit-dialog.tsx:215 | 必要（一覧/編集画面表示） |
@@ -437,7 +437,7 @@
 | - | id | 主キー(UUID自動採番) | ③ | schema:1037 | 必要（UI非表示・内部管理用） |
 | - | tenantId | 所属テナント(FK、分離境界) | ③ | schema:1039 | 必要（UI非表示・内部管理用） |
 | - | projectId | 作成元プロジェクト(M:N中間経由で複数紐付け) | ② | schema:1042 | 必要（UI非表示・内部管理用） |
-| 実施日 | conductedDate | 振り返り実施日(公開時必須) | ① | retrospective-edit-dialog.tsx:189 | 必要（一覧/編集画面表示） |
+| 実施日 | conductedDate | 振り返り実施日(v1.3.0: 常に任意。未入力なら当日補完。計画総括/実績総括/良かった点/課題/改善事項が公開時必須) | ① | retrospective-edit-dialog.tsx | 必要（一覧/編集画面表示） |
 | 計画総括 | planSummary | 計画総括(入力) | ① | retrospective-edit-dialog.tsx:213 | 必要（一覧/編集画面表示） |
 | 実績総括 | actualSummary | 実績総括(入力) | ① | retrospective-edit-dialog.tsx:213 | 必要（一覧/編集画面表示） |
 | 良かった点 | goodPoints | 良かった点(入力) | ① | retrospective-edit-dialog.tsx:213 | 必要（一覧/編集画面表示） |
@@ -494,7 +494,7 @@
 | - | id | 主キー(UUID自動採番) | ③ | schema:1426 | 必要（UI非表示・内部管理用） |
 | - | tenantId | 所属テナント(FK、分離境界) | ③ | schema:1428 | 必要（UI非表示・内部管理用） |
 | 作成者 | userId | 作成者(固定、所有者/認可キー)。**2026-06-03: /all-memos のみ一覧表示。/memos は自分のメモのみのため一覧列から撤去** | ② | all-memos-client.tsx | 必要（全メモ一覧表示） |
-| タイトル | title | メモタイトル(公開時必須) | ① | memos-client.tsx:434 | 必要（一覧/編集画面表示） |
+| タイトル | title | メモタイトル(v1.3.0: 常時必須。本文は公開時必須) | ① | memos-client.tsx | 必要（一覧/編集画面表示） |
 | 本文 | content | メモ本文(入力) | ① | memos-client.tsx:443 | 必要（一覧/編集画面表示） |
 | 公開範囲 | visibility | private/public。**2026-06-03: 一覧の列は撤去。編集ダイアログ + 一覧上部の一括変更ツールバーで操作** | ① | memos-client.tsx（編集select / CrossListBulkVisibilityToolbar） | 必要（編集画面・一括変更で操作、一覧列なし） |
 | - | contentEmbedding | 意味検索用ベクトル(Voyage 1024次元、自動生成) | ③ | schema:1434 | 必要（UI非表示・内部管理用） |
@@ -957,7 +957,7 @@
 | - | id | 主キー(UUID自動採番) | ③ | schema:1395 |
 | - | tenantId | 所属テナント(FK) | ③ | schema:1397 |
 | - | userId | 受信ユーザ(FK) | ③ | schema:1398 |
-| 種別 | type | task_start_due/task_end_due他 | ② | notification-bell.tsx |
+| 種別 | type | task_end_due/comment_mention他 | ② | notification-bell.tsx |
 | - | entityType | 対象エンティティ種別(ポリモーフィック) | ③ | schema:1400 |
 | - | entityId | 対象エンティティID(ポリモーフィック) | ③ | schema:1401 |
 | 通知文 | title | 通知本文 | ② | notification-bell.tsx |
@@ -1025,6 +1025,42 @@
 | - | updatedAt | 更新日時(自動) | ③ | schema |
 
 > グローバル(tenantId なし)。表示判定 getActiveBanner + 1本制約(期間重複禁止)。`message/severity/startAt/endAt/enabled` は管理画面で super_admin が入力(①)。
+
+---
+
+## RiskIssuePromotion（リスク→課題 昇華リンク）— v1.3.0 資産導線機能（リスク/課題編集ダイアログの昇華バッジ・ボタン）
+| 画面表示名 | 内部名 | 意味・用途 | 象限 | 根拠 |
+|---|---|---|---|---|
+| - | riskId | 昇華元リスク.id（複合PKの一部）。FK→risks_issues (CASCADE) | ③ | schema:RiskIssuePromotion |
+| - | issueId | 昇華先課題.id（複合PKの一部）。FK→risks_issues (CASCADE) | ③ | schema:RiskIssuePromotion |
+| - | createdAt | 昇華操作の実行日時(自動) | ③ | schema |
+| - | createdBy | 昇華操作を行ったUser.id | ③ | schema:RiskIssuePromotion |
+
+> 画面に直接入力欄を持つカラムは無い（新規課題本体は既存の課題起票フォームを再利用、本テーブルは関連の記録のみ）。「課題として昇華」ボタンは visibility='public' のリスクの編集ダイアログにのみ表示。M:N・再昇華の system 側ブロックなし（バッジ表示のみ）。
+
+## IssueKnowledgePromotion（課題→ナレッジ 昇華リンク）— v1.3.0 資産導線機能（課題/ナレッジ編集ダイアログの昇華バッジ・ボタン）
+| 画面表示名 | 内部名 | 意味・用途 | 象限 | 根拠 |
+|---|---|---|---|---|
+| - | issueId | 昇華元課題.id（複合PKの一部）。FK→risks_issues (CASCADE) | ③ | schema:IssueKnowledgePromotion |
+| - | knowledgeId | 昇華先ナレッジ.id（複合PKの一部）。FK→knowledges (CASCADE) | ③ | schema:IssueKnowledgePromotion |
+| - | createdAt | 昇華操作の実行日時(自動) | ③ | schema |
+| - | createdBy | 昇華操作を行ったUser.id | ③ | schema:IssueKnowledgePromotion |
+
+> RiskIssuePromotion と同設計。「ナレッジとして昇華」ボタンは visibility='public' の課題の編集ダイアログにのみ表示。
+
+## AssetLink（資産間 汎用手動リンク）— v1.3.0 資産導線機能（Risk/Issue/Knowledge/Retrospective/Memo の各編集・参照ダイアログの「関連資産」セクション）
+| 画面表示名 | 内部名 | 意味・用途 | 象限 | 根拠 |
+|---|---|---|---|---|
+| - | id | 主キー(UUID自動採番) | ③ | schema:AssetLink |
+| - | tenantId | テナント分離キー。FK→tenants (NO ACTION、他テーブルと統一) | ③ | schema:AssetLink |
+| 種類 (リンク追加ダイアログ) | fromEntityType | リンク元種別。'risk'/'issue'/'knowledge'/'retrospective'/'memo' | ① | asset-link.ts |
+| - | fromEntityId | リンク元 ID。ポリモーフィックのため FK 無し | ③ | schema:AssetLink |
+| 種類 (リンク追加ダイアログ) | toEntityType | リンク先種別。5 種同上 | ① | asset-link.ts |
+| - | toEntityId | リンク先 ID。検索結果から選択 (① 相当の操作で確定するが値自体は候補選択経由) | ②/③ | asset-link-section.tsx |
+| - | createdAt | リンク作成日時(自動) | ③ | schema |
+| - | createdBy | リンク作成者.id。解除可否判定 (作成者本人のみ表示) に使用 | ③ | schema:AssetLink |
+
+> リンク対象は公開可視 (visibility='public') の資産のみ (service 層で限定、defense-in-depth)。A→B と B→A の対称重複は作成時にアプリ層で検出して防止。entity 削除時の孤立リンクは各エンティティの delete service から `deleteAssetLinksForEntity` を呼んで除去 (FK 無しのため DB cascade に依存できない)。昇華リンク (RiskIssuePromotion/IssueKnowledgePromotion) とは視覚的に区別 (本リンクは info 系配色、昇華は warning 系配色)。
 
 ---
 

@@ -182,7 +182,7 @@ export function AllRetrospectivesTable({
                     <Badge
                       variant="outline"
                       className="text-[10px]"
-                      title={`${r.linkedProjectIds.length} 件のプロジェクトに紐付け済`}
+                      title={tRetro('linkedProjectsTitle', { count: r.linkedProjectIds.length })}
                     >
                       +{r.linkedProjectIds.length - 1}
                     </Badge>

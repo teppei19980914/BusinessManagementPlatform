@@ -19,7 +19,7 @@ flowchart TD
 
     PJ_DETAIL --> TAB_EST[見積もり管理]
     PJ_DETAIL --> TAB_TASK[WBS管理]
-    PJ_DETAIL --> TAB_GANTT[ガントチャート]
+    PJ_DETAIL --> TAB_GANTT[進捗確認]
     PJ_DETAIL --> TAB_RISK[リスク/課題一覧]
     PJ_DETAIL --> TAB_KN[ナレッジ管理]
     PJ_DETAIL --> TAB_RETRO[振り返り]
@@ -53,7 +53,7 @@ flowchart TD
 | 概要 | /projects/:id | 常時表示 |
 | 見積もり | /projects/:id/estimates | admin, pm_tl のみ |
 | WBS管理 | /projects/:id/tasks | 常時表示 |
-| ガントチャート | /projects/:id/gantt | 常時表示 |
+| 進捗確認 (ガント表示 + 担当者別確認、旧称: ガントチャート) | /projects/:id/gantt | 常時表示 |
 | リスク/課題 | /projects/:id/risks | 常時表示 |
 | ナレッジ | /projects/:id/knowledge | 常時表示 |
 | 振り返り | /projects/:id/retrospectives | 完了以降表示 |

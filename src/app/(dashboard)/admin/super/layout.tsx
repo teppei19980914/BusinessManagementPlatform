@@ -8,6 +8,7 @@
 
 import { redirect } from 'next/navigation';
 import Link from 'next/link';
+import { getTranslations } from 'next-intl/server';
 import { requireAuthForLayout } from '@/lib/page-auth';
 
 export default async function SuperAdminLayout({ children }: { children: React.ReactNode }) {
@@ -17,41 +18,41 @@ export default async function SuperAdminLayout({ children }: { children: React.R
   if (user.systemRole !== 'super_admin') {
     redirect('/');
   }
+  const t = await getTranslations('superAdmin');
 
   return (
     <div className="space-y-6">
       <div className="rounded-md bg-amber-100 p-3 text-sm text-amber-900 dark:bg-amber-900/30 dark:text-amber-200">
-        <strong>システム管理者領域</strong> — プラットフォーム運営者専用の画面です。
-        全テナント横断の監視・集計が可能です。
+        <strong>{t('layoutBannerBold')}</strong>{t('layoutBannerBody')}
       </div>
       <nav className="flex gap-4 border-b pb-2 text-sm">
         <Link href="/admin/super" className="hover:underline">
-          サマリ
+          {t('layoutNavSummary')}
         </Link>
         <Link href="/admin/super/tenants" className="hover:underline">
-          テナント一覧
+          {t('layoutNavTenants')}
         </Link>
         <Link href="/admin/super/usage" className="hover:underline">
-          使用量サマリ
+          {t('layoutNavUsage')}
         </Link>
         <Link href="/admin/super/cron-history" className="hover:underline">
-          cron 実行履歴
+          {t('layoutNavCronHistory')}
         </Link>
         {/* PR-V7 #6 (2026-05-19): Stripe DLQ 監視 + 手動再投入 */}
         <Link href="/admin/super/stripe-dlq" className="hover:underline">
-          Stripe DLQ
+          {t('layoutNavStripeDlq')}
         </Link>
         {/* PR-V7 #8 (2026-05-19): 請求ダッシュボード (= 月次サマリ + 詳細) */}
         <Link href="/admin/super/billing" className="hover:underline">
-          請求
+          {t('layoutNavBilling')}
         </Link>
         {/* PR-V8 (2026-05-19): 診断ダッシュボード (= 想定外事象の検知 + 修復) */}
         <Link href="/admin/super/diagnostics" className="hover:underline">
-          診断
+          {t('layoutNavDiagnostics')}
         </Link>
         {/* ADR-0036: 全ユーザ共通の周知バナー (画面上部の帯メッセージ) 管理 */}
         <Link href="/admin/super/banners" className="hover:underline">
-          周知バナー
+          {t('layoutNavBanners')}
         </Link>
       </nav>
       {children}

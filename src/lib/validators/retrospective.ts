@@ -2,14 +2,16 @@ import { z } from 'zod/v4';
 import { MEDIUM_TEXT_MAX_LENGTH, LONG_TEXT_MAX_LENGTH } from '@/config';
 
 /**
- * 2026-05-11: 振り返り作成スキーマ。
+ * 2026-05-11 / v1.3.0 軽量入力 (2026-06-19) 改訂: 振り返り作成スキーマ。
  *
  * 公開範囲 (visibility) に応じて必須チェックを切り替える:
- *   - 'draft' (自分のみ): 実施日が未入力でも保存可。サーバ側で当日日付を default として補完
- *   - 'public' (全メンバー): 実施日必須
+ *   - 'draft' (自分のみ): 必須項目なし。実施日未入力でもサーバ側で当日日付を default 補完
+ *     (振り返りは title 列が無いため「draft=title のみ必須」ルールの対象外)
+ *   - 'public' (全メンバー): 「Embedding 対象 ∩ UI 入力欄あり」の 5 セクション
+ *     (計画総括 / 実績総括 / 良かった点 / 課題 / 改善事項) を必須化。
  *
- *   5 本文セクション (計画総括 / 実績総括 / 良かった点 / 問題点 / 改善事項) は visibility に
- *   関わらず任意 (空文字許容)。
+ *   実施日 (conductedDate) は日付項目のため常に任意 (v1.3.0 で public 必須を撤去)。
+ *   knowledgeToShare は UI 入力欄が無い (インポート専用) ため必須対象外 (embedding 合成には含む)。
  */
 
 /** 今日の日付を 'YYYY-MM-DD' で返す (Retrospective draft の conductedDate default 用)。 */
@@ -50,14 +52,26 @@ export const createRetrospectiveSchema = z
     assigneeId: z.string().uuid().nullable().optional(),
   })
   .superRefine((data, ctx) => {
-    // 2026-05-11: public 時のみ conductedDate を厳格に検証 (draft 時は default で today が入る)
+    // v1.3.0 軽量入力 (2026-06-19): 実施日 (conductedDate) は日付項目のため常に任意化
+    //   (旧: public 必須)。代わりに public 化時は「Embedding 対象 ∩ UI 入力欄あり」の
+    //   5 セクション (計画総括 / 実績総括 / 良かった点 / 課題 / 改善事項) を必須化し、
+    //   公開資産が提案エンジンで意味を持つよう本文の空公開を防ぐ。
+    //   knowledgeToShare は UI 入力欄が無い (インポート専用) ため必須対象外。
     if (data.visibility === 'public') {
-      if (!data.conductedDate || !/^\d{4}-\d{2}-\d{2}$/.test(data.conductedDate)) {
-        ctx.addIssue({
-          code: 'custom',
-          message: '「全メンバー」に公開する場合は実施日を入力してください',
-          path: ['conductedDate'],
-        });
+      if (!data.planSummary || data.planSummary.trim().length === 0) {
+        ctx.addIssue({ code: 'custom', message: '「全メンバー」に公開する場合は計画総括を入力してください', path: ['planSummary'] });
+      }
+      if (!data.actualSummary || data.actualSummary.trim().length === 0) {
+        ctx.addIssue({ code: 'custom', message: '「全メンバー」に公開する場合は実績総括を入力してください', path: ['actualSummary'] });
+      }
+      if (!data.goodPoints || data.goodPoints.trim().length === 0) {
+        ctx.addIssue({ code: 'custom', message: '「全メンバー」に公開する場合は良かった点を入力してください', path: ['goodPoints'] });
+      }
+      if (!data.problems || data.problems.trim().length === 0) {
+        ctx.addIssue({ code: 'custom', message: '「全メンバー」に公開する場合は課題を入力してください', path: ['problems'] });
+      }
+      if (!data.improvements || data.improvements.trim().length === 0) {
+        ctx.addIssue({ code: 'custom', message: '「全メンバー」に公開する場合は改善事項を入力してください', path: ['improvements'] });
       }
     }
   });
@@ -81,17 +95,25 @@ const baseUpdateRetrospectiveSchema = z.object({
 });
 
 export const updateRetrospectiveSchema = baseUpdateRetrospectiveSchema.superRefine((data, ctx) => {
-  // public 化する更新では conductedDate が未指定 / 不正形式でないこと
-  if (
-    data.visibility === 'public' &&
-    data.conductedDate !== undefined &&
-    !/^\d{4}-\d{2}-\d{2}$/.test(data.conductedDate)
-  ) {
-    ctx.addIssue({
-      code: 'custom',
-      message: '「全メンバー」に公開する場合は実施日を入力してください',
-      path: ['conductedDate'],
-    });
+  // v1.3.0 軽量入力: 実施日 (conductedDate) は常に任意 (public 必須を撤去。形式 regex は field 側で担保)。
+  //   public 化 / 維持の更新で 5 セクションを空へ更新しようとした場合は拒否 (= undefined は既存値維持。
+  //   本文未送信での public 化は service 層ガードで最終検証)。
+  if (data.visibility === 'public') {
+    if (data.planSummary !== undefined && data.planSummary.trim().length === 0) {
+      ctx.addIssue({ code: 'custom', message: '「全メンバー」に公開する場合は計画総括を入力してください', path: ['planSummary'] });
+    }
+    if (data.actualSummary !== undefined && data.actualSummary.trim().length === 0) {
+      ctx.addIssue({ code: 'custom', message: '「全メンバー」に公開する場合は実績総括を入力してください', path: ['actualSummary'] });
+    }
+    if (data.goodPoints !== undefined && data.goodPoints.trim().length === 0) {
+      ctx.addIssue({ code: 'custom', message: '「全メンバー」に公開する場合は良かった点を入力してください', path: ['goodPoints'] });
+    }
+    if (data.problems !== undefined && data.problems.trim().length === 0) {
+      ctx.addIssue({ code: 'custom', message: '「全メンバー」に公開する場合は課題を入力してください', path: ['problems'] });
+    }
+    if (data.improvements !== undefined && data.improvements.trim().length === 0) {
+      ctx.addIssue({ code: 'custom', message: '「全メンバー」に公開する場合は改善事項を入力してください', path: ['improvements'] });
+    }
   }
 });
 

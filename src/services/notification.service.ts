@@ -3,13 +3,15 @@
  *
  * 機能:
  *   - CRUD: list / markAsRead / markAllAsRead
- *   - 日次 cron: generateDailyNotifications (ACT の開始/終了日リマインダ生成)
+ *   - 日次 cron: generateDailyNotifications (ACT の予定終了日リマインダ生成)
  *   - 日次 cron: cleanupReadNotifications (既読 + 30 日経過の物理削除)
  *
  * 設計方針:
  *   - **flat query**: 階層 traversal は使わず、`type='activity'` の Task に対する
- *     date 一致でフィルタするだけ。partial index (idx_tasks_planned_start_due /
- *     idx_tasks_planned_end_due) で seq scan を避けている (DEVELOPER_GUIDE §5.54)。
+ *     date 一致でフィルタするだけ。partial index (idx_tasks_planned_end_due) で
+ *     seq scan を避けている (DEVELOPER_GUIDE §5.54)。
+ *     ※ idx_tasks_planned_start_due は v1.3.0 で開始通知廃止に伴い不使用になったが、
+ *       migration は不変のため DB 上にインデックスが残存する (害なし)。
  *   - **dedupe**: `dedupeKey = '{type}:{taskId}:{YYYY-MM-DD}'` を UNIQUE 制約で
  *     DB レベルに弾く。cron が時間内に 2 回呼ばれても安全。
  *   - **JST 基準**: 「当日 (today)」の判定は JST 0:00〜23:59。cron は UTC 22:00 で実行
@@ -196,14 +198,12 @@ export function buildTaskNotificationTitle(input: {
  * 日次 cron 本体: 当日朝に発火する通知を ACT に対して生成する。
  *
  * クエリ:
- *   - 開始通知: `type='activity' AND status='not_started' AND plannedStartDate=today AND assigneeId IS NOT NULL`
  *   - 終了通知: `type='activity' AND status≠'completed' AND plannedEndDate=today AND assigneeId IS NOT NULL`
  *
  * 重複は dedupeKey の UNIQUE 制約で DB が弾く (createMany skipDuplicates)。
  * 戻り値: 生成件数のサマリ (cron 監視で運用上の異常検知に使う)。
  */
 export async function generateDailyNotifications(now: Date = new Date()): Promise<{
-  startCreated: number;
   endCreated: number;
 }> {
   const today = todayInJst(now);
@@ -225,45 +225,6 @@ export async function generateDailyNotifications(now: Date = new Date()): Promis
     project: { tenantId: string; name: string };
     parentTask: { name: string } | null;
   };
-
-  // ---- 開始通知 ----
-  const startTasks = await prisma.task.findMany({
-    where: {
-      type: 'activity',
-      deletedAt: null,
-      assigneeId: { not: null },
-      status: 'not_started',
-      plannedStartDate: today,
-    },
-    select: {
-      id: true,
-      name: true,
-      projectId: true,
-      assigneeId: true,
-      project: { select: { tenantId: true, name: true } },
-      parentTask: { select: { name: true } },
-    },
-  });
-  const startData = startTasks
-    .filter((t): t is TaskRow => t.assigneeId !== null)
-    .map((t) => ({
-      tenantId: t.project.tenantId,
-      userId: t.assigneeId,
-      type: 'task_start_due' as const,
-      entityType: 'task' as const,
-      entityId: t.id,
-      title: buildTaskNotificationTitle({
-        projectName: t.project.name,
-        parentTaskName: t.parentTask?.name ?? null,
-        taskName: t.name,
-        suffix: 'の予定開始日です',
-      }),
-      link: `/projects/${t.projectId}/tasks?taskId=${t.id}`,
-      dedupeKey: buildDedupeKey('task_start_due', t.id, today),
-    }));
-  const startResult = startData.length > 0
-    ? await prisma.notification.createMany({ data: startData, skipDuplicates: true })
-    : { count: 0 };
 
   // ---- 終了通知 ----
   const endTasks = await prisma.task.findMany({
@@ -304,7 +265,7 @@ export async function generateDailyNotifications(now: Date = new Date()): Promis
     ? await prisma.notification.createMany({ data: endData, skipDuplicates: true })
     : { count: 0 };
 
-  return { startCreated: startResult.count, endCreated: endResult.count };
+  return { endCreated: endResult.count };
 }
 
 /**

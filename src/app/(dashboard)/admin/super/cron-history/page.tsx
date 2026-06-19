@@ -18,27 +18,29 @@
  * データ取得: server component で prisma 直接読み (= API ルート経由不要、SSR で完結)
  */
 
+import { getTranslations } from 'next-intl/server';
 import { fetchCronHistoryView, STALE_RUNNING_THRESHOLD_MS } from '@/services/cron-history.service';
 import { CRON_JOBS, getCronDescription } from '@/config/cron-jobs';
 
 const HISTORY_LIMIT = 100;
 
 export default async function CronHistoryPage() {
+  const t = await getTranslations('superAdmin');
   // Date.now() は render 中に呼べない (react-hooks/purity)。service 側で計算して受け取る。
   const { summary, history } = await fetchCronHistoryView(HISTORY_LIMIT);
 
   return (
     <div className="space-y-6">
-      <h1 className="text-xl font-semibold">cron 実行履歴</h1>
+      <h1 className="text-xl font-semibold">{t('cronHistoryTitle')}</h1>
 
       {/* 直近 24h サマリ */}
       <section className="grid grid-cols-2 gap-3 md:grid-cols-5">
-        <SummaryCard label="直近 24h 実行" value={summary.total} />
-        <SummaryCard label="成功" value={summary.success} tone="success" />
-        <SummaryCard label="失敗" value={summary.failure} tone={summary.failure > 0 ? 'error' : 'neutral'} />
-        <SummaryCard label="実行中" value={summary.running} tone="neutral" />
+        <SummaryCard label={t('cronHistoryRecent24h')} value={summary.total} />
+        <SummaryCard label={t('cronHistorySuccess')} value={summary.success} tone="success" />
+        <SummaryCard label={t('cronHistoryFailure')} value={summary.failure} tone={summary.failure > 0 ? 'error' : 'neutral'} />
+        <SummaryCard label={t('cronHistoryRunning')} value={summary.running} tone="neutral" />
         <SummaryCard
-          label="stale (timeout 疑い)"
+          label={t('cronHistoryStale')}
           value={summary.staleRunning}
           tone={summary.staleRunning > 0 ? 'error' : 'neutral'}
         />
@@ -46,22 +48,22 @@ export default async function CronHistoryPage() {
 
       {summary.staleRunning > 0 && (
         <div className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm">
-          <strong>⚠ timeout 疑い:</strong> status=&apos;running&apos; のまま 30 秒以上経過した実行が
-          {' '}{summary.staleRunning} 件あります。Netlify Functions の 10 秒制限を超過した可能性が高いため、
-          該当 cron の処理を chunk 化 / async 化する対応を検討してください。
+          {t.rich('cronHistoryStaleWarningLead', { strong: (chunks) => <strong>{chunks}</strong> })}
+          {summary.staleRunning}
+          {t('cronHistoryStaleWarningTrail')}
         </div>
       )}
 
       {/* cron 動作概要 */}
       <section className="space-y-2">
-        <h2 className="text-lg font-semibold">登録 cron 一覧</h2>
+        <h2 className="text-lg font-semibold">{t('cronHistoryRegisteredCronsTitle')}</h2>
         <div className="overflow-x-auto rounded-md border">
           <table className="w-full text-sm">
             <thead className="bg-muted">
               <tr>
-                <th className="px-3 py-2 text-left">cron 名</th>
-                <th className="px-3 py-2 text-left">動作概要</th>
-                <th className="px-3 py-2 text-left">スケジュール</th>
+                <th className="px-3 py-2 text-left">{t('cronHistoryColCronName')}</th>
+                <th className="px-3 py-2 text-left">{t('cronHistoryColSummary')}</th>
+                <th className="px-3 py-2 text-left">{t('cronHistoryColSchedule')}</th>
               </tr>
             </thead>
             <tbody>
@@ -79,20 +81,20 @@ export default async function CronHistoryPage() {
 
       {/* 実行履歴 */}
       <section className="space-y-2">
-        <h2 className="text-lg font-semibold">直近 {HISTORY_LIMIT} 件の実行履歴</h2>
+        <h2 className="text-lg font-semibold">{t('cronHistoryRecentExecutionsTitle', { limit: HISTORY_LIMIT })}</h2>
         {history.length === 0 ? (
-          <p className="text-sm text-muted-foreground">まだ実行履歴がありません。</p>
+          <p className="text-sm text-muted-foreground">{t('cronHistoryNoHistory')}</p>
         ) : (
           <div className="overflow-x-auto rounded-md border">
             <table className="w-full text-sm">
               <thead className="bg-muted">
                 <tr>
-                  <th className="px-3 py-2 text-left">開始時刻</th>
-                  <th className="px-3 py-2 text-left">cron 名</th>
-                  <th className="px-3 py-2 text-left">動作</th>
-                  <th className="px-3 py-2 text-left">所要</th>
-                  <th className="px-3 py-2 text-left">ステータス</th>
-                  <th className="px-3 py-2 text-left">詳細</th>
+                  <th className="px-3 py-2 text-left">{t('cronHistoryColStartTime')}</th>
+                  <th className="px-3 py-2 text-left">{t('cronHistoryColCronName')}</th>
+                  <th className="px-3 py-2 text-left">{t('cronHistoryColAction')}</th>
+                  <th className="px-3 py-2 text-left">{t('cronHistoryColDuration')}</th>
+                  <th className="px-3 py-2 text-left">{t('cronHistoryColStatus')}</th>
+                  <th className="px-3 py-2 text-left">{t('cronHistoryColDetails')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -118,7 +120,7 @@ export default async function CronHistoryPage() {
                       <td className="px-3 py-2 text-xs">
                         {entry.errorMessage && (
                           <details>
-                            <summary className="cursor-pointer text-destructive">エラー</summary>
+                            <summary className="cursor-pointer text-destructive">{t('cronHistoryErrorSummary')}</summary>
                             <pre className="mt-1 whitespace-pre-wrap break-all rounded bg-muted p-2 text-[11px]">
                               {entry.errorMessage}
                             </pre>

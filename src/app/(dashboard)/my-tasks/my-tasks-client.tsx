@@ -201,10 +201,10 @@ export function MyTasksClient({ projectGroups, today, tenantTimeZone, tenantLoca
           listMyTaskProjects が throw した場合、画面は空表示になるが他画面への遷移は維持。 */}
       {dataLoadError && (
         <div className="rounded border border-destructive/30 bg-destructive/10 p-3 text-sm">
-          <p className="font-semibold">⚠ マイタスクの読み込みに失敗しました</p>
+          <p className="font-semibold">{tMyTask('loadFailedTitle')}</p>
           <p className="mt-1 text-muted-foreground">
-            一時的な問題の可能性があります。ページを再読み込みするか、しばらくしてから再試行してください。
-            問題が継続する場合は管理者にお問合せください。
+            {tMyTask('loadFailedMessageRetry')}
+            {tMyTask('loadFailedMessageContact')}
           </p>
         </div>
       )}
@@ -255,6 +255,7 @@ export function MyTasksClient({ projectGroups, today, tenantTimeZone, tenantLoca
                 today={today}
                 tenantTimeZone={tenantTimeZone}
                 tenantLocale={tenantLocale}
+                hideBoard
               />
             </div>
           ))}

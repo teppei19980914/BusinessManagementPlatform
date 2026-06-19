@@ -372,6 +372,8 @@ model Tenant {
   stripeUsageRecordQueue  StripeUsageRecordQueue[]
   // 規約・プラポリ同意ログ (feat/legal-pages-lp-integration / 2026-05-21)
   consentLogs             TenantConsentLog[]
+  // v1.3.0: 資産間手動リンク
+  assetLinks              AssetLink[]
 
   @@index([plan], map: "idx_tenants_plan")
   // PR-S1: credit_card テナントの絞り込み用 (= Stripe 連携対象のクエリで使用)
@@ -473,7 +475,11 @@ model User {
   receivedMentions        Mention[]                @relation("MentionTarget")
   apiCallLogs             ApiCallLog[]             @relation("ApiCallLogActor")
   generatedExplanations   SuggestionExplanation[]  @relation("SuggestionExplanationGeneratedBy")
-  importPreviews          TenantImportPreview[]    @relation("TenantImportPreviewCreator")
+  importPreviews               TenantImportPreview[]    @relation("TenantImportPreviewCreator")
+  // v1.3.0: 昇華リンク / 手動リンク作成者
+  riskIssuePromotions          RiskIssuePromotion[]     @relation("RiskIssuePromotionCreator")
+  issueKnowledgePromotions     IssueKnowledgePromotion[] @relation("IssueKnowledgePromotionCreator")
+  createdAssetLinks            AssetLink[]              @relation("AssetLinkCreator")
 
   // PR #2: tenant への back relation
   tenant Tenant @relation(fields: [tenantId], references: [id])
@@ -771,7 +777,8 @@ model Task {
   name             String    @db.VarChar(100)
   description      String?   @db.Text
   category         String    @db.VarChar(30)
-  assigneeId       String?   @map("assignee_id") @db.Uuid // WP は null、ACT は必須
+  assigneeId           String?   @map("assignee_id") @db.Uuid // WP は null、ACT は必須
+  assigneeDisplayText  String?   @map("assignee_display_text") @db.VarChar(200) // WP のみ: 複数担当者の場合 "田中 +2" 形式、単一担当者の場合 null (assigneeName で表示)
   plannedStartDate DateTime? @map("planned_start_date") @db.Date // WP は子から自動計算
   plannedEndDate   DateTime? @map("planned_end_date") @db.Date // WP は子から自動計算
   actualStartDate  DateTime? @map("actual_start_date") @db.Date
@@ -890,6 +897,10 @@ model RiskIssue {
   reporter          User               @relation("RiskReporter", fields: [reporterId], references: [id])
   assignee          User?              @relation("RiskAssignee", fields: [assigneeId], references: [id])
   riskIssueProjects RiskIssueProject[]
+  // v1.3.0: 昇華リンク (risk として昇華した先の issue 群 / issue として元になった risk 群 / issue として昇華した先の knowledge 群)
+  riskPromotions    RiskIssuePromotion[]     @relation("RiskPromotions")
+  issueSourceRisks  RiskIssuePromotion[]     @relation("IssueSourceRisks")
+  issuePromotions   IssueKnowledgePromotion[] @relation("IssuePromotions")
 
   @@index([projectId, type], map: "idx_risks_project")
   @@index([state, priority], map: "idx_risks_state")
@@ -1028,8 +1039,10 @@ model Knowledge {
   // feat/asset-assignee-expansion (2026-05-26): onDelete: SetNull で migration SQL と整合 (担当者 User
   //   物理削除時に Knowledge は残し assigneeId は null クリアされる)
   assignee          User?              @relation("KnowledgeAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
-  knowledgeProjects KnowledgeProject[]
-  taskKnowledges    TaskKnowledge[]
+  knowledgeProjects     KnowledgeProject[]
+  taskKnowledges        TaskKnowledge[]
+  // v1.3.0: 昇華リンク (issue として元になった issue 群)
+  knowledgeSourceIssues IssueKnowledgePromotion[] @relation("KnowledgeSourceIssues")
 
   @@index([knowledgeType], map: "idx_knowledges_type")
   @@index([visibility], map: "idx_knowledges_visibility")
@@ -1427,13 +1440,12 @@ model Mention {
 /// 設計方針:
 ///   - **アプリ内通知のみ** (メール / push 通知は対象外)
 ///   - **polymorphic 連携** (entity_type + entity_id) で将来コメント mention 等に拡張可能
-///   - **dedupeKey** で同じトリガが 1 日 1 回しか発火しないよう保証 (例: 同タスクの開始通知が
+///   - **dedupeKey** で同じトリガが 1 日 1 回しか発火しないよう保証 (例: 同タスクの終了通知が
 ///     同日に複数回作られない)
 ///   - 既読 (readAt が NULL でない) かつ 30 日経過したものは cron で物理削除
 ///   - 受信者 (userId) は単一。複数ユーザに同時通知する場合は service 層でループ生成する
 ///
 /// MVP の type:
-///   - 'task_start_due' : ACT の予定開始日当日 (status='not_started')
 ///   - 'task_end_due'   : ACT の予定終了日当日 (status≠'completed')
 /// 将来:
 ///   - 'comment_mention': コメント本文の @username で言及
@@ -1447,7 +1459,7 @@ model Notification {
   entityId   String    @map("entity_id") @db.Uuid
   title      String    @db.VarChar(200)
   link       String    @db.VarChar(500)
-  /// 重複抑止用キー (例: `task_start_due:${taskId}:${YYYY-MM-DD}`)。
+  /// 重複抑止用キー (例: `task_end_due:${taskId}:${YYYY-MM-DD}`)。
   /// UNIQUE 制約で 2 重生成を DB レベルで弾く (cron が時間内に 2 回呼ばれても安全)。
   dedupeKey  String    @map("dedupe_key") @db.VarChar(200)
   readAt     DateTime? @map("read_at") @db.Timestamptz
@@ -1525,6 +1537,74 @@ model Memo {
   // feat/asset-assignee-expansion (2026-05-26): 担当 memo 一覧用
   @@index([assigneeId], map: "idx_memos_assignee")
   @@map("memos")
+}
+
+// ============================================================
+// 昇華リンク / 手動リンク (v1.3.0, 2026-06-16)
+// ============================================================
+
+/// リスク → 課題の昇華リンク (M:N)。
+/// リスクが顕在化したタイミングで「課題として昇華」操作を行うと 1 行追加される。
+/// 元リスク (risk) / 派生課題 (issue) の双方から参照可能。
+/// onDelete: Cascade — リスク/課題が削除されたとき昇華リンクも連動削除。
+model RiskIssuePromotion {
+  riskId    String   @map("risk_id") @db.Uuid
+  issueId   String   @map("issue_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  createdBy String   @map("created_by") @db.Uuid
+
+  risk    RiskIssue @relation("RiskPromotions", fields: [riskId], references: [id], onDelete: Cascade)
+  issue   RiskIssue @relation("IssueSourceRisks", fields: [issueId], references: [id], onDelete: Cascade)
+  creator User      @relation("RiskIssuePromotionCreator", fields: [createdBy], references: [id])
+
+  @@id([riskId, issueId])
+  @@index([riskId], map: "idx_risk_issue_promotions_risk")
+  @@index([issueId], map: "idx_risk_issue_promotions_issue")
+  @@map("risk_issue_promotions")
+}
+
+/// 課題 → ナレッジの昇華リンク (M:N)。
+/// 課題が解消されたタイミングで「ナレッジとして昇華」操作を行うと 1 行追加される。
+/// onDelete: Cascade — 課題/ナレッジが削除されたとき昇華リンクも連動削除。
+model IssueKnowledgePromotion {
+  issueId     String   @map("issue_id") @db.Uuid
+  knowledgeId String   @map("knowledge_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+  createdBy   String   @map("created_by") @db.Uuid
+
+  issue     RiskIssue @relation("IssuePromotions", fields: [issueId], references: [id], onDelete: Cascade)
+  knowledge Knowledge @relation("KnowledgeSourceIssues", fields: [knowledgeId], references: [id], onDelete: Cascade)
+  creator   User      @relation("IssueKnowledgePromotionCreator", fields: [createdBy], references: [id])
+
+  @@id([issueId, knowledgeId])
+  @@index([issueId], map: "idx_issue_knowledge_promotions_issue")
+  @@index([knowledgeId], map: "idx_issue_knowledge_promotions_knowledge")
+  @@map("issue_knowledge_promotions")
+}
+
+/// 資産間の汎用手動リンク (Risk/Issue/Knowledge/Retrospective/Memo 間の M:N 関連)。
+/// entityType の値: 'risk' | 'issue' | 'knowledge' | 'retrospective' | 'memo'
+/// FK は entity ID 列に付けない (ポリモーフィック設計)。
+/// entity 削除時の孤立リンクはアプリケーション層でクリーンアップする (各 service.ts の delete 処理)。
+/// 対称重複防止 (A→B と B→A を同一とみなす) はアプリケーション層で実施。
+model AssetLink {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId       String   @map("tenant_id") @db.Uuid
+  fromEntityType String   @map("from_entity_type") @db.VarChar(20)
+  fromEntityId   String   @map("from_entity_id") @db.Uuid
+  toEntityType   String   @map("to_entity_type") @db.VarChar(20)
+  toEntityId     String   @map("to_entity_id") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
+  createdBy      String   @map("created_by") @db.Uuid
+
+  // ADR-0015 / DATA_MODEL.md §6: tenant_id は全テーブル共通で NO ACTION
+  // (DB 自動 cascade を使わず、テナント削除はアプリ層で明示的に行う方針)。他テーブルと揃える。
+  tenant  Tenant @relation(fields: [tenantId], references: [id])
+  creator User   @relation("AssetLinkCreator", fields: [createdBy], references: [id])
+
+  @@index([tenantId, fromEntityType, fromEntityId], map: "idx_asset_links_from")
+  @@index([tenantId, toEntityType, toEntityId], map: "idx_asset_links_to")
+  @@map("asset_links")
 }
 
 // ============================================================

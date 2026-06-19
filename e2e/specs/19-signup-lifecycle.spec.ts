@@ -106,10 +106,13 @@ test.describe('@feature:release-acceptance signup ライフサイクル (払い�
   }
 
   test('TC-RA-22: ナレッジ 作成 → 更新 (API 真値 + /knowledge UI の内容列に反映)', async () => {
+    // v1.3.0 軽量入力 (2026-06-19): public は title + 背景/内容/結果 が必須
     const res = await postOk(page, `/api/projects/${projectId}/knowledge`, {
       title: KNOWLEDGE_TITLE,
       knowledgeType: 'lesson',
+      background: 'E2E 背景',
       content: KNOWLEDGE_CONTENT,
+      result: 'E2E 結果',
       visibility: 'public',
     });
     const knowledgeId = (await res.json()).data.id as string;
@@ -133,12 +136,14 @@ test.describe('@feature:release-acceptance signup ライフサイクル (払い�
   });
 
   test('TC-RA-23/24: リスク + 課題 作成 (API 真値で確認)', async () => {
-    // visibility='public' は superRefine で title + occurrence(考えられる事象/発生事象) が必須
+    // v1.3.0 軽量入力 (2026-06-19): public は title + occurrence/cause/responsePolicy/content が必須
     await postOk(page, `/api/projects/${projectId}/risks`, {
       type: 'risk',
       title: RISK_TITLE,
       content: 'E2E リスク本文',
       occurrence: 'E2E 想定事象',
+      cause: 'E2E 想定原因',
+      responsePolicy: 'E2E 想定対応策',
       impact: 'medium',
       visibility: 'public',
     });
@@ -147,6 +152,8 @@ test.describe('@feature:release-acceptance signup ライフサイクル (払い�
       title: ISSUE_TITLE,
       content: 'E2E 課題本文',
       occurrence: 'E2E 発生事象',
+      cause: 'E2E 直接原因',
+      responsePolicy: 'E2E 対応策',
       impact: 'high',
       visibility: 'public',
     });
@@ -157,10 +164,14 @@ test.describe('@feature:release-acceptance signup ライフサイクル (払い�
 
   test('TC-RA-25: 振り返り 作成 (API 真値で確認)', async () => {
     const today = new Date().toISOString().slice(0, 10);
+    // v1.3.0 軽量入力 (2026-06-19): public は 5 セクション (計画総括/実績総括/良かった点/課題/改善事項) が必須。実施日は任意。
     await postOk(page, `/api/projects/${projectId}/retrospectives`, {
       conductedDate: today,
       planSummary: RETRO_PLAN,
       actualSummary: 'E2E 実績総括',
+      goodPoints: 'E2E 良かった点',
+      problems: 'E2E 課題',
+      improvements: 'E2E 改善事項',
       visibility: 'public',
     });
     await expectListContains(`/api/projects/${projectId}/retrospectives`, RETRO_PLAN);

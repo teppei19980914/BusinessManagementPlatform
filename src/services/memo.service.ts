@@ -24,6 +24,7 @@ import { prisma } from '@/lib/db';
 import { afterSafe } from '@/lib/after-safe';
 import { assertAssigneeTenant } from '@/lib/assignee-validation';
 import { generateAndPersistEntityEmbedding, generateAndPersistBatchEmbeddings } from './embedding.service';
+import { deleteAssetLinksForEntity } from './asset-link.service';
 import type { CreateMemoInput, UpdateMemoInput } from '@/lib/validators/memo';
 
 /**
@@ -266,6 +267,11 @@ export async function updateMemo(
     if (!effectiveTitle || effectiveTitle.trim().length === 0) {
       throw new Error('PUBLIC_REQUIRES_TITLE');
     }
+    // v1.3.0 軽量入力 (2026-06-19): public 化時は本文 (content = Embedding 対象 ∩ UI 入力欄あり) も必須。
+    const effContent = input.content !== undefined ? input.content : existing.content;
+    if (!effContent || effContent.trim().length === 0) {
+      throw new Error('PUBLIC_REQUIRES_FIELDS');
+    }
   }
 
   // feat/asset-assignee-expansion (2026-05-26) severity-1 防御:
@@ -391,7 +397,11 @@ export async function bulkUpdateMemosVisibilityFromList(
   let skippedEmptyTitle = 0;
   if (visibility === 'public') {
     const beforeCount = eligible.length;
-    eligible = eligible.filter((t) => t.title.trim().length > 0);
+    // v1.3.0 軽量入力 (2026-06-19): public 化は title + 本文 (content = Embedding 対象 ∩ UI 入力欄あり) が
+    //   ともに非空の行のみ対象。未充足行は private のまま skip し、単発 update の必須ルールと整合させる。
+    eligible = eligible.filter(
+      (t) => t.title.trim().length > 0 && t.content.trim().length > 0,
+    );
     skippedEmptyTitle = beforeCount - eligible.length;
   }
   const ownedIds = eligible.map((t) => t.id);
@@ -486,6 +496,10 @@ export async function deleteMemo(
       data: { deletedAt: now },
     }),
   ]);
+
+  // v1.3.0 資産導線機能: 削除されたメモに紐づく手動リンクの孤児を除去。
+  //   asset_links はポリモーフィック (FK なし) のため cascade delete が効かない。
+  await deleteAssetLinksForEntity('memo', memoId, viewerTenantId);
 
   // ADR-0025 (2026-05-29): Beginner プラン超過状態からの DELETE で容量キャッシュを即時更新。
   //   循環参照回避のため dynamic import。fail-safe で throw しない (= return true は維持)。

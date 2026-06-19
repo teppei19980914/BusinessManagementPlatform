@@ -86,7 +86,7 @@ stateDiagram-v2
   `not_started` 未着手 / `in_progress` 進行中 / `completed` 完了 / `on_hold` 保留
 - **既定値**: `not_started` (`schema.prisma:749` `@default("not_started")`)
 - **遷移**: 専用の state machine は無く、ユーザが任意の値に直接更新可能 (一方向制約なし)。
-- **制約 / 利用箇所**: 通知 cron が `task_start_due` (ACT の予定開始日当日 AND `status='not_started'`)、`task_end_due` (予定終了日当日 AND `status≠'completed'`) を判定する (`schema.prisma:1388-1389`)。
+- **制約 / 利用箇所**: 通知 cron が `task_end_due` (ACT の予定終了日当日 AND `status≠'completed'`) を判定する (`schema.prisma:1388-1389`)。
 
 ---
 

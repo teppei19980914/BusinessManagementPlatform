@@ -1001,6 +1001,7 @@ describe('recalculateAllProjectWps (ADR-0037 バッチ化)', () => {
     actualEndDate: null,
     status: 'not_started',
     assigneeId: null,
+    assignee: null, // Prisma は assigneeId=null のとき assignee=null を返す
     ...o,
   });
   const actRow = (o: Record<string, unknown> = {}) => ({
@@ -1015,6 +1016,7 @@ describe('recalculateAllProjectWps (ADR-0037 バッチ化)', () => {
     actualEndDate: null,
     status: 'completed',
     assigneeId: 'u-1',
+    assignee: { name: 'テストユーザー' }, // Prisma は assigneeId が設定されていれば { name } を返す
     ...o,
   });
 

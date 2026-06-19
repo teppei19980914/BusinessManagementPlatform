@@ -4,8 +4,7 @@
  * 外部 cron (cron-job.org) で 1 日 1 回実行 (JST 7:00 = UTC 前日 22:00)。
  *
  * 処理内容:
- *   1. ACT (type='activity') の予定開始日/予定終了日リマインダ通知を生成
- *      - 開始: status='not_started' AND plannedStartDate=today (JST)
+ *   1. ACT (type='activity') の予定終了日リマインダ通知を生成
  *      - 終了: status≠'completed' AND plannedEndDate=today (JST)
  *   2. 既読 + readAt > 30 日 の通知を物理削除 (容量管理)
  *

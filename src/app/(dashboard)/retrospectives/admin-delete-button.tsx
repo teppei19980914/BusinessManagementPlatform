@@ -24,7 +24,7 @@ export function AdminRetrospectiveDeleteButton({
 }) {
   const router = useRouter();
   const { withLoading } = useLoading();
-  const { showSuccess, showError } = useToast();
+  const { showSuccessKey, showErrorKey } = useToast();
   const tAction = useTranslations('action');
   const tCommon = useTranslations('common');
   return (
@@ -40,10 +40,10 @@ export function AdminRetrospectiveDeleteButton({
           fetch(`/api/retrospectives/${retroId}`, { method: 'DELETE' }),
         );
         if (!res.ok) {
-          showError('振り返りの削除に失敗しました');
+          showErrorKey('retro.toastDeleteFailed');
           return;
         }
-        showSuccess('振り返りを削除しました');
+        showSuccessKey('retro.toastDeleteSuccess');
         router.refresh();
       }}
     >

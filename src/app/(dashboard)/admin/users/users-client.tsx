@@ -92,6 +92,7 @@ function getUserSortValue(u: UserDTO, columnKey: string): unknown {
 export function UsersClient({ initialUsers, tenantPlan, seatUsageCount, beginnerMaxSeats, dataLoadError = false, currentUserId, initialKeyword = '' }: Props) {
   const tAction = useTranslations('action');
   const t = useTranslations('admin.users');
+  const tSuper = useTranslations('superAdmin');
   const router = useRouter();
   const { withLoading } = useLoading();
   const { showSuccess, showError } = useToast();
@@ -160,12 +161,12 @@ export function UsersClient({ initialUsers, tenantPlan, seatUsageCount, beginner
       } else {
         setError(json.error?.message || t('registrationFailed'));
       }
-      showError('ユーザの登録に失敗しました');
+      showError(tSuper('usersToastRegistrationFailed'));
       return;
     }
 
     setSuccess(true);
-    showSuccess('ユーザを登録し、招待メールを送信しました');
+    showSuccess(tSuper('usersToastRegistrationSuccess'));
     router.refresh();
   }
 
@@ -186,7 +187,7 @@ export function UsersClient({ initialUsers, tenantPlan, seatUsageCount, beginner
       fetch('/api/admin/users/lock-inactive', { method: 'POST' }),
     );
     if (!res.ok) {
-      showError('非アクティブユーザの手動ロックに失敗しました');
+      showError(tSuper('usersToastLockInactiveFailed'));
       return;
     }
     const json = await res.json().catch(() => ({ data: null }));

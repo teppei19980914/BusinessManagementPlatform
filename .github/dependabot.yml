@@ -1,7 +1,8 @@
 # Dependabot 設定 (PR feat/security-auto-update / 2026-05-09, 自動マージ化 2026-06-04)
+# クレジット最適化 2026-06-13: daily→weekly + all-others キャッチオール追加でデプロイ数を削減
 #
 # 目的: ライブラリ / アクションのバージョンを常時最新化し、既知脆弱性 (CVE) の取りこぼしを防ぐ。
-#   github-actions / npm を日次で検知 → PR 起票し、patch / minor は
+#   github-actions / npm を週次で検知 → PR 起票し、patch / minor は
 #   .github/workflows/dependabot-auto-merge.yml が CI green を条件に自動マージする。
 #   major (破壊的変更を含みうる) は自動マージ対象外で、人間が手動レビューする。
 #
@@ -9,22 +10,25 @@
 #   https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
 #
 # 更新スコープ:
-#   - github-actions: 日次 (新しい脆弱性検出ルールをすぐに取り込む)
-#   - npm: 日次 (新バージョンを随時 PR 化。patch/minor は自動マージ、major は手動)
-#   - npm (security only): 即時 PR (ライブラリの CVE 公表時に自動 PR)
+#   - github-actions: 週次月曜 (1PR/週にグループ集約)
+#   - npm: 週次月曜 (機能グループ + キャッチオールで最大5PR/週に抑制。patch/minor は自動マージ、major は手動)
+#
+# デプロイ数見積もり (変更前: ~84回/月 → 変更後: ~20回/月):
+#   github-actions: 1PR/週, npm: next-react/prisma/testing/all-others の最大4PR/週
 
 version: 2
 
 updates:
   # ────────────────────────────────────────────────
-  # GitHub Actions: 日次でアクションバージョンを自動更新
+  # GitHub Actions: 週次でアクションバージョンを自動更新 (全アクションを1PRに集約)
   #   gitleaks-action / codeql-action / pnpm/action-setup / actions/setup-node 等が対象
   #   これにより gitleaks 等の「アクションにバンドルされた検出ルール」が常に最新化される
   # ────────────────────────────────────────────────
   - package-ecosystem: 'github-actions'
     directory: '/'
     schedule:
-      interval: 'daily'
+      interval: 'weekly'
+      day: 'monday'
       time: '03:00'
       timezone: 'Asia/Tokyo'
     labels:
@@ -32,20 +36,21 @@ updates:
       - 'github-actions'
     commit-message:
       prefix: 'chore(actions)'
-    open-pull-requests-limit: 5
-    # patch / minor は dependabot-auto-merge.yml が CI green を条件に自動マージする。
-    # メジャーアップデートは破壊的変更を含むことがあるため自動マージ対象外 (手動レビュー)。
+    open-pull-requests-limit: 3
+    groups:
+      github-actions-all:
+        patterns:
+          - '*'
 
   # ────────────────────────────────────────────────
-  # npm: 日次で全依存を更新 (新バージョンを随時 PR 化)
+  # npm: 週次で全依存を更新 (機能グループ + キャッチオールで PR 数を最小化)
   #   patch/minor は自動マージされるため PR が滞留しない。major のみ手動レビューで残る。
   # ────────────────────────────────────────────────
   - package-ecosystem: 'npm'
     directory: '/'
     schedule:
-      # NOTE: `schedule.day` は `interval: weekly` でのみ valid (公式 schema 制約)。
-      #   daily / monthly では day を指定しない (指定すると validator が fail する)。
-      interval: 'daily'
+      interval: 'weekly'
+      day: 'monday'
       time: '03:00'
       timezone: 'Asia/Tokyo'
     labels:
@@ -53,7 +58,7 @@ updates:
       - 'npm'
     commit-message:
       prefix: 'chore(deps)'
-    open-pull-requests-limit: 10
+    open-pull-requests-limit: 5
     ignore:
       # pdf-parse v2 は破壊的変更 (v1 の `pdf(buffer)→{text}` 廃止 →
       #   `new PDFParse({ data }).getText()`)。src/services/file-text-extraction.service.ts が
@@ -86,3 +91,7 @@ updates:
           - '@vitest/*'
           - '@playwright/*'
           - 'playwright'
+      # 上記グループに属さない全パッケージを1PRに集約 (eslint/prettier/supabase/@types/* 等)
+      all-others:
+        patterns:
+          - '*'

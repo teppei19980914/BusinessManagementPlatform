@@ -9,22 +9,21 @@
  * データ取得: server component で service 直接読み (= SSR で完結)。切替は client から PATCH。
  */
 
+import { getTranslations } from 'next-intl/server';
 import { listManagementSeedCandidates } from '@/services/sample-curation.service';
 import { SeedDataCurationClient } from './seed-data-client';
 
 export const dynamic = 'force-dynamic';
 
 export default async function SeedDataCurationPage() {
+  const t = await getTranslations('superAdmin');
   const candidates = await listManagementSeedCandidates();
 
   return (
     <div className="space-y-6">
-      <h1 className="text-xl font-semibold">スターターデータ キュレーション</h1>
+      <h1 className="text-xl font-semibold">{t('seedDataPageTitle')}</h1>
       <p className="text-sm text-muted-foreground">
-        各テナントが「スターターデータ取込」で複製する見本データ (管理テナントの Project / Knowledge) を管理します。
-        既存サンプルの<strong>内容は通常の編集画面から編集</strong>でき、ここでは
-        <strong>どれをサンプル (取込対象) にするか</strong>を切替えます。
-        課題/リスク・振り返りはサンプルプロジェクト配下に作成すると自動的に取込対象になります。
+        {t.rich('seedDataPageDescription', { strong: (chunks) => <strong>{chunks}</strong> })}
       </p>
       <SeedDataCurationClient initialCandidates={candidates} />
     </div>

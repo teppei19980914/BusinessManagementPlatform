@@ -12,6 +12,8 @@ vi.mock('@/lib/db', () => ({
     },
     // PR #89: deleteMemo が attachment.updateMany を $transaction 内で呼ぶ
     attachment: { updateMany: vi.fn() },
+    // v1.3.0 資産導線機能: deleteMemo が deleteAssetLinksForEntity 経由で呼ぶ (count 読み取りのため既定値必須)
+    assetLink: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
     $transaction: vi.fn((ops: unknown[]) => Promise.all(ops)),
   },
 }));
@@ -362,7 +364,7 @@ describe('bulkUpdateMemosVisibilityFromList', () => {
 
   it('Memo は visibility="public" も受理 (private→public の bulk 公開)', async () => {
     vi.mocked(prisma.memo.findMany).mockResolvedValue([
-      { id: 'memo-1', userId: 'u-1', title: '正しいタイトル' },
+      { id: 'memo-1', userId: 'u-1', title: '正しいタイトル', content: '本文' },
     ] as never);
     vi.mocked(prisma.memo.updateMany).mockResolvedValue({ count: 1 } as never);
 
@@ -376,9 +378,9 @@ describe('bulkUpdateMemosVisibilityFromList', () => {
   //   silent skip + skippedEmptyTitle を返す。
   it('private→public 化時に空タイトルの行はスキップ (個人情報漏洩 + UX 不整合の防止)', async () => {
     vi.mocked(prisma.memo.findMany).mockResolvedValue([
-      { id: 'memo-1', userId: 'u-1', title: '正しいタイトル' },
-      { id: 'memo-empty', userId: 'u-1', title: '' },
-      { id: 'memo-space', userId: 'u-1', title: '   ' },
+      { id: 'memo-1', userId: 'u-1', title: '正しいタイトル', content: '本文' },
+      { id: 'memo-empty', userId: 'u-1', title: '', content: '本文' },
+      { id: 'memo-space', userId: 'u-1', title: '   ', content: '本文' },
     ] as never);
     vi.mocked(prisma.memo.updateMany).mockResolvedValue({ count: 1 } as never);
 
@@ -395,6 +397,22 @@ describe('bulkUpdateMemosVisibilityFromList', () => {
     // updateMany は memo-1 のみが対象
     const call = getMockCallArg(vi.mocked(prisma.memo.updateMany));
     expect(call.where.id.in).toEqual(['memo-1']);
+  });
+
+  // v1.3.0 軽量入力 (2026-06-19): public 化は本文 (content) も非空必須。本文欠落行は skip。
+  it('private→public 化時に本文が空の行はスキップ (v1.3.0)', async () => {
+    vi.mocked(prisma.memo.findMany).mockResolvedValue([
+      { id: 'memo-full', userId: 'u-1', title: 't', content: '本文' },
+      { id: 'memo-nobody', userId: 'u-1', title: 't', content: '' },
+    ] as never);
+    vi.mocked(prisma.memo.updateMany).mockResolvedValue({ count: 1 } as never);
+
+    const r = await bulkUpdateMemosVisibilityFromList(
+      ['memo-full', 'memo-nobody'], 'public', 'u-1', 't-1',
+    );
+
+    expect(r.updatedIds).toEqual(['memo-full']);
+    expect(r.skippedEmptyTitle).toBe(1);
   });
 
   it('private 化 (public→private) の場合は空タイトル行もそのまま通す (制約緩和方向)', async () => {

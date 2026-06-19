@@ -431,18 +431,13 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
                     </div>
                   )}
                   <div className="space-y-2">
-                    <Label>
-                      {tRisk('subject')}
-                      {/* 2026-05-11: 公開範囲 = 自分のみ (draft) なら任意、全メンバー (public) なら必須 */}
-                      {form.visibility === 'draft' && (
-                        <span className="ml-2 text-xs text-muted-foreground">{tRisk('optional')}</span>
-                      )}
-                    </Label>
+                    {/* v1.3.0 軽量入力 (2026-06-19): 件名は draft / public とも常に必須 */}
+                    <Label>{tRisk('subject')}</Label>
                     <Input
                       value={form.title}
                       onChange={(e) => setForm({ ...form, title: e.target.value })}
                       maxLength={100}
-                      required={form.visibility === 'public'}
+                      required
                     />
                   </div>
                   {/* feat/risk-issue-4-section (2026-05-26): 4 セクション化
@@ -465,8 +460,11 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
                   </div>
                   <div className="space-y-2">
                     <Label>
-                      {form.type === 'risk' ? tField('riskCause') : tField('issueCause')}{' '}
-                      <span className="text-xs text-muted-foreground">{tRisk('optional')}</span>
+                      {form.type === 'risk' ? tField('riskCause') : tField('issueCause')}
+                      {/* v1.3.0 軽量入力: public 化時は必須 (Embedding 対象 ∩ UI 入力欄あり) */}
+                      {form.visibility !== 'public' && (
+                        <span className="ml-2 text-xs text-muted-foreground">{tRisk('optional')}</span>
+                      )}
                     </Label>
                     <MarkdownTextarea
                       value={form.cause}
@@ -477,8 +475,11 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
                   </div>
                   <div className="space-y-2">
                     <Label>
-                      {form.type === 'risk' ? tField('riskCountermeasure') : tField('issueCountermeasure')}{' '}
-                      <span className="text-xs text-muted-foreground">{tRisk('optional')}</span>
+                      {form.type === 'risk' ? tField('riskCountermeasure') : tField('issueCountermeasure')}
+                      {/* v1.3.0 軽量入力: public 化時は必須 (Embedding 対象 ∩ UI 入力欄あり) */}
+                      {form.visibility !== 'public' && (
+                        <span className="ml-2 text-xs text-muted-foreground">{tRisk('optional')}</span>
+                      )}
                     </Label>
                     <MarkdownTextarea
                       value={form.responsePolicy}
@@ -489,8 +490,11 @@ export function RisksClient({ projectId, risks, members, canCreate, currentUserI
                   </div>
                   <div className="space-y-2">
                     <Label>
-                      {tField('memo')}{' '}
-                      <span className="text-xs text-muted-foreground">{tRisk('optional')}</span>
+                      {tField('memo')}
+                      {/* v1.3.0 軽量入力: public 化時は必須 (Embedding 対象 ∩ UI 入力欄あり) */}
+                      {form.visibility !== 'public' && (
+                        <span className="ml-2 text-xs text-muted-foreground">{tRisk('optional')}</span>
+                      )}
                     </Label>
                     <MarkdownTextarea
                       value={form.content}

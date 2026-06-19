@@ -3,11 +3,10 @@ import { z } from 'zod/v4';
 /**
  * 通知 type の列挙 (PR feat/notifications-mvp)。
  *
- * MVP は ACT の予定日リマインダ 2 種のみ。将来コメント @mention 等が増える想定で
+ * MVP は ACT の予定終了日リマインダ 1 種のみ (v1.3.0 で開始日通知廃止)。将来コメント @mention 等が増える想定で
  * `as const` で型安全に拡張。
  */
 export const NOTIFICATION_TYPES = [
-  'task_start_due', // ACT の予定開始日当日 (status='not_started')
   'task_end_due', // ACT の予定終了日当日 (status≠'completed')
   'comment_mention', // コメント本文の @username で言及 (PR feat/comment-mentions)
 ] as const;

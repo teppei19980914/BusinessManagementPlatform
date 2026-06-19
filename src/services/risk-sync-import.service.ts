@@ -250,7 +250,13 @@ export function parseRiskSyncImportCsv(csvText: string): RiskSyncImportRow[] {
     const result = COL.result >= 0 ? ((fields[COL.result] ?? '').trim() || null) : null;
     const lessonLearned = COL.lessonLearned >= 0 ? ((fields[COL.lessonLearned] ?? '').trim() || null) : null;
     const visibilityRaw = (fields[COL.visibility] ?? '').trim();
-    const visibility = (VALID_VISIBILITIES.has(visibilityRaw) ? visibilityRaw : 'public') as 'draft' | 'public';
+    let visibility = (VALID_VISIBILITIES.has(visibilityRaw) ? visibilityRaw : 'public') as 'draft' | 'public';
+    // v1.3.0 軽量入力 (2026-06-19): 本文 (occurrence/content/cause/responsePolicy) が全て空の public は
+    //   draft へ降格する (実質件名のみ公開を防ぐ)。UI 作成/更新は全必須だが、import は旧 16 列形式
+    //   (occurrence 列なし) や過去資産を救うため「本文が全く無い public のみ降格」の緩和ルールを採る。
+    if (visibility === 'public' && !occurrence && !content && !cause && !responsePolicy) {
+      visibility = 'draft';
+    }
     const natureRaw = (fields[COL.riskNature] ?? '').trim();
     const riskNature = VALID_NATURES.has(natureRaw) ? (natureRaw as 'threat' | 'opportunity') : null;
 

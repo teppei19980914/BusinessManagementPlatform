@@ -205,7 +205,7 @@ export function KnowledgeClient({ initialKnowledge, systemRole, initialKeyword =
                     >
                       {k.projectName}
                       {k.linkedProjectCount > 1 && (
-                        <span className="ml-1 text-xs text-muted-foreground">+{k.linkedProjectCount - 1} 他</span>
+                        <span className="ml-1 text-xs text-muted-foreground">{tKnowledge('linkedMoreSuffix', { count: k.linkedProjectCount - 1 })}</span>
                       )}
                     </Link>
                   ) : (
@@ -213,7 +213,7 @@ export function KnowledgeClient({ initialKnowledge, systemRole, initialKeyword =
                       {k.projectName}
                       {k.projectDeleted && <span className="ml-1 text-xs text-destructive">{tKnowledge('deleted')}</span>}
                       {k.linkedProjectCount > 1 && (
-                        <span className="ml-1 text-xs text-muted-foreground">+{k.linkedProjectCount - 1} 他</span>
+                        <span className="ml-1 text-xs text-muted-foreground">{tKnowledge('linkedMoreSuffix', { count: k.linkedProjectCount - 1 })}</span>
                       )}
                     </span>
                   )}

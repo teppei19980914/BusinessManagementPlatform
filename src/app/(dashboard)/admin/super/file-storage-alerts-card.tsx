@@ -10,6 +10,7 @@
  * 設計参考: db-capacity-alerts-card.tsx と同パターン (= 視覚的統一感)
  */
 
+import { getTranslations } from 'next-intl/server';
 import { prisma } from '@/lib/db';
 import {
   FILE_STORAGE_DRIFT_WARNING_RATIO,
@@ -36,14 +37,21 @@ function formatBytes(bytes: bigint): string {
   return `${n} B`;
 }
 
-const LEVEL_LABELS: Record<FileStorageWarningLevel, { label: string; color: string }> = {
-  none: { label: '正常', color: 'text-gray-600' },
-  l1: { label: 'L1 警告 (1GB)', color: 'text-blue-700 bg-blue-50' },
-  l2: { label: 'L2 警告 (10GB)', color: 'text-yellow-700 bg-yellow-50' },
-  l3: { label: 'L3 (50GB 到達/Compute 増強検討)', color: 'text-red-700 bg-red-50' },
+const LEVEL_COLORS: Record<FileStorageWarningLevel, string> = {
+  none: 'text-gray-600',
+  l1: 'text-blue-700 bg-blue-50',
+  l2: 'text-yellow-700 bg-yellow-50',
+  l3: 'text-red-700 bg-red-50',
+};
+const LEVEL_LABEL_KEYS: Record<FileStorageWarningLevel, string> = {
+  none: 'alertsLevelNone',
+  l1: 'alertsLevelL1',
+  l2: 'alertsLevelL2',
+  l3: 'alertsLevelL3',
 };
 
 export async function FileStorageAlertsCard() {
+  const t = await getTranslations('superAdmin');
   const session = await auth();
   if (!session?.user || !isSuperAdmin(session.user)) {
     return null;
@@ -86,9 +94,9 @@ export async function FileStorageAlertsCard() {
         : 'text-green-700 bg-green-50';
 
   // 3. anomaly: 24h で +5GB 以上のテナント (= 表示中の上位 20 件から抽出)
-  const anomalyTenants = alertTenants.filter((t) => {
-    if (t.storageFileBytesYesterday == null) return false;
-    return t.storageFileBytesUsed - t.storageFileBytesYesterday >= BigInt(FILE_STORAGE_ANOMALY_DAILY_INCREASE_BYTES);
+  const anomalyTenants = alertTenants.filter((tenant) => {
+    if (tenant.storageFileBytesYesterday == null) return false;
+    return tenant.storageFileBytesUsed - tenant.storageFileBytesYesterday >= BigInt(FILE_STORAGE_ANOMALY_DAILY_INCREASE_BYTES);
   });
 
   return (
@@ -97,21 +105,21 @@ export async function FileStorageAlertsCard() {
       aria-labelledby="file-storage-alerts-title"
     >
       <h2 id="file-storage-alerts-title" className="mb-4 text-lg font-semibold text-gray-900">
-        ファイルストレージ アラート (ADR-0021)
+        {t('fileStorageAlertsTitle')}
       </h2>
 
       <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
         <div className={`rounded p-3 ${driftColor}`}>
-          <div className="text-xs font-medium">drift 検知</div>
+          <div className="text-xs font-medium">{t('driftDetectionLabel')}</div>
           <div className="mt-1 text-lg font-semibold">
             {(drift.driftRatio * 100).toFixed(1)}%
           </div>
           <div className="text-xs">
             {drift.driftLevel === 'critical'
-              ? `≥${FILE_STORAGE_DRIFT_CRITICAL_RATIO * 100}% 重大 (計測漏れの疑い)`
+              ? t('driftRangeCritical', { ratio: FILE_STORAGE_DRIFT_CRITICAL_RATIO * 100 })
               : drift.driftLevel === 'warning'
-                ? `≥${FILE_STORAGE_DRIFT_WARNING_RATIO * 100}% 警告 (要調査)`
-                : '正常範囲'}
+                ? t('driftRangeWarning', { ratio: FILE_STORAGE_DRIFT_WARNING_RATIO * 100 })
+                : t('driftRangeNormal')}
           </div>
         </div>
         <div>
@@ -121,7 +129,7 @@ export async function FileStorageAlertsCard() {
           </div>
         </div>
         <div>
-          <div className="text-xs font-medium text-gray-500">storage.objects 実容量</div>
+          <div className="text-xs font-medium text-gray-500">{t('fileStorageObjectsActualSize')}</div>
           <div className="mt-1 text-lg font-semibold text-gray-900">
             {formatBytes(drift.bucketSumBytes)}
           </div>
@@ -130,32 +138,36 @@ export async function FileStorageAlertsCard() {
 
       {anomalyTenants.length > 0 && (
         <div className="mb-4 rounded border border-orange-200 bg-orange-50 p-3 text-sm text-orange-700">
-          ⚠️ <strong>{anomalyTenants.length} 件</strong> のテナントで 24h 内に +
-          {FILE_STORAGE_ANOMALY_DAILY_INCREASE_BYTES / SI_GB_BYTES}GB 以上の急増を検知。乱用 / 大量バッチ投入の可能性。
+          {'⚠️ '}
+          {t.rich('fileStorageAnomalyWarning', {
+            count: anomalyTenants.length,
+            gb: FILE_STORAGE_ANOMALY_DAILY_INCREASE_BYTES / SI_GB_BYTES,
+            strong: (chunks) => <strong>{chunks}</strong>,
+          })}
         </div>
       )}
 
       <div>
         <h3 className="mb-2 text-sm font-medium text-gray-700">
-          警告レベルテナント ({alertTenants.length} 件)
+          {t('warningTenantsTitle', { count: alertTenants.length })}
         </h3>
         {alertTenants.length === 0 ? (
           <p className="text-sm text-gray-500">
-            現在、警告レベル (L1 以上) に達しているテナントはありません。
+            {t('noWarningTenants')}
           </p>
         ) : (
           <table className="w-full text-sm">
             <thead className="border-b border-gray-200 text-left text-xs text-gray-500">
               <tr>
-                <th className="pb-2 pr-2">テナント</th>
+                <th className="pb-2 pr-2">{t('colTenant')}</th>
                 <th className="pb-2 pr-2">Level</th>
-                <th className="pb-2 pr-2 text-right">月中 peak</th>
-                <th className="pb-2">peak 到達日時</th>
+                <th className="pb-2 pr-2 text-right">{t('colMonthPeak')}</th>
+                <th className="pb-2">{t('colPeakReachedAt')}</th>
               </tr>
             </thead>
             <tbody>
-              {alertTenants.map((t) => {
-                const rawLevel = t.fileStorageWarningLevel;
+              {alertTenants.map((tenant) => {
+                const rawLevel = tenant.fileStorageWarningLevel;
                 const safeLevel: FileStorageWarningLevel = isValidWarningLevel(rawLevel)
                   ? rawLevel
                   : 'none';
@@ -163,36 +175,37 @@ export async function FileStorageAlertsCard() {
                   recordError({
                     severity: 'warn',
                     source: 'server',
-                    message: `[file-storage-alerts] invalid fileStorageWarningLevel (tenant=${t.id})`,
+                    message: `[file-storage-alerts] invalid fileStorageWarningLevel (tenant=${tenant.id})`,
                     context: {
                       kind: 'file_storage_alerts_invalid_level',
-                      tenantId: t.id,
+                      tenantId: tenant.id,
                       rawLevel,
                     },
                   }).catch(() => {});
                 }
-                const labelInfo = LEVEL_LABELS[safeLevel];
+                const levelColor = LEVEL_COLORS[safeLevel];
+                const levelLabel = t(LEVEL_LABEL_KEYS[safeLevel]);
                 return (
-                  <tr key={t.id} className="border-b border-gray-100">
+                  <tr key={tenant.id} className="border-b border-gray-100">
                     <td className="py-2 pr-2">
-                      <div className="font-medium">{t.name}</div>
+                      <div className="font-medium">{tenant.name}</div>
                       <div className="text-xs text-gray-500">
-                        #{t.tenantSeq ?? '—'} / {t.slug}
+                        #{tenant.tenantSeq ?? '—'} / {tenant.slug}
                       </div>
                     </td>
                     <td className="py-2 pr-2">
                       <span
-                        className={`rounded px-2 py-0.5 text-xs font-medium ${labelInfo.color}`}
+                        className={`rounded px-2 py-0.5 text-xs font-medium ${levelColor}`}
                       >
-                        {labelInfo.label}
+                        {levelLabel}
                       </span>
                     </td>
                     <td className="py-2 pr-2 text-right font-mono">
-                      {formatBytes(t.storageFileBytesPeakThisMonth)}
+                      {formatBytes(tenant.storageFileBytesPeakThisMonth)}
                     </td>
                     <td className="py-2 text-xs text-gray-600">
-                      {t.storageFileBytesPeakAt
-                        ? t.storageFileBytesPeakAt.toLocaleString('ja-JP', {
+                      {tenant.storageFileBytesPeakAt
+                        ? tenant.storageFileBytesPeakAt.toLocaleString('ja-JP', {
                             timeZone: 'Asia/Tokyo',
                           })
                         : '—'}

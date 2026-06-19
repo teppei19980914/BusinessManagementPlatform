@@ -15,6 +15,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import { useToast } from '@/components/toast-provider';
 import { Button } from '@/components/ui/button';
 
@@ -28,14 +29,12 @@ export function ConfirmPaymentButton({
   tenantName,
 }: ConfirmPaymentButtonProps) {
   const router = useRouter();
+  const t = useTranslations('superAdmin');
   const { showSuccess, showError } = useToast();
   const [submitting, setSubmitting] = useState(false);
 
   const handleClick = async () => {
-    const confirmMsg
-      = `「${tenantName}」の請求を入金確認済 (paid) にしますか?\n\n`
-      + 'OK で「今日付け」、Cancel で操作中止。\n'
-      + '（過去日に遡って消込する場合は別画面 / SQL で対応予定）';
+    const confirmMsg = t('confirmPaymentConfirm', { name: tenantName });
     if (!window.confirm(confirmMsg)) return;
 
     setSubmitting(true);
@@ -48,13 +47,13 @@ export function ConfirmPaymentButton({
         | { error?: { message?: string } }
         | null;
       if (!res.ok) {
-        showError(json?.error?.message ?? '消込に失敗しました');
+        showError(json?.error?.message ?? t('confirmPaymentErrorDefault'));
         return;
       }
-      showSuccess('入金確認済に更新しました');
+      showSuccess(t('confirmPaymentToastSuccess'));
       router.refresh();
     } catch {
-      showError('通信エラー');
+      showError(t('confirmPaymentNetworkError'));
     } finally {
       setSubmitting(false);
     }
@@ -68,7 +67,7 @@ export function ConfirmPaymentButton({
       onClick={handleClick}
       disabled={submitting}
     >
-      {submitting ? '処理中…' : '入金確認'}
+      {submitting ? t('confirmPaymentProcessing') : t('confirmPaymentSubmit')}
     </Button>
   );
 }
