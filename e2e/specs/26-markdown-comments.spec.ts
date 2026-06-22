@@ -52,12 +52,14 @@ test.describe('@feature:comment:markdown コメント Markdown レンダリン�
 
     await addProjectMemberViaApi(page, { projectId, userId: adminUserId, projectRole: 'pm_tl' });
 
-    // ナレッジを作成
+    // ナレッジを作成 (visibility='public' は background/content/result が必須)
     const kRes = await page.request.post(`/api/projects/${projectId}/knowledge`, {
       data: {
         title: KNOWLEDGE_TITLE,
         knowledgeType: 'lesson',
+        background: 'Markdown コメント機能の E2E 検証用ナレッジ',
         content: 'Markdown コメント E2E 用ナレッジ',
+        result: 'Markdown が正しくレンダリングされることを確認する',
         visibility: 'public',
       },
     });

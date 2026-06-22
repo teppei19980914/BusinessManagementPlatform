@@ -19,10 +19,10 @@ describe('createTaskSchema - アクティビティ', () => {
     expect(createTaskSchema.safeParse({ ...validActivity, name: '' }).success).toBe(false);
   });
 
-  it('担当者が必須', () => {
+  it('担当者はオプション（未スケジュールタスクを許容）', () => {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { assigneeId, ...noAssignee } = validActivity;
-    expect(createTaskSchema.safeParse(noAssignee).success).toBe(false);
+    const { assigneeId, plannedStartDate, plannedEndDate, plannedEffort, ...unscheduled } = validActivity;
+    expect(createTaskSchema.safeParse(unscheduled).success).toBe(true);
   });
 
   it('予定工数が0以下の場合を拒否する', () => {

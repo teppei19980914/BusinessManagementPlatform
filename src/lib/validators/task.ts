@@ -29,8 +29,8 @@ export const createWorkPackageSchema = z.object({
 
 /**
  * アクティビティ作成スキーマ
- * - 担当者必須（実作業ノード）
- * - 日付・工数を直接入力
+ * - 担当者・日付・工数はオプション（未スケジュールタスクを許容: カンバン未スケジュール行に表示）
+ * - 日付・工数は後からドラッグ&ドロップや編集で設定可
  */
 export const createActivitySchema = z.object({
   type: z.literal('activity'),
@@ -38,10 +38,10 @@ export const createActivitySchema = z.object({
   wbsNumber: z.string().max(50).optional(),
   name: z.string().min(1, 'アクティビティ名を入力してください').max(100),
   description: z.string().max(2000).optional(),
-  assigneeId: z.string().uuid('担当者を選択してください'),
-  plannedStartDate: z.string().regex(dateRegex, '日付形式が不正です'),
-  plannedEndDate: z.string().regex(dateRegex, '日付形式が不正です'),
-  plannedEffort: z.number().positive('予定工数は正の数で入力してください'),
+  assigneeId: z.string().uuid('担当者のIDが不正です').optional().nullable(),
+  plannedStartDate: z.string().regex(dateRegex, '日付形式が不正です').optional().nullable(),
+  plannedEndDate: z.string().regex(dateRegex, '日付形式が不正です').optional().nullable(),
+  plannedEffort: z.number().positive('予定工数は正の数で入力してください').optional(),
   priority: z.enum(['low', 'medium', 'high']).optional(),
   isMilestone: z.boolean().optional(),
   includeWeekends: z.boolean().optional(),
