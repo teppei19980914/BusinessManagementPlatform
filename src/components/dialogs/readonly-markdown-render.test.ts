@@ -135,3 +135,49 @@ describe('readOnly モードで Markdown プレビューが効かない回帰バ
     );
   });
 });
+
+/**
+ * v1.4.0 横展開 Markdown 表示退行防止テスト。
+ *
+ * コメント以外で MarkdownDisplay を導入した箇所が
+ * 将来の編集で linkifyNodes 直挿入に戻らないことを担保する。
+ */
+describe('v1.4.0 横展開 Markdown 表示退行防止', () => {
+  it('SystemBannerBar が MarkdownDisplay を import して使用している', () => {
+    const src = readFileSync(
+      join(DIALOG_DIR, '../../components/system-banner-bar.tsx'),
+      'utf8',
+    );
+    expect(src).toMatch(
+      /import\s+\{[^}]*\bMarkdownDisplay\b[^}]*\}\s+from\s+['"]@\/components\/ui\/markdown-textarea['"]/,
+    );
+    expect(src).toMatch(/<MarkdownDisplay\b/);
+    // linkifyNodes を直接 import していないこと (MarkdownDisplay 内部経路のみで使う)
+    expect(src).not.toMatch(/import\s+\{[^}]*\blinkifyNodes\b[^}]*\}\s+from/);
+  });
+
+  it('CustomerDetailClient が MarkdownDisplay と MarkdownTextarea を import して使用している', () => {
+    const src = readFileSync(
+      join(DIALOG_DIR, '../../app/(dashboard)/customers/[customerId]/customer-detail-client.tsx'),
+      'utf8',
+    );
+    expect(src).toMatch(
+      /import\s+\{[^}]*\bMarkdownDisplay\b[^}]*\}\s+from\s+['"]@\/components\/ui\/markdown-textarea['"]/,
+    );
+    expect(src).toMatch(/<MarkdownDisplay\b/);
+    expect(src).toMatch(/<MarkdownTextarea\b/);
+    // linkifyNodes を直接 import していないこと
+    expect(src).not.toMatch(/import\s+\{[^}]*\blinkifyNodes\b[^}]*\}\s+from/);
+  });
+
+  it('BannersListClient が MarkdownDisplay を import して使用している', () => {
+    const src = readFileSync(
+      join(DIALOG_DIR, '../../app/(dashboard)/admin/super/banners/banners-list-client.tsx'),
+      'utf8',
+    );
+    expect(src).toMatch(
+      /import\s+\{[^}]*\bMarkdownDisplay\b[^}]*\}\s+from\s+['"]@\/components\/ui\/markdown-textarea['"]/,
+    );
+    expect(src).toMatch(/<MarkdownDisplay\b/);
+  });
+});

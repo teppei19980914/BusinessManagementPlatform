@@ -1,6 +1,17 @@
 import { z } from 'zod/v4';
+import { isWeekendOrHoliday } from '@/lib/jp-holidays';
 
 const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+
+/** includeWeekends=false のとき、日付が土日祝日でないかを検証する。*/
+function validateNotWeekendIfNeeded(
+  date: string | null | undefined,
+  includeWeekends: boolean | null | undefined,
+): boolean {
+  if (includeWeekends === true) return true; // オンなら土日祝OK
+  if (!date) return true; // 日付なしはOK（必須チェックは別）
+  return !isWeekendOrHoliday(date);
+}
 
 /**
  * ワークパッケージ作成スキーマ
@@ -33,8 +44,15 @@ export const createActivitySchema = z.object({
   plannedEffort: z.number().positive('予定工数は正の数で入力してください'),
   priority: z.enum(['low', 'medium', 'high']).optional(),
   isMilestone: z.boolean().optional(),
+  includeWeekends: z.boolean().optional(),
   notes: z.string().max(1000).optional(),
-});
+}).refine(
+  (v) => validateNotWeekendIfNeeded(v.plannedStartDate, v.includeWeekends),
+  { message: '「土日祝日を含める」がオフの場合、開始予定日に土日祝日は設定できません', path: ['plannedStartDate'] },
+).refine(
+  (v) => validateNotWeekendIfNeeded(v.plannedEndDate, v.includeWeekends),
+  { message: '「土日祝日を含める」がオフの場合、終了予定日に土日祝日は設定できません', path: ['plannedEndDate'] },
+);
 
 /**
  * 統合作成スキーマ（type で分岐）
@@ -62,8 +80,15 @@ export const updateTaskSchema = z.object({
   status: z.enum(['not_started', 'in_progress', 'completed', 'on_hold']).optional(),
   progressRate: z.number().int().min(0).max(100).optional(),
   isMilestone: z.boolean().optional(),
+  includeWeekends: z.boolean().optional(),
   notes: z.string().max(1000).optional().nullable(),
-});
+}).refine(
+  (v) => validateNotWeekendIfNeeded(v.plannedStartDate, v.includeWeekends),
+  { message: '「土日祝日を含める」がオフの場合、開始予定日に土日祝日は設定できません', path: ['plannedStartDate'] },
+).refine(
+  (v) => validateNotWeekendIfNeeded(v.plannedEndDate, v.includeWeekends),
+  { message: '「土日祝日を含める」がオフの場合、終了予定日に土日祝日は設定できません', path: ['plannedEndDate'] },
+);
 
 export const updateProgressSchema = z.object({
   progressRate: z.number().int().min(0).max(100, '進捗率は0〜100で入力してください'),

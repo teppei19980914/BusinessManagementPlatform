@@ -9,6 +9,7 @@
  */
 
 import Link from 'next/link';
+import { getTranslations } from 'next-intl/server';
 import type { SystemRole } from '@/config/master-data';
 
 export interface DegradedModeBannerProps {
@@ -25,7 +26,8 @@ export interface DegradedModeBannerProps {
   systemRole: SystemRole;
 }
 
-export function DegradedModeBanner({ reason, systemRole }: DegradedModeBannerProps) {
+export async function DegradedModeBanner({ reason, systemRole }: DegradedModeBannerProps) {
+  const t = await getTranslations('degradedBanner');
   const isAdminLike = systemRole === 'admin' || systemRole === 'super_admin';
   const isEmbeddingReason =
     reason === 'embedding_budget_exceeded' || reason === 'embedding_beginner_limit_exceeded';
@@ -33,15 +35,15 @@ export function DegradedModeBanner({ reason, systemRole }: DegradedModeBannerPro
   const headline = (() => {
     switch (reason) {
       case 'beginner_limit_exceeded':
-        return 'Beginner プランの LLM 呼び出し上限に達しています';
+        return t('headlineLlmBeginner');
       case 'budget_exceeded':
-        return 'LLM 月次予算上限に達しています';
+        return t('headlineLlmBudget');
       case 'embedding_beginner_limit_exceeded':
-        return 'Beginner プランの Embedding 月次試用上限に達しています';
+        return t('headlineEmbeddingBeginner');
       case 'embedding_budget_exceeded':
-        return 'Embedding 月次予算上限に達しています';
+        return t('headlineEmbeddingBudget');
       default:
-        return 'API 呼び出しが一時停止しています';
+        return t('headlineDefault');
     }
   })();
 
@@ -49,11 +51,11 @@ export function DegradedModeBanner({ reason, systemRole }: DegradedModeBannerPro
   //   を明示。LLM 縮退時は従来通り提案エンジンの縮退モード重み再配分を明示。
   const detail = isEmbeddingReason
     ? isAdminLike
-      ? '新規 embedding 生成のみ停止、既存 embedding でのチャット検索・提案エンジンは継続。月初 backfill で次月補填されます。「設定 → テナント → 使用量タブ」から復活できます。'
-      : '新規 embedding 生成のみ停止、既存検索は継続しています。早期復活が必要な場合はテナント管理者にご相談ください。'
+      ? t('detailEmbeddingAdmin')
+      : t('detailEmbeddingUser')
     : isAdminLike
-      ? '提案機能はタグ:テキスト=5:5 で動作中。embedding 生成は停止しています。「設定 → テナント」から復活できます。'
-      : '提案機能はタグ:テキスト=5:5 で動作中。embedding 生成は停止しています。早期復活が必要な場合はテナント管理者にご相談ください。';
+      ? t('detailLlmAdmin')
+      : t('detailLlmUser');
 
   return (
     <div
@@ -62,14 +64,14 @@ export function DegradedModeBanner({ reason, systemRole }: DegradedModeBannerPro
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p>
-          <strong>⚠ 縮退モード起動中:</strong> {headline} — {detail}
+          <strong>{t('bannerStrong')}</strong> {headline} — {detail}
         </p>
         {isAdminLike && (
           <Link
             href="/settings/tenant"
             className="rounded border border-amber-400 bg-white px-2 py-1 text-xs font-medium hover:bg-amber-100 dark:bg-amber-900/50 dark:hover:bg-amber-900/70"
           >
-            テナント設定を開く
+            {t('openSettings')}
           </Link>
         )}
       </div>

@@ -41,34 +41,29 @@ type Props = {
   userName: string;
 };
 
-const ROLE_LABEL: Record<GuideRole, string> = {
-  admin: 'テナント管理者',
-  pm: 'PM / PL (プロジェクト管理者)',
-  member: '一般メンバー',
-  viewer: '閲覧者',
-};
-
 export function GuideClient({ role, systemRole, userName }: Props) {
+  const t = useTranslations('guide');
   const tNav = useTranslations('nav');
+  const r = t.rich.bind(t);
   const discord = getDiscordInviteUrl();
   // admin/pm 向けには AI ロジックや課金関連の用語まで含める。member/viewer には含めない。
   const showAdvancedTerms = role === 'admin' || role === 'pm';
   const displayRoleLabel =
-    systemRole === 'super_admin' ? 'システム管理者 (プラットフォーム運営者)' : ROLE_LABEL[role];
+    systemRole === 'super_admin'
+      ? t('roleLabelSuperAdmin')
+      : t(`roleLabel.${role}` as `roleLabel.${GuideRole}`);
 
   return (
     <div className="mx-auto max-w-5xl space-y-10 pb-12">
       {/* ヘッダ */}
       <header className="space-y-2">
-        <h1 className="text-2xl font-bold">使い方ガイド</h1>
+        <h1 className="text-2xl font-bold">{t('header.title')}</h1>
         <p className="text-sm text-muted-foreground">
-          {userName ? `${userName} さん、` : ''}
-          ようこそ。たすきば Knowledge Relay は「過去のプロジェクトの教訓を{' '}
-          <strong>次のプロジェクトで自動的に再利用</strong>
-          する」ことを目指す業務マネジメントプラットフォームです。
+          {userName && t('header.greetingUser', { userName })}
+          {r('header.description', { strong: (c) => <strong key="s">{c}</strong> })}
         </p>
         <p className="inline-flex items-center gap-2 rounded-md border bg-info/5 px-3 py-1 text-xs">
-          <span className="text-muted-foreground">あなたのロール:</span>
+          <span className="text-muted-foreground">{t('header.yourRole')}</span>
           <strong>{displayRoleLabel}</strong>
         </p>
       </header>
@@ -79,12 +74,9 @@ export function GuideClient({ role, systemRole, userName }: Props) {
 
       {/* 1. サービスの全体像 (視覚化) */}
       <section id="overview" className="space-y-4">
-        <h2 className="text-xl font-semibold">サービスの全体像</h2>
+        <h2 className="text-xl font-semibold">{t('overview.title')}</h2>
         <p className="text-sm">
-          プロジェクトを進めると「<strong>過去にも同じ判断をした</strong>」
-          「<strong>同じ課題で詰まった</strong>」が繰り返されます。本サービスは
-          WBS / リスク / 課題 / 振り返り / ナレッジ を 1 つの空間で扱い、
-          新しいプロジェクトに <strong>類似の過去事例を自動で提示</strong> することでこの繰り返しを断ちます。
+          {r('overview.description', { strong: (c) => <strong key={String(c).slice(0, 4)}>{c}</strong> })}
         </p>
 
         {/* フロー図: 4 ステップ (横並び、矢印付き) */}
@@ -96,7 +88,7 @@ export function GuideClient({ role, systemRole, userName }: Props) {
 
       {/* 2. あなたのやること (ユーザのロール用セクションのみ表示) */}
       <section id="your-work" className="space-y-3">
-        <h2 className="text-xl font-semibold">あなたのやること</h2>
+        <h2 className="text-xl font-semibold">{t('yourWork.title')}</h2>
         {role === 'admin' && <AdminActions systemRole={systemRole} />}
         {role === 'pm' && <PmActions />}
         {role === 'member' && <MemberActions />}
@@ -105,52 +97,43 @@ export function GuideClient({ role, systemRole, userName }: Props) {
 
       {/* 3. 用語集 (ロールに応じて項目数を絞る) */}
       <section id="glossary" className="space-y-3">
-        <h2 className="text-xl font-semibold">用語集</h2>
-        <p className="text-sm text-muted-foreground">
-          Ctrl+F (Cmd+F) でキーワード検索できます。
-        </p>
+        <h2 className="text-xl font-semibold">{t('glossary.title')}</h2>
+        <p className="text-sm text-muted-foreground">{t('glossary.searchHint')}</p>
         <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           {/* 全ロール共通の基本用語 */}
-          <GlossaryItem term="プロジェクト">
-            業務の最上位単位。1 つのプロジェクト配下に WBS / リスク / 課題 / 振り返り / ナレッジ等がぶら下がります。
+          <GlossaryItem term={t('glossary.termProject')}>
+            {t('glossary.defProject')}
           </GlossaryItem>
-          <GlossaryItem term="WBS / WP / Activity">
-            プロジェクトの作業を <strong>WP (作業パッケージ)</strong> →{' '}
-            <strong>Activity (実作業)</strong> の階層で分解したもの。担当者・予定工数は Activity に付与します。
+          <GlossaryItem term={t('glossary.termWbs')}>
+            {r('glossary.defWbs', { strong: (c) => <strong key={String(c).slice(0, 3)}>{c}</strong> })}
           </GlossaryItem>
-          <GlossaryItem term="進捗確認 (旧称: ガントチャート)">
-            タスクを時間軸で並べた工程表 (ガント表示) と、担当者ごとの直近の状況をまとめたボード (担当者別確認) で進捗を可視化する画面。期日超過・並列稼働を視覚的に把握できます。
+          <GlossaryItem term={t('glossary.termGantt')}>
+            {t('glossary.defGantt')}
           </GlossaryItem>
-          <GlossaryItem term="リスク / 課題">
-            リスク = まだ発生していない潜在的な障害。課題 = すでに発生したブロッカー。
+          <GlossaryItem term={t('glossary.termRiskIssue')}>
+            {t('glossary.defRiskIssue')}
           </GlossaryItem>
-          <GlossaryItem term="振り返り / ナレッジ">
-            振り返り = プロジェクト後の KPT 形式での内省。ナレッジ = 業務知識を独立した文書にしたもの。
+          <GlossaryItem term={t('glossary.termRetroKnowledge')}>
+            {t('glossary.defRetroKnowledge')}
           </GlossaryItem>
-          <GlossaryItem term="メンション (@)">
-            コメント中で <code>@ユーザ名</code> を入力するとそのユーザに通知が届きます。
+          <GlossaryItem term={t('glossary.termMention')}>
+            {r('glossary.defMention', { code: (c) => <code key="c">{c}</code> })}
           </GlossaryItem>
-          <GlossaryItem term="たすきフクロウ (チャット意味検索)">
-            全画面右下に常駐する公式マスコット「たすきフクロウ」アイコン。クリックするとチャットパネルが開き、
-            <strong>自然文で過去資産を相談</strong> できます。LINE / Teams 風の吹き出し UI で、
-            フクロウが Project / Knowledge / Risk / Issue / Retrospective / Memo / 添付ファイル
-            を横断検索して提案を返します (全プラン無料・無制限)。
+          <GlossaryItem term={t('glossary.termOwl')}>
+            {r('glossary.defOwl', { strong: (c) => <strong key="s">{c}</strong> })}
           </GlossaryItem>
 
           {/* admin/pm のみに表示する高度な用語 */}
           {showAdvancedTerms && (
             <>
-              <GlossaryItem term="提案エンジン (参考タブ)">
-                プロジェクトの内容に類似した過去のリスク・課題・ナレッジを <strong>自動で抽出</strong>
-                して提示する機能。Pro プランでは AI による「なぜ参考になるか」の説明文も付きます。
+              <GlossaryItem term={t('glossary.termSuggestion')}>
+                {r('glossary.defSuggestion', { strong: (c) => <strong key="s">{c}</strong> })}
               </GlossaryItem>
-              <GlossaryItem term="テナント">
-                <strong>会社・組織</strong> 単位の最上位区切り。テナント間でデータは完全に分離されます。
+              <GlossaryItem term={t('glossary.termTenant')}>
+                {r('glossary.defTenant', { strong: (c) => <strong key="s">{c}</strong> })}
               </GlossaryItem>
-              <GlossaryItem term="プラン (Beginner / Expert / Pro)">
-                <strong>Beginner</strong> = 無料・5 席まで (プロジェクト作成・更新 月 50 回まで)。
-                <strong>Expert</strong> = 席数無制限・プロジェクト作成・更新 ¥10/回。
-                <strong>Pro</strong> = 席数無制限・¥15/回 + AI 説明文付き提案。
+              <GlossaryItem term={t('glossary.termPlan')}>
+                {r('glossary.defPlan', { strong: (c) => <strong key={String(c).slice(0, 3)}>{c}</strong> })}
               </GlossaryItem>
             </>
           )}
@@ -162,11 +145,9 @@ export function GuideClient({ role, systemRole, userName }: Props) {
           開発者・ユーザが集まる「コミュニティ」と位置付ける。ユーザ同士の利用事例共有も発生する場であり、
           単方向のサポートチャネルと誤認されないよう文言を統一する (横展開対象)。 */}
       <section className="rounded-lg border bg-muted/40 p-5">
-        <h2 className="text-base font-semibold">関連リンク</h2>
+        <h2 className="text-base font-semibold">{t('cta.title')}</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          サービスの背景は LP、よくある質問は FAQ、開発者や他のユーザと話したいときは
-          <strong>たすきばコミュニティ (Discord)</strong> でどうぞ (利用事例の共有・質問・バグ報告・要望)。
-          画面右上のアカウントメニューからも常時アクセスできます。
+          {r('cta.description', { strong: (c) => <strong key="s">{c}</strong> })}
         </p>
         <div className="mt-3 flex flex-wrap gap-2">
           <a
@@ -175,13 +156,13 @@ export function GuideClient({ role, systemRole, userName }: Props) {
             rel="noopener noreferrer"
             className="inline-flex items-center gap-1.5 rounded-md bg-card px-3 py-1.5 text-sm hover:bg-accent"
           >
-            🌐 サービス紹介ページ (LP)
+            {t('cta.lpButton')}
           </a>
           <Link
             href={HELP_ROUTE}
             className="inline-flex items-center gap-1.5 rounded-md bg-card px-3 py-1.5 text-sm hover:bg-accent"
           >
-            ❓ よくある質問
+            {t('cta.faqButton')}
           </Link>
           {discord && (
             <a
@@ -208,32 +189,17 @@ export function GuideClient({ role, systemRole, userName }: Props) {
  * SVG ではなく Tailwind の grid + 矢印を CSS で実現 (依存追加なし)。
  */
 function FlowDiagram() {
+  const t = useTranslations('guide');
   const steps = [
-    {
-      n: 1,
-      title: 'プロジェクト作成',
-      body: '概要を入力すると、関連する過去のナレッジ・リスク・課題が「参考タブ」に自動表示',
-    },
-    {
-      n: 2,
-      title: 'WBS で作業分解',
-      body: '作業を WP → Activity に分解し、担当者と予定工数を設定。進捗確認で進捗を可視化',
-    },
-    {
-      n: 3,
-      title: '進行中の記録',
-      body: 'リスク・課題・振り返り・ナレッジを発生時点で記録。チームの暗黙知を形式知に',
-    },
-    {
-      n: 4,
-      title: '次プロジェクトへ',
-      body: '記録した知見は次のプロジェクトの「参考タブ」に自動的に再利用される',
-    },
+    { n: 1, titleKey: 'flow.step1Title' as const, bodyKey: 'flow.step1Body' as const },
+    { n: 2, titleKey: 'flow.step2Title' as const, bodyKey: 'flow.step2Body' as const },
+    { n: 3, titleKey: 'flow.step3Title' as const, bodyKey: 'flow.step3Body' as const },
+    { n: 4, titleKey: 'flow.step4Title' as const, bodyKey: 'flow.step4Body' as const },
   ];
   return (
     <div
       className="rounded-lg border bg-card p-4"
-      aria-label="プロジェクトライフサイクルの 4 ステップフロー"
+      aria-label={t('overview.flowAriaLabel')}
     >
       <ol className="grid grid-cols-1 gap-3 md:grid-cols-4">
         {steps.map((s, idx) => (
@@ -245,9 +211,9 @@ function FlowDiagram() {
               <span className="flex size-7 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground">
                 {s.n}
               </span>
-              <strong className="text-sm">{s.title}</strong>
+              <strong className="text-sm">{t(s.titleKey)}</strong>
             </div>
-            <p className="text-xs text-muted-foreground">{s.body}</p>
+            <p className="text-xs text-muted-foreground">{t(s.bodyKey)}</p>
             {/* 矢印 (md 以上で右側に表示、最終ステップは非表示) */}
             {idx < steps.length - 1 && (
               <span
@@ -269,9 +235,10 @@ function FlowDiagram() {
  * 自分のロール行を背景色で強調し、「自分は何ができるか」を一目で把握できる。
  */
 function RoleMatrix({ activeRole }: { activeRole: GuideRole }) {
+  const t = useTranslations('guide');
   const rows: Array<{
     role: GuideRole;
-    label: string;
+    labelKey: string;
     items: Array<'create' | 'edit' | 'view' | 'admin'>;
   }> = [
     // 2026-05-13 docs/guide-role-actions: 実装真実 (check-permission.ts) と一致させる修正。
@@ -279,26 +246,26 @@ function RoleMatrix({ activeRole }: { activeRole: GuideRole }) {
     //   `admin` ロールは check-permission.ts:58 で全アクション (project:create / update / delete /
     //   change_status / task:* / knowledge:* / risk:* / member:manage / admin:users 等) を許可済み。
     //   ガイドが実装と乖離するとユーザが「admin はプロジェクトを作れない」と誤認するため修正。
-    { role: 'admin', label: 'テナント管理者', items: ['create', 'edit', 'view', 'admin'] },
-    { role: 'pm', label: 'PM / PL', items: ['create', 'edit', 'view'] },
-    { role: 'member', label: '一般メンバー', items: ['edit', 'view'] },
-    { role: 'viewer', label: '閲覧者', items: ['view'] },
+    { role: 'admin', labelKey: 'roleMatrix.rowAdmin', items: ['create', 'edit', 'view', 'admin'] },
+    { role: 'pm', labelKey: 'roleMatrix.rowPm', items: ['create', 'edit', 'view'] },
+    { role: 'member', labelKey: 'roleMatrix.rowMember', items: ['edit', 'view'] },
+    { role: 'viewer', labelKey: 'roleMatrix.rowViewer', items: ['view'] },
   ];
-  const cols: Array<{ key: 'admin' | 'create' | 'edit' | 'view'; label: string }> = [
-    { key: 'create', label: 'プロジェクト作成・WBS 計画' },
-    { key: 'edit', label: '担当タスクの進捗更新 / 起票' },
-    { key: 'view', label: 'リスク・課題・ナレッジ閲覧' },
-    { key: 'admin', label: 'ユーザ管理・プラン設定' },
+  const cols: Array<{ key: 'admin' | 'create' | 'edit' | 'view'; labelKey: string }> = [
+    { key: 'create', labelKey: 'roleMatrix.colCreate' },
+    { key: 'edit', labelKey: 'roleMatrix.colEdit' },
+    { key: 'view', labelKey: 'roleMatrix.colView' },
+    { key: 'admin', labelKey: 'roleMatrix.colAdmin' },
   ];
   return (
     <div className="overflow-x-auto rounded-lg border bg-card">
       <table className="w-full border-collapse text-sm">
         <thead className="bg-muted/40">
           <tr>
-            <th className="border-b p-2 text-left">ロール</th>
+            <th className="border-b p-2 text-left">{t('roleMatrix.headerRole')}</th>
             {cols.map((c) => (
               <th key={c.key} className="border-b p-2 text-left text-xs font-medium">
-                {c.label}
+                {t(c.labelKey as Parameters<typeof t>[0])}
               </th>
             ))}
           </tr>
@@ -306,26 +273,29 @@ function RoleMatrix({ activeRole }: { activeRole: GuideRole }) {
         <tbody>
           {rows.map((r) => {
             const isMe = r.role === activeRole;
+            const label = t(r.labelKey as Parameters<typeof t>[0]);
             return (
               <tr
                 key={r.role}
                 className={isMe ? 'bg-info/10 font-medium' : ''}
-                aria-label={isMe ? `あなたのロール: ${r.label}` : undefined}
+                aria-label={isMe ? t('roleMatrix.ariaYouRole', { label }) : undefined}
               >
                 <td className="border-b p-2">
-                  {r.label}
+                  {label}
                   {isMe && (
-                    <span className="ml-2 rounded bg-info/30 px-1.5 py-0.5 text-xs">あなた</span>
+                    <span className="ml-2 rounded bg-info/30 px-1.5 py-0.5 text-xs">
+                      {t('roleMatrix.youBadge')}
+                    </span>
                   )}
                 </td>
                 {cols.map((c) => (
                   <td key={c.key} className="border-b p-2 text-center">
                     {r.items.includes(c.key) ? (
-                      <span aria-label="可能" className="text-emerald-600 dark:text-emerald-400">
+                      <span aria-label={t('roleMatrix.abilityYes')} className="text-emerald-600 dark:text-emerald-400">
                         ✓
                       </span>
                     ) : (
-                      <span aria-label="不可" className="text-muted-foreground/40">
+                      <span aria-label={t('roleMatrix.abilityNo')} className="text-muted-foreground/40">
                         −
                       </span>
                     )}
@@ -345,17 +315,16 @@ function RoleMatrix({ activeRole }: { activeRole: GuideRole }) {
 // ================================================================
 
 function AdminActions({ systemRole }: { systemRole: string }) {
+  const t = useTranslations('guide');
   return (
     <div className="space-y-3 rounded-md border bg-card p-4">
-      <p className="text-sm text-muted-foreground">
-        組織全体の設定・ユーザ管理・課金プランの調整、および新規プロジェクトの立ち上げを担当します。
-      </p>
+      <p className="text-sm text-muted-foreground">{t('adminActions.description')}</p>
       <ol className="list-decimal space-y-1.5 pl-6 text-sm">
         <li>
           <Link className="text-primary underline" href="/admin/users">
-            ユーザ管理
+            {t('adminActions.step1LinkText')}
           </Link>{' '}
-          からメンバーを招待 (メール送信)。受信者がパスワードを設定すると参加完了。
+          {t('adminActions.step1Post')}
         </li>
         {/* 2026-05-13 docs/guide-role-actions: プロジェクト新規作成は admin の主要業務として明示。
             実装真実 (check-permission.ts) では admin / pm_tl の両方が project:create 可能だが、
@@ -363,40 +332,40 @@ function AdminActions({ systemRole }: { systemRole: string }) {
             標準的。pm_tl も自身で作成可だが、組織管理の文脈では admin の役割が中心。 */}
         <li>
           <Link className="text-primary underline" href={PROJECTS_ROUTE}>
-            プロジェクト一覧
+            {t('adminActions.step2LinkText')}
           </Link>{' '}
-          で「+ 新規」を押して新しいプロジェクトを立ち上げ、PM/PL に運営権限を割り当て。
+          {t('adminActions.step2Post')}
         </li>
         <li>
           <Link className="text-primary underline" href="/settings/tenant">
-            テナント設定
+            {t('adminActions.step3LinkText')}
           </Link>{' '}
-          でプラン・月次予算・請求先・支払い方法を確認・変更。
+          {t('adminActions.step3Post')}
         </li>
         <li>
           <Link className="text-primary underline" href="/admin/audit-logs">
-            監査ログ
+            {t('adminActions.step4Link1Text')}
           </Link>{' '}
           /{' '}
           <Link className="text-primary underline" href="/admin/role-changes">
-            権限変更
+            {t('adminActions.step4Link2Text')}
           </Link>{' '}
-          で重要操作の追跡 (退職時引継ぎ等)。
+          {t('adminActions.step4Post')}
         </li>
         <li>
-          生成 AI の利用状況・課金額は{' '}
+          {t('adminActions.step5Pre')}{' '}
           <Link className="text-primary underline" href="/settings/tenant">
-            テナント設定
+            {t('adminActions.step5LinkText')}
           </Link>{' '}
-          のダッシュボードで日次確認。
+          {t('adminActions.step5Post')}
         </li>
         {systemRole === 'super_admin' && (
           <li>
-            <strong>システム管理者向け:</strong>{' '}
+            <strong>{t('adminActions.superAdminStepLabel')}</strong>{' '}
             <Link className="text-primary underline" href="/admin/super">
-              システム管理者ダッシュボード
+              {t('adminActions.superAdminStepLinkText')}
             </Link>{' '}
-            から全テナントの使用量・請求合計・休眠テナント警告を確認できます。
+            {t('adminActions.superAdminStepPost')}
           </li>
         )}
       </ol>
@@ -405,55 +374,53 @@ function AdminActions({ systemRole }: { systemRole: string }) {
 }
 
 function PmActions() {
+  const t = useTranslations('guide');
+  const r = t.rich.bind(t);
   return (
     <div className="space-y-3 rounded-md border bg-card p-4">
-      <p className="text-sm text-muted-foreground">
-        プロジェクトの計画・進捗管理・人員配置・リスク統制を担います。
-      </p>
+      <p className="text-sm text-muted-foreground">{t('pmActions.description')}</p>
       <ol className="list-decimal space-y-1.5 pl-6 text-sm">
         {/* 2026-05-13 docs/guide-role-actions: 運用フローを反映。テナント管理者がプロジェクトを
             立ち上げて PM/PL に権限割当するのが標準。pm_tl 自身もプロジェクト作成可だが (実装真実)、
             ガイドとしては「割り当てられた直後の動き」を主軸に説明する方がユーザに伝わりやすい。 */}
         <li>
-          テナント管理者から割り当てられたプロジェクトを{' '}
+          {t('pmActions.step1Pre')}{' '}
           <Link className="text-primary underline" href={PROJECTS_ROUTE}>
-            プロジェクト一覧
+            {t('pmActions.step1LinkText')}
           </Link>{' '}
-          で開き、概要・期間・顧客を確認。自身で新たに立ち上げる場合は「+ 新規」を押せば、AI が自動でタグを抽出します。
+          {t('pmActions.step1Post')}
         </li>
         <li>
-          作成直後の <strong>「参考」タブ</strong> に並ぶ過去のリスク・課題・ナレッジを必ず確認 (見落とし防止)。
+          {r('pmActions.step2', { strong: (c) => <strong key="s">{c}</strong> })}
         </li>
         <li>
-          WBS タブで作業を <strong>WP → Activity</strong> に分解。Activity に担当者・予定工数・期間を設定。
+          {r('pmActions.step3', { strong: (c) => <strong key="s">{c}</strong> })}
         </li>
+        <li>{t('pmActions.step4')}</li>
         <li>
-          進捗確認 (ガント表示・担当者別確認) で並列稼働状況・期日超過・各メンバーの直近の状況を確認、必要なら工数集計でメンバーの過負荷を検知。
-        </li>
-        <li>
-          発生し得る不確実性は{' '}
+          {t('pmActions.step5Pre')}{' '}
           <Link className="text-primary underline" href={ALL_RISKS_ROUTE}>
-            リスク
+            {t('pmActions.step5Link1Text')}
           </Link>
-          、すでに発生したブロッカーは{' '}
+          {t('pmActions.step5Middle')}{' '}
           <Link className="text-primary underline" href={ALL_ISSUES_ROUTE}>
-            課題
+            {t('pmActions.step5Link2Text')}
           </Link>{' '}
-          に記録。
+          {t('pmActions.step5Post')}
         </li>
         <li>
-          プロジェクト完了後は{' '}
+          {t('pmActions.step6Pre')}{' '}
           <Link className="text-primary underline" href={ALL_RETROSPECTIVES_ROUTE}>
-            振り返り
+            {t('pmActions.step6LinkText')}
           </Link>{' '}
-          を必ず実施 (Keep/Problem/Try)。これが次プロジェクトの参考になります。
+          {t('pmActions.step6Post')}
         </li>
         <li>
-          重要な学びは{' '}
+          {t('pmActions.step7Pre')}{' '}
           <Link className="text-primary underline" href={KNOWLEDGE_ROUTE}>
-            ナレッジ
+            {t('pmActions.step7LinkText')}
           </Link>{' '}
-          として独立記録 (公開範囲を「公開」に設定すれば、テナント内の他プロジェクトからも参照できます)。
+          {t('pmActions.step7Post')}
         </li>
       </ol>
     </div>
@@ -461,42 +428,40 @@ function PmActions() {
 }
 
 function MemberActions() {
+  const t = useTranslations('guide');
+  const r = t.rich.bind(t);
   return (
     <div className="space-y-3 rounded-md border bg-card p-4">
-      <p className="text-sm text-muted-foreground">
-        アサインされた作業の進行と、現場で気づいた知見の記録が中心です。
-      </p>
+      <p className="text-sm text-muted-foreground">{t('memberActions.description')}</p>
       <ol className="list-decimal space-y-1.5 pl-6 text-sm">
         <li>
-          毎日まず{' '}
+          {t('memberActions.step1Pre')}{' '}
           <Link className="text-primary underline" href={MY_TASKS_ROUTE}>
-            マイタスク
+            {t('memberActions.step1LinkText')}
           </Link>{' '}
-          を開く。担当 Activity がプロジェクト毎にツリー表示されます。
+          {t('memberActions.step1Post')}
         </li>
+        <li>{t('memberActions.step2')}</li>
         <li>
-          Activity のステータス (未着手 / 着手 / 完了) を更新し、進捗バーで実績を反映。
-        </li>
-        <li>
-          作業中に「将来詰まりそう」と感じたら即{' '}
+          {t('memberActions.step3Pre')}{' '}
           <Link className="text-primary underline" href={ALL_RISKS_ROUTE}>
-            リスク
-          </Link>{' '}
-          に起票。すでに詰まったら{' '}
+            {t('memberActions.step3Link1Text')}
+          </Link>
+          {t('memberActions.step3Middle')}{' '}
           <Link className="text-primary underline" href={ALL_ISSUES_ROUTE}>
-            課題
-          </Link>{' '}
-          に。
+            {t('memberActions.step3Link2Text')}
+          </Link>
+          {t('memberActions.step3Post')}
         </li>
         <li>
-          コメントで <code>@</code> を使って関係者にメンション (確実に通知が届きます)。
+          {r('memberActions.step4', { code: (c) => <code key="c">{c}</code> })}
         </li>
         <li>
-          共有したい知見は{' '}
+          {t('memberActions.step5Pre')}{' '}
           <Link className="text-primary underline" href={KNOWLEDGE_ROUTE}>
-            ナレッジ
+            {t('memberActions.step5LinkText')}
           </Link>{' '}
-          に書き起こす (公開範囲はプロジェクト内 / 全社で選択可)。
+          {t('memberActions.step5Post')}
         </li>
       </ol>
     </div>
@@ -504,16 +469,16 @@ function MemberActions() {
 }
 
 function ViewerActions() {
+  const t = useTranslations('guide');
+  const r = t.rich.bind(t);
   return (
     <div className="space-y-3 rounded-md border bg-card p-4">
-      <p className="text-sm text-muted-foreground">
-        書き込みは行えませんが、関係者にプロジェクトの状況を共有する用途で使います (役員・営業担当など)。
-      </p>
+      <p className="text-sm text-muted-foreground">{t('viewerActions.description')}</p>
       <ol className="list-decimal space-y-1.5 pl-6 text-sm">
-        <li>プロジェクト概要・WBS・進捗確認を <strong>閲覧のみ</strong> 可能。</li>
-        <li>リスク・課題・ナレッジ・振り返りも閲覧可能 (公開範囲に応じて)。</li>
-        <li>コメントの新規投稿は不可。質問は別途メンバー経由で書き込んでもらう運用。</li>
-        <li>マイタスク画面は使えません (担当タスクが付与されないため)。</li>
+        <li>{r('viewerActions.step1', { strong: (c) => <strong key="s">{c}</strong> })}</li>
+        <li>{t('viewerActions.step2')}</li>
+        <li>{t('viewerActions.step3')}</li>
+        <li>{t('viewerActions.step4')}</li>
       </ol>
     </div>
   );

@@ -113,7 +113,7 @@ function ResetPasswordForm() {
               {error && <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
               {/* ADR-0016 (2026-05-20): multi-tenant 対応で 組織 ID を必須化 */}
               <div className="space-y-2">
-                <Label>組織 ID</Label>
+                <Label>{t('tenantSlugLabel')}</Label>
                 <Input
                   type="text"
                   value={verifyForm.tenantSlug}

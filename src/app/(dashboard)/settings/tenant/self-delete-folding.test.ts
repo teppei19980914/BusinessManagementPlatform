@@ -21,6 +21,10 @@ const CLIENT_SOURCE = readFileSync(
   resolve(__dirname, 'tenant-settings-client.tsx'),
   'utf-8',
 );
+const JA_CATALOG = readFileSync(
+  resolve(__dirname, '../../../../i18n/messages/ja.json'),
+  'utf-8',
+);
 
 describe('SelfDeleteTenantSection markup contract', () => {
   it('<details> でラップされている (= ユーザ確定方針: 概要内のまま折りたたみ)', () => {
@@ -35,11 +39,12 @@ describe('SelfDeleteTenantSection markup contract', () => {
 
     // 必須要件: <details> でラップ、識別用 data-testid 付与
     expect(functionBody).toMatch(/<details[\s\S]+data-testid="self-delete-tenant-section"/);
-    // <summary> に解約見出しが含まれる
-    expect(functionBody).toMatch(/<summary[\s\S]+テナント解約/);
+    // <summary> に解約見出しが含まれる (i18n 化後はリテラルがカタログへ移動)
+    expect(functionBody).toMatch(/<summary/);
+    expect(JA_CATALOG).toContain('テナント解約');
     // form / button 自体は維持されている (= 機能退行防止)
     expect(functionBody).toContain('handleSubmit');
-    expect(functionBody).toContain('🗑 テナントを解約する');
+    expect(JA_CATALOG).toContain('🗑 テナントを解約する');
   });
 
   it('default で open 属性が付いていない (= 初期状態は閉じている)', () => {

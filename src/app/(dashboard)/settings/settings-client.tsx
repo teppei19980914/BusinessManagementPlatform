@@ -94,7 +94,7 @@ export function SettingsClient({
 }: Props) {
   const router = useRouter();
   const { withLoading } = useLoading();
-  const { showSuccessKey, showErrorKey } = useToast();
+  const { showSuccess, showError } = useToast();
   const { update: updateSession } = useSession();
   const tSetting = useTranslations('setting');
   const tField = useTranslations('field');
@@ -127,14 +127,14 @@ export function SettingsClient({
       const json = await res.json().catch(() => ({}));
       const msg = json.error?.message || tSetting('themeSaveFailed');
       setThemeError(msg);
-      showErrorKey('setting.toastThemeSaveFailed');
+      showError(tSetting('toastThemeSaveFailed'));
       return;
     }
     // セッション JWT に反映 → layout.tsx 側の <html data-theme> を next refresh で更新
     // (React の immutability ルール上、クライアントから直接 document を書き換えない)
     await updateSession({ themePreference: next });
     setThemeSuccess(tSetting('themeChanged'));
-    showSuccessKey('setting.toastThemeSaveSuccess');
+    showSuccess(tSetting('toastThemeSaveSuccess'));
     router.refresh();
   }
 
@@ -158,11 +158,11 @@ export function SettingsClient({
     if (!res.ok) {
       const json = await res.json().catch(() => ({}));
       setLogoutOthersError(json.error?.message || tSetting('logoutOtherDevicesFailed'));
-      showErrorKey('setting.toastSignOutOthersFailed');
+      showError(tSetting('toastSignOutOthersFailed'));
       return;
     }
     setLogoutOthersSuccess(tSetting('logoutOtherDevicesSuccess'));
-    showSuccessKey('setting.toastSignOutOthersSuccess');
+    showSuccess(tSetting('toastSignOutOthersSuccess'));
   }
 
   // MFA
@@ -201,12 +201,12 @@ export function SettingsClient({
     if (!res.ok) {
       const msg = json.error?.message || tMessage('passwordChangeFailed');
       setPwError(msg);
-      showErrorKey('setting.toastPasswordChangeFailed');
+      showError(tSetting('toastPasswordChangeFailed'));
       return;
     }
 
     setPwSuccess(tMessage('passwordChanged'));
-    showSuccessKey('setting.toastPasswordChangeSuccess');
+    showSuccess(tSetting('toastPasswordChangeSuccess'));
     setPwForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
   }
 
@@ -241,13 +241,13 @@ export function SettingsClient({
     if (!res.ok) {
       const msg = json.error?.message || tSetting('mfaCodeVerifyFailed');
       setMfaError(msg);
-      showErrorKey('setting.toastMfaEnableFailed');
+      showError(tSetting('toastMfaEnableFailed'));
       return;
     }
 
     setMfaStep('idle');
     setTotpCode('');
-    showSuccessKey('setting.toastMfaEnableSuccess');
+    showSuccess(tSetting('toastMfaEnableSuccess'));
     router.refresh();
   }
 
@@ -294,7 +294,7 @@ export function SettingsClient({
       setMfaStep('idle');
       setDisableCurrentPassword('');
       setDisableTotpCode('');
-      showSuccessKey('setting.toastMfaDisableSuccess');
+      showSuccess(tSetting('toastMfaDisableSuccess'));
       router.refresh();
       return;
     }
@@ -314,7 +314,7 @@ export function SettingsClient({
     } else {
       setMfaError(fallbackMsg);
     }
-    showErrorKey('setting.toastMfaDisableFailed');
+    showError(tSetting('toastMfaDisableFailed'));
   }
 
   return (
@@ -325,8 +325,7 @@ export function SettingsClient({
         <div className="rounded border border-destructive/30 bg-destructive/10 p-3 text-sm">
           <p className="font-semibold">{tSetting('loadFailedTitle')}</p>
           <p className="mt-1 text-muted-foreground">
-            {tSetting('loadFailedMessageRetry')}
-            {tSetting('loadFailedMessageContact')}
+            {tSetting('loadFailedMessageRetry')}{' '}{tSetting('loadFailedMessageContact')}
           </p>
         </div>
       )}

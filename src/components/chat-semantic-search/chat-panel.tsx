@@ -34,6 +34,7 @@ import {
   useTransition,
 } from 'react';
 import Image from 'next/image';
+import { useTranslations } from 'next-intl';
 import { useSession } from 'next-auth/react';
 import { cn } from '@/lib/utils';
 import {
@@ -59,25 +60,6 @@ import {
 } from '@/lib/chat-history-storage';
 
 type DegradedReason = NonNullable<ChatSearchResult['degradeReason']>;
-
-const DEGRADED_REASON_LABEL: Record<DegradedReason, string> = {
-  rate_limited: 'リクエストが多すぎます',
-  // ADR-0019 (2026-05-24): チャット検索は無料化されたため、Beginner 上限 / 予算上限の判定からは
-  //   除外される。本 2 ラベルはサーバ側の reason union 整合 (legacy) のため残す。
-  //   通常の運用ではこの reason はチャット検索で発生しない。
-  beginner_limit_exceeded: 'チャット検索は無料機能です (上限超過の通知が出た場合はサポートへ)',
-  budget_exceeded: 'チャット検索は無料機能です (上限超過の通知が出た場合はサポートへ)',
-  // ADR-0019: チャット検索 (= 無料 featureUnit) の月次 fair use limit (10,000 calls/tenant) 到達。
-  fair_use_limit_exceeded: '無料機能の月間利用上限に達しました (来月自動再開)',
-  // ADR-0030 (2026-05-30): チャット意味検索は EMBEDDING_BILLABLE のため、Embedding 月次上限 / Beginner 100 件試用上限が発火する。
-  //   既存 embedding を使った検索は本質的に embedding 生成を伴わないため停止しないが、UI 側の防御として label を整備。
-  embedding_budget_exceeded: 'Embedding 月次予算上限に達しました (新規 embedding 停止、既存検索は継続、月初 backfill で次月補填)',
-  embedding_beginner_limit_exceeded: 'Beginner プランの Embedding 月間試用上限 (100 件) に達しました (新規 embedding 停止、既存検索は継続)',
-  tenant_inactive: 'テナントが無効です',
-  plan_invalid: 'プラン設定が不正です',
-  llm_error: 'AI サービスで一時的な問題が発生しています',
-  output_invalid: 'クエリ処理に失敗しました',
-};
 
 /**
  * 1 つの会話ターン (ユーザ発言 + フクロウの応答) を表す型。
@@ -149,6 +131,7 @@ function generateTurnId(): string {
 }
 
 export function ChatPanel({ onClose }: { onClose: () => void }) {
+  const t = useTranslations('chatPanel');
   // ADR-0028: タブで「過去資産検索」と「ヘルプ・ガイド」を切替。default は既存挙動互換で search。
   const [mode, setMode] = useState<PanelMode>(() => loadPanelMode());
   const handleSwitchMode = useCallback((next: PanelMode) => {
@@ -273,7 +256,7 @@ export function ChatPanel({ onClose }: { onClose: () => void }) {
         const body = (await res.json().catch(() => ({}))) as {
           error?: { message?: string };
         };
-        const message = body.error?.message ?? `検索に失敗しました (${res.status})`;
+        const message = body.error?.message ?? t('searchErrorWithStatus', { status: res.status });
         setTurns((prev) =>
           prev.map((t) => (t.id === turnId ? { ...t, error: message } : t)),
         );
@@ -288,7 +271,7 @@ export function ChatPanel({ onClose }: { onClose: () => void }) {
       if (e instanceof DOMException && e.name === 'AbortError') {
         return;
       }
-      const message = e instanceof Error ? e.message : '検索に失敗しました';
+      const message = e instanceof Error ? e.message : t('searchErrorDefault');
       setTurns((prev) =>
         prev.map((t) => (t.id === turnId ? { ...t, error: message } : t)),
       );
@@ -339,7 +322,7 @@ export function ChatPanel({ onClose }: { onClose: () => void }) {
   return (
     <aside
       role="complementary"
-      aria-label="チャット意味検索"
+      aria-label={t('ariaLabelPanel')}
       className="fixed inset-y-0 right-0 z-40 flex h-full w-full max-w-md flex-col border-l border-border bg-background shadow-xl"
     >
       <header className="flex items-center justify-between border-b border-border px-4 py-3">
@@ -362,7 +345,7 @@ export function ChatPanel({ onClose }: { onClose: () => void }) {
               {CHAT_PERSONA.name}
             </span>
             <span className="text-[10px] text-muted-foreground leading-tight">
-              {mode === 'search' ? '過去資産を意味検索' : 'FAQ・使い方ガイド'}
+              {mode === 'search' ? t('subtitleSearch') : t('subtitleHelp')}
             </span>
           </div>
         </div>
@@ -384,13 +367,13 @@ export function ChatPanel({ onClose }: { onClose: () => void }) {
             disabled={mode === 'search' ? turns.length === 0 : helpTurnsCount === 0}
             aria-label={
               mode === 'search'
-                ? '過去資産検索の会話履歴をクリア'
-                : 'ヘルプ・ガイドの会話履歴をクリア'
+                ? t('ariaLabelClearSearch')
+                : t('ariaLabelClearHelp')
             }
             title={
               mode === 'search'
-                ? '過去資産検索の会話履歴をクリア'
-                : 'ヘルプ・ガイドの会話履歴をクリア'
+                ? t('ariaLabelClearSearch')
+                : t('ariaLabelClearHelp')
             }
             data-testid="chat-panel-clear-history"
             className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-muted-foreground"
@@ -400,7 +383,7 @@ export function ChatPanel({ onClose }: { onClose: () => void }) {
           <button
             type="button"
             onClick={onClose}
-            aria-label="閉じる"
+            aria-label={t('ariaLabelClose')}
             className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
           >
             ✕
@@ -415,7 +398,7 @@ export function ChatPanel({ onClose }: { onClose: () => void }) {
       */}
       <div
         role="tablist"
-        aria-label="チャットパネルのモード切替"
+        aria-label={t('tablistAriaLabel')}
         className="flex border-b border-border bg-muted/30"
       >
         <button
@@ -434,7 +417,7 @@ export function ChatPanel({ onClose }: { onClose: () => void }) {
               : 'border-transparent text-muted-foreground hover:text-foreground',
           )}
         >
-          🔍 過去資産検索
+          {t('tabSearch')}
         </button>
         <button
           type="button"
@@ -452,7 +435,7 @@ export function ChatPanel({ onClose }: { onClose: () => void }) {
               : 'border-transparent text-muted-foreground hover:text-foreground',
           )}
         >
-          🦉 ヘルプ・ガイド
+          {t('tabHelp')}
         </button>
       </div>
 
@@ -546,6 +529,7 @@ function SearchModeBody({
   bottomAnchorRef: React.RefObject<HTMLDivElement | null>;
   isNavigating: boolean;
 }) {
+  const t = useTranslations('chatPanel');
   return (
     <div
       role="tabpanel"
@@ -557,8 +541,7 @@ function SearchModeBody({
         Voyage への外部送信を明示告知 (about.md §Q5 と整合)。
       */}
       <div className="border-b border-border bg-muted/50 px-4 py-2 text-xs text-muted-foreground">
-        ⓘ クエリ内容は意味検索のため外部 AI サービス (Voyage AI)
-        に送信されます。機微情報の入力はお控えください。
+        {t('voyageNotice')}
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 text-sm" data-testid="chat-panel-messages">
@@ -572,12 +555,10 @@ function SearchModeBody({
         <AssistantBubble>
           <div data-testid="chat-initial-greeting">
             <p className="leading-relaxed">
-              こんにちは、{CHAT_PERSONA.name}です。
+              {t('greetingHello', { name: CHAT_PERSONA.name })}
             </p>
             <p className="mt-1 leading-relaxed">
-              気になることや知りたいことをチャットしてください。
-              プロジェクト・ナレッジ・リスク・課題・振り返り・メモから、
-              私が適切な情報を探してご提案します。
+              {t('greetingBody')}
             </p>
           </div>
         </AssistantBubble>
@@ -603,7 +584,7 @@ function SearchModeBody({
             aria-live="polite"
             className="mb-3 rounded-md border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground"
           >
-            ⏳ 詳細を開いています...
+            {t('navigationPending')}
           </div>
         )}
 
@@ -614,12 +595,12 @@ function SearchModeBody({
       <footer className="border-t border-border p-3">
         {showWarning && (
           <div className="mb-2 text-xs text-warning-foreground">
-            もう少し詳しく書いていただけると、より精度の高い提案ができます
+            {t('warningShortQuery')}
           </div>
         )}
         {tooLong && (
           <div className="mb-2 text-xs text-destructive">
-            クエリは {CHAT_SEARCH_INPUT_MAX_CHARS} 文字以内にしてください
+            {t('warningTooLong', { max: CHAT_SEARCH_INPUT_MAX_CHARS })}
           </div>
         )}
         <div className="flex items-end gap-2">
@@ -628,7 +609,7 @@ function SearchModeBody({
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKeyDown}
             disabled={submitting}
-            placeholder="過去の似た案件で発生したリスクは?"
+            placeholder={t('inputPlaceholder')}
             rows={2}
             className={cn(
               'flex-1 resize-none rounded-md border border-input bg-background px-3 py-2 text-sm',
@@ -640,13 +621,13 @@ function SearchModeBody({
             type="button"
             onClick={handleSubmit}
             disabled={submitting || query.trim().length === 0 || tooLong}
-            aria-label="送信"
+            aria-label={t('ariaLabelSend')}
             className={cn(
               'h-9 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground',
               'hover:bg-primary/80 disabled:opacity-50 disabled:hover:bg-primary',
             )}
           >
-            {submitting ? '検索中...' : '送信→'}
+            {submitting ? t('btnSearching') : t('btnSend')}
           </button>
         </div>
       </footer>
@@ -670,6 +651,19 @@ function ChatTurnView({
   sessionLoading: boolean;
   onCardClick: () => void;
 }) {
+  const t = useTranslations('chatPanel');
+  const degradedLabelMap: Record<DegradedReason, string> = {
+    rate_limited: t('degradedRateLimit'),
+    beginner_limit_exceeded: t('degradedBeginnerLimit'),
+    budget_exceeded: t('degradedBudget'),
+    fair_use_limit_exceeded: t('degradedFairUse'),
+    embedding_budget_exceeded: t('degradedEmbeddingBudget'),
+    embedding_beginner_limit_exceeded: t('degradedEmbeddingBeginner'),
+    tenant_inactive: t('degradedTenantInactive'),
+    plan_invalid: t('degradedPlanInvalid'),
+    llm_error: t('degradedLlmError'),
+    output_invalid: t('degradedOutputInvalid'),
+  };
   // H-3: strong tier の「6 件目以降」を見せるかどうか (初期 false)。
   const [strongExpanded, setStrongExpanded] = useState(false);
   // H-4: medium tier をデフォルト折りたたみに変更 (旧仕様: 常時開)。
@@ -693,15 +687,14 @@ function ChatTurnView({
       ) : pending ? (
         <AssistantBubble>
           <div className="text-xs text-muted-foreground" role="status" aria-live="polite">
-            ⏳ ちょっと待ってくださいね、過去資産から探しています…
+            {t('pendingMessage')}
           </div>
         </AssistantBubble>
       ) : turn.result ? (
         <AssistantBubble>
           {turn.result.degraded && turn.result.degradeReason && (
             <div className="mb-2 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs">
-              💡 ごめんなさい、AI 機能が一時的に使えないようです ({DEGRADED_REASON_LABEL[turn.result.degradeReason]})。
-              テキスト類似度だけで探しますね。
+              {t('degradedNotice', { label: degradedLabelMap[turn.result.degradeReason] ?? turn.result.degradeReason })}
             </div>
           )}
           <ChatResults
@@ -786,6 +779,7 @@ function ChatResults({
   onToggleWeak: () => void;
   onCardClick: () => void;
 }) {
+  const t = useTranslations('chatPanel');
   // ADR-0021 (2026-05-26): file scope query 検出時は attachment のみ、それ以外は 5 資産横断
   const allHits: ChatSearchHit[] = result.fileScopeApplied
     ? [...result.results.attachments]
@@ -800,10 +794,10 @@ function ChatResults({
   if (allHits.length === 0) {
     return (
       <div className="rounded-md border border-border bg-muted/50 px-3 py-4 text-center text-xs text-muted-foreground">
-        💡 うーん、関連する資産は見つかりませんでした…別の言葉でも試してみてください。
+        {t('noResults')}
         {result.fileScopeApplied && (
           <div className="mt-1 text-xs">
-            ※ 添付ファイルに絞って探しました (「ファイル」「添付」「PDF」等のキーワードを検出した場合)
+            {t('fileScopeNote')}
           </div>
         )}
       </div>
@@ -827,17 +821,17 @@ function ChatResults({
     <div>
       {result.fileScopeApplied && (
         <div className="mb-2 rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-700">
-          📎 「ファイル」「添付」「PDF」等のキーワードを検出したので、添付ファイルに絞って探しました。
+          {t('fileScopeAppliedNotice')}
         </div>
       )}
       <div className="mb-3 text-xs text-muted-foreground">
-        💡 {result.totalCount}件{result.fileScopeApplied ? 'の添付ファイル' : 'の関連資産'}を見つけました。関連が強い順にご紹介しますね。
+        {t('foundCount', { count: result.totalCount, scope: result.fileScopeApplied ? t('scopeAttachments') : t('scopeAssets') })}
       </div>
 
       {strong.length > 0 && (
         <section className="mb-4">
           <h3 className="mb-2 text-xs font-semibold text-foreground">
-            ▼ 強く関連 ({strong.length}件)
+            {t('strongSectionTitle', { count: strong.length })}
           </h3>
           <div className="flex flex-col gap-2">
             {strongInitial.map((hit) => (
@@ -859,8 +853,8 @@ function ChatResults({
                   className="mt-1 text-xs font-medium text-muted-foreground hover:text-foreground"
                 >
                   {strongExpanded
-                    ? `▼ さらに表示中 (${strongRest.length}件)`
-                    : `▶ さらに ${strongRest.length}件を表示`}
+                    ? t('strongShowLess', { count: strongRest.length })
+                    : t('strongShowMore', { count: strongRest.length })}
                 </button>
                 {strongExpanded &&
                   strongRest.map((hit) => (
@@ -888,7 +882,7 @@ function ChatResults({
             data-testid="chat-toggle-medium"
             className="mb-2 text-xs font-semibold text-foreground hover:text-muted-foreground"
           >
-            {mediumExpanded ? '▼' : '▶'} 中程度の関連 ({medium.length}件)
+            {mediumExpanded ? t('mediumExpandedLabel', { count: medium.length }) : t('mediumCollapsed', { count: medium.length })}
           </button>
           {mediumExpanded && (
             <div className="flex flex-col gap-2">
@@ -915,7 +909,7 @@ function ChatResults({
             data-testid="chat-toggle-weak"
             className="mb-2 text-xs font-semibold text-muted-foreground hover:text-foreground"
           >
-            {weakExpanded ? '▼' : '▶'} 弱い関連性 ({weak.length}件)
+            {weakExpanded ? t('weakExpandedLabel', { count: weak.length }) : t('weakCollapsed', { count: weak.length })}
           </button>
           {weakExpanded && (
             <div className="flex flex-col gap-2">

@@ -14,6 +14,7 @@
  */
 
 import Link from 'next/link';
+import { getTranslations } from 'next-intl/server';
 import {
   getCrossTenantUsageSummary,
   getDefaultTenantOwnSummary,
@@ -22,6 +23,7 @@ import {
 } from '@/services/super-admin.service';
 
 export default async function SuperAdminUsagePage() {
+  const t = await getTranslations('adminUsage');
   const [summary, defaultTenant, history] = await Promise.all([
     getCrossTenantUsageSummary(),
     getDefaultTenantOwnSummary(),
@@ -40,51 +42,50 @@ export default async function SuperAdminUsagePage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold">使用量サマリ (全テナント横断)</h1>
+      <h1 className="text-2xl font-bold">{t('pageTitle')}</h1>
       <p className="text-sm text-muted-foreground">
-        管理テナント (運営内部) と Default テナント (運営者自身) は顧客集計から除外しています。
-        Default テナントの情報は下部の専用セクションを参照してください。
+        {t('pageDesc')}
       </p>
 
       <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
         <UsageCard
-          label="顧客テナント数"
+          label={t('cardTenantCount')}
           value={summary.tenantCount.toString()}
-          unit="件"
+          unit={t('unitCount')}
         />
         <UsageCard
-          label="アクティブユーザ総数"
+          label={t('cardActiveUsers')}
           value={summary.totalActiveUsers.toString()}
-          unit="人"
+          unit={t('unitPeople')}
         />
         <UsageCard
-          label="今月の API 呼出 (全 billable)"
+          label={t('cardApiCalls')}
           value={summary.totalCurrentMonthApiCalls.toLocaleString()}
-          unit="回"
-          subValue="LLM + Embedding + Storage 超過 の合算"
+          unit={t('unitTimes')}
+          subValue={t('cardApiCallsSubValue')}
         />
         {/* chore/storage-addon-backend-removal (2026-05-26): 旧 4 段階プラン Storage 月額は撤去。
             ApiCallLog 集計 (DB / file storage 超過の従量課金も含む) に統合
             ADR-0022 (2026-06-01): Embedding 課金も統合されたため totalCurrentMonthApiCostJpy が
             LLM + Embedding + Storage の総和を表す */}
         <UsageCard
-          label="今月の合計課金"
+          label={t('cardTotalCost')}
           value={`¥${summary.totalCurrentMonthApiCostJpy.toLocaleString()}`}
           unit=""
-          subValue="LLM + Embedding + DB/ファイルストレージ超過 の合算"
+          subValue={t('cardTotalCostSubValue')}
         />
         {/* ADR-0022 (2026-06-01): Embedding 内訳 KPI カード (= 全体課金のうち Embedding 部分) */}
         <UsageCard
-          label="今月の Embedding 呼出 (内訳)"
+          label={t('cardEmbeddingCalls')}
           value={summary.totalCurrentMonthEmbeddingCalls.toLocaleString()}
-          unit="回"
-          subValue="Beginner=無料 / Expert=Pro=¥5/回"
+          unit={t('unitTimes')}
+          subValue={t('cardEmbeddingCallsSubValue')}
         />
         <UsageCard
-          label="今月の Embedding 課金 (内訳)"
+          label={t('cardEmbeddingCost')}
           value={`¥${summary.totalCurrentMonthEmbeddingCostJpy.toLocaleString()}`}
           unit=""
-          subValue="全体合計のうち Embedding 部分"
+          subValue={t('cardEmbeddingCostSubValue')}
         />
       </section>
 
@@ -92,22 +93,22 @@ export default async function SuperAdminUsagePage() {
       <DefaultTenantUsageSection defaultTenant={defaultTenant} />
 
       <section className="space-y-2">
-        <h2 className="text-lg font-semibold">プラン別分布</h2>
+        <h2 className="text-lg font-semibold">{t('planDistributionTitle')}</h2>
         <p className="text-xs text-muted-foreground">
-          顧客テナントのみ集計 (Default テナント = 運営者自身は別セクションを参照)
+          {t('planDistributionDesc')}
         </p>
         <table className="w-full border-collapse text-sm">
           <thead>
             <tr className="border-b text-left">
-              <th className="p-2">プラン</th>
-              <th className="p-2 text-right">テナント数</th>
+              <th className="p-2">{t('colPlan')}</th>
+              <th className="p-2 text-right">{t('colTenantCount')}</th>
             </tr>
           </thead>
           <tbody>
             {summary.planDistribution.length === 0 ? (
               <tr>
                 <td colSpan={2} className="p-4 text-center text-muted-foreground">
-                  顧客テナントがありません
+                  {t('noTenants')}
                 </td>
               </tr>
             ) : (
@@ -124,21 +125,21 @@ export default async function SuperAdminUsagePage() {
 
       {/* P-5b (2026-05-08): CSV エクスポート / 2026-05-14: 解約済テナント込みエクスポート追加 */}
       <section className="space-y-2 rounded border p-4">
-        <h2 className="text-lg font-semibold">CSV エクスポート (請求業務用)</h2>
+        <h2 className="text-lg font-semibold">{t('csvExportTitle')}</h2>
         <p className="text-xs text-muted-foreground">
-          月次の請求業務向けに、テナント別使用量を CSV ダウンロードできます。Excel で開けるよう UTF-8 BOM 付き。
+          {t('csvExportDesc')}
         </p>
 
         {/* 通常 (アクティブテナントのみ) */}
         <div className="space-y-1">
-          <p className="text-xs font-semibold text-muted-foreground">アクティブテナントのみ</p>
+          <p className="text-xs font-semibold text-muted-foreground">{t('csvActiveOnly')}</p>
           <div className="flex flex-wrap gap-2 text-sm">
             <a
               href="/api/admin/super/usage/export"
               className="inline-flex items-center rounded border px-3 py-1.5 hover:bg-accent"
               download
             >
-              📥 当月分 (現在値) をダウンロード
+              {t('csvDownloadCurrent')}
             </a>
             {yearMonths.map((ym) => (
               <a
@@ -156,12 +157,12 @@ export default async function SuperAdminUsagePage() {
         {/* 2026-05-14: 解約済テナント込み (月途中解約の請求漏れ検知用) */}
         <div className="mt-3 space-y-1 rounded border border-amber-300 bg-amber-50 p-3 dark:bg-amber-900/20">
           <p className="text-xs font-semibold text-amber-900 dark:text-amber-100">
-            🔍 解約済テナントも含む (月途中解約の請求漏れ検知)
+            {t('csvWithDeletedTitle')}
           </p>
           <p className="text-xs text-muted-foreground">
-            「解約日」列が追加され、月の途中で解約されたテナントもこの CSV に含まれます。
-            解約日までの利用分を請求する運用に使用します。
-            詳細は <code className="text-xs">docs/operations/BILLING_MONTHLY_OPERATIONS.md</code> を参照。
+            {t('csvWithDeletedDescPre')}
+            <code className="text-xs">docs/operations/BILLING_MONTHLY_OPERATIONS.md</code>
+            {t('csvWithDeletedDescSuffix')}
           </p>
           <div className="flex flex-wrap gap-2 text-sm">
             <a
@@ -169,7 +170,7 @@ export default async function SuperAdminUsagePage() {
               className="inline-flex items-center rounded border border-amber-400 bg-white px-3 py-1.5 hover:bg-accent dark:bg-amber-950/40"
               download
             >
-              📥 当月分 (現在値、解約済込み)
+              {t('csvDownloadCurrentWithDeleted')}
             </a>
             {yearMonths.map((ym) => (
               <a
@@ -178,7 +179,7 @@ export default async function SuperAdminUsagePage() {
                 className="inline-flex items-center rounded border border-amber-400 bg-white px-3 py-1.5 hover:bg-accent dark:bg-amber-950/40"
                 download
               >
-                📥 {ym} (解約済込み)
+                {t('csvDownloadMonthWithDeleted', { yearMonth: ym })}
               </a>
             ))}
           </div>
@@ -186,33 +187,32 @@ export default async function SuperAdminUsagePage() {
 
         {yearMonths.length === 0 && (
           <p className="text-xs text-muted-foreground">
-            ℹ 過去月の履歴は月初リセット cron (毎月 1 日 00:00 UTC) 以降に蓄積されます。
-            月の途中で解約されたテナントは deleteTenant() のスナップショットで即座に履歴に記録されます (2026-05-14)。
+            {t('csvNoHistory')}
           </p>
         )}
       </section>
 
       {/* P-5b (2026-05-08): 過去 6 ヶ月の履歴テーブル */}
       <section className="space-y-2">
-        <h2 className="text-lg font-semibold">過去 6 ヶ月の使用量履歴</h2>
+        <h2 className="text-lg font-semibold">{t('historyTitle')}</h2>
         {yearMonths.length === 0 ? (
           <p className="rounded border bg-muted/30 p-4 text-sm text-muted-foreground">
-            ℹ 履歴データがありません。月初リセット cron (毎月 1 日 00:00 UTC) が初回実行されると自動的に蓄積されます。
+            {t('historyNoData')}
           </p>
         ) : (
           <div className="overflow-x-auto rounded border">
             <table className="w-full border-collapse text-sm">
               <thead className="bg-muted/50">
                 <tr>
-                  <th className="p-2 text-left">月</th>
-                  <th className="p-2 text-left">テナント</th>
-                  <th className="p-2 text-left">プラン</th>
-                  <th className="p-2 text-right" title="LLM + Embedding + Storage 超過の合算">API 呼出</th>
-                  <th className="p-2 text-right">API 費用</th>
+                  <th className="p-2 text-left">{t('colMonth')}</th>
+                  <th className="p-2 text-left">{t('colTenant')}</th>
+                  <th className="p-2 text-left">{t('colPlan')}</th>
+                  <th className="p-2 text-right" title={t('colApiCallsTooltip')}>{t('colApiCalls')}</th>
+                  <th className="p-2 text-right">{t('colApiCost')}</th>
                   {/* ADR-0022 (2026-06-01): Embedding 内訳 (ADR-0022 適用前の過去月は - 表示) */}
-                  <th className="p-2 text-right" title="Embedding 系の月内呼出回数 (ADR-0022 内訳)">Embedding 呼出</th>
-                  <th className="p-2 text-right" title="Embedding 系の月内課金 (Beginner=0、Expert/Pro=件数×¥5、ADR-0029)">Embedding 費用</th>
-                  <th className="p-2 text-right">アクティブユーザ</th>
+                  <th className="p-2 text-right" title={t('colEmbeddingCallsTooltip')}>{t('colEmbeddingCalls')}</th>
+                  <th className="p-2 text-right" title={t('colEmbeddingCostTooltip')}>{t('colEmbeddingCost')}</th>
+                  <th className="p-2 text-right">{t('colActiveUsers')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -276,67 +276,68 @@ function UsageCard({
 /**
  * 2026-05-11: Default テナント (運営者自身) の使用量サマリを別セクションで表示。
  */
-function DefaultTenantUsageSection({
+async function DefaultTenantUsageSection({
   defaultTenant,
 }: {
   defaultTenant: DefaultTenantOwnSummary | null;
 }) {
+  const t = await getTranslations('adminUsage');
   return (
     <section className="space-y-2 rounded border border-info/40 bg-info/5 p-4">
       <div className="flex items-baseline justify-between gap-2">
-        <h2 className="text-lg font-semibold">Default テナント (運営者自身)</h2>
+        <h2 className="text-lg font-semibold">{t('defaultTenantTitle')}</h2>
         {defaultTenant && (
           <Link
             href={`/admin/super/tenants/${defaultTenant.id}`}
             className="text-xs text-info hover:underline"
           >
-            詳細を見る →
+            {t('defaultTenantLink')}
           </Link>
         )}
       </div>
       <p className="text-xs text-muted-foreground">
-        運営者自身のテナント。顧客集計には含まれません (= 請求対象外)
+        {t('defaultTenantDesc')}
       </p>
       {!defaultTenant ? (
         <p className="text-sm text-muted-foreground">
-          Default テナントが存在しません (seed 未投入または削除済)。
+          {t('defaultTenantNotFound')}
         </p>
       ) : (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
           <UsageCard
-            label="アクティブユーザ"
+            label={t('cardDefaultActiveUsers')}
             value={defaultTenant.activeUserCount.toString()}
-            unit="人"
+            unit={t('unitPeople')}
           />
           <UsageCard
-            label="今月の API 呼出 (LLM)"
+            label={t('cardDefaultApiCalls')}
             value={defaultTenant.currentMonthApiCallCount.toLocaleString()}
-            unit="回"
+            unit={t('unitTimes')}
           />
           <UsageCard
-            label="今月の API 費用 (LLM、参考)"
+            label={t('cardDefaultApiCost')}
             value={`¥${defaultTenant.currentMonthApiCostJpy.toLocaleString()}`}
             unit=""
-            subValue="(請求対象外)"
+            subValue={t('cardDefaultFree')}
           />
           {/* ADR-0022 (2026-06-01): Embedding 内訳カード (Default テナントも件数記録、参考) */}
           <UsageCard
-            label="今月の Embedding 呼出"
+            label={t('cardDefaultEmbeddingCalls')}
             value={defaultTenant.currentMonthEmbeddingCallCount.toLocaleString()}
-            unit="回"
+            unit={t('unitTimes')}
           />
           <UsageCard
-            label="今月の Embedding 費用 (参考)"
+            label={t('cardDefaultEmbeddingCost')}
             value={`¥${defaultTenant.currentMonthEmbeddingCostJpy.toLocaleString()}`}
             unit=""
-            subValue="(請求対象外)"
+            subValue={t('cardDefaultFree')}
           />
           {/* 2026-05-31 (ADR-0030): 累積ハードキャップ撤去。50GB は L3 監視アラート閾値として進捗表示に使用 */}
           <UsageCard
-            label="Storage 使用量"
+            label={t('cardDefaultStorage')}
             value={formatBytesLocal(defaultTenant.storageBytesUsed)}
             unit=""
-            subValue={`${(defaultTenant.storageUsageRatio * 100).toFixed(1)}% (50GB / L3 監視アラート閾値)`}
+            subValue={t('cardDefaultStorageSubValue', { ratio: (defaultTenant.storageUsageRatio * 100).toFixed(1) })}
           />
         </div>
       )}

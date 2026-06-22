@@ -789,6 +789,7 @@ model Task {
   status           String    @default("not_started") @db.VarChar(20)
   progressRate     Int       @default(0) @map("progress_rate") // WP は子の加重平均
   isMilestone      Boolean   @default(false) @map("is_milestone")
+  includeWeekends  Boolean   @default(false) @map("include_weekends") // true=土日祝日を稼働日に含む、false=平日のみ（デフォルト）
   notes            String?   @db.Text
   createdBy        String    @map("created_by") @db.Uuid
   updatedBy        String    @map("updated_by") @db.Uuid

@@ -1,3 +1,141 @@
 {
-  "guide": {}
+  "guide": {
+    "roleLabel": {
+      "admin": "Tenant Admin",
+      "pm": "PM / PL (Project Manager)",
+      "member": "General Member",
+      "viewer": "Viewer"
+    },
+    "roleLabelSuperAdmin": "System Administrator (Platform Operator)",
+    "header": {
+      "title": "User Guide",
+      "greetingUser": "Hi, {userName}!",
+      "description": "Welcome. Tasukiba Knowledge Relay is a project management platform that <strong>automatically reuses lessons learned from past projects</strong> in new ones.",
+      "yourRole": "Your role:"
+    },
+    "overview": {
+      "title": "Service Overview",
+      "description": "As projects progress, the same decisions and roadblocks keep recurring — \"<strong>We made this call before</strong>\" or \"<strong>We got stuck on this exact issue</strong>.\" This service consolidates WBS, risks, issues, retrospectives, and knowledge in one space, and <strong>automatically surfaces relevant past cases</strong> in new projects to break the cycle.",
+      "flowAriaLabel": "4-step project lifecycle flow"
+    },
+    "flow": {
+      "step1Title": "Create Project",
+      "step1Body": "Enter an overview and related past knowledge, risks, and issues appear automatically in the \"References\" tab",
+      "step2Title": "Break Down WBS",
+      "step2Body": "Decompose work into WP → Activity, assign owners and estimated hours, visualize progress with Gantt chart",
+      "step3Title": "Record as You Go",
+      "step3Body": "Log risks, issues, retrospectives, and knowledge as they arise — turn team tacit knowledge into explicit records",
+      "step4Title": "Reuse in Next Project",
+      "step4Body": "Captured insights are automatically surfaced in the \"References\" tab of future projects"
+    },
+    "roleMatrix": {
+      "headerRole": "Role",
+      "colCreate": "Create Projects / WBS Planning",
+      "colEdit": "Update Task Progress / File Issues",
+      "colView": "View Risks, Issues & Knowledge",
+      "colAdmin": "User Management / Plan Settings",
+      "rowAdmin": "Tenant Admin",
+      "rowPm": "PM / PL",
+      "rowMember": "General Member",
+      "rowViewer": "Viewer",
+      "youBadge": "You",
+      "ariaYouRole": "Your role: {label}",
+      "abilityYes": "Allowed",
+      "abilityNo": "Not allowed"
+    },
+    "yourWork": {
+      "title": "Your Tasks"
+    },
+    "adminActions": {
+      "description": "You handle organization-wide settings, user management, billing plan adjustments, and launching new projects.",
+      "step1LinkText": "User Management",
+      "step1Post": "to invite members (email sent). Members join after setting their password.",
+      "step2LinkText": "Project List",
+      "step2Post": "and click \"+ New\" to launch a new project, then assign PM/PL operational permissions.",
+      "step3LinkText": "Tenant Settings",
+      "step3Post": "to review and update your plan, monthly budget, billing address, and payment method.",
+      "step4Link1Text": "Audit Log",
+      "step4Link2Text": "Role Changes",
+      "step4Post": "to track important operations (e.g., handoffs when members leave).",
+      "step5Pre": "Monitor AI usage and billing amounts in",
+      "step5LinkText": "Tenant Settings",
+      "step5Post": "dashboard daily.",
+      "superAdminStepLabel": "System Admin:",
+      "superAdminStepLinkText": "System Admin Dashboard",
+      "superAdminStepPost": "to review usage, billing totals, and dormant tenant alerts across all tenants."
+    },
+    "pmActions": {
+      "description": "You handle project planning, progress management, staffing, and risk control.",
+      "step1Pre": "Open the project assigned by your tenant admin in",
+      "step1LinkText": "Project List",
+      "step1Post": "to review the overview, timeline, and client. To create your own project, click \"+ New\" — AI will automatically extract tags.",
+      "step2": "Always check the <strong>\"References\" tab</strong> right after creation for past risks, issues, and knowledge (prevents oversights).",
+      "step3": "In the WBS tab, decompose work into <strong>WP → Activity</strong>. Assign owners, estimated hours, and dates to each Activity.",
+      "step4": "Use the Gantt chart to spot parallel workload conflicts and deadline overruns; check hour totals to detect member overload.",
+      "step5Pre": "Log potential uncertainties as",
+      "step5Link1Text": "Risks",
+      "step5Middle": "and active blockers as",
+      "step5Link2Text": "Issues",
+      "step5Post": ".",
+      "step6Pre": "After project completion, always run a",
+      "step6LinkText": "Retrospective",
+      "step6Post": "(Keep/Problem/Try). This feeds the next project's references.",
+      "step7Pre": "Document key learnings as",
+      "step7LinkText": "Knowledge",
+      "step7Post": "entries (set visibility to \"Public\" to share across projects in your tenant)."
+    },
+    "memberActions": {
+      "description": "Your focus is executing assigned work and capturing field insights.",
+      "step1Pre": "Start each day by opening",
+      "step1LinkText": "My Tasks",
+      "step1Post": "— your assigned Activities are shown in a per-project tree view.",
+      "step2": "Update Activity status (Not Started / In Progress / Done) and reflect actual progress in the progress bar.",
+      "step3Pre": "If you sense a future blocker, file it immediately as a",
+      "step3Link1Text": "Risk",
+      "step3Middle": ". If you're already blocked, file an",
+      "step3Link2Text": "Issue",
+      "step3Post": ".",
+      "step4": "Use <code>@</code> in comments to mention team members (they receive a notification).",
+      "step5Pre": "Document insights worth sharing as",
+      "step5LinkText": "Knowledge",
+      "step5Post": "entries (choose visibility: project-only or company-wide)."
+    },
+    "viewerActions": {
+      "description": "You cannot write, but can use the platform to share project status with stakeholders (executives, sales, etc.).",
+      "step1": "Project overview, WBS, and Gantt chart are available for <strong>read-only</strong> access.",
+      "step2": "Risks, issues, knowledge, and retrospectives are also viewable (subject to visibility settings).",
+      "step3": "New comments cannot be posted. Ask members to write on your behalf.",
+      "step4": "My Tasks is not available (no tasks are assigned to Viewer accounts)."
+    },
+    "glossary": {
+      "title": "Glossary",
+      "searchHint": "Use Ctrl+F (Cmd+F) to search by keyword.",
+      "termProject": "Project",
+      "defProject": "The top-level unit of work. WBS, risks, issues, retrospectives, knowledge, etc. all live under a project.",
+      "termWbs": "WBS / WP / Activity",
+      "defWbs": "Work decomposed into a hierarchy of <strong>WP (Work Package)</strong> → <strong>Activity (actual task)</strong>. Owners and estimated hours are assigned at the Activity level.",
+      "termGantt": "Gantt Chart",
+      "defGantt": "A timeline view of tasks. Visualize deadline overruns and parallel workloads at a glance.",
+      "termRiskIssue": "Risk / Issue",
+      "defRiskIssue": "Risk = a potential obstacle that hasn't occurred yet. Issue = an active blocker that has already materialized.",
+      "termRetroKnowledge": "Retrospective / Knowledge",
+      "defRetroKnowledge": "Retrospective = a post-project KPT reflection. Knowledge = standalone documents capturing business know-how.",
+      "termMention": "Mention (@)",
+      "defMention": "Type <code>@username</code> in a comment to send that user a notification.",
+      "termOwl": "Tasuki Owl (Semantic Chat Search)",
+      "defOwl": "The official mascot \"Tasuki Owl\" lives in the bottom-right corner of every page. Click to open the chat panel and <strong>ask questions about past assets in natural language</strong>. The owl searches across Projects, Knowledge, Risks, Issues, Retrospectives, Memos, and attachments (free and unlimited on all plans).",
+      "termSuggestion": "Suggestion Engine (References Tab)",
+      "defSuggestion": "Automatically <strong>surfaces past risks, issues, and knowledge</strong> similar to the current project. Pro plan also includes AI-generated explanations of why each item is relevant.",
+      "termTenant": "Tenant",
+      "defTenant": "The top-level boundary for a <strong>company or organization</strong>. Data is completely isolated between tenants.",
+      "termPlan": "Plan (Beginner / Expert / Pro)",
+      "defPlan": "<strong>Beginner</strong> = Free, up to 5 seats (50 project create/update operations per month). <strong>Expert</strong> = Unlimited seats, ¥10/project create or update. <strong>Pro</strong> = Unlimited seats, ¥15/operation + AI-powered suggestions with explanations."
+    },
+    "cta": {
+      "title": "Related Links",
+      "description": "Learn about the service background on the LP, find answers on the FAQ page, or join the <strong>Tasukiba Community (Discord)</strong> to chat with developers and other users (share use cases, ask questions, report bugs, make requests). Also accessible from the account menu in the top-right corner.",
+      "lpButton": "🌐 Product Page (LP)",
+      "faqButton": "❓ FAQ"
+    }
+  }
 }

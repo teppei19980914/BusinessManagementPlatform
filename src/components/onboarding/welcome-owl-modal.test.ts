@@ -16,11 +16,11 @@ const source = readFileSync(
 
 describe('WelcomeOwlModal 導線ハブ invariant', () => {
   it('4 つの導線 CTA を備える (チャット / 使い方ガイド / FAQ / Discord)', () => {
-    expect(source).toMatch(/たすきフクロウに聞いてみる/);
-    expect(source).toMatch(/使い方ガイド/);
-    expect(source).toMatch(/よくある質問/);
-    expect(source).toMatch(/コミュニティ（Discord）をのぞいてみる/);
-    expect(source).toMatch(/案内を閉じる/);
+    expect(source).toMatch(/t\('ctaChat'\)/);
+    expect(source).toMatch(/使い方ガイド/); // GUIDE_ROUTE 経由 or コメント内
+    expect(source).toMatch(/よくある質問/); // HELP_ROUTE 経由 or コメント内
+    expect(source).toMatch(/t\('ctaDiscord'\)/);
+    expect(source).toMatch(/t\('closeButton'\)/);
   });
 
   it('チャット CTA は FAB を開く (requestOpenHelpChat / 画面遷移しない)', () => {

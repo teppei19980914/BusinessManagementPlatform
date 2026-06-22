@@ -540,6 +540,7 @@ type CapRow = {
   plannedStartDate: Date | null;
   plannedEndDate: Date | null;
   plannedEffort: number;
+  includeWeekends: boolean;
 };
 function mockCapacity(rows: CapRow[]) {
   vi.mocked(prisma.task.findMany).mockResolvedValue(rows as never);
@@ -551,6 +552,7 @@ function capRow(
   start: string,
   end: string,
   plannedEffort: number,
+  includeWeekends = false,
 ): CapRow {
   return {
     assigneeId,
@@ -558,6 +560,7 @@ function capRow(
     plannedStartDate: d(start),
     plannedEndDate: d(end),
     plannedEffort,
+    includeWeekends,
   };
 }
 
@@ -597,8 +600,8 @@ describe('getAssigneeDailyCapacity', () => {
   });
 
   it('予定工数を期間で均等按分し、担当者×日付に展開する', async () => {
-    // 06-10〜06-13 (4 日) に 8h → 2h/日。全日が本日以降。
-    mockCapacity([capRow('uX', 'X', '2026-06-10', '2026-06-13', 8)]);
+    // 06-10〜06-13 (4 日) に 8h → 2h/日。全日が本日以降。06-13(土)含む全暦日で均等按分。
+    mockCapacity([capRow('uX', 'X', '2026-06-10', '2026-06-13', 8, true)]);
     const r = await getAssigneeDailyCapacity('p1', 'tenant-A', NOW);
     expect(r.dates).toEqual(['2026-06-10', '2026-06-11', '2026-06-12', '2026-06-13']);
     const x = r.assignees[0];
@@ -680,6 +683,28 @@ describe('getAssigneeDailyCapacity', () => {
     expect(x.cells[0]?.effortHours).toBe(4);
     expect(x.cells[1]).toBeNull(); // 06-11 は割当なし
     expect(x.cells[2]).toBeNull(); // 06-12 は割当なし
+  });
+
+  it('includeWeekends=false: 金〜月(4暦日) 4h → 業務日(金・月)のみ分散 → 各日 2h', async () => {
+    // 2026-06-19(金)〜06-22(月)。業務日は金・月の 2 日のみで 4h ÷ 2 = 2h/日。
+    // 横軸 (dates) は enumerateDays で全暦日を列挙するため土日も含む。
+    // 土日セル (06-20, 06-21) は dailyMap に載らないため null になる。
+    mockCapacity([capRow('uX', 'X', '2026-06-19', '2026-06-22', 4, false)]);
+    const r = await getAssigneeDailyCapacity('p1', 'tenant-A', d('2026-06-19'));
+    const x = r.assignees[0];
+    expect(r.dates).toEqual(['2026-06-19', '2026-06-20', '2026-06-21', '2026-06-22']);
+    expect(x.cells[0]).toMatchObject({ effortHours: 2 }); // 06-19(金) — 稼働日
+    expect(x.cells[1]).toBeNull(); // 06-20(土) — 非稼働日
+    expect(x.cells[2]).toBeNull(); // 06-21(日) — 非稼働日
+    expect(x.cells[3]).toMatchObject({ effortHours: 2 }); // 06-22(月) — 稼働日
+  });
+
+  it('includeWeekends=true: 金〜月(4暦日) 4h → 全暦日分散 → 各日 1h', async () => {
+    mockCapacity([capRow('uX', 'X', '2026-06-19', '2026-06-22', 4, true)]);
+    const r = await getAssigneeDailyCapacity('p1', 'tenant-A', d('2026-06-19'));
+    const x = r.assignees[0];
+    expect(r.dates).toEqual(['2026-06-19', '2026-06-20', '2026-06-21', '2026-06-22']);
+    expect(x.cells.map((c) => c?.effortHours)).toEqual([1, 1, 1, 1]);
   });
 
   it('予定工数 0 / 期間逆転 は対象外', async () => {

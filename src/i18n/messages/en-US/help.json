@@ -1,3 +1,439 @@
 {
-  "help": {}
+  "help": {
+    "search": {
+      "label": "Search (question & answer)",
+      "placeholder": "e.g. billing / knowledge / login"
+    },
+    "header": {
+      "title": "Help & FAQ",
+      "guideLinkText": "How-to Guide",
+      "descPre": "If you're new, we recommend reading the",
+      "descPost": "first. You can also search by keyword using the box below. For usage questions, feel free to ask the Tasukiba Owl (🦉) in the bottom-right corner."
+    },
+    "sections": {
+      "gettingStarted": "🚀 Getting Started & Role Guide",
+      "aboutService": "About the Service",
+      "businessUsage": "Using the Service",
+      "permissions": "Roles & Permissions",
+      "account": "Account & Login",
+      "dataPrivacy": "Data & Privacy",
+      "csvImport": "Importing External Data (CSV Import — Tenant Admins Only)",
+      "billing": "Billing & Payment (Tenant Admins Only)",
+      "planSeat": "Plans & Seats (Tenant Admin)"
+    },
+    "faq": {
+      "owlMascot": {
+        "q": "What is the owl shown in the header and favicon?",
+        "imgAlt": "Tasukiba Owl",
+        "p1": "It's the official mascot of Tasukiba: <strong>\"Tasukiba Owl\"</strong>. Owls have long been symbols of <strong>wisdom, memory, and watchful protection</strong> — perfectly aligning with Tasukiba's three core pillars: project management, knowledge management, and security.",
+        "p2": "The owl holds documents in its wings, a keyed shield on its chest, and a circular barrier in the background — a visual representation of our mission to \"protect knowledge and pass it on to the next person.\"",
+        "p3": "You'll find the owl in the top-left corner, the browser tab icon, and social media previews — always by your side as you work."
+      },
+      "browser": {
+        "q": "Which browsers are recommended? Can I use it on a smartphone?",
+        "a": "We recommend the latest version of <strong>Chrome / Edge / Safari / Firefox</strong>. Mobile browsers are supported (responsive design), but for intensive tasks like CSV imports or project editing, a desktop computer is recommended."
+      },
+      "riskVsIssue": {
+        "q": "What's the difference between a risk and an issue?",
+        "a": "A <strong>risk</strong> is \"a problem that hasn't happened yet but might\"; an <strong>issue</strong> is \"a problem that has already occurred and needs action\". If a risk materializes, leave the risk record as-is and register a new issue separately (this preserves the risk record as evidence of your monitoring, useful for retrospectives)."
+      },
+      "wpActivity": {
+        "q": "How do I use WP and Activity?",
+        "p1": "<strong>WP (Work Package)</strong> is a large grouping; <strong>Activity</strong> is a single unit of hands-on work within it. Assign owners, planned effort, and dates to <strong>Activities</strong> (WPs automatically show the sum of their child Activities).",
+        "p2": "Example: in a sales proposal project, \"Create proposal (WP)\" might contain \"Design slides / Create charts / Proofread (Activities)\". Keeping each Activity to <strong>half a day to one week</strong> makes progress easy to track."
+      },
+      "knowledgeVsRetro": {
+        "q": "How do I use Knowledge vs. Retrospective?",
+        "a": "<strong>Retrospective</strong> is where you organize experience at project end using the <strong>Keep (continue) / Problem (struggled with) / Try (improve next time)</strong> framework. <strong>Knowledge</strong> is a standalone document for business know-how that can be reused across projects. Extract the best \"Try\" ideas from retrospectives into Knowledge entries to build your organization's asset base."
+      },
+      "suggestionEngine": {
+        "q": "What does the Suggestion Engine (Reference tab) show?",
+        "p1": "The AI automatically finds and lists <strong>past risks, issues, knowledge, and retrospectives with similar content</strong> to the current project. It searches both your organization's data and the platform's sample cases (seed data; can be turned off in Tenant Settings).",
+        "p2": "On the Pro plan, each suggestion also includes an explanation of <strong>\"Why it's relevant\"</strong> (using a more capable AI model).",
+        "p3": "※ After saving new data, there may be a <strong>delay of several seconds</strong> before it appears in the suggestion engine (the AI needs to process the content and build search data)."
+      },
+      "mention": {
+        "q": "How do I use mentions (@)?",
+        "a": "Type <code>@</code> while writing a comment to get a popup with member suggestions. Selecting a member sends them a notification (the bell icon in the top-right). Use this whenever you need someone to see something — questions, review requests, deadline reminders."
+      },
+      "knowledgeMissing": {
+        "q": "The knowledge/memo/retrospective/project I saved isn't showing in suggestions or lists",
+        "p1": "First, check that the <strong>visibility is set to \"All Members (Public)\"</strong>. Items set to \"My Draft Only\" won't appear in the suggestion engine or all-member list views.",
+        "p2": "If it's already set to public, there may be a <strong>delay of several seconds</strong> between saving and appearing in the suggestion engine (the AI is processing the content). If it doesn't appear right after saving, wait a few tens of seconds and refresh the page."
+      },
+      "resolvedMissing": {
+        "q": "Resolved issues/risks aren't showing in suggestions",
+        "p1": "Issues and risks are only eligible for suggestions when <strong>both</strong> of these conditions are met:",
+        "li1": "<strong>Status is \"Resolved\"</strong> (unresolved items are excluded)",
+        "li2": "<strong>Visibility is \"All Members (Public)\"</strong>",
+        "p2": "After both conditions are met, there may be a <strong>delay of several seconds</strong> before they appear."
+      },
+      "editNoChange": {
+        "q": "I edited an existing item's text but the suggestion results haven't changed",
+        "p1": "After editing, the AI re-reads the content and <strong>rebuilds the search data</strong>, which takes a <strong>delay of several seconds</strong>.",
+        "p2": "※ Editing fields other than title/body (tags, priority, due date, etc.) does not trigger a rebuild — only the body text is used for suggestions."
+      },
+      "projectDeleted": {
+        "q": "I accidentally deleted a project. Can it be restored?",
+        "a": "If it's been fewer than <strong>30 days</strong> since deletion, contact us via your Tenant Admin (it's still stored internally and can be restored). After 30 days it's permanently deleted. Please be careful when using the delete confirmation dialog."
+      },
+      "closedProject": {
+        "q": "Can I edit a project with \"Closed\" status?",
+        "a": "<strong>Yes, you can edit it</strong> (if you have permission). \"Closed\" is a display status, not an edit lock. Feel free to add retrospectives or clean up knowledge entries after project completion."
+      },
+      "template": {
+        "q": "Can I duplicate a project from a template?",
+        "a": "Full project templates are not yet implemented. <strong>WBS (work structure) duplication</strong> is available from the WBS screen (task list) within a project."
+      },
+      "chatZero": {
+        "q": "Chat search is returning 0 results",
+        "a": "Instead of single keywords, try <strong>a sentence of 50–200 characters that includes business context and technical terms</strong>. For example, \"error handling for credit card payment API integration\" will return better results than just \"payment\"."
+      },
+      "draftData": {
+        "q": "Do \"Draft / My Only\" items appear in suggestions?",
+        "a": "No. <strong>Items in \"Draft / My Only\" status are excluded from the suggestion engine</strong> (they also don't generate search data, so there's no cost overhead). Change the visibility to \"Within Project\" or \"All Members (Public)\" to include them in suggestions."
+      },
+      "whyBilling": {
+        "q": "Does every press of the \"Why is this relevant?\" button cost ¥15?",
+        "a": "No — <strong>for the same combination (current project × reference candidate), results from the 2nd press onward are served from cache at no additional cost</strong>. ¥15 only applies when the combination changes (pressing for a different candidate, or after the source item's body has been edited)."
+      },
+      "roleTable": {
+        "q": "What's the difference between Operator / Tenant Admin / General Member?",
+        "colOp": "Operation",
+        "colOperator": "Operator",
+        "colAdmin": "Tenant Admin",
+        "colMember": "General Member",
+        "row1Op": "Tenant create/delete/billing management",
+        "row1Admin": "○ (own org only)",
+        "row2Op": "Member invite / role change",
+        "row3Op": "Create/edit projects, knowledge, issues",
+        "row4Op": "View other orgs' data",
+        "row4Operator": "Billing totals only"
+      },
+      "roleCheck": {
+        "q": "How do I check my own role?",
+        "a": "Open the account menu (avatar icon) in the top-right. Your role is shown in <strong>Organization → Role → Name → Email</strong> order."
+      },
+      "handover": {
+        "q": "How do I hand over knowledge/issues from a departing team member?",
+        "a": "For knowledge, risks, issues, retrospectives, and memos: <strong>reassign the assignee to another member</strong>. Change the \"Assignee\" field in each item's edit screen (the data itself is preserved)."
+      },
+      "orgIdForgot": {
+        "q": "I forgot my Organization ID",
+        "a": "Check using one of these methods: (1) Focus the empty \"Organization ID\" field on the login screen — up to <strong>5 previously used IDs (for 90 days)</strong> will be suggested. (2) Check the \"[Important] Login Information\" section in your invitation email. (3) Ask another member of your organization (e.g. your Tenant Admin)."
+      },
+      "passwordLink": {
+        "q": "How long is the password setup link valid?",
+        "a": "Links in invitation and password-reset emails expire after <strong>24 hours</strong>. If expired, use \"Forgot your password?\" on the login screen to request a new one (if you can't do it yourself, ask your Tenant Admin)."
+      },
+      "inviteEmail": {
+        "q": "I haven't received my invitation email",
+        "introPre": "The sender is",
+        "introPost": ". Check in this order:",
+        "li1": "Check your spam/junk folder",
+        "li2Pre": "Add",
+        "li2Post": "to your company email's allowlist",
+        "li3": "Check the email address for typos (your Tenant Admin can verify in the invitation screen)",
+        "li4": "If still unresolved, ask your Tenant Admin to re-invite you"
+      },
+      "notification": {
+        "q": "I'm not receiving notifications",
+        "a": "In-app notifications appear in the bell icon (top-right) <strong>only when you are @mentioned</strong>. There's no notification on/off setting yet (coming soon). If you need to notify someone, use <code>@</code> in a comment to explicitly mention them."
+      },
+      "emailNotify": {
+        "q": "Are there email notifications?",
+        "a": "Currently only <strong>invitation emails and Beginner plan expiry warnings (60 / 75 / 90 / 150 / 170 days)</strong> are sent by email. Daily activity (comments, assignee changes, deadline reminders) is in-app only (bell icon)."
+      },
+      "otherTenant": {
+        "q": "Can I see data from other tenants (organizations)?",
+        "a": "No. Data is completely separated per tenant (organization). Even the platform operator does not view other organizations' business data (only aggregate counts and amounts for billing purposes)."
+      },
+      "deactivation": {
+        "q": "What happens to my data if I cancel?",
+        "intro": "It depends on your plan.",
+        "li1": "<strong>Beginner</strong>: Read-only after 90 days from organization creation; business data is <strong>automatically deleted</strong> after 180 days total (advance email notification sent).",
+        "li2": "<strong>Expert / Pro</strong>: Use \"Self-Cancellation\" in Tenant Settings; business data is deleted approximately 90 days after cancellation.",
+        "p2": "If you need your data before deletion, export it as CSV via Tenant Settings → \"Export\". Records legally required to be retained (such as invoices) are kept by the platform for 5 years."
+      },
+      "rejoin": {
+        "q": "Can I rejoin the same organization after cancellation?",
+        "a": "After deletion, you'll need to create a new organization (organization IDs cannot be reused). Previous business data cannot be restored, so please export everything you need before deleting."
+      },
+      "aiData": {
+        "q": "What data is sent to the AI?",
+        "intro": "The following data is sent to Anthropic (Claude) and Voyage AI for the suggestion engine and chat search:",
+        "li1": "Project \"purpose / background / scope\"",
+        "li2": "Body text of knowledge, risks, issues, retrospectives, and memos (those not set to draft visibility)",
+        "li3": "Chat search query strings",
+        "p2": "The following are <strong>not sent</strong>: authentication credentials (passwords), attachment file contents, comment text, personal information (name, email address), etc."
+      },
+      "backup": {
+        "q": "Can I back up or export my data?",
+        "aPre": "Tenant Admins can bulk-export all data as a ZIP from",
+        "linkText": "Tenant Settings",
+        "aPost": ". Individual CSV downloads are also available via the \"Export\" button on each list screen (Knowledge, Risks, Issues, Retrospectives, Memos). Use this to save your data before cancellation."
+      },
+      "memoTypes": {
+        "q": "What's the difference between Personal Memos and All Memos?",
+        "p1": "The <strong>Personal Memos</strong> screen is where you manage and edit all memos you've created (both public and private).",
+        "p2": "The <strong>All Memos</strong> screen lets you browse memos that other members in your tenant have set to <strong>\"Public\"</strong> (view only — only creators can edit their own memos).",
+        "p3": "Note: Memos where you've been mentioned also appear in your Personal Memos automatically."
+      },
+      "visibilityScope": {
+        "q": "How do I use knowledge visibility settings (Draft / Within Project / All Members)?",
+        "intro": "Guidelines by use case:",
+        "li1": "<strong>Draft</strong>: Your personal work notes. Not visible to other members (excluded from suggestion engine)",
+        "li2": "<strong>Within Project (project)</strong>: Visible only to members of the associated project",
+        "li3": "<strong>All Members (company)</strong>: Visible to everyone in the organization; included in suggestion engine candidates",
+        "p2": "Risks and issues (RiskIssue) have <strong>2 levels</strong>: <strong>Draft</strong> or <strong>Public</strong>."
+      },
+      "changeVisibility": {
+        "q": "Can I change visibility settings later?",
+        "a": "Yes, you can change them in each item's edit screen (PM and Tenant Admin only). <strong>When you change from \"Draft\" to \"All Members\" for the first time, the AI creates search data</strong>, so there may be a <strong>delay of several seconds</strong> before it appears in the suggestion engine."
+      },
+      "privateMemoMention": {
+        "q": "Can the person I @mentioned in a private memo see it?",
+        "a": "Memos have <strong>2 levels: private (my eyes only) and public (visible to all members)</strong>. @mentioning someone in a private memo does not let them see it (and no notification is sent). To share, <strong>change to public first</strong>, then @mention."
+      },
+      "terms": {
+        "q": "Where can I find the Terms of Service and Privacy Policy?",
+        "aPre": "At the bottom of the sign-up form, and on the",
+        "linkText": "official LP Terms of Service page",
+        "aPost": ". You'll be notified by email before any revisions."
+      },
+      "csvMigrate": {
+        "q": "I want to bulk-import existing knowledge/issues from our internal wiki / Excel / old PM tool after first login",
+        "intro": "The \"① Import CSV File\" feature (available to <strong>Tenant Admins only</strong>) lets you bulk-import customers, projects, WBS, risks, issues, knowledge, and retrospectives via CSV. Imported data is created as new records with a default visibility of \"Draft\" (drafts are excluded from embedding generation and billing).",
+        "li1Pre": "Open the account menu (top-right) → <strong>Settings</strong> →",
+        "li1LinkText": "Tenant Settings",
+        "li1Post": "to open",
+        "li2Pre": "From the yellow notice box in the \"Data Import\" section, go to",
+        "li2LinkText": "Import CSV File",
+        "li2Post": "to proceed",
+        "li3": "Download the <strong>template CSV</strong> (one per entity type) from the top of the screen, edit in Excel → File → Save As → <strong>\"CSV UTF-8 (Comma Delimited)\"</strong>",
+        "li4": "Complete the 4-step wizard (file selection → mapping → preview → import). The preview shows row counts and errors so you can fix the CSV before importing."
+      },
+      "csvFormat": {
+        "q": "What CSV format is accepted?",
+        "li1": "Character encoding: <strong>UTF-8</strong> (Excel's default Shift_JIS will cause garbled text — always select \"CSV UTF-8 (Comma Delimited)\" when saving)",
+        "li2": "First row is the header row (column names); delimiter is comma (tabs and semicolons are not supported)",
+        "li3": "Cells with long text containing line breaks (body, background, cause, etc.) <strong>must be wrapped in double quotes (<code>\"</code>)</strong> (use Alt+Enter in Excel for line breaks within a cell)",
+        "li4": "Dates must be in <strong><code>YYYY-MM-DD</code> format</strong> (e.g. <code>2026-12-31</code>; <code>2026/12/31</code> is not accepted)",
+        "li5": "Selection values (impact, priority, etc.) must be <strong>lowercase English</strong> (e.g. <code>high</code>; <code>High</code> is not accepted)",
+        "li6": "Maximum file size: <strong>50 MB</strong>"
+      },
+      "csvError": {
+        "q": "How do I fix \"N error rows\" shown in the preview?",
+        "intro": "No data has been imported yet at the preview stage. Common causes and fixes:",
+        "li1Pre": "<strong>Required field is empty</strong> (<code>title</code> /",
+        "li1Post": "<code>content</code>, etc.) → Fill in the missing values in Excel",
+        "li2": "<strong>Invalid value</strong> (<code>knowledgeType</code> must be <code>failure/success/lesson/template/general</code>; <code>impact</code> must be <code>low/medium/high</code>) → Correct to one of the allowed lowercase values",
+        "li3": "<strong>Date format error</strong> (<code>deadline</code>) → Use hyphens, not slashes: <code>YYYY-MM-DD</code>",
+        "li4": "<strong>Line 2+ of body content is missing after import</strong> → The cell with line breaks may not have been wrapped in double quotes. Open the CSV in Notepad/VS Code and verify the cell is enclosed in <code>\"...\"</code> (Excel sometimes strips quotes when saving)",
+        "excelNote": "<strong>Excel tips</strong>:",
+        "excelLi1": "<strong>Save as CSV UTF-8</strong>: Excel menu → File → Save As → select \"CSV UTF-8 (Comma Delimited) (*.csv)\" from the file type dropdown (same on Windows and Mac)",
+        "excelLi2": "<strong>Line breaks within a cell</strong>: Press <code>Alt+Enter</code> (Mac: <code>Option+Return</code>) inside the cell. Cells with line breaks are automatically wrapped in <code>\"</code> when saved"
+      },
+      "csvItems": {
+        "q": "What can be imported via CSV? What about memos?",
+        "p1": "The \"① Import CSV File\" wizard supports <strong>customers, projects, WBS, risks, issues, knowledge, and retrospectives</strong> — 7 entity types.",
+        "p2": "Memos are not included; use the \"Import\" button on the memo list screen instead (a round-trip flow: export → edit → re-import). The per-list \"Import\" can also be used to overwrite/update existing data."
+      },
+      "csvPlan": {
+        "q": "Do CSV import limits vary by plan (Beginner / Expert / Pro)?",
+        "intro": "<strong>File size and row count limits are the same for all plans</strong>:",
+        "li1": "<strong>External data migration wizard</strong>: 50 MB per file / 5,000 rows total / free for all plans (ADR-0019)",
+        "li2": "<strong>Per-entity sync-import</strong> (list screens): 10 MB per file / 500 rows",
+        "p2": "However, <strong>behavior when DB capacity is exceeded</strong> <strong>differs by plan</strong> (ADR-0020 §11, updated 2026-05-28):",
+        "tableColUsage": "Estimated usage after import",
+        "tableColBeginner": "Beginner",
+        "tableColExpertPro": "Expert / Pro",
+        "tableRow1Usage": "< 50 MB (within free tier)",
+        "tableRow1Both": "Import allowed",
+        "tableRow2Usage": "50 MB – 1 GB",
+        "tableRow2Beginner": "⛔ Import blocked",
+        "tableRow2ExpertPro": "Import allowed (¥0–¥50/month)",
+        "tableRow3Usage": "1 GB – 10 GB (L1)",
+        "tableRow3Beginner": "⛔ Import blocked",
+        "tableRow3ExpertPro": "⚠ Warning (import allowed)",
+        "tableRow4Usage": "10 GB – 50 GB (L2)",
+        "tableRow4Beginner": "⛔ Import blocked",
+        "tableRow4ExpertPro": "⚠ Warning (import allowed)",
+        "tableRow5Usage": "≥ 50 GB (L3 monitoring alert)",
+        "tableRow5Beginner": "⛔ Import blocked",
+        "tableRow5ExpertPro": "Import allowed (no cumulative cap)",
+        "noteBeginnerPre": "<strong>Beginner plan users</strong>: Imports exceeding the 50 MB free tier show a warning in the preview and disable the import button (no unexpected charges). To import more than 50 MB at once, please upgrade to Expert / Pro.",
+        "noteExpertProPre": "<strong>Expert / Pro plan users</strong>: There is no cumulative cap — your import won't be blocked just because you've stored a lot of data (L3 = 50 GB is a performance monitoring threshold for the platform, not a write limit). The preview screen shows \"Estimated usage after import\" and \"Estimated monthly charge\" — please review before confirming. Details are available in",
+        "noteExpertProLinkText": "Tenant Settings",
+        "noteExpertProPost": "→ \"Usage\" tab."
+      },
+      "csvVisibility": {
+        "q": "What visibility will imported data have?",
+        "li1": "Visibility can be <strong>Draft / Public</strong> (same for knowledge, risks, issues, retrospectives). Default when not specified in the mapping: <strong>Draft</strong>",
+        "li2": "<strong>Draft</strong>: My eyes only. Hidden from suggestion engine / not indexed / no billing",
+        "li3": "<strong>Public</strong>: Visible to all tenant members; eligible as suggestion candidates",
+        "li4": "You can specify <code>draft</code> / <code>public</code> per row in the CSV visibility column (Japanese <code>下書き</code> / <code>公開</code> also accepted). You can also change visibility individually from each item's edit screen after import."
+      },
+      "billingWhen": {
+        "q": "When am I billed?",
+        "a": "<strong>End of month cut-off → payment due on the 25th of the following month (fixed)</strong> (if that falls on a weekend or holiday, the next business day applies). Invoice PDFs are sent to your billing email address by the 15th of the following month."
+      },
+      "billingPlanChange": {
+        "q": "If I change plans mid-month, how is billing calculated?",
+        "a": "Tasukiba uses pay-per-use billing (per action), so usage before the switch is billed at the old rate and usage after is billed at the new rate (no daily proration). Beginner → Expert / Pro and Expert ↔ Pro switches take effect <strong>immediately when you press the switch button</strong>."
+      },
+      "billingPayment": {
+        "q": "Is there a payment method other than credit card?",
+        "aPre": "We support <strong>bank transfer (invoice PDF)</strong> and <strong>credit card (Stripe auto-debit)</strong>. New organizations default to bank transfer. You can switch to credit card in",
+        "linkText": "Tenant Settings",
+        "aPost": "(credit card may be temporarily unavailable depending on platform circumstances)."
+      },
+      "billingInvoice": {
+        "q": "Where can I download invoice PDFs?",
+        "a": "For bank transfer, invoices are <strong>sent directly as a PDF to your billing email address</strong> by the 15th of each month (there's no download screen in the dashboard). For credit card, a Stripe invoice URL is included in the email."
+      },
+      "billingTax": {
+        "q": "How is consumption tax calculated?",
+        "a": "<strong>Rounded to the nearest integer at 10%</strong>. Invoices show both pre-tax and tax-inclusive amounts."
+      },
+      "billingBeginnerOverage": {
+        "q": "What happens if Beginner plan DB usage exceeds 50 MB?",
+        "a": "<strong>New data cannot be saved or edited</strong> (the Beginner plan is free, so there's no overage charge). Deleting unnecessary data triggers automatic recalculation of available space within about 30 seconds, after which writes resume. If you need to store more data consistently, please upgrade to Expert / Pro."
+      },
+      "billingCapacity": {
+        "q": "Where can I check DB and file storage usage?",
+        "linkText": "Tenant Settings",
+        "aPost": "→ <strong>\"Usage\" tab</strong>. Usage is recalculated the moment you open the page, so even recent deletions are reflected accurately."
+      },
+      "billingCapacityLimit": {
+        "q": "Is there a cap on data/file storage? Will saves ever be blocked due to too much data?",
+        "a": "<strong>There is no cumulative storage cap</strong> (updated 2026-05-31). On Expert / Pro, no matter how much data accumulates, pay-per-use billing continues (¥50 per GB for DB, ¥10 per GB for files) and <strong>saves, edits, and uploads are never blocked</strong> (\"Data is the lifeblood of Tasukiba\"). There are limits of 5 MB per body text and 50 MB per file per operation, but these are to limit instantaneous server load — not related to cumulative storage. The L3 threshold (50 GB) is a platform performance monitoring target and does not affect writes. Note: on the Beginner plan only, exceeding the free tier (50 MB DB / 100 MB files) blocks new creates, updates, and uploads (deletes still work; no charge is incurred)."
+      },
+      "planDiff": {
+        "q": "What are the differences between plans (Beginner / Expert / Pro)?",
+        "colItem": "Item",
+        "colBeginner": "Beginner (Free)",
+        "colExpert": "Expert (¥10/action)",
+        "colPro": "Pro (¥15/action)",
+        "rowSeat": "Seats",
+        "rowSeatBeginner": "Up to 5",
+        "rowSeatOther": "Unlimited",
+        "rowProjectCreate": "Project create/update",
+        "rowProjectCreateBeginner": "Up to 50/month free",
+        "rowProjectCreateExpert": "¥10/action",
+        "rowProjectCreatePro": "¥15/action",
+        "rowAssets": "Asset input / Chat search",
+        "rowAssetsAll": "Free & unlimited for all plans",
+        "rowAiModel": "AI model used",
+        "rowAiModelBeginner": "Standard AI (Claude Haiku)",
+        "rowAiModelExpert": "Standard AI (Claude Haiku)",
+        "rowAiModelPro": "Advanced AI (Claude Sonnet)",
+        "rowWhy": "\"Why is this relevant?\" feature",
+        "rowWhyNA": "Not available",
+        "rowWhyPro": "Available (¥15/action)",
+        "notePreLink": "For details, see the plan information section in",
+        "noteLinkText": "Tenant Settings",
+        "notePostLink": "."
+      },
+      "planSwitch": {
+        "q": "When does an Expert ↔ Pro switch take effect?",
+        "a": "Expert ↔ Pro switches take effect <strong>immediately when you press the switch button</strong> (no daily proration; usage before and after is billed at the respective rate). Switching back to Beginner is not possible (see FAQ: \"Can I switch back to the Beginner plan?\")."
+      },
+      "planBudget": {
+        "q": "What happens when the monthly budget cap is reached?",
+        "a": "When the cap is reached, <strong>some AI features are temporarily paused</strong>. Data creation and editing continue as normal, but newly saved data may not appear in suggestions and search accuracy may decrease slightly. <strong>Everything resets automatically on the 1st of the next month</strong> (to restore sooner, increase the budget cap)."
+      },
+      "planSeed": {
+        "q": "I don't want to use seed data (platform sample cases)",
+        "linkText": "Tenant Settings",
+        "aPost": ". After that, suggestions will only use your organization's own data (no other company's data is referenced at all)."
+      },
+      "planDowngrade": {
+        "q": "Can I switch back to the Beginner plan from Expert / Pro?",
+        "aPre": "<strong>No, you cannot.</strong> Beginner is a trial plan (90 days); once you upgrade, you cannot return to it for the same organization. If you want to reduce monthly costs to zero, keep Expert / Pro and set <strong>Tenant Settings → \"Monthly Budget Cap\" to ¥0</strong> (AI features will pause and no additional charges will occur)."
+      }
+    },
+    "adminAi": {
+      "title": "How AI Works & What to Know (Tenant Admin Guide)",
+      "intro": "As the person responsible for your organization's cost management, it helps to understand where AI is used and what costs money. Here's a plain-language summary.",
+      "featuresTitle": "Where this service uses AI",
+      "autoTagTitle": "Auto-tagging",
+      "autoTagBody": "When a project is created, the AI reads the purpose, background, and scope text, then automatically assigns keywords for industry, technology used, and process phase. These tags make it easier to find similar projects later.",
+      "embeddingTitle": "Text vectorization (search preparation)",
+      "embeddingBody": "When saving projects, knowledge, risks, issues, or retrospectives, the AI converts the text into a \"sequence of numbers representing meaning\" and stores it behind the scenes. This enables finding \"content that means something similar even if worded differently\" later. Users never interact with this directly.",
+      "whyTitle": "\"Why is this relevant?\" explanation",
+      "whyBody": "Pressing the button next to a suggested past resource generates a short Japanese explanation of \"why this is useful for the current project.\" Available on the Pro plan only.",
+      "similarTitle": "Core similarity matching (Reference tab ranking)",
+      "similarBody": "The process of ranking past resources by similarity in the Reference tab. This only uses the already-stored vectorized data — no new AI call is made, so there's no additional charge.",
+      "featuresNote": "Note: authentication credentials (passwords), comment text, and attachment file contents are not sent to the AI. Only business text such as project summaries and knowledge body text is sent.",
+      "billingTitle": "Billable vs. non-billable summary",
+      "billingColFeature": "Feature",
+      "billingColStatus": "Billing",
+      "billingColUnit": "What counts as \"1 action\"",
+      "billingRow1Feature": "Auto-tagging",
+      "billingRow1Status": "Billable",
+      "billingRow1Unit": "1 action each time a project is created or edited",
+      "billingRow2Feature": "Text vectorization (search preparation)",
+      "billingRow2Status": "Billable",
+      "billingRow2Unit": "1 action each time a project / knowledge / risk / issue / retrospective / external data import is saved",
+      "billingRow3Feature": "\"Why is this relevant?\" explanation (Pro only)",
+      "billingRow3Status": "Billable",
+      "billingRow3Unit": "1 action the moment the button is pressed (the 2nd+ press for the same combination shows cached results — no additional charge)",
+      "billingRow4Feature": "Core similarity matching (Reference tab)",
+      "billingRow4Status": "Not billable",
+      "billingRow4Unit": "Display and reordering alone do not call the AI",
+      "planTitle": "Per-plan breakdown (what's available, AI model used, pricing)",
+      "planColItem": "Item",
+      "planColBeginner": "Beginner",
+      "planColExpert": "Expert",
+      "planColPro": "Pro",
+      "planRowSeat": "Seats",
+      "planRowSeatBeginner": "Up to 5",
+      "planRowSeatOther": "Unlimited",
+      "planRowLimit": "Monthly limit on project create/update",
+      "planRowLimitBeginner": "Up to 50/month",
+      "planRowLimitOther": "Unlimited",
+      "planRowAssets": "Asset input / Chat search",
+      "planRowAssetsAll": "Free & unlimited",
+      "planRowPrice": "Per-action price (project create/update)",
+      "planRowPriceBeginner": "Free (up to 50/month)",
+      "planRowPriceExpert": "¥10 / action",
+      "planRowPricePro": "¥15 / action",
+      "planRowWhy": "Why feature (Pro only)",
+      "planRowWhyNA": "Not available",
+      "planRowWhyPro": "¥15 / action",
+      "planRowAutoTagModel": "AI model for auto-tagging",
+      "planRowAutoTagModelBeginnerExpert": "Claude Haiku",
+      "planRowAutoTagModelPro": "Claude Sonnet",
+      "planRowAutoTagModelProNote": "(more capable model)",
+      "planRowEmbeddingModel": "AI model for text vectorization",
+      "planRowEmbeddingModelAll": "Voyage voyage-4-lite (same for all plans)",
+      "planRowWhyModel": "\"Why is this relevant?\" explanation",
+      "planRowWhyModelNA": "Not available",
+      "planRowWhyModelPro": "Available",
+      "planRowWhyModelProNote": "(Claude Sonnet)",
+      "planRowSimilarity": "Core similarity matching (Reference tab)",
+      "planRowSimilarityAll": "Available",
+      "planRowBudget": "Monthly budget cap setting",
+      "planRowBudgetBeginner": "Not available (auto-stops after 50 project create/update actions/month)",
+      "planRowBudgetOther": "Available",
+      "planRowLimit2": "When the limit is reached",
+      "planRowLimit2All": "Automatically switches to \"rest mode\". Suggestion tab search (using already-stored vectorized data) continues; only new AI calls (= new billing) are paused. Resets on the 1st of the next month.",
+      "planNote": "※ Expert / Pro per-action prices are the standard rates. If your tenant has custom pricing, check",
+      "planNoteLinkText": "Tenant Settings",
+      "planNotePost": "for your actual rates.",
+      "usageTitle": "\"When / Who / How much\" — tracking usage",
+      "usageBody": "Every AI call is recorded. Tenant Admins can see \"when\", \"who\", \"which feature\", and \"how much\" was used from the Tenant Settings screen. Use this for end-of-month reconciliation and cost reviews."
+    },
+    "notResolved": {
+      "title": "Still not resolved?",
+      "descPre": "If this page didn't solve your issue, access",
+      "discord": "Discord",
+      "descPost": "from the account menu (top-right) to ask the developer directly. The Tasukiba Discord is a community of developers and users where you can:",
+      "li1": "Ask the developer questions directly in the Tasukiba Discord.",
+      "li2": "Ask other users about use cases and tips in the Tasukiba Discord.",
+      "li3": "Bug reports and feature improvement requests are also welcome in the community.",
+      "linksDesc": "For service introductions or sending consolidated requests, please use the link below."
+    }
+  }
 }

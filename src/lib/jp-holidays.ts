@@ -74,6 +74,18 @@ export function isJapaneseHoliday(date: Date | string): boolean {
 }
 
 /**
+ * YYYY-MM-DD 文字列が土曜・日曜・日本の祝日のいずれかかを判定する。
+ * カンバン/バリデータで共通利用する。日付は UTC 解釈（YYYY-MM-DD 前提）。
+ */
+export function isWeekendOrHoliday(dateStr: string): boolean {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const date = new Date(Date.UTC(y, m - 1, d));
+  const dow = date.getUTCDay(); // 0=Sun, 6=Sat
+  if (dow === 0 || dow === 6) return true;
+  return isJapaneseHoliday(dateStr);
+}
+
+/**
  * 期間 [start, end] (両端含む) に含まれる祝日を返す。
  */
 export function getJapaneseHolidaysBetween(

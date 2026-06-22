@@ -70,7 +70,7 @@ export function MfaForm({ userId, callbackUrl }: { userId: string; callbackUrl: 
     }
     if (!res || !res.ok) {
       window.alert(
-        'ログアウト処理に失敗しました。ネットワーク接続を確認のうえ、ページを再読み込みしてから再度お試しください。',
+        t('logoutFailed'),
       );
       return;
     }

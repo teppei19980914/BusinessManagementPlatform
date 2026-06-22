@@ -35,6 +35,7 @@ const querySchema = z.object({
   }),
   plannedEffort: z.coerce.number().min(0, { message: 'plannedEffort は 0 以上である必要があります' }),
   excludeTaskId: z.string().uuid().optional(),
+  includeWeekends: z.coerce.boolean().optional().default(false),
 });
 
 export const dynamic = 'force-dynamic';
@@ -57,6 +58,7 @@ export async function GET(
     endDate: searchParams.get('endDate'),
     plannedEffort: searchParams.get('plannedEffort'),
     excludeTaskId: searchParams.get('excludeTaskId') ?? undefined,
+    includeWeekends: searchParams.get('includeWeekends') ?? undefined,
   });
   if (!parsed.success) {
     return NextResponse.json(
@@ -72,6 +74,7 @@ export async function GET(
     endDate: parsed.data.endDate,
     plannedEffort: parsed.data.plannedEffort,
     excludeTaskId: parsed.data.excludeTaskId,
+    includeWeekends: parsed.data.includeWeekends,
     viewerTenantId: user.tenantId,
   });
 

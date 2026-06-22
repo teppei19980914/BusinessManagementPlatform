@@ -13,6 +13,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/toast-provider';
 import {
@@ -92,14 +93,14 @@ function parseHeaderLine(text: string): string[] {
 }
 
 /** 指定エンティティの「埋めれば取り込めるテンプレCSV」(日本語ヘッダ1行) をダウンロードする。 */
-function downloadTemplate(entity: ImportEntityKind) {
+function downloadTemplate(entity: ImportEntityKind, suffix: string) {
   const labels = IMPORT_FIELD_CATALOG[entity].map((d) => d.label);
   const csv = '﻿' + labels.join(',') + '\r\n'; // UTF-8 BOM + ヘッダ行のみ
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `${IMPORT_ENTITY_LABELS[entity]}-テンプレート.csv`;
+  a.download = `${IMPORT_ENTITY_LABELS[entity]}${suffix}`;
   document.body.appendChild(a);
   a.click();
   a.remove();
@@ -108,6 +109,7 @@ function downloadTemplate(entity: ImportEntityKind) {
 
 export function MigrationWizardClient() {
   const { showError } = useToast();
+  const t = useTranslations('migrationWizard');
   const [step, setStep] = useState<Step>(1);
   const [states, setStates] = useState<Record<ImportEntityKind, EntityState>>(() => {
     const init = {} as Record<ImportEntityKind, EntityState>;
@@ -199,11 +201,11 @@ export function MigrationWizardClient() {
       // 通信/認可エラー (4xx/5xx) はトーストのまま。業務エラー (HTTP 200 + ok:false) は
       // プレビュー画面へ進めて、そこで理由を表示する (ユーザが原因を把握できるようにする)。
       if (!res.ok || !json) {
-        showError('プレビューに失敗しました');
+        showError(t('errorPreviewFailed'));
         return;
       }
       if (!json.ok) {
-        const message = json?.error?.message ?? 'プレビューを作成できませんでした。入力内容を確認してください。';
+        const message = json?.error?.message ?? t('errorPreviewCreateFailed');
         setPreviewId(null);
         setPreview({
           errors: [{ entity: '', ref: '', reason: message }],
@@ -217,7 +219,7 @@ export function MigrationWizardClient() {
       setPreview(json.preview);
       setStep(3);
     } catch {
-      showError('通信エラーが発生しました');
+      showError(t('errorNetworkError'));
     } finally {
       setLoading(false);
     }
@@ -234,13 +236,13 @@ export function MigrationWizardClient() {
       });
       const json = await res.json();
       if (!res.ok || !json.ok) {
-        showError(json?.error?.message ?? '取り込みに失敗しました');
+        showError(json?.error?.message ?? t('errorApplyFailed'));
         return;
       }
       setApplyResult(json.result);
       setStep(4);
     } catch {
-      showError('通信エラーが発生しました');
+      showError(t('errorNetworkError'));
     } finally {
       setLoading(false);
     }
@@ -251,9 +253,9 @@ export function MigrationWizardClient() {
   return (
     <div className="space-y-6">
       <ol className="flex gap-2 text-sm">
-        {(['CSVを選ぶ', 'マッピング', 'プレビュー', '完了'] as const).map((label, i) => (
+        {[t('step1Label'), t('step2Label'), t('step3Label'), t('step4Label')].map((label, i) => (
           <li
-            key={label}
+            key={i}
             className={`rounded px-2 py-1 ${step === i + 1 ? 'bg-black text-white' : 'bg-gray-100 text-gray-500'}`}
           >
             {i + 1}. {label}
@@ -262,54 +264,54 @@ export function MigrationWizardClient() {
       </ol>
 
       <details className="rounded border bg-gray-50 p-3 text-xs text-gray-600">
-        <summary className="cursor-pointer font-medium">CSVインポートルール</summary>
+        <summary className="cursor-pointer font-medium">{t('rulesSummary')}</summary>
         <div className="mt-2 space-y-1">
-          <p className="font-bold text-amber-700">注意</p>
-          <p className="text-amber-700">・規定値は未入力に設定されるデフォルト値です。</p>
-          <p className="text-amber-700">・プルダウン項目は各小見出しの選択肢の値だけを入れてください（選択肢以外の値はエラーになります）。</p>
-          <p className="text-amber-700">・日付は <strong>YYYY-MM-DD</strong> または <strong>YYYY/MM/DD</strong>（例: 2026/06/01）で入れてください（年→月→日の順以外・実在しない日付はエラー）。</p>
-          <p className="text-amber-700">・資産（リスク・課題 / ナレッジ / 振り返り）は、プロジェクトに紐づけるか公開範囲を「公開」にしてください（紐づかない下書きはどの一覧にも表示されません）。</p>
+          <p className="font-bold text-amber-700">{t('rulesNoticeTitle')}</p>
+          <p className="text-amber-700">{t('rulesNotice1')}</p>
+          <p className="text-amber-700">{t('rulesNotice2')}</p>
+          <p className="text-amber-700">{t('rulesNotice3')}</p>
+          <p className="text-amber-700">{t('rulesNotice4')}</p>
 
-          <p className="font-bold">顧客</p>
-          <p className="pl-4">－ 担当者メール: XXX@XX.XX（例: name@example.com）の形式で入力します。</p>
+          <p className="font-bold">{t('rulesCustomerTitle')}</p>
+          <p className="pl-4">{t('rulesCustomerEmail')}</p>
 
-          <p className="font-bold">プロジェクト</p>
-          <p className="pl-4">－ 顧客: 必ず顧客に紐づきます。存在する顧客名（または一緒に取り込む顧客名）を入力してください。</p>
-          <p className="pl-4">－ ステータス: 企画中 / 見積中 / 計画中 / 実行中 / クローズ</p>
-          <p className="pl-4">－ 開発方式: スクラッチ開発 / ローコード・ノーコード開発 / パッケージ開発 / そのほか</p>
-          <p className="pl-4">－ 契約形態: 準委任 / 請負 / SES / そのほか</p>
-          <p className="pl-4">－ 開始予定日 / 終了予定日: YYYY-MM-DD または YYYY/MM/DD</p>
+          <p className="font-bold">{t('rulesProjectTitle')}</p>
+          <p className="pl-4">{t('rulesProjectCustomer')}</p>
+          <p className="pl-4">{t('rulesProjectStatus')}</p>
+          <p className="pl-4">{t('rulesProjectDevMethod')}</p>
+          <p className="pl-4">{t('rulesProjectContractType')}</p>
+          <p className="pl-4">{t('rulesDates')}</p>
 
-          <p className="font-bold">WBS（タスク）</p>
-          <p className="pl-4">－ プロジェクト: 必ずプロジェクトに紐づきます。存在するプロジェクト名を指定してください。</p>
-          <p className="pl-4">－ レベル: 半角数字で階層の深さを表します（1＝最上位、2＝その子、3＝さらにその子…）。子を持つ行は自動でワークパッケージ(WP)、最も大きい数字（最も深い行）は末端＝作業(ACT)になります。</p>
-          <p className="pl-4">－ 予定工数(人時): 0 以上・小数第一位までの半角数値（例: 8 / 8.5）。WPの予定工数は自動集計のため未入力で問題ありません。</p>
-          <p className="pl-4">－ 開始予定日 / 終了予定日: YYYY-MM-DD または YYYY/MM/DD</p>
+          <p className="font-bold">{t('rulesWbsTitle')}</p>
+          <p className="pl-4">{t('rulesWbsProject')}</p>
+          <p className="pl-4">{t('rulesWbsLevel')}</p>
+          <p className="pl-4">{t('rulesWbsHours')}</p>
+          <p className="pl-4">{t('rulesDates')}</p>
 
-          <p className="font-bold">リスク</p>
-          <p className="pl-4 text-gray-500">※「リスク・課題」用CSVで、種別＝リスクの行に入れます。</p>
-          <p className="pl-4">－ 種別: 「リスク」と入力します。</p>
-          <p className="pl-4">－ 影響度: 高 / 中 / 低</p>
-          <p className="pl-4">－ 発生可能性: 高 / 中 / 低</p>
-          <p className="pl-4">－ 脅威 / 好機: 脅威 / 好機</p>
-          <p className="pl-4">－ 期限: YYYY-MM-DD または YYYY/MM/DD</p>
-          <p className="pl-4">－ 公開範囲: 下書き / 公開（空欄は「下書き」）</p>
+          <p className="font-bold">{t('rulesRiskTitle')}</p>
+          <p className="pl-4 text-gray-500">{t('rulesRiskNote')}</p>
+          <p className="pl-4">{t('rulesRiskKind')}</p>
+          <p className="pl-4">{t('rulesRiskSeverity')}</p>
+          <p className="pl-4">{t('rulesRiskProbability')}</p>
+          <p className="pl-4">{t('rulesRiskNegativePositive')}</p>
+          <p className="pl-4">{t('rulesDeadline')}</p>
+          <p className="pl-4">{t('rulesVisibility')}</p>
 
-          <p className="font-bold">課題</p>
-          <p className="pl-4 text-gray-500">※「リスク・課題」用CSVで、種別＝課題の行に入れます。</p>
-          <p className="pl-4">－ 種別: 「課題」と入力します（空欄は「課題」扱い）。</p>
-          <p className="pl-4">－ 重要度: 高 / 中 / 低</p>
-          <p className="pl-4">－ 緊急度: 高 / 中 / 低</p>
-          <p className="pl-4">－ 期限: YYYY-MM-DD または YYYY/MM/DD</p>
-          <p className="pl-4">－ 公開範囲: 下書き / 公開（空欄は「下書き」）</p>
+          <p className="font-bold">{t('rulesIssueTitle')}</p>
+          <p className="pl-4 text-gray-500">{t('rulesIssueNote')}</p>
+          <p className="pl-4">{t('rulesIssueKind')}</p>
+          <p className="pl-4">{t('rulesIssueSeverity')}</p>
+          <p className="pl-4">{t('rulesIssueUrgency')}</p>
+          <p className="pl-4">{t('rulesDeadline')}</p>
+          <p className="pl-4">{t('rulesVisibility')}</p>
 
-          <p className="font-bold">ナレッジ</p>
-          <p className="pl-4">－ 種別: 調査 / 検証 / 障害対応 / 意思決定 / 教訓 / ベストプラクティス / その他</p>
-          <p className="pl-4">－ 公開範囲: 下書き / 公開（空欄は「下書き」）</p>
+          <p className="font-bold">{t('rulesKnowledgeTitle')}</p>
+          <p className="pl-4">{t('rulesKnowledgeKind')}</p>
+          <p className="pl-4">{t('rulesVisibility')}</p>
 
-          <p className="font-bold">振り返り</p>
-          <p className="pl-4">－ 実施日: YYYY-MM-DD または YYYY/MM/DD（空欄なら当日を補完）</p>
-          <p className="pl-4">－ 公開範囲: 下書き / 公開（空欄は「下書き」）</p>
+          <p className="font-bold">{t('rulesRetroTitle')}</p>
+          <p className="pl-4">{t('rulesRetroDate')}</p>
+          <p className="pl-4">{t('rulesVisibility')}</p>
         </div>
       </details>
 
@@ -317,7 +319,7 @@ export function MigrationWizardClient() {
         <section className="space-y-4">
           <div className="rounded border bg-gray-50 p-3 text-xs">
             <p className="mb-2 font-medium">
-              テンプレCSVをダウンロード
+              {t('step1TemplateDownloadTitle')}
             </p>
             <div className="flex flex-wrap gap-2">
               {IMPORT_ENTITY_ORDER.map((entity) => (
@@ -325,7 +327,7 @@ export function MigrationWizardClient() {
                   key={entity}
                   type="button"
                   className="rounded border bg-white px-2 py-1 hover:bg-gray-100"
-                  onClick={() => downloadTemplate(entity)}
+                  onClick={() => downloadTemplate(entity, t('downloadTemplateSuffix'))}
                 >
                   {IMPORT_ENTITY_LABELS[entity]} ⬇
                 </button>
@@ -344,7 +346,7 @@ export function MigrationWizardClient() {
                 />
                 {states[entity].fileName && (
                   <span className="text-xs text-gray-500">
-                    {states[entity].fileName}（{states[entity].headers.length}列）
+                    {states[entity].fileName}{t('step1ColumnCount', { count: states[entity].headers.length })}
                   </span>
                 )}
               </div>
@@ -353,7 +355,7 @@ export function MigrationWizardClient() {
           {selectWarnings.length > 0 && (
             <div className="rounded border border-amber-300 bg-amber-50 p-3">
               <div className="mb-1 font-medium text-amber-700">
-                確認 {selectWarnings.length} 件（このままでも進めます。マッピングの「既定値」で補えます）
+                {t('step1SelectWarningTitle', { count: selectWarnings.length })}
               </div>
               <ul className="max-h-40 list-disc space-y-1 overflow-auto pl-5 text-sm text-amber-700">
                 {selectWarnings.map((w, i) => (
@@ -365,7 +367,7 @@ export function MigrationWizardClient() {
 
           <div className="flex justify-end">
             <Button disabled={enabledEntities.length === 0} onClick={() => setStep(2)}>
-              次へ：マッピング
+              {t('step1NextButton')}
             </Button>
           </div>
         </section>
@@ -374,9 +376,7 @@ export function MigrationWizardClient() {
       {step === 2 && (
         <section className="space-y-6">
           <p className="text-sm text-gray-600">
-            各項目に「どのCSV列を使うか」を割り当てます。「既定値」を入れておくと、CSV列が
-            <strong>空欄のとき、または値が不正・未登録のとき</strong>にその値が使われます
-            （例：開発方式に変な値が入っていても既定値で取り込めます）。空欄でよい任意項目はそのままで構いません。
+            {t('step2Description')}
           </p>
           {enabledEntities.map((entity) => (
             <div key={entity} className="rounded border">
@@ -386,9 +386,9 @@ export function MigrationWizardClient() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="text-left text-gray-500">
-                    <th className="px-3 py-1">項目</th>
-                    <th className="px-3 py-1">CSV列</th>
-                    <th className="px-3 py-1">既定値</th>
+                    <th className="px-3 py-1">{t('step2TableHeaderField')}</th>
+                    <th className="px-3 py-1">{t('step2TableHeaderColumn')}</th>
+                    <th className="px-3 py-1">{t('step2TableHeaderDefault')}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -409,7 +409,7 @@ export function MigrationWizardClient() {
                             })
                           }
                         >
-                          <option value="">取り込まない</option>
+                          <option value="">{t('step2ColumnNoMap')}</option>
                           {states[entity].headers.map((h) => (
                             <option key={h} value={h}>
                               {h}
@@ -420,7 +420,7 @@ export function MigrationWizardClient() {
                       <td className="px-3 py-1">
                         <input
                           className="rounded border px-2 py-1"
-                          placeholder="（任意）"
+                          placeholder={t('step2DefaultPlaceholder')}
                           value={states[entity].fixedMap[def.field] ?? ''}
                           onChange={(e) =>
                             update(entity, {
@@ -437,10 +437,10 @@ export function MigrationWizardClient() {
           ))}
           <div className="flex justify-between">
             <Button variant="outline" onClick={() => setStep(1)}>
-              戻る
+              {t('backButton')}
             </Button>
             <Button disabled={loading} onClick={() => void callPreview()}>
-              {loading ? '確認中…' : '次へ：プレビューを確認'}
+              {loading ? t('step2PreviewLoadingButton') : t('step2NextButton')}
             </Button>
           </div>
         </section>
@@ -449,28 +449,28 @@ export function MigrationWizardClient() {
       {step === 3 && preview && (
         <section className="space-y-4">
           <div className="rounded border p-3">
-            <div className="mb-2 font-medium">取り込み内容</div>
+            <div className="mb-2 font-medium">{t('step3SummaryTitle')}</div>
             <ul className="grid grid-cols-3 gap-2 text-sm">
-              <li>顧客: {preview.summary.customers}</li>
-              <li>プロジェクト: {preview.summary.projects}</li>
+              <li>{t('summaryCustomers', { count: preview.summary.customers })}</li>
+              <li>{t('summaryProjects', { count: preview.summary.projects })}</li>
               <li>WBS: {preview.summary.wbs}</li>
-              <li>リスク・課題: {preview.summary.risks}</li>
-              <li>ナレッジ: {preview.summary.knowledge}</li>
-              <li>振り返り: {preview.summary.retrospectives}</li>
+              <li>{t('summaryRisks', { count: preview.summary.risks })}</li>
+              <li>{t('summaryKnowledge', { count: preview.summary.knowledge })}</li>
+              <li>{t('summaryRetros', { count: preview.summary.retrospectives })}</li>
             </ul>
           </div>
 
           {hasErrors && (
             <div className="rounded border border-red-300 bg-red-50 p-3">
               <div className="mb-1 font-medium text-red-700">
-                エラー {preview.errors.length} 件（修正してから取り込めます）
+                {t('step3ErrorTitle', { count: preview.errors.length })}
               </div>
               <ul className="max-h-48 list-disc space-y-1 overflow-auto pl-5 text-sm text-red-700">
                 {preview.errors.map((e, i) => (
                   <li key={i}>
                     {e.file ? <span className="font-medium">{e.file}：</span> : null}
-                    {e.row != null ? `${e.row}行目` : null}
-                    {e.column ? `「${e.column}」列` : null}
+                    {e.row != null ? t('step3ErrorRowNumber', { row: e.row }) : null}
+                    {e.column ? t('step3ErrorColumnLabel', { column: e.column }) : null}
                     {e.file || e.row != null || e.column ? ' — ' : null}
                     {e.reason}
                   </li>
@@ -481,7 +481,7 @@ export function MigrationWizardClient() {
 
           {preview.warnings.length > 0 && (
             <div className="rounded border border-amber-300 bg-amber-50 p-3">
-              <div className="mb-1 font-medium text-amber-700">注意 {preview.warnings.length} 件</div>
+              <div className="mb-1 font-medium text-amber-700">{t('step3WarningTitle', { count: preview.warnings.length })}</div>
               <ul className="max-h-40 list-disc space-y-1 overflow-auto pl-5 text-sm text-amber-700">
                 {preview.warnings.map((w, i) => (
                   <li key={i}>{w}</li>
@@ -491,15 +491,15 @@ export function MigrationWizardClient() {
           )}
 
           <p className="text-xs text-gray-500">
-            ※ この取り込みは新規作成のみです。既存データとの重複確認は行いません。
+            {t('step3Note')}
           </p>
 
           <div className="flex justify-between">
             <Button variant="outline" onClick={() => setStep(2)}>
-              戻る
+              {t('backButton')}
             </Button>
             <Button disabled={loading || hasErrors} onClick={() => void callApply()}>
-              {loading ? '取り込み中…' : 'この内容で取り込む'}
+              {loading ? t('step3ApplyLoadingButton') : t('step3ApplyButton')}
             </Button>
           </div>
         </section>
@@ -508,19 +508,19 @@ export function MigrationWizardClient() {
       {step === 4 && applyResult && (
         <section className="space-y-4">
           <div className="rounded border border-green-300 bg-green-50 p-3">
-            <div className="mb-2 font-medium text-green-700">取り込みが完了しました</div>
+            <div className="mb-2 font-medium text-green-700">{t('step4SuccessTitle')}</div>
             <ul className="grid grid-cols-3 gap-2 text-sm">
-              <li>顧客: {applyResult.customersCreated}</li>
-              <li>プロジェクト: {applyResult.projectsCreated}</li>
+              <li>{t('summaryCustomers', { count: applyResult.customersCreated })}</li>
+              <li>{t('summaryProjects', { count: applyResult.projectsCreated })}</li>
               <li>WBS: {applyResult.wbsCreated}</li>
-              <li>リスク・課題: {applyResult.risksCreated}</li>
-              <li>ナレッジ: {applyResult.knowledgeCreated}</li>
-              <li>振り返り: {applyResult.retrospectivesCreated}</li>
+              <li>{t('summaryRisks', { count: applyResult.risksCreated })}</li>
+              <li>{t('summaryKnowledge', { count: applyResult.knowledgeCreated })}</li>
+              <li>{t('summaryRetros', { count: applyResult.retrospectivesCreated })}</li>
             </ul>
           </div>
           {applyResult.errors.length > 0 && (
             <div className="rounded border border-red-300 bg-red-50 p-3 text-sm text-red-700">
-              <div className="mb-1 font-medium">取り込めなかった項目 {applyResult.errors.length} 件</div>
+              <div className="mb-1 font-medium">{t('step4ErrorsTitle', { count: applyResult.errors.length })}</div>
               <ul className="list-disc space-y-1 pl-5">
                 {applyResult.errors.map((e, i) => (
                   <li key={i}>
@@ -530,7 +530,7 @@ export function MigrationWizardClient() {
               </ul>
             </div>
           )}
-          <p className="text-sm text-gray-600">各「○○一覧」画面で取り込んだデータを確認できます。</p>
+          <p className="text-sm text-gray-600">{t('step4FinishNote')}</p>
         </section>
       )}
     </div>

@@ -17,6 +17,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useTranslations } from 'next-intl';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -76,6 +77,7 @@ const INITIAL: FormState = {
 };
 
 export default function SignupPage() {
+  const t = useTranslations('auth');
   const [form, setForm] = useState<FormState>(INITIAL);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
@@ -137,25 +139,23 @@ export default function SignupPage() {
       if (res.ok) {
         setResendStatus('success');
         setResendCount((c) => c + 1);
-        setResendMessage(json.data?.message ?? '招待メールを再送しました。');
+        setResendMessage(json.data?.message ?? t('signup.resendSuccessMessage'));
         // UX 上、再送直後の連打防止に 60 秒のフロント側クールダウンを設ける
         // (= サーバ側 Rate Limit とは独立、操作ミス防止が目的)
         setResendCooldownSec(60);
       } else if (res.status === 429) {
         setResendStatus('rate_limited');
-        setResendMessage(json.error?.message ?? '再送回数の上限に達しました。');
+        setResendMessage(json.error?.message ?? t('signup.resendRateLimitedMessage'));
         // Retry-After ヘッダがあれば優先、なければ 1 時間表示
         const retryAfter = res.headers.get('Retry-After');
         setResendCooldownSec(retryAfter ? parseInt(retryAfter, 10) : 3600);
       } else {
         setResendStatus('failed');
-        setResendMessage(
-          json.error?.message ?? '再送に失敗しました。時間をおいて再度お試しください。',
-        );
+        setResendMessage(json.error?.message ?? t('signup.resendFailedMessage'));
       }
     } catch {
       setResendStatus('failed');
-      setResendMessage('通信エラーが発生しました。ネットワーク接続をご確認ください。');
+      setResendMessage(t('signup.resendNetworkError'));
     }
   }
 
@@ -249,14 +249,14 @@ export default function SignupPage() {
         const message = json?.error?.message as string | undefined;
         // feat/signup-friction-reduction (2026-06-12): 組織 ID はサーバ自動採番のため、
         //   ユーザが入力欄で直す導線は無い。採番衝突はサーバ側で message を返す。
-        if (code === 'SLUG_CONFLICT') setError(message ?? '組織 ID の自動採番に失敗しました。時間をおいて再度お試しください。');
+        if (code === 'SLUG_CONFLICT') setError(message ?? t('signup.errorSlugConflict'));
         // ADR-0016 (2026-05-20): EMAIL_CONFLICT は廃止 (tenant-scoped 一意化で発生不能)
         // ADR-0016 Revised (2026-05-22): 3 層判定のサーバ側 defense-in-depth エラー
-        else if (code === 'OWNED_TENANT_EXISTS') setError(message ?? '入力された初期管理者メールは、既に自前テナントを保有しているユーザのものです。追加のテナント払い出しはシステム管理者へお問い合わせください。');
-        else if (code === 'BEGINNER_REQUIRES_UPGRADE') setError(message ?? 'このメールアドレスは既に登録履歴があるため、Expert または Pro プランをご選択ください。');
-        else if (code === 'EMAIL_SEND_FAILED') setError('招待メール送信に失敗したため登録を取り消しました。メールアドレスを確認のうえ再度お試しください。');
-        else if (code === 'RATE_LIMITED') setError('短時間に多くの申込がありました。1 時間後に再度お試しください。');
-        else setError(message ?? '登録に失敗しました。');
+        else if (code === 'OWNED_TENANT_EXISTS') setError(message ?? t('signup.errorOwnedTenant'));
+        else if (code === 'BEGINNER_REQUIRES_UPGRADE') setError(message ?? t('signup.errorBeginnerUpgrade'));
+        else if (code === 'EMAIL_SEND_FAILED') setError(t('signup.errorEmailSendFailed'));
+        else if (code === 'RATE_LIMITED') setError(t('signup.errorRateLimited'));
+        else setError(message ?? t('signup.errorDefault'));
         return;
       }
 
@@ -277,16 +277,13 @@ export default function SignupPage() {
       <div className="mx-auto my-8 max-w-md px-4">
         <Card>
           <CardHeader>
-            <CardTitle>招待メールを送信しました</CardTitle>
-            <CardDescription>
-              入力したメールアドレス宛に、パスワード設定リンクを記載した招待メールを送信しました。
-              メール本文のリンクをクリックしてパスワードを設定すると、ログインできるようになります。
-            </CardDescription>
+            <CardTitle>{t('signup.successTitle')}</CardTitle>
+            <CardDescription>{t('signup.successDescription')}</CardDescription>
           </CardHeader>
           <CardContent className="space-y-5">
             {/* 1. 入力メールアドレスの明示表示 (= typo 確認誘導) */}
             <div className="rounded-md border border-info/30 bg-info/5 p-3 text-sm">
-              <p className="m-0 text-muted-foreground">送信先</p>
+              <p className="m-0 text-muted-foreground">{t('signup.successSendToLabel')}</p>
               <p
                 className="m-0 mt-1 font-mono text-base break-all"
                 data-testid="signup-success-email"
@@ -294,7 +291,7 @@ export default function SignupPage() {
                 {form.initialAdminEmail}
               </p>
               <p className="m-0 mt-2 text-xs text-muted-foreground">
-                上記アドレスに誤りがある場合は、ログイン画面に戻り、サインアップをやり直してください。
+                {t('signup.successAddressErrorHint')}
               </p>
             </div>
 
@@ -306,7 +303,7 @@ export default function SignupPage() {
                 className="rounded-md border border-info/30 bg-info/5 p-3 text-sm"
                 data-testid="signup-success-slug-block"
               >
-                <p className="m-0 text-muted-foreground">あなたの組織 ID (ログイン時に入力します)</p>
+                <p className="m-0 text-muted-foreground">{t('signup.successSlugLabel')}</p>
                 <p
                   className="m-0 mt-1 font-mono text-lg font-bold break-all"
                   data-testid="signup-success-slug"
@@ -314,7 +311,7 @@ export default function SignupPage() {
                   {assignedSlug}
                 </p>
                 <p className="m-0 mt-2 text-xs text-muted-foreground">
-                  この組織 ID は招待メールにも記載されます。次回ログイン時に、メールアドレス・パスワードとあわせて入力します。
+                  {t('signup.successSlugMemo')}
                 </p>
               </div>
             )}
@@ -327,37 +324,28 @@ export default function SignupPage() {
               className="space-y-2 rounded-md border border-muted-foreground/20 bg-muted/30 p-3 text-sm"
               data-testid="signup-email-expectation"
             >
-              <p className="m-0 font-semibold">届くメールについて</p>
+              <p className="m-0 font-semibold">{t('signup.emailExpectationTitle')}</p>
               <ul className="m-0 ml-4 list-disc space-y-1 text-muted-foreground">
                 <li>
-                  差出人: <span className="font-mono">noreply@tasukiba.com</span>
+                  {t('signup.emailSenderPrefix')}<span className="font-mono">noreply@tasukiba.com</span>
                 </li>
                 <li>
-                  件名: <span className="font-semibold">「たすきば - アカウントの設定」</span>
+                  {t('signup.emailSubjectPrefix')}<span className="font-semibold">{t('signup.emailSubjectValue')}</span>
                 </li>
-                <li>到着の目安: 通常 1 分以内に届きます</li>
-                <li>メール内のリンクは送信から 24 時間有効です</li>
+                <li>{t('signup.emailArrivalLine')}</li>
+                <li>{t('signup.emailValidLine')}</li>
               </ul>
-              <p className="m-0 mt-1 text-muted-foreground">
-                このあとの手順: メール内の「パスワードを設定する」を押す → パスワードを設定 → ログイン画面で
-                組織 ID・メールアドレス・パスワードを入力してログイン。
-              </p>
+              <p className="m-0 mt-1 text-muted-foreground">{t('signup.emailNextSteps')}</p>
             </div>
 
             {/* 2. トラブルシュートチェックリスト */}
             <div className="space-y-2">
-              <p className="text-sm font-semibold">メールが届かない場合の確認手順</p>
+              <p className="text-sm font-semibold">{t('signup.troubleshootTitle')}</p>
               <ol className="ml-5 list-decimal space-y-1 text-sm text-muted-foreground">
-                <li>受信箱に届いていない場合は、迷惑メール / スパムフォルダもご確認ください。</li>
-                <li>1〜2 分待ってから受信箱を更新してください。</li>
-                <li>
-                  法人メールをご利用の場合、受信制限・フィルタ設定をご確認ください
-                  (情シス担当者への確認が必要な場合があります)。
-                </li>
-                <li>
-                  上記でも届かない場合は、下記の「メールを再送する」ボタンからご再送いただくか、
-                  運営までお問い合わせください。
-                </li>
+                <li>{t('signup.troubleshootStep1')}</li>
+                <li>{t('signup.troubleshootStep2')}</li>
+                <li>{t('signup.troubleshootStep3')}</li>
+                <li>{t('signup.troubleshootStep4')}</li>
               </ol>
             </div>
 
@@ -389,22 +377,22 @@ export default function SignupPage() {
                 data-testid="resend-button"
               >
                 {resendStatus === 'sending'
-                  ? '再送中...'
+                  ? t('signup.resendSending')
                   : resendCooldownSec > 0
-                    ? `メールを再送する (${resendCooldownSec} 秒後に再操作可)`
+                    ? t('signup.resendCooldown', { remaining: resendCooldownSec })
                     : resendCount > 0
-                      ? `メールを再送する (再送済 ${resendCount} 回)`
-                      : 'メールを再送する'}
+                      ? t('signup.resendWithCount', { count: resendCount })
+                      : t('signup.resendDefault')}
               </Button>
             </div>
 
             {/* 4. 最終的に解決しない場合の運営お問い合わせ動線 */}
             <div className="rounded-md border border-muted-foreground/20 bg-muted/30 p-3 text-sm">
-              <p className="m-0 font-semibold">それでも解決しない場合</p>
+              <p className="m-0 font-semibold">{t('signup.resolveTitle')}</p>
               <p className="m-0 mt-1 text-muted-foreground">
-                以下のお問い合わせフォームより、運営までご連絡ください。お問い合わせ種別は
-                <span className="font-semibold"> 「たすきばに関するお問い合わせ」</span>
-                を選択してください。
+                {t('signup.resolveDescription')}
+                <span className="font-semibold"> {t('signup.resolveContactKind')}</span>
+                {t('signup.resolveContactKindPost')}
               </p>
               <a
                 href="https://teppei19980914.github.io/HomePage/ja/contact/"
@@ -413,7 +401,7 @@ export default function SignupPage() {
                 className="mt-2 inline-block text-info hover:underline"
                 data-testid="contact-link"
               >
-                お問い合わせフォームを開く (新しいタブで開きます) ↗
+                {t('signup.contactLink')}
               </a>
             </div>
 
@@ -421,7 +409,7 @@ export default function SignupPage() {
               href="/login"
               className="inline-flex h-9 w-full items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-xs hover:bg-primary/90"
             >
-              ログイン画面へ
+              {t('toLoginScreen')}
             </Link>
           </CardContent>
         </Card>
@@ -433,11 +421,9 @@ export default function SignupPage() {
     <div className="mx-auto my-8 max-w-2xl px-4">
       <Card>
         <CardHeader>
-          <CardTitle>たすきば サインアップ</CardTitle>
+          <CardTitle>{t('signup.pageTitle')}</CardTitle>
           <CardDescription>
-            新規テナント (組織) を開設します。プランをご選択ください。<strong>Beginner</strong>{' '}
-            は 90 日試用 (プロジェクト作成・更新が月 50 回まで無料)、期限後は読み取り専用モードに移行します
-            (データのエクスポート機能は引き続きご利用いただけます)。
+            {t('signup.pageDescriptionPre')}<strong>{t('signup.pageDescriptionBeginnerLabel')}</strong>{t('signup.pageDescriptionPost')}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -468,12 +454,9 @@ export default function SignupPage() {
                 className="rounded-md border border-warning/40 bg-warning/10 p-4 text-sm"
                 data-testid="owned-tenant-warning"
               >
-                <p className="font-semibold">
-                  既に自前テナントを保有しているメールアドレスです
-                </p>
+                <p className="font-semibold">{t('signup.ownedTenantTitle')}</p>
                 <p className="mt-1 text-muted-foreground">
-                  {eligibilityHint ||
-                    '入力された初期管理者メールは、既に自前テナントを保有しているユーザのものです。追加のテナント払い出しはシステム管理者へお問い合わせください。'}
+                  {eligibilityHint || t('signup.ownedTenantFallback')}
                 </p>
                 {discordUrl && (
                   <p className="mt-2">
@@ -483,7 +466,7 @@ export default function SignupPage() {
                       rel="noopener noreferrer"
                       className="text-info hover:underline"
                     >
-                      Discord でシステム管理者に問い合わせる
+                      {t('signup.ownedTenantDiscordLink')}
                     </a>
                   </p>
                 )}
@@ -496,29 +479,27 @@ export default function SignupPage() {
                 判定 (層1 全面不可の警告 / 層2 Beginner disable) がプラン選択時点で確定する。 */}
 
             <fieldset className="space-y-3 rounded border p-4">
-              <legend className="px-1 text-sm font-semibold">テナント (組織) 情報</legend>
+              <legend className="px-1 text-sm font-semibold">{t('signup.orgInfoLegend')}</legend>
               <div className="space-y-1.5">
-                <Label htmlFor="name">表示用テナント名 *</Label>
-                <Input id="name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} maxLength={100} placeholder="例: 株式会社たすきば" required />
+                <Label htmlFor="name">{t('signup.orgNameLabel')}</Label>
+                <Input id="name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} maxLength={100} placeholder={t('signup.orgNamePlaceholder')} required />
               </div>
               {/* feat/signup-friction-reduction (2026-06-12): 組織 ID (ログイン時に使う識別子) は
                   サーバが数字連番で自動採番するため入力欄なし。採番値は送信後の成功画面と招待メールで案内する。 */}
               <p className="text-xs text-muted-foreground" data-testid="signup-org-id-auto-note">
-                ログイン時に使う「組織 ID」は自動で発行されます (入力不要)。登録後の成功画面と招待メールでお知らせします。
+                {t('signup.orgIdAutoNote')}
               </p>
             </fieldset>
 
             <fieldset className="space-y-3 rounded border p-4">
-              <legend className="px-1 text-sm font-semibold">初期管理者 (ログイン用)</legend>
-              <p className="text-xs text-muted-foreground">
-                このメールアドレスに招待メールが届きます。リンクからパスワードを設定するとログインできるようになります。
-              </p>
+              <legend className="px-1 text-sm font-semibold">{t('signup.adminLegend')}</legend>
+              <p className="text-xs text-muted-foreground">{t('signup.adminLegendHint')}</p>
               <div className="space-y-1.5">
-                <Label htmlFor="initialAdminName">氏名 *</Label>
+                <Label htmlFor="initialAdminName">{t('signup.adminNameLabel')}</Label>
                 <Input id="initialAdminName" value={form.initialAdminName} onChange={(e) => setForm({ ...form, initialAdminName: e.target.value })} maxLength={100} required />
               </div>
               <div className="space-y-1.5">
-                <Label htmlFor="initialAdminEmail">メールアドレス *</Label>
+                <Label htmlFor="initialAdminEmail">{t('signup.adminEmailLabel')}</Label>
                 <Input id="initialAdminEmail" type="email" value={form.initialAdminEmail} onChange={(e) => setForm({ ...form, initialAdminEmail: e.target.value })} maxLength={255} required />
               </div>
             </fieldset>
@@ -526,7 +507,7 @@ export default function SignupPage() {
             {/* ADR-0016 (2026-05-20): プラン選択 UI。Beginner は初回ユーザ限定 (90日試用 abuse 防止)。
                 既登録 email の場合は Beginner radio を disable し Expert/Pro 必須にする。 */}
             <fieldset className="space-y-3 rounded border p-4">
-              <legend className="px-1 text-sm font-semibold">プラン選択 *</legend>
+              <legend className="px-1 text-sm font-semibold">{t('signup.planLegend')}</legend>
               <div className="grid gap-2 sm:grid-cols-3">
                 <label
                   className={`flex cursor-pointer items-start gap-2 rounded border p-3 text-sm ${
@@ -546,7 +527,7 @@ export default function SignupPage() {
                   />
                   <div>
                     <div className="font-semibold">Beginner</div>
-                    <div className="text-xs text-muted-foreground">90日試用 / 月50call / 5席</div>
+                    <div className="text-xs text-muted-foreground">{t('signup.planBeginnerDesc')}</div>
                   </div>
                 </label>
                 <label
@@ -564,7 +545,7 @@ export default function SignupPage() {
                   />
                   <div>
                     <div className="font-semibold">Expert</div>
-                    <div className="text-xs text-muted-foreground">¥10/call 従量課金</div>
+                    <div className="text-xs text-muted-foreground">{t('signup.planExpertDesc')}</div>
                   </div>
                 </label>
                 <label
@@ -582,7 +563,7 @@ export default function SignupPage() {
                   />
                   <div>
                     <div className="font-semibold">Pro</div>
-                    <div className="text-xs text-muted-foreground">¥15/call 高精度モデル</div>
+                    <div className="text-xs text-muted-foreground">{t('signup.planProDesc')}</div>
                   </div>
                 </label>
               </div>
@@ -601,7 +582,7 @@ export default function SignupPage() {
                 billingType は individual 固定で送る (handleSubmit 参照)。Expert/Pro のみ請求先を入力・必須化する。 */}
             {form.plan !== 'beginner' && (
             <fieldset className="space-y-3 rounded border p-4">
-              <legend className="px-1 text-sm font-semibold">請求先情報</legend>
+              <legend className="px-1 text-sm font-semibold">{t('signup.billingLegend')}</legend>
 
               {/* 既登録メールで Beginner → Expert に自動切替された場合 (層 2)、請求先が必要になった理由を明示。 */}
               {beginnerAvailable === false && (
@@ -609,13 +590,13 @@ export default function SignupPage() {
                   className="rounded-md bg-info/10 p-2 text-xs text-info"
                   data-testid="billing-required-on-upgrade-hint"
                 >
-                  ℹ このメールアドレスは登録履歴があるため Expert / Pro プランでの開設となり、請求先情報の入力が必要です。
+                  {t('signup.billingUpgradeHint')}
                 </p>
               )}
 
               {/* 2026-05-09 (PR C / #5): 個人 / 法人 切替 */}
               <div className="space-y-1.5">
-                <Label>請求先種別 *</Label>
+                <Label>{t('signup.billingTypeLabel')}</Label>
                 <div className="flex gap-4 text-sm">
                   <label className="flex items-center gap-1.5">
                     <input
@@ -625,7 +606,7 @@ export default function SignupPage() {
                       checked={form.billingType === 'corporate'}
                       onChange={() => setForm({ ...form, billingType: 'corporate' })}
                     />
-                    法人
+                    {t('signup.billingTypeCorporate')}
                   </label>
                   <label className="flex items-center gap-1.5">
                     <input
@@ -635,7 +616,7 @@ export default function SignupPage() {
                       checked={form.billingType === 'individual'}
                       onChange={() => setForm({ ...form, billingType: 'individual', billingCompanyName: '' })}
                     />
-                    個人
+                    {t('signup.billingTypeIndividual')}
                   </label>
                 </div>
               </div>
@@ -643,58 +624,58 @@ export default function SignupPage() {
               {/* 2026-05-09 (#5): 法人選択時のみ会社名を表示・必須 */}
               {form.billingType === 'corporate' && (
                 <div className="space-y-1.5">
-                  <Label htmlFor="billingCompanyName">会社名 / 法人名 *</Label>
+                  <Label htmlFor="billingCompanyName">{t('signup.billingCompanyLabel')}</Label>
                   <Input id="billingCompanyName" value={form.billingCompanyName} onChange={(e) => setForm({ ...form, billingCompanyName: e.target.value })} maxLength={200} required />
                 </div>
               )}
 
               <div className="space-y-1.5">
                 <Label htmlFor="billingContactName">
-                  {form.billingType === 'corporate' ? '請求担当者名 *' : 'お名前 *'}
+                  {form.billingType === 'corporate' ? t('signup.billingContactNameCorporate') : t('signup.billingContactNameIndividual')}
                 </Label>
                 <Input id="billingContactName" value={form.billingContactName} onChange={(e) => setForm({ ...form, billingContactName: e.target.value })} maxLength={100} required />
               </div>
               <div className="space-y-1.5">
-                <Label htmlFor="billingContactEmail">請求先メール *</Label>
+                <Label htmlFor="billingContactEmail">{t('signup.billingEmailLabel')}</Label>
                 <Input id="billingContactEmail" type="email" value={form.billingContactEmail} onChange={(e) => setForm({ ...form, billingContactEmail: e.target.value })} maxLength={255} required />
               </div>
 
               {/* 2026-05-09 (PR C / #8): 住所をサブフィールドに分割 */}
               <div className="space-y-1.5">
-                <Label htmlFor="billingPostalCode">郵便番号 *</Label>
+                <Label htmlFor="billingPostalCode">{t('signup.billingPostalCodeLabel')}</Label>
                 <Input
                   id="billingPostalCode"
                   value={form.billingPostalCode}
                   onChange={(e) => setForm({ ...form, billingPostalCode: e.target.value })}
                   maxLength={10}
-                  placeholder="例: 100-0001"
+                  placeholder={t('signup.billingPostalCodePlaceholder')}
                   pattern="\d{3}-?\d{4}"
                   required
                 />
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1.5">
-                  <Label htmlFor="billingPrefecture">都道府県 *</Label>
-                  <Input id="billingPrefecture" value={form.billingPrefecture} onChange={(e) => setForm({ ...form, billingPrefecture: e.target.value })} maxLength={20} placeholder="例: 東京都" required />
+                  <Label htmlFor="billingPrefecture">{t('signup.billingPrefectureLabel')}</Label>
+                  <Input id="billingPrefecture" value={form.billingPrefecture} onChange={(e) => setForm({ ...form, billingPrefecture: e.target.value })} maxLength={20} placeholder={t('signup.billingPrefecturePlaceholder')} required />
                 </div>
                 <div className="space-y-1.5">
-                  <Label htmlFor="billingCity">市区町村 *</Label>
-                  <Input id="billingCity" value={form.billingCity} onChange={(e) => setForm({ ...form, billingCity: e.target.value })} maxLength={100} placeholder="例: 千代田区" required />
+                  <Label htmlFor="billingCity">{t('signup.billingCityLabel')}</Label>
+                  <Input id="billingCity" value={form.billingCity} onChange={(e) => setForm({ ...form, billingCity: e.target.value })} maxLength={100} placeholder={t('signup.billingCityPlaceholder')} required />
                 </div>
               </div>
               <div className="space-y-1.5">
-                <Label htmlFor="billingStreetAddress">番地・町名 *</Label>
-                <Input id="billingStreetAddress" value={form.billingStreetAddress} onChange={(e) => setForm({ ...form, billingStreetAddress: e.target.value })} maxLength={200} placeholder="例: 千代田1-1" required />
+                <Label htmlFor="billingStreetAddress">{t('signup.billingStreetLabel')}</Label>
+                <Input id="billingStreetAddress" value={form.billingStreetAddress} onChange={(e) => setForm({ ...form, billingStreetAddress: e.target.value })} maxLength={200} placeholder={t('signup.billingStreetPlaceholder')} required />
               </div>
               {/* 2026-05-09 (#10): 建物名・部屋番号は任意 */}
               <div className="space-y-1.5">
-                <Label htmlFor="billingBuildingName">建物名・部屋番号 (任意)</Label>
-                <Input id="billingBuildingName" value={form.billingBuildingName} onChange={(e) => setForm({ ...form, billingBuildingName: e.target.value })} maxLength={200} placeholder="例: 〇〇ビル 5F" />
+                <Label htmlFor="billingBuildingName">{t('signup.billingBuildingLabel')}</Label>
+                <Input id="billingBuildingName" value={form.billingBuildingName} onChange={(e) => setForm({ ...form, billingBuildingName: e.target.value })} maxLength={200} placeholder={t('signup.billingBuildingPlaceholder')} />
               </div>
 
               <div className="space-y-1.5">
-                <Label htmlFor="billingPhoneNumber">電話番号 (任意)</Label>
-                <Input id="billingPhoneNumber" value={form.billingPhoneNumber} onChange={(e) => setForm({ ...form, billingPhoneNumber: e.target.value })} maxLength={20} placeholder="例: 03-1234-5678" />
+                <Label htmlFor="billingPhoneNumber">{t('signup.billingPhoneLabel')}</Label>
+                <Input id="billingPhoneNumber" value={form.billingPhoneNumber} onChange={(e) => setForm({ ...form, billingPhoneNumber: e.target.value })} maxLength={20} placeholder={t('signup.billingPhonePlaceholder')} />
               </div>
             </fieldset>
             )}
@@ -705,7 +686,7 @@ export default function SignupPage() {
                 同意の証跡 (民法 548 条の 2 / 定型約款の組入合意) は
                 サーバ側 tenant-onboarding.service が TenantConsentLog テーブルに記録する。 */}
             <fieldset className="space-y-2 rounded border p-4">
-              <legend className="px-1 text-sm font-semibold">同意事項 *</legend>
+              <legend className="px-1 text-sm font-semibold">{t('signup.consentLegend')}</legend>
               <label className="flex items-start gap-2 text-sm">
                 <input
                   type="checkbox"
@@ -722,9 +703,9 @@ export default function SignupPage() {
                     rel="noopener noreferrer"
                     className="text-info hover:underline"
                   >
-                    利用規約
+                    {t('signup.consentTermsLinkText')}
                   </a>
-                  に同意します
+                  {t('signup.consentPost')}
                 </span>
               </label>
               <label className="flex items-start gap-2 text-sm">
@@ -743,9 +724,9 @@ export default function SignupPage() {
                     rel="noopener noreferrer"
                     className="text-info hover:underline"
                   >
-                    プライバシーポリシー
+                    {t('signup.consentPrivacyLinkText')}
                   </a>
-                  に同意します
+                  {t('signup.consentPost')}
                 </span>
               </label>
             </fieldset>
@@ -762,11 +743,11 @@ export default function SignupPage() {
               }
               data-testid="signup-submit"
             >
-              {submitting ? '送信中...' : 'サインアップ'}
+              {submitting ? t('signup.submittingButton') : t('signup.submitButton')}
             </Button>
 
             <p className="text-center text-sm text-muted-foreground">
-              既にアカウントをお持ちの場合は <Link href="/login" className="text-info hover:underline">ログイン</Link> してください
+              {t('signup.alreadyHaveAccountPre')}<Link href="/login" className="text-info hover:underline">{t('signup.alreadyHaveAccountLink')}</Link>{t('signup.alreadyHaveAccountPost')}
             </p>
           </form>
         </CardContent>

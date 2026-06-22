@@ -64,6 +64,7 @@ type SourceTask = {
   plannedEffort: unknown;
   priority: string | null;
   isMilestone: boolean;
+  includeWeekends: boolean;
   notes: string | null;
 };
 
@@ -121,6 +122,7 @@ export async function duplicateTasks(input: DuplicateTasksInput): Promise<Duplic
       plannedEffort: true,
       priority: true,
       isMilestone: true,
+      includeWeekends: true,
       notes: true,
     },
   });
@@ -270,6 +272,7 @@ export async function duplicateTasks(input: DuplicateTasksInput): Promise<Duplic
         plannedEffort: isActivity ? (Number(s.plannedEffort) || 0) : 0,
         priority: isActivity ? (s.priority ?? 'medium') : null,
         isMilestone: s.isMilestone,
+        includeWeekends: isActivity ? s.includeWeekends : false,
         notes: s.notes,
         // 実績情報: リセット
         status: 'not_started',

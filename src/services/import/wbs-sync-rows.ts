@@ -26,6 +26,7 @@ export function toSyncImportRows(wbs: WbsRow[]): SyncImportRow[] {
       plannedStartDate: row.plannedStartDate,
       plannedEndDate: row.plannedEndDate,
       plannedEffort: row.plannedEffort,
+      includeWeekends: false,
       parentRowIndex,
     };
   });

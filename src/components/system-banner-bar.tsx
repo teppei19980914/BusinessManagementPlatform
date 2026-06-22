@@ -21,7 +21,7 @@ import {
   dismissBanner,
   purgeAllBannerDismiss,
 } from '@/lib/banner-dismiss-storage';
-import { linkifyNodes } from '@/components/ui/linkified-text';
+import { MarkdownDisplay } from '@/components/ui/markdown-textarea';
 
 export type SystemBannerBarProps = {
   banner: { id: string; message: string; severity: BannerSeverity } | null;
@@ -62,9 +62,7 @@ export function SystemBannerBar({ banner }: SystemBannerBarProps) {
       className={`border-b px-4 py-2 text-sm ${BANNER_SEVERITY_CLASSES[banner.severity]}`}
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="whitespace-pre-wrap break-words [&_a]:text-current [&_a]:font-semibold">
-          {linkifyNodes(banner.message)}
-        </p>
+        <div className="flex-1"><MarkdownDisplay value={banner.message} /></div>
         <button
           type="button"
           onClick={handleClose}

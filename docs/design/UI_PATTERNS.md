@@ -1140,8 +1140,9 @@ PgBouncer 制約により `prisma.$transaction` は使えない (旧 import 同�
 
 - 「WBSをエクスポート」「WBSを上書きインポート」ボタンを追加 (PM/TL + admin のみ表示)
 - 上書きインポートは dry-run プレビューダイアログを必ず経由する 2 ステップ UX
-  - サマリ + 行ごと差分テーブル + 削除候補セクション (赤強調)
-  - 「削除モード」ラジオボタン (保持 / 警告のみ / 削除実行)
+  - サマリ + 行ごと差分テーブル
+  - 「削除候補の扱い」ラジオボタン (保持 / 警告のみ / 削除実行)
+  - 「削除候補 (N 件)」アコーディオン: **「削除実行」を選んだ時だけ** ラジオボタン直下に出現。デフォルト閉じ、クリックで展開。進捗ありタスクは赤で強調
   - 「確定実行」ボタンで本 API 呼び出し
 
 ### 33.9 上限・性能 (ADR-0032 で改訂)
@@ -1213,6 +1214,92 @@ PgBouncer 制約により `prisma.$transaction` は使えない (旧 import 同�
   {/* 4. 詳細ダイアログ (read-only) — 専用コンポーネントを使う */}
   <XxxEditDialog ... readOnly={true} />
   {/* または MemoViewDialog のような専用 read-only ダイアログ */}
+
+---
+
+## DESIGN §38. WBS カンバンビュー / ビュー切替パターン (v1.4.0)
+
+### 38.1 排他ビュー切替の実装パターン
+
+同一画面で「ツリービュー / カンバンビュー」などを排他切替する場合の標準実装:
+
+```tsx
+// セッション永続 (ページリロード後も維持、タブ閉じたら破棄)
+const [viewMode, setViewMode] = useSessionState<'tree' | 'kanban'>(
+  `wbs:${projectId}:view-mode`,
+  'tree', // デフォルト
+);
+
+// トグルボタン (フィルター行末尾に配置)
+<div role="group" className="ml-auto hidden items-center rounded-md border p-0.5 md:flex">
+  <button aria-pressed={viewMode === 'tree'} onClick={() => setViewMode('tree')}>ツリー</button>
+  <button aria-pressed={viewMode === 'kanban'} onClick={() => setViewMode('kanban')}>カンバン</button>
+</div>
+
+// 条件分岐レンダリング
+{viewMode === 'kanban' && <KanbanView ... />}
+<div className={viewMode === 'kanban' ? 'hidden' : 'hidden md:block'}>
+  {/* ツリーテーブル */}
+</div>
+```
+
+### 38.2 キー設計規約
+
+| 用途 | sessionStorage キー形式 |
+|---|---|
+| WBS ビューモード | `wbs:<projectId>:view-mode` |
+| WBS 担当者フィルタ | `wbs:<projectId>:assignee-filter` |
+| WBS 状況フィルタ | `wbs:<projectId>:status-filter` |
+| WBS WP 展開状態 | `wbs:<projectId>:expanded-tasks` |
+| ガント 名称列幅 | `gantt:<projectId>:name-col-width` |
+
+- `useSessionState<T>(key, defaultValue)` — スカラー値 (string / number / 型リテラル union)
+- `useSessionStringSet(key, initializer)` — Set<string> (複数選択フィルタ / 展開 ID 集合)
+
+### 38.3 WBS カンバンビューの設計
+
+- **付箋高さ**: `max(32, round((dailyEffort / 8) * 200))` px
+  - 8h = 200px (FULL_HEIGHT_PX), 最低 32px (MIN_HEIGHT_PX)
+- **日次工数分散**: `distributeEffortByDay(start, end, effort, includeWeekends)` — 第4引数でモードを切替
+  - `includeWeekends=true`: 全暦日に均等分散（例: 金〜月 4h → 各日 1h）
+  - `includeWeekends=false`（デフォルト）: 業務日のみに分散（例: 金〜月 4h → 金 2h・月 2h）
+  - タスクごとに `task.includeWeekends` フラグを保持。カンバンビューはタスク固有の値を使用
+- **グリッド軸**: 担当者行 × **全暦日列**（土日・祝日を含む。ガントと同一仕様）
+- **列ヘッダーの色分け**（ガントと一致）:
+  - 土曜日: `bg-blue-50 dark:bg-blue-950/30` / テキスト青
+  - 日曜・祝日: `bg-red-50 dark:bg-red-950/30` / テキスト赤（祝日名 tooltip 表示）
+  - 今日: `bg-info/20 dark:bg-info/10` / テキスト太字・情報色
+  - 祝日判定: `getJapaneseHoliday()` (`@holiday-jp/holiday_jp`, YYYY-MM-DD 文字列で TZ 非依存)
+- **初期スクロール**: マウント時に今日の列が左端に来るよう `scrollLeft` を設定
+  - `today` はサーバが `getTenantTodayString(new Date(), tenantTimeZone)` で算出した YYYY-MM-DD 文字列
+- **未スケジュール行**: `plannedStartDate` または `plannedEndDate` が null のタスクを最下部にまとめて表示
+- **セルハイライト** (優先順位: 過負荷 > 土日祝 > 今日 > 通常):
+  - 日次工数合計が `WORKLOAD_WARN_HOURS(7h)` 以上で黄、`WORKLOAD_ALERT_HOURS(8h)` 以上で赤
+  - 土日祝は薄い青/赤の背景を重ねる
+- **モバイル**: `hidden md:block` で PC のみ表示 (モバイルは既存カード表示を継続)
+- **ドラッグ&ドロップ** (admin / pm_tl のみ。`canDragDrop` prop):
+  - ドラッグ元: 日付設定済みの付箋のみ draggable。未スケジュール行は不可
+  - 移動ロジック: `delta = targetDate − sourceDate (日数)`、`newStart = start + delta`、`newEnd = end + delta`
+    - 単日タスク(start=end): delta を加算 → 新しい単日に移動
+    - 複数日タスク: 期間を保ったままシフト（複数列の付箋がすべて連動して移動）
+  - **`includeWeekends=false` タスクのドロップ制約**:
+    - 単日タスクを土日・祝日列にドロップ → エラートースト表示・移動キャンセル
+    - 複数日タスク: `newStart` を直前の業務日にスナップ、`newEnd` を直後の業務日にスナップ（通知なし、画面リフレッシュ）
+    - 業務日判定: `isWeekendOrHoliday(dateStr)` (`jp-holidays.ts` からエクスポート)
+  - 担当者変更: 異なる担当者行へドロップすると `assigneeId` を同時変更
+  - 完了時: `PATCH /api/projects/[id]/tasks/[taskId]` で `plannedStartDate / plannedEndDate / assigneeId` を一括更新 → reload
+  - 視覚フィードバック: ドラッグ中の付箋 `opacity-40`、ホバー中のセル `ring-2 ring-inset ring-primary`
+  - 未スケジュール行はドロップ不可（日付なしでデルタ計算できないため）
+
+### 38.4 ファイル構成
+
+| ファイル | 役割 |
+|---|---|
+| `src/lib/task-day-distribution.ts` | 全暦日計算 (`getAllCalendarDays`) / 業務日計算 (`getBusinessDays`, `countWorkingDays`) / 工数分散ロジック (`distributeEffortByDay`) |
+| `src/lib/jp-holidays.ts` | 日本祝日判定 (`getJapaneseHoliday`) / 土日祝判定 (`isWeekendOrHoliday`) |
+| `src/app/.../tasks/kanban-view.tsx` | グリッドコンポーネント |
+| `src/app/.../tasks/task-chip.tsx` | 付箋コンポーネント (memo 化) |
+| `src/app/.../tasks/tasks-client.tsx` | ビュー切替 state / 両ビュー統合 |
 </div>
 ```
 
@@ -1718,7 +1805,7 @@ super_admin / テナント管理者のダッシュボードで「DB 容量」「
 |---|---|---|
 | **MarkdownTextarea** ([`ui/markdown-textarea.tsx`](../../src/components/ui/markdown-textarea.tsx)) | 複数行入力 + プレビュー (右、トグル) + 差分 (下、トグル) の共通入力欄。プレビューは Markdown 構文を含めば react-markdown、含まなければ `whitespace-pre-wrap` プレーン表示 | `value` / `onChange` / `previousValue?` (差分用、編集 dialog のみ) / `rows?` / `maxLength?` / `required?` / `placeholder?` / `disabled?` / `className?`。プレビュー・差分とも **既定 OFF** |
 | **MarkdownDisplay / MarkdownRenderInner** ([`ui/markdown-textarea.tsx`](../../src/components/ui/markdown-textarea.tsx) export / [`ui/markdown-render-inner.tsx`](../../src/components/ui/markdown-render-inner.tsx)) | read-only で Markdown を描画 (all-memos 詳細 dialog / project-detail 概要タブで再利用)。`MarkdownRenderInner` は react-markdown + remark-gfm + remark-breaks (~150KB) を `next/dynamic` (`ssr: true`) で別 chunk 化し、Markdown を含むときだけロード (PR-2 perf 2026-05-29) | `MarkdownDisplay({ value, className? })`。XSS 対策で raw HTML 不許可、改行は `<br>` 変換 (remark-breaks) |
-| **SearchableSelect** ([`ui/searchable-select.tsx`](../../src/components/ui/searchable-select.tsx)) | 項目数が多い / 増える Select の代替 (PR #126)。Base UI Combobox ベース。検索欄は **viewport 高さの 50% に収まらない件数のときのみ** 動的表示 (`computeThreshold`)。ユーザ / メンバー / 顧客選択に限定採用、固定件数 select は従来の `<Select>` 維持 | `value` / `onValueChange` / `options: {value, label, disabled?}[]` / `placeholder?` / `disabled?` / `id?` / `aria-label?` / `className?`。フィルタは `includes()` ベース (ReDoS 回避) |
+| **SearchableSelect** ([`ui/searchable-select.tsx`](../../src/components/ui/searchable-select.tsx)) | 項目数が多い / 増える Select の代替 (PR #126)。Base UI Combobox ベース。検索欄は **viewport 高さの 50% に収まらない件数のときのみ** 動的表示 (`computeThreshold`)。ユーザ / メンバー / 顧客選択、および **WBS タスク作成・編集・一括複製ダイアログの親 WP 選択 (v1.4.0)** に採用。固定件数 select は従来の `<Select>` 維持 | `value` / `onValueChange` / `options: {value, label, disabled?}[]` / `placeholder?` / `disabled?` / `id?` / `aria-label?` / `className?`。フィルタは `includes()` ベース (ReDoS 回避)。階層インデントは全角スペースをラベル先頭に付与して表現 |
 | **EntitySyncImportDialog** ([`dialogs/entity-sync-import-dialog.tsx`](../../src/components/dialogs/entity-sync-import-dialog.tsx)) | §33 の WBS 専用 sync-import を **flat entity 向けに一般化** した汎用ダイアログ (T-22 Phase 22a)。risks / retrospectives / knowledge / memos の sync-import を共通化。WBS 版 (`wbs-sync-import-dialog.tsx`) から階層関連ロジックを除いた版で、entity 種別を prop で受けて使い回す | `apiBasePath` / `i18nNamespace` / `open` / `onOpenChange` / `onImported`。2 ステップ UX (`?dryRun=1` プレビュー → 確定実行)、削除モード (keep/warn/delete)、DB 容量事前判定パネル (`StoragePrecheckPanel`、Beginner block / L3 block で実行拒否) を内包 |
 | **AppHeader** ([`app-header.tsx`](../../src/components/app-header.tsx)) | 全画面共通ヘッダ (feat/app-header-footer-unification 2026-05-24、旧 DashboardHeader 等 3 系統を統合)。`user: AppHeaderUser \| null` で表示切替 (ログイン後=ナビ + NotificationBell + AccountMenu / ログイン前=アプリ名 + ログイン導線) | `sticky top-0 z-40` + auto-hide (下スクロールで隠れ上スクロールで再表示、先頭 64px は常時 visible)。dropdown 開放中は auto-hide 抑止 (`HeaderMenuContext` + `useReportHeaderMenuOpen`)。flat ↔ 3 分類 dropdown の切替 breakpoint は `xl:` (1280px)。adminOnly / superAdminOnly / visibleToSuperAdmin の 3 フラグで項目出し分け。**dropdown 折りたたみ幅 (xl: 未満) では active 項目が見えないため、画面名を `CollapsedNavScreenTitle` で補完表示する (§38.10)** |
 | **AppFooter** ([`app-footer.tsx`](../../src/components/app-footer.tsx)) | 全画面共通フッタ (Server Component)。root layout の children の後に `mt-auto` で配置。**ADR-0031 (2026-05-31) で認証状態 2 層出し分けに全面改修**: ① **共通情報** (ログイン前後で常時表示) = 製品ページ / 利用規約 / プライバシーポリシー / 運営者情報 / 特定商取引法に基づく表記、すべて外部 LP (tasukiba-user) の各アンカーへ集約 (`target="_blank"`)。② **ログイン後限定** (`isAuthenticated` のみ) = お知らせ (アプリ内 `/announcements`、next/link) / セキュリティ報告 (LP `#security`)。旧「© copyright + 最終更新日 + サービス情報 (`/settings/about`)」は全廃し、バージョン / 更新履歴はヘッダ AccountMenu「バージョンアップ情報」(→ `/changelog`) へ移設。`/settings/about` ページは削除済 | `isAuthenticated: boolean` (root layout が `auth()` で解決、MFA 未検証=false=共通情報のみ)。`data-authenticated` 属性で状態を露出。**auto-hide 対象外** (fixed/sticky でなく document 末尾。下スクロール時は既に画面外のため「隠す」対象なし)。fixed-bottom 化する場合は ChatFab (fixed bottom-4) / Toast (fixed bottom-0 z-50) との重なり調整が必須。詳細は [ADR-0031](../adr/0031-footer-auth-aware-and-about-removal.md) |
@@ -1840,10 +1927,10 @@ WBS 画面で ACT (Activity) を作成・編集する際、担当者の **1 人 
 
 ### 40.4 適用面
 
-- **MarkdownDisplay 経由 (自動カバー)**: ナレッジ / リスク・課題 / 振り返り / プロジェクト概要 / メモ / ステークホルダー / 提案パネル。
-- **個別プレーン表示面**: 顧客の備考 ([customer-detail-client.tsx](../../src/app/(dashboard)/customers/[customerId]/customer-detail-client.tsx))、コメント本文 ([comment-section.tsx](../../src/components/comments/comment-section.tsx))、システムお知らせ帯 ([system-banner-bar.tsx](../../src/components/system-banner-bar.tsx))、提案(参考)パネルの抜粋スニペット ([suggestions-panel.tsx](../../src/app/(dashboard)/projects/[projectId]/suggestions/suggestions-panel.tsx)、ナレッジ/課題/リスク/振り返り)。
+- **MarkdownDisplay 経由 (自動カバー)**: ナレッジ / リスク・課題 / 振り返り / プロジェクト概要 / メモ / ステークホルダー / 提案パネル。v1.4.0 追加: コメント本文 ([comment-section.tsx](../../src/components/comments/comment-section.tsx))、顧客の備考 ([customer-detail-client.tsx](../../src/app/(dashboard)/customers/[customerId]/customer-detail-client.tsx))、システムお知らせ帯 ([system-banner-bar.tsx](../../src/components/system-banner-bar.tsx))、バナー一覧プレビュー ([banners-list-client.tsx](../../src/app/(dashboard)/admin/super/banners/banners-list-client.tsx)、`line-clamp-2` ラッパで切り詰め)。
+- **個別プレーン表示面**: 提案(参考)パネルの抜粋スニペット ([suggestions-panel.tsx](../../src/app/(dashboard)/projects/[projectId]/suggestions/suggestions-panel.tsx)、ナレッジ/課題/リスク/振り返り)。
 - **タスク**: 説明・備考は MarkdownTextarea のプレビューで `MarkdownDisplay` 経由。
-- **対象外 (意図的)**: 見積 notes (テーブルで truncate 表示)、バナー一覧プレビュー (管理画面で line-clamp) — 切り詰め表示でリンク化は不適。
+- **対象外 (意図的)**: 見積 notes (テーブルで truncate 表示) — 切り詰め表示でリンク化は不適。
 
 ### 40.5 セキュリティ
 
@@ -1852,4 +1939,53 @@ react-markdown は raw HTML を許可せず、プレーン経路も `linkifyNode
 ### 40.6 ADR 要否
 
 本機能は既存の MarkdownDisplay/MarkdownTextarea 基盤に表示ヘルパを 1 つ足す **UI レンダリング規約**であり、データモデル変更や後戻りしにくいアーキテクチャ判断を含まない (タスク備考欄も既存カラム `Task.notes` の UI 露出にすぎない)。よって **ADR は作成せず、本 §40 を設計上の正本**とする。
+
+---
+
+
+## DESIGN §41. Markdown 表示・入力コンポーネント (v1.4.0)
+
+## 41. Markdown 表示・入力コンポーネント (src/components/ui/markdown-textarea.tsx)
+
+v1.4.0 でコメント / 顧客ノート / システムバナーへの Markdown 書式対応を拡張した。コンポーネントの使い分けと共通ルールを本節に集約する。
+
+### 41.1 コンポーネント一覧
+
+| コンポーネント | 用途 | エクスポート元 |
+|---|---|---|
+| `MarkdownDisplay` | 読み取り専用レンダラ。`isMarkdown()` で分岐し、Markdown 構文あり → react-markdown、なし → `linkifyNodes` の軽量パス | `src/components/ui/markdown-textarea.tsx` |
+| `MarkdownTextarea` | 入力 + プレビュー + 差分トグル付きテキストエリア。`value / onChange / previousValue / rows / maxLength` を受け取る | 同上 |
+| `MarkdownRenderInner` | react-markdown + remark-gfm + remark-breaks + remark-linkify-urls の組み合わせ。`next/dynamic` で遅延ロード (~150KB chunk / gzip ~35KB) | `src/components/ui/markdown-render-inner.tsx` |
+
+### 41.2 使い分けガイド
+
+| 場面 | 採用コンポーネント | 理由 |
+|---|---|---|
+| 保存済みコンテンツの表示 (readOnly モード) | `MarkdownDisplay` | `<fieldset disabled>` 配下でも動作する (button を含まないため) |
+| 新規作成 / 編集フォームの入力欄 | `MarkdownTextarea` | プレビュー・差分表示が一体化 |
+| 詳細ダイアログの readOnly 分岐 | `readOnly ? <MarkdownDisplay ...> : <MarkdownTextarea ...>` | `<fieldset disabled>` がボタンを無効化するため分岐必須 (§32 退行防止テストで担保) |
+| コメント入力 (@メンション補完を持つ) | カスタム textarea + プレビュートグル (MarkdownDisplay を隣接配置) | MentionAutocompleteTextarea の dropdown 位置制御と競合するため `MarkdownTextarea` を使わない |
+
+### 41.3 Markdown 対応フィールド一覧 (v1.4.0 時点)
+
+| 画面 / 機能 | フィールド | 表示 | 入力 |
+|---|---|---|---|
+| ナレッジ詳細ダイアログ | 背景・内容・結果 | MarkdownDisplay | MarkdownTextarea |
+| リスク・課題詳細ダイアログ | 内容 | MarkdownDisplay | MarkdownTextarea |
+| 振り返り詳細ダイアログ | 計画・実績・Good / 問題 / 改善 | MarkdownDisplay | MarkdownTextarea |
+| プロジェクト概要タブ | 概要 | MarkdownDisplay | MarkdownTextarea |
+| メモ詳細 | 本文 | MarkdownDisplay | MarkdownTextarea |
+| タスク詳細ダイアログ | 説明・備考 | MarkdownDisplay | MarkdownTextarea |
+| コメント欄 (全エンティティ共通) | コメント本文 | MarkdownDisplay | カスタム textarea + プレビュートグル |
+| 顧客詳細 | 備考 | MarkdownDisplay | MarkdownTextarea |
+| システムお知らせ帯 | メッセージ | MarkdownDisplay | (管理画面の入力欄は対象外) |
+| バナー一覧 (管理) | メッセージプレビュー | MarkdownDisplay (line-clamp-2) | (参照のみ) |
+
+### 41.4 XSS 安全性
+
+react-markdown は raw HTML 挿入 API を使わない設計になっている。`rehype-raw` を組み込んでいないため、ユーザ入力の HTML タグは文字列として表示され実行されない。リンクは `target="_blank" rel="noopener noreferrer"` が自動付与される。
+
+### 41.5 パフォーマンス
+
+`isMarkdown()` 分岐により、Markdown 構文が含まれないテキスト (URL のみ / プレーン文章) では react-markdown chunk を読み込まず `linkifyNodes` の軽量パスを通る。`MarkdownRenderInner` は `next/dynamic` で遅延ロードされ、初回レンダリングのバンドルサイズに影響しない (§40.3 perf 方針を維持)。
 

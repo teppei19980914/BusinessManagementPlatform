@@ -49,6 +49,48 @@ describe('createTaskSchema - アクティビティ', () => {
       notes: 'あ'.repeat(1001),
     }).success).toBe(false);
   });
+
+  describe('includeWeekends バリデーション', () => {
+    // 2026-06-20 = 土曜日, 2026-06-21 = 日曜日, 2026-06-22 = 月曜日
+    it('includeWeekends=false で開始日が土日 → 拒否', () => {
+      const r = createTaskSchema.safeParse({
+        ...validActivity,
+        plannedStartDate: '2026-06-20', // 土
+        plannedEndDate: '2026-06-22',
+        includeWeekends: false,
+      });
+      expect(r.success).toBe(false);
+    });
+
+    it('includeWeekends=false で終了日が土日 → 拒否', () => {
+      const r = createTaskSchema.safeParse({
+        ...validActivity,
+        plannedStartDate: '2026-06-19', // 金
+        plannedEndDate: '2026-06-21', // 日
+        includeWeekends: false,
+      });
+      expect(r.success).toBe(false);
+    });
+
+    it('includeWeekends=true で開始日が土日 → 許可', () => {
+      const r = createTaskSchema.safeParse({
+        ...validActivity,
+        plannedStartDate: '2026-06-20', // 土
+        plannedEndDate: '2026-06-22',
+        includeWeekends: true,
+      });
+      expect(r.success).toBe(true);
+    });
+
+    it('includeWeekends 未指定で平日のみ → 許可', () => {
+      const r = createTaskSchema.safeParse({
+        ...validActivity,
+        plannedStartDate: '2026-06-15', // 月
+        plannedEndDate: '2026-06-19', // 金
+      });
+      expect(r.success).toBe(true);
+    });
+  });
 });
 
 describe('createTaskSchema - ワークパッケージ', () => {

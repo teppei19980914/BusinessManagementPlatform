@@ -86,6 +86,7 @@ function baseDto(overrides: Partial<TaskDTO>): TaskDTO {
     status: 'not_started',
     progressRate: 0,
     isMilestone: false,
+    includeWeekends: false,
     notes: null,
     ...overrides,
   };
@@ -747,6 +748,61 @@ describe('previewActivityWorkload', () => {
     expect(r.level).toBe('ok');
     // 不正期間は早期 return = findMany を呼ばない
     expect(prisma.task.findMany).not.toHaveBeenCalled();
+  });
+
+  it('includeWeekends=false: 金〜月の新規タスク 4h → 業務日(金・月)のみ分散 → 各日 2h', async () => {
+    vi.mocked(prisma.task.findMany).mockResolvedValue([] as never);
+    // 2026-06-19(金) 〜 2026-06-22(月): 業務日は金・月の2日
+    const r = await previewActivityWorkload({
+      ...BASE_INPUT,
+      startDate: '2026-06-19',
+      endDate: '2026-06-22',
+      plannedEffort: 4,
+      includeWeekends: false,
+    });
+    // 業務日は金・月の2日 → 4h / 2日 = 2h/日 → max=2h
+    expect(r.maxDailyEffort).toBe(2);
+    expect(r.level).toBe('ok');
+  });
+
+  it('includeWeekends=true: 金〜月の新規タスク 4h → 全暦日(4日)で分散 → 各日 1h', async () => {
+    vi.mocked(prisma.task.findMany).mockResolvedValue([] as never);
+    // 2026-06-19(金) 〜 2026-06-22(月): 暦日4日
+    const r = await previewActivityWorkload({
+      ...BASE_INPUT,
+      startDate: '2026-06-19',
+      endDate: '2026-06-22',
+      plannedEffort: 4,
+      includeWeekends: true,
+    });
+    // 暦日4日 → 4h / 4日 = 1h/日 → max=1h
+    expect(r.maxDailyEffort).toBe(1);
+    expect(r.level).toBe('ok');
+  });
+
+  it('既存タスクの includeWeekends が undefined なら false 扱い (デフォルト動作)', async () => {
+    // 既存タスク: 金〜月 8h, includeWeekends=undefined
+    vi.mocked(prisma.task.findMany).mockResolvedValue([
+      {
+        plannedStartDate: new Date('2026-06-19T00:00:00.000Z'),
+        plannedEndDate: new Date('2026-06-22T00:00:00.000Z'),
+        plannedEffort: 4,
+        includeWeekends: false,
+      },
+    ] as never);
+    // 新規: 2026-06-19(金) 1日 × 4h
+    const r = await previewActivityWorkload({
+      ...BASE_INPUT,
+      startDate: '2026-06-19',
+      endDate: '2026-06-19',
+      plannedEffort: 4,
+      includeWeekends: false,
+    });
+    // 既存: 業務日(金・月)で 4h/2=2h/日 → 06-19 に 2h
+    // 新規: 06-19 に 4h
+    // 合計 06-19: 6h → warning
+    expect(r.maxDailyEffort).toBe(6);
+    expect(r.level).toBe('ok'); // 6 < 7 (warn threshold)
   });
 
   // ★ テナント分離 (severity-1): where 句に project.tenantId フィルタが必須

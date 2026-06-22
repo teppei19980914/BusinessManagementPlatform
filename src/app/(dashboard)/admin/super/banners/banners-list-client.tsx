@@ -12,7 +12,7 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useTranslations } from 'next-intl';
+import { MarkdownDisplay } from '@/components/ui/markdown-textarea';
 import { useLoading } from '@/components/loading-overlay';
 import { useToast } from '@/components/toast-provider';
 import { BANNER_SEVERITY_LABELS } from '@/lib/validators/system-banner';
@@ -29,16 +29,16 @@ function formatJst(iso: string): string {
   });
 }
 
-type StatusInfo = { labelKey: 'bannerStatusStopped' | 'bannerStatusScheduled' | 'bannerStatusEnded' | 'bannerStatusActive'; className: string };
+type StatusInfo = { label: string; className: string };
 
 function statusOf(b: SystemBannerDTO): StatusInfo {
-  if (!b.enabled) return { labelKey: 'bannerStatusStopped', className: 'bg-muted text-muted-foreground' };
+  if (!b.enabled) return { label: '停止', className: 'bg-muted text-muted-foreground' };
   const now = Date.now();
   const start = new Date(b.startAt).getTime();
   const end = new Date(b.endAt).getTime();
-  if (now < start) return { labelKey: 'bannerStatusScheduled', className: 'bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-200' };
-  if (now >= end) return { labelKey: 'bannerStatusEnded', className: 'bg-muted text-muted-foreground' };
-  return { labelKey: 'bannerStatusActive', className: 'bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-200' };
+  if (now < start) return { label: '予約', className: 'bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-200' };
+  if (now >= end) return { label: '終了', className: 'bg-muted text-muted-foreground' };
+  return { label: '表示中', className: 'bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-200' };
 }
 
 const SEVERITY_TEXT_CLASS: Record<string, string> = {
@@ -49,15 +49,14 @@ const SEVERITY_TEXT_CLASS: Record<string, string> = {
 
 export function BannersListClient({ banners }: { banners: SystemBannerDTO[] }) {
   const router = useRouter();
-  const t = useTranslations('superAdmin');
   const { withLoading } = useLoading();
-  const { showSuccess, showError } = useToast();
+  const { showSuccessKey, showErrorKey } = useToast();
 
   async function runAction(
     method: 'PATCH' | 'DELETE',
     id: string,
     body: Record<string, unknown> | undefined,
-    successMsg: string,
+    successKey: string,
   ) {
     const res = await withLoading(() =>
       fetch(`/api/admin/super/banners/${id}`, {
@@ -69,32 +68,31 @@ export function BannersListClient({ banners }: { banners: SystemBannerDTO[] }) {
     const json = await res.json().catch(() => ({}));
     if (!res.ok) {
       const code = json?.error?.code as string | undefined;
-      const message = json?.error?.message as string | undefined;
-      if (code === 'OVERLAP') showError(message ?? t('bannerOverlapErrorShort'));
-      else showError(message ?? t('bannerOperationFailedDefault'));
+      if (code === 'OVERLAP') showErrorKey('superAdmin.bannerOverlapErrorShort');
+      else showErrorKey('superAdmin.bannerOperationFailedDefault');
       return;
     }
-    showSuccess(successMsg);
+    showSuccessKey(successKey);
     router.refresh();
   }
 
   function handleSuspend(id: string) {
-    void runAction('PATCH', id, { enabled: false }, t('toastBannerTakedown'));
+    void runAction('PATCH', id, { enabled: false }, 'superAdmin.toastBannerTakedown');
   }
 
   function handleResume(id: string) {
-    void runAction('PATCH', id, { enabled: true }, t('toastBannerReactivate'));
+    void runAction('PATCH', id, { enabled: true }, 'superAdmin.toastBannerReactivate');
   }
 
   function handleDelete(id: string) {
-    if (!window.confirm(t('bannerDeleteConfirm'))) return;
-    void runAction('DELETE', id, undefined, t('toastBannerDelete'));
+    if (!window.confirm('このバナーを履歴ごと完全に削除します。よろしいですか？')) return;
+    void runAction('DELETE', id, undefined, 'superAdmin.toastBannerDelete');
   }
 
   if (banners.length === 0) {
     return (
       <p className="rounded border p-8 text-center text-muted-foreground">
-        {t('bannersListEmpty')}
+        周知バナーはまだありません。「+ 新規バナー」から作成してください。
       </p>
     );
   }
@@ -104,11 +102,11 @@ export function BannersListClient({ banners }: { banners: SystemBannerDTO[] }) {
       <table className="w-full border-collapse text-sm">
         <thead>
           <tr className="border-b text-left">
-            <th className="p-2">{t('bannersColStatus')}</th>
-            <th className="p-2">{t('bannersColSeverity')}</th>
-            <th className="p-2">{t('bannersColMessage')}</th>
-            <th className="p-2">{t('bannersColPeriod')}</th>
-            <th className="p-2 text-right">{t('bannersColActions')}</th>
+            <th className="p-2">状態</th>
+            <th className="p-2">緊急度</th>
+            <th className="p-2">メッセージ</th>
+            <th className="p-2">表示期間 (JST)</th>
+            <th className="p-2 text-right">操作</th>
           </tr>
         </thead>
         <tbody>
@@ -118,14 +116,16 @@ export function BannersListClient({ banners }: { banners: SystemBannerDTO[] }) {
               <tr key={b.id} className="border-b align-top hover:bg-muted/30">
                 <td className="p-2">
                   <span className={`inline-block rounded px-2 py-0.5 text-xs font-medium ${status.className}`}>
-                    {t(status.labelKey)}
+                    {status.label}
                   </span>
                 </td>
                 <td className={`p-2 font-medium ${SEVERITY_TEXT_CLASS[b.severity] ?? ''}`}>
                   {BANNER_SEVERITY_LABELS[b.severity]}
                 </td>
                 <td className="max-w-md p-2">
-                  <span className="line-clamp-2 whitespace-pre-wrap break-words">{b.message}</span>
+                  <div className="line-clamp-2 overflow-hidden">
+                    <MarkdownDisplay value={b.message} />
+                  </div>
                 </td>
                 <td className="p-2 whitespace-nowrap text-xs">
                   {formatJst(b.startAt)}
@@ -137,13 +137,13 @@ export function BannersListClient({ banners }: { banners: SystemBannerDTO[] }) {
                       href={`/admin/super/banners/${b.id}/edit`}
                       className="rounded border px-2 py-1 text-xs hover:bg-muted"
                     >
-                      {t('bannerActionEdit')}
+                      編集
                     </Link>
                     <Link
                       href={`/admin/super/banners/new?from=${b.id}`}
                       className="rounded border px-2 py-1 text-xs hover:bg-muted"
                     >
-                      {t('bannerActionClone')}
+                      複製
                     </Link>
                     {b.enabled ? (
                       <button
@@ -151,7 +151,7 @@ export function BannersListClient({ banners }: { banners: SystemBannerDTO[] }) {
                         onClick={() => handleSuspend(b.id)}
                         className="rounded border px-2 py-1 text-xs hover:bg-muted"
                       >
-                        {t('bannerActionTakedown')}
+                        取り下げ
                       </button>
                     ) : (
                       <button
@@ -159,7 +159,7 @@ export function BannersListClient({ banners }: { banners: SystemBannerDTO[] }) {
                         onClick={() => handleResume(b.id)}
                         className="rounded border px-2 py-1 text-xs hover:bg-muted"
                       >
-                        {t('bannerActionReactivate')}
+                        再開
                       </button>
                     )}
                     <button
@@ -167,7 +167,7 @@ export function BannersListClient({ banners }: { banners: SystemBannerDTO[] }) {
                       onClick={() => handleDelete(b.id)}
                       className="rounded border border-destructive/40 px-2 py-1 text-xs text-destructive hover:bg-destructive/10"
                     >
-                      {t('bannerActionDelete')}
+                      削除
                     </button>
                   </div>
                 </td>

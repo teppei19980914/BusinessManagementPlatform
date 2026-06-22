@@ -950,6 +950,7 @@ export function ProjectDetailClient({
                     userId={userId}
                     onReload={reloadTasks}
                     isReadOnly={isReadOnlyByStatus}
+                    today={today}
                   />
                 )}
               </LazyTabContent>
