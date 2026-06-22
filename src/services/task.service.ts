@@ -302,6 +302,40 @@ export async function listTasksFlat(projectId: string, viewerTenantId: string): 
 }
 
 // ================================================================
+// 2026-06-19 (v1.3.0): WBS 完了バナー表示判定
+// ================================================================
+
+/**
+ * WBS 完了バナーの表示判定 (v1.3.0 資産導線機能)。
+ *
+ * 表示条件: プロジェクト内に ACT (type='activity') が 1 件以上存在し、
+ *   かつ全 ACT の status が 'completed' または 'on_hold' のみ (他の status が 1 件もない)。
+ *   振り返りの有無は問わない (既に振り返り済みでも表示し、再確認を促す)。
+ *
+ * 実装: 全件 status を読まず COUNT 2 本に分解 (総数 / 非対象 status 数) して判定する。
+ */
+export async function getWbsCompletionBannerState(
+  projectId: string,
+  viewerTenantId: string,
+): Promise<{ shouldShow: boolean }> {
+  const [totalActCount, incompleteActCount] = await Promise.all([
+    prisma.task.count({
+      where: { projectId, type: 'activity', deletedAt: null, project: { tenantId: viewerTenantId } },
+    }),
+    prisma.task.count({
+      where: {
+        projectId,
+        type: 'activity',
+        deletedAt: null,
+        project: { tenantId: viewerTenantId },
+        status: { notIn: ['completed', 'on_hold'] },
+      },
+    }),
+  ]);
+  return { shouldShow: totalActCount > 0 && incompleteActCount === 0 };
+}
+
+// ================================================================
 // 2026-05-09 (PR H / #7): 担当者別 日次工数集計
 // ================================================================
 
@@ -1470,6 +1504,8 @@ export type WpAggregationChild = {
   actualEndDate: Date | null;
   status: string;
   assigneeId: string | null;
+  /** 複数担当者表示テキスト計算用。ACT は assignee.name、WP 子孫経由は省略可 */
+  assigneeName?: string | null;
 };
 
 export type WpAggregationResult = {
@@ -1486,6 +1522,10 @@ export type WpAggregationResult = {
    * 再帰的 recalculateAncestors により、孫以降の変更もボトムアップで伝播する。
    */
   assigneeId: string | null;
+  /**
+   * 複数担当者の場合 "田中 +2" 形式で表示するテキスト。単一担当者または未アサインは null。
+   */
+  assigneeDisplayText: string | null;
 };
 
 export function aggregateWpFromChildren(children: WpAggregationChild[]): WpAggregationResult {
@@ -1499,6 +1539,7 @@ export function aggregateWpFromChildren(children: WpAggregationChild[]): WpAggre
       actualEndDate: null,
       status: 'not_started',
       assigneeId: null,
+      assigneeDisplayText: null,
     };
   }
 
@@ -1518,14 +1559,17 @@ export function aggregateWpFromChildren(children: WpAggregationChild[]): WpAggre
     dates.length > 0 ? new Date(Math.max(...dates.map((d) => d.getTime()))) : null;
 
   // ステータス自動判定
+  // 優先順位: completed(全員)> in_progress > on_hold > completed+not_started混在 → in_progress > not_started
   const statuses = children.map((c) => c.status);
   let wpStatus = 'not_started';
   if (statuses.every((s) => s === 'completed')) {
     wpStatus = 'completed';
-  } else if (statuses.some((s) => s === 'in_progress' || s === 'completed')) {
+  } else if (statuses.some((s) => s === 'in_progress')) {
     wpStatus = 'in_progress';
   } else if (statuses.some((s) => s === 'on_hold')) {
     wpStatus = 'on_hold';
+  } else if (statuses.some((s) => s === 'completed')) {
+    wpStatus = 'in_progress';
   }
 
   // 実績日付は予定と同じ min/max ロジックで集計した上で、ステータス整合性ルール（PR #39）を
@@ -1548,6 +1592,16 @@ export function aggregateWpFromChildren(children: WpAggregationChild[]): WpAggre
   const uniformAssignee: string | null
     = distinctAssignees.size === 1 ? [...distinctAssignees][0] : null;
 
+  // 複数担当者表示テキスト: 非 null な uniqueId が 2 件以上のとき "田中 +N" 形式
+  const nonNullAssigneeIds = [...distinctAssignees].filter((id): id is string => id !== null);
+  let assigneeDisplayText: string | null = null;
+  if (nonNullAssigneeIds.length >= 2) {
+    const firstName = children.find((c) => c.assigneeId !== null && c.assigneeName)?.assigneeName ?? null;
+    if (firstName) {
+      assigneeDisplayText = `${firstName} +${nonNullAssigneeIds.length - 1}`;
+    }
+  }
+
   return {
     plannedEffort: totalEffort,
     progressRate: weightedProgress,
@@ -1557,6 +1611,7 @@ export function aggregateWpFromChildren(children: WpAggregationChild[]): WpAggre
     actualEndDate: normalized.actualEndDate,
     status: wpStatus,
     assigneeId: uniformAssignee,
+    assigneeDisplayText,
   };
 }
 
@@ -1579,6 +1634,7 @@ export function isWpAggregationEqual(
     actualEndDate: Date | null;
     status: string;
     assigneeId: string | null;
+    assigneeDisplayText?: string | null;
   },
   next: WpAggregationResult,
 ): boolean {
@@ -1596,6 +1652,7 @@ export function isWpAggregationEqual(
     && sameDate(current.actualEndDate, next.actualEndDate)
     && current.status === next.status
     && (current.assigneeId ?? null) === (next.assigneeId ?? null)
+    && (current.assigneeDisplayText ?? null) === (next.assigneeDisplayText ?? null)
   );
 }
 
