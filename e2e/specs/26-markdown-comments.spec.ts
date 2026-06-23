@@ -87,7 +87,7 @@ test.describe('@feature:comment:markdown コメント Markdown レンダリン�
 
   test('ナレッジのコメントで **太字** が <strong> タグとしてレンダリングされる', async () => {
     // 全ナレッジ画面からナレッジ行をクリックしてダイアログを開く
-    await page.goto('/all-knowledge');
+    await page.goto('/knowledge');
     await page.waitForLoadState('networkidle');
 
     // ナレッジタイトルをクリックしてダイアログを開く
