@@ -176,8 +176,8 @@ test.describe('@feature:project:wbs WBS カンバンビュー', () => {
     // カンバンビューを確認
     await expect(page.getByTestId('kanban-task-chip').first()).toBeVisible({ timeout: 10_000 });
 
-    // 付箋クリック
-    await page.getByTestId('kanban-task-chip').first().click();
+    // ACT_NAME の付箋を特定してクリック (金曜日は ACT_WEEKEND_NAME も同列に表示されるため .first() は不確定)
+    await page.getByTestId('kanban-task-chip').filter({ hasText: ACT_NAME }).first().click();
 
     // 編集ダイアログが開く (DialogContent 内に ACT 名が表示される)
     await expect(page.getByRole('dialog')).toBeVisible({ timeout: 10_000 });
