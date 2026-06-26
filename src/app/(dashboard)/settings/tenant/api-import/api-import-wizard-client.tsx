@@ -17,6 +17,7 @@
  */
 
 import { useState } from 'react';
+import { useTranslations } from 'next-intl';
 import {
   IMPORT_FIELD_CATALOG,
   IMPORT_ENTITY_LABELS,
@@ -63,23 +64,6 @@ interface ImportPreview {
   warnings: string[];
 }
 
-const SOURCES: { id: ApiSource; label: string; note: string }[] = [
-  { id: 'google_sheets', label: 'Google スプレッドシート', note: 'タブ（シート）ごとに1エンティティ。ヘッダ行を列に使います。' },
-  { id: 'backlog', label: 'Backlog', note: 'プロジェクトの課題を、課題種別で「タスク(WBS)」と「課題」に振り分けます。' },
-  { id: 'notion', label: 'Notion', note: 'インテグレーションに共有したデータベースを取り込みます。' },
-  { id: 'kintone', label: 'kintone', note: 'アプリ単位のAPIトークン（閲覧）。アプリIDを指定します。' },
-  { id: 'pleasanter', label: 'Pleasanter', note: 'サイト(siteId)単位。Issues→WBS / Results→課題。' },
-];
-
-/** サービスごとの接続情報フィールド定義 (非機密。token は別管理)。 */
-const CONN_FIELDS: Record<ApiSource, { tokenLabel: string; tokenHint: string; extra: { key: string; label: string; hint: string }[] }> = {
-  notion: { tokenLabel: 'インテグレーショントークン', tokenHint: 'Notion の Integration（Read content 権限）のトークン', extra: [] },
-  backlog: { tokenLabel: 'API キー', tokenHint: '個人設定で発行した API キー', extra: [{ key: 'baseUrl', label: 'ベースURL', hint: '例: https://xxxx.backlog.com（.jp / .backlogtool.com も可）' }] },
-  kintone: { tokenLabel: 'API トークン', tokenHint: 'アプリの「閲覧」権限のAPIトークン', extra: [{ key: 'baseUrl', label: 'サブドメインURL', hint: '例: https://xxxx.kintone.com' }, { key: 'appIds', label: 'アプリID', hint: 'カンマ区切りで複数可（例: 12,15）' }] },
-  pleasanter: { tokenLabel: 'ApiKey', tokenHint: '閲覧権限ユーザのApiKey', extra: [{ key: 'baseUrl', label: 'ベースURL', hint: 'オンプレ: https://host / クラウド: https://pleasanter.net/fs' }, { key: 'siteIds', label: 'サイトID', hint: 'カンマ区切りで複数可' }] },
-  google_sheets: { tokenLabel: 'アクセストークン', tokenHint: 'OAuth (spreadsheets.readonly)。公開シートはAPIキーでも可', extra: [{ key: 'spreadsheetId', label: 'スプレッドシートID', hint: 'URL の /d/ と /edit の間の文字列' }, { key: 'apiKey', label: 'APIキー（公開シートのみ・任意）', hint: '公開シートを読む場合のみ。アクセストークンは空でOK' }] },
-};
-
 interface SourceMapState {
   entity: ImportEntityKind | 'none';
   columnMap: Record<string, string>;
@@ -87,9 +71,8 @@ interface SourceMapState {
   parentKey: string;
 }
 
-const STEP_LABELS = ['サービス選択', 'マッピング', 'プレビュー', '完了'] as const;
-
 export function ApiImportWizard() {
+  const t = useTranslations('apiImportWizard');
   const [step, setStep] = useState(1);
   const [source, setSource] = useState<ApiSource | null>(null);
   const [token, setToken] = useState('');
@@ -101,6 +84,22 @@ export function ApiImportWizard() {
   const [applied, setApplied] = useState<{ created: PreviewSummary } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const SOURCES: { id: ApiSource; label: string; note: string }[] = [
+    { id: 'google_sheets', label: t('sourceGoogleLabel'), note: t('sourceGoogleNote') },
+    { id: 'backlog', label: 'Backlog', note: t('sourceBacklogNote') },
+    { id: 'notion', label: 'Notion', note: t('sourceNotionNote') },
+    { id: 'kintone', label: 'kintone', note: t('sourceKintoneNote') },
+    { id: 'pleasanter', label: 'Pleasanter', note: t('sourcePleasanterNote') },
+  ];
+
+  const CONN_FIELDS: Record<ApiSource, { tokenLabel: string; tokenHint: string; extra: { key: string; label: string; hint: string }[] }> = {
+    notion: { tokenLabel: t('notionTokenLabel'), tokenHint: t('notionTokenHint'), extra: [] },
+    backlog: { tokenLabel: t('backlogTokenLabel'), tokenHint: t('backlogTokenHint'), extra: [{ key: 'baseUrl', label: t('backlogBaseUrlLabel'), hint: t('backlogBaseUrlHint') }] },
+    kintone: { tokenLabel: t('kintoneTokenLabel'), tokenHint: t('kintoneTokenHint'), extra: [{ key: 'baseUrl', label: t('kintoneBaseUrlLabel'), hint: t('kintoneBaseUrlHint') }, { key: 'appIds', label: t('kintoneAppIdsLabel'), hint: t('kintoneAppIdsHint') }] },
+    pleasanter: { tokenLabel: t('pleasanterTokenLabel'), tokenHint: t('pleasanterTokenHint'), extra: [{ key: 'baseUrl', label: t('pleasanterBaseUrlLabel'), hint: t('pleasanterBaseUrlHint') }, { key: 'siteIds', label: t('pleasanterSiteIdsLabel'), hint: t('pleasanterSiteIdsHint') }] },
+    google_sheets: { tokenLabel: t('googleTokenLabel'), tokenHint: t('googleTokenHint'), extra: [{ key: 'spreadsheetId', label: t('googleSpreadsheetIdLabel'), hint: t('googleSpreadsheetIdHint') }, { key: 'apiKey', label: t('googleApiKeyLabel'), hint: t('googleApiKeyHint') }] },
+  };
 
   const connFields = source ? CONN_FIELDS[source] : null;
 
@@ -129,7 +128,7 @@ export function ApiImportWizard() {
       const json = await res.json();
       setToken(''); // 送信後すぐ破棄
       if (!json.ok) {
-        setError(json.error?.message ?? '接続に失敗しました');
+        setError(json.error?.message ?? t('errorConnectFailed'));
         return;
       }
       const sc = json.schema as DiscoveredSchema;
@@ -184,7 +183,7 @@ export function ApiImportWizard() {
       const json = await res.json();
       setToken('');
       if (!json.ok) {
-        setError(json.error?.message ?? 'プレビューに失敗しました');
+        setError(json.error?.message ?? t('errorPreviewFailed'));
         return;
       }
       setPreview(json.preview as ImportPreview);
@@ -207,7 +206,7 @@ export function ApiImportWizard() {
       });
       const json = await res.json();
       if (!json.ok) {
-        setError(json.error?.message ?? '取り込みに失敗しました');
+        setError(json.error?.message ?? t('errorApplyFailed'));
         return;
       }
       setApplied({ created: json.result?.created ?? json.result });
@@ -222,17 +221,14 @@ export function ApiImportWizard() {
   return (
     <div className="mx-auto max-w-4xl space-y-4 p-4">
       <header>
-        <h1 className="text-xl font-bold">外部データ API 連携インポート（ベータ）</h1>
-        <p className="text-sm text-muted-foreground">
-          Notion / Backlog / kintone / Pleasanter / Google スプレッドシート から直接つないでデータを取り込みます。
-          認証情報はサーバに保存されません（送信のたびに破棄されます）。
-        </p>
+        <h1 className="text-xl font-bold">{t('pageTitle')}</h1>
+        <p className="text-sm text-muted-foreground">{t('pageDescription')}</p>
       </header>
 
       <ol className="flex flex-wrap gap-2 text-sm">
-        {STEP_LABELS.map((label, i) => (
+        {[t('step1Label'), t('step2Label'), t('step3Label'), t('step4Label')].map((label, i) => (
           <li
-            key={label}
+            key={i}
             className={`rounded px-2 py-1 ${step === i + 1 ? 'bg-black text-white' : 'bg-gray-100 text-gray-600'}`}
           >
             {i + 1}. {label}
@@ -287,7 +283,7 @@ export function ApiImportWizard() {
                   placeholder={connFields.tokenHint}
                   autoComplete="off"
                 />
-                <p className="text-xs text-muted-foreground">{connFields.tokenHint}（保存されません）</p>
+                <p className="text-xs text-muted-foreground">{connFields.tokenHint}{t('tokenNotSaved')}</p>
               </div>
               <button
                 type="button"
@@ -295,7 +291,7 @@ export function ApiImportWizard() {
                 onClick={handleDiscover}
                 className="rounded bg-black px-3 py-1.5 text-sm text-white disabled:opacity-50"
               >
-                {busy ? '接続中…' : '接続して取得元を読み込む'}
+                {busy ? t('connectingButton') : t('connectButton')}
               </button>
             </div>
           )}
@@ -309,7 +305,7 @@ export function ApiImportWizard() {
             <p key={i} className="rounded bg-amber-50 p-2 text-xs text-amber-800">{w}</p>
           ))}
           {schema.sources.length === 0 && (
-            <p className="text-sm text-muted-foreground">取得できる対象がありませんでした。共有設定・ID をご確認ください。</p>
+            <p className="text-sm text-muted-foreground">{t('noSourcesFound')}</p>
           )}
           {schema.sources.map((s) => {
             const m = maps[s.id];
@@ -322,7 +318,7 @@ export function ApiImportWizard() {
                     value={m.entity}
                     onChange={(e) => setMaps((mm) => ({ ...mm, [s.id]: { ...m, entity: e.target.value as ImportEntityKind | 'none' } }))}
                   >
-                    <option value="none">取り込まない</option>
+                    <option value="none">{t('mappingSkipEntity')}</option>
                     {Object.entries(IMPORT_ENTITY_LABELS).map(([k, label]) => (
                       <option key={k} value={k}>{label}</option>
                     ))}
@@ -333,9 +329,9 @@ export function ApiImportWizard() {
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="text-left text-xs text-muted-foreground">
-                        <th className="py-1">たすきば項目</th>
-                        <th className="py-1">連携元の項目</th>
-                        <th className="py-1">既定値</th>
+                        <th className="py-1">{t('mappingTableHeaderField')}</th>
+                        <th className="py-1">{t('mappingTableHeaderSource')}</th>
+                        <th className="py-1">{t('mappingTableHeaderDefault')}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -353,7 +349,7 @@ export function ApiImportWizard() {
                                 setMaps((mm) => ({ ...mm, [s.id]: { ...m, columnMap: { ...m.columnMap, [def.field]: e.target.value } } }))
                               }
                             >
-                              <option value="">（割り当てない）</option>
+                              <option value="">{t('mappingSkipField')}</option>
                               {s.fields.map((f) => (
                                 <option key={f.key} value={f.key}>{f.label}</option>
                               ))}
@@ -366,7 +362,7 @@ export function ApiImportWizard() {
                               onChange={(e) =>
                                 setMaps((mm) => ({ ...mm, [s.id]: { ...m, fixedMap: { ...m.fixedMap, [def.field]: e.target.value } } }))
                               }
-                              placeholder="（任意）"
+                              placeholder={t('mappingDefaultPlaceholder')}
                             />
                           </td>
                         </tr>
@@ -377,13 +373,13 @@ export function ApiImportWizard() {
 
                 {m.entity === 'wbs' && (
                   <div>
-                    <label className="text-xs font-medium">親を指す項目（階層をつくる場合）</label>
+                    <label className="text-xs font-medium">{t('mappingParentKeyLabel')}</label>
                     <select
                       className="mt-1 block w-full rounded border px-1 py-0.5 text-sm"
                       value={m.parentKey}
                       onChange={(e) => setMaps((mm) => ({ ...mm, [s.id]: { ...m, parentKey: e.target.value } }))}
                     >
-                      <option value="">（指定しない＝すべて最上位）</option>
+                      <option value="">{t('mappingNoParent')}</option>
                       {s.fields.map((f) => (
                         <option key={f.key} value={f.key}>{f.label}</option>
                       ))}
@@ -395,14 +391,14 @@ export function ApiImportWizard() {
           })}
 
           <div className="flex gap-2">
-            <button type="button" onClick={() => setStep(1)} className="rounded border px-3 py-1.5 text-sm">戻る</button>
+            <button type="button" onClick={() => setStep(1)} className="rounded border px-3 py-1.5 text-sm">{t('backButton')}</button>
             <button
               type="button"
               disabled={buildMappings().length === 0}
               onClick={() => setStep(3)}
               className="rounded bg-black px-3 py-1.5 text-sm text-white disabled:opacity-50"
             >
-              次へ（プレビュー）
+              {t('nextPreviewButton')}
             </button>
           </div>
         </section>
@@ -413,7 +409,7 @@ export function ApiImportWizard() {
         <section className="space-y-4">
           {!preview && (
             <div className="space-y-3 rounded border p-3">
-              <p className="text-sm">取り込み内容を確認するため、もう一度{connFields?.tokenLabel}を入力してください（取得のたびに破棄されます）。</p>
+              <p className="text-sm">{t('previewReenterTokenDesc', { tokenLabel: connFields?.tokenLabel ?? '' })}</p>
               <input
                 type="password"
                 className="block w-full rounded border px-2 py-1 text-sm"
@@ -423,14 +419,14 @@ export function ApiImportWizard() {
                 autoComplete="off"
               />
               <div className="flex gap-2">
-                <button type="button" onClick={() => setStep(2)} className="rounded border px-3 py-1.5 text-sm">戻る</button>
+                <button type="button" onClick={() => setStep(2)} className="rounded border px-3 py-1.5 text-sm">{t('backButton')}</button>
                 <button
                   type="button"
                   disabled={busy || !canPreview}
                   onClick={handlePreview}
                   className="rounded bg-black px-3 py-1.5 text-sm text-white disabled:opacity-50"
                 >
-                  {busy ? '取得中…' : '取得してプレビュー'}
+                  {busy ? t('fetchingButton') : t('fetchPreviewButton')}
                 </button>
               </div>
             </div>
@@ -439,14 +435,14 @@ export function ApiImportWizard() {
           {preview && (
             <div className="space-y-3">
               <div className="rounded border p-3 text-sm">
-                <div className="font-semibold">取り込み件数</div>
+                <div className="font-semibold">{t('previewCountTitle')}</div>
                 <ul className="mt-1 grid grid-cols-2 gap-1 sm:grid-cols-3">
-                  <li>顧客: {preview.summary.customers}</li>
-                  <li>プロジェクト: {preview.summary.projects}</li>
+                  <li>{t('summaryCustomers', { count: preview.summary.customers })}</li>
+                  <li>{t('summaryProjects', { count: preview.summary.projects })}</li>
                   <li>WBS: {preview.summary.wbs}</li>
-                  <li>リスク・課題: {preview.summary.risks}</li>
-                  <li>ナレッジ: {preview.summary.knowledge}</li>
-                  <li>振り返り: {preview.summary.retrospectives}</li>
+                  <li>{t('summaryRisks', { count: preview.summary.risks })}</li>
+                  <li>{t('summaryKnowledge', { count: preview.summary.knowledge })}</li>
+                  <li>{t('summaryRetros', { count: preview.summary.retrospectives })}</li>
                 </ul>
               </div>
 
@@ -458,7 +454,7 @@ export function ApiImportWizard() {
 
               {preview.errors.length > 0 ? (
                 <div className="rounded border-l-4 border-red-500 bg-red-50 p-3 text-xs text-red-800">
-                  <p className="font-semibold">エラー（{preview.errors.length} 件）— 修正してから取り込めます</p>
+                  <p className="font-semibold">{t('previewErrorTitle', { count: preview.errors.length })}</p>
                   <ul className="mt-1 list-disc pl-4">
                     {preview.errors.slice(0, 50).map((e, i) => (
                       <li key={i}>{IMPORT_ENTITY_LABELS[e.entity as ImportEntityKind] ?? e.entity}「{e.ref}」: {e.reason}</li>
@@ -466,18 +462,18 @@ export function ApiImportWizard() {
                   </ul>
                 </div>
               ) : (
-                <p className="text-sm text-emerald-700">エラーはありません。取り込めます。</p>
+                <p className="text-sm text-emerald-700">{t('previewNoErrors')}</p>
               )}
 
               <div className="flex gap-2">
-                <button type="button" onClick={() => { setPreview(null); setStep(2); }} className="rounded border px-3 py-1.5 text-sm">マッピングに戻る</button>
+                <button type="button" onClick={() => { setPreview(null); setStep(2); }} className="rounded border px-3 py-1.5 text-sm">{t('backToMappingButton')}</button>
                 <button
                   type="button"
                   disabled={busy || preview.errors.length > 0}
                   onClick={handleApply}
                   className="rounded bg-black px-3 py-1.5 text-sm text-white disabled:opacity-50"
                 >
-                  {busy ? '取り込み中…' : 'この内容で取り込む'}
+                  {busy ? t('importingButton') : t('importButton')}
                 </button>
               </div>
             </div>
@@ -489,17 +485,17 @@ export function ApiImportWizard() {
       {step === 4 && applied && (
         <section className="space-y-3">
           <div className="rounded border-l-4 border-emerald-500 bg-emerald-50 p-3 text-sm">
-            <p className="font-semibold">取り込みが完了しました。</p>
+            <p className="font-semibold">{t('successTitle')}</p>
             <ul className="mt-1 grid grid-cols-2 gap-1 sm:grid-cols-3">
-              <li>顧客: {applied.created.customers}</li>
-              <li>プロジェクト: {applied.created.projects}</li>
+              <li>{t('summaryCustomers', { count: applied.created.customers })}</li>
+              <li>{t('summaryProjects', { count: applied.created.projects })}</li>
               <li>WBS: {applied.created.wbs}</li>
-              <li>リスク・課題: {applied.created.risks}</li>
-              <li>ナレッジ: {applied.created.knowledge}</li>
-              <li>振り返り: {applied.created.retrospectives}</li>
+              <li>{t('summaryRisks', { count: applied.created.risks })}</li>
+              <li>{t('summaryKnowledge', { count: applied.created.knowledge })}</li>
+              <li>{t('summaryRetros', { count: applied.created.retrospectives })}</li>
             </ul>
           </div>
-          <a href="/settings/tenant" className="text-info underline">設定に戻る</a>
+          <a href="/settings/tenant" className="text-info underline">{t('backToSettingsLink')}</a>
         </section>
       )}
     </div>

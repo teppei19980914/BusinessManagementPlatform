@@ -13,23 +13,10 @@
  */
 
 import Link from 'next/link';
+import { useTranslations } from 'next-intl';
 import { cn } from '@/lib/utils';
 import { buildChatHitLink } from '@/lib/chat-search-link';
 import type { ChatSearchHit, ChatSearchKind } from '@/services/chat-search.service';
-
-/**
- * 種別ごとの表示メタ情報。仕様 §3.4 のバッジ識別と整合。
- */
-const KIND_META: Record<ChatSearchKind, { icon: string; label: string }> = {
-  project: { icon: '📄', label: 'プロジェクト' },
-  knowledge: { icon: '📕', label: 'ナレッジ' },
-  risk: { icon: '⚠️', label: 'リスク' },
-  issue: { icon: '⚠️', label: '課題' },
-  retrospective: { icon: '📋', label: '振り返り' },
-  memo: { icon: '📝', label: 'メモ' },
-  // ADR-0021 (2026-05-26): 添付ファイル本体検索結果
-  attachment: { icon: '📎', label: '添付ファイル' },
-};
 
 export function ChatSearchResultCard({
   hit,
@@ -48,6 +35,18 @@ export function ChatSearchResultCard({
    */
   disabled?: boolean;
 }) {
+  const t = useTranslations('chatPanel');
+  // 種別ごとの表示メタ情報。仕様 §3.4 のバッジ識別と整合。
+  const KIND_META: Record<ChatSearchKind, { icon: string; label: string }> = {
+    project: { icon: '📄', label: t('kindProject') },
+    knowledge: { icon: '📕', label: t('kindKnowledge') },
+    risk: { icon: '⚠️', label: t('kindRisk') },
+    issue: { icon: '⚠️', label: t('kindIssue') },
+    retrospective: { icon: '📋', label: t('kindRetrospective') },
+    memo: { icon: '📝', label: t('kindMemo') },
+    // ADR-0021 (2026-05-26): 添付ファイル本体検索結果
+    attachment: { icon: '📎', label: t('kindAttachment') },
+  };
   const meta = KIND_META[hit.kind];
   const href = buildChatHitLink(hit, { viewerUserId });
 
@@ -57,7 +56,7 @@ export function ChatSearchResultCard({
     return (
       <div
         aria-disabled="true"
-        title="ユーザ情報を読み込み中です。少し待ってから再度お試しください"
+        title={t('loadingUserInfo')}
         className={cn(
           'block rounded-md border border-border bg-background p-3 text-sm',
           'opacity-60 cursor-wait',
@@ -89,6 +88,7 @@ function CardInner({
   meta: { icon: string; label: string };
   hit: ChatSearchHit;
 }) {
+  const t = useTranslations('chatPanel');
   return (
     <>
       <div className="mb-1 flex items-center gap-2 text-xs text-muted-foreground">
@@ -100,7 +100,7 @@ function CardInner({
             / {hit.sourceProjectName}
           </span>
         )}
-        <span className="ml-auto whitespace-nowrap">類似度: {hit.score.toFixed(2)}</span>
+        <span className="ml-auto whitespace-nowrap">{t('similarityScore', { score: hit.score.toFixed(2) })}</span>
       </div>
       <div className="line-clamp-1 font-medium">{hit.title}</div>
       <div className="mt-1 line-clamp-2 text-xs text-muted-foreground">{hit.snippet}</div>

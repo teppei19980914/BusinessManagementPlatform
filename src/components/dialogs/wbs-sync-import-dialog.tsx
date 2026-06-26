@@ -156,6 +156,7 @@ export function WbsSyncImportDialog({
   const [filter, setFilter] = useState<RowFilter>('all');
   const [dragActive, setDragActive] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleteCandidatesOpen, setDeleteCandidatesOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const reset = useCallback(() => {
@@ -167,6 +168,7 @@ export function WbsSyncImportDialog({
     setFilter('all');
     setDragActive(false);
     setShowDeleteConfirm(false);
+    setDeleteCandidatesOpen(false);
   }, []);
 
   const handleClose = useCallback(() => {
@@ -457,51 +459,64 @@ export function WbsSyncImportDialog({
                 <SummaryCard label={t('summaryWarning')} value={preview.summary.warnings} variant="outline" />
               </div>
 
-              {/* 削除候補ハイライト (進捗ありを上に) */}
-              {preview.summary.removed > 0 && (
-                <div className="rounded-md border border-warning bg-warning/10 p-3 space-y-2">
-                  <div className="text-sm font-semibold">
-                    {t('removeCandidatesTitle', { count: preview.summary.removed })}
-                  </div>
-                  <ul className="space-y-1 text-sm">
-                    {preview.rows
-                      .filter((r) => r.action === 'REMOVE_CANDIDATE')
-                      .sort((a, b) => Number(b.hasProgress ?? false) - Number(a.hasProgress ?? false))
-                      .map((r) => (
-                        <li
-                          key={r.id ?? r.csvRow}
-                          className={r.hasProgress ? 'text-destructive font-medium' : ''}
-                        >
-                          {r.hasProgress && '⚠ '}
-                          {tCommon('nameQuoted', { name: r.name })}
-                          {r.hasProgress && t('removeCandidateBlockedSuffix')}
-                        </li>
-                      ))}
-                  </ul>
-                </div>
-              )}
-
-              {/* 削除モード選択 */}
+              {/* 削除候補の扱い */}
               <div className="space-y-2">
                 <Label>{t('removeModeLabel')}</Label>
                 <div className="flex flex-col gap-1 text-sm">
                   <RadioOption
                     checked={removeMode === 'keep'}
-                    onChange={() => setRemoveMode('keep')}
+                    onChange={() => { setRemoveMode('keep'); setDeleteCandidatesOpen(false); }}
                     label={t('removeModeKeep')}
                   />
                   <RadioOption
                     checked={removeMode === 'warn'}
-                    onChange={() => setRemoveMode('warn')}
+                    onChange={() => { setRemoveMode('warn'); setDeleteCandidatesOpen(false); }}
                     label={t('removeModeWarn')}
                   />
                   <RadioOption
                     checked={removeMode === 'delete'}
-                    onChange={() => setRemoveMode('delete')}
+                    onChange={() => { setRemoveMode('delete'); setDeleteCandidatesOpen(false); }}
                     label={t('removeModeDelete')}
                   />
                 </div>
               </div>
+
+              {/* 削除候補一覧: removeMode=delete 時のみ・アコーディオン (デフォルト閉じ) */}
+              {removeMode === 'delete' && preview.summary.removed > 0 && (
+                <div className="rounded-md border border-warning bg-warning/10">
+                  <button
+                    type="button"
+                    onClick={() => setDeleteCandidatesOpen((v) => !v)}
+                    className="flex w-full items-center justify-between px-3 py-2 text-sm font-semibold text-left"
+                    aria-expanded={deleteCandidatesOpen}
+                  >
+                    <span>{t('removeCandidatesTitle', { count: preview.summary.removed })}</span>
+                    <span
+                      className={`transition-transform duration-200 inline-block ${deleteCandidatesOpen ? 'rotate-180' : ''}`}
+                      aria-hidden="true"
+                    >
+                      ▼
+                    </span>
+                  </button>
+                  {deleteCandidatesOpen && (
+                    <ul className="px-3 pb-3 pt-1 space-y-1 text-sm border-t border-warning/30">
+                      {preview.rows
+                        .filter((r) => r.action === 'REMOVE_CANDIDATE')
+                        .sort((a, b) => Number(b.hasProgress ?? false) - Number(a.hasProgress ?? false))
+                        .map((r) => (
+                          <li
+                            key={r.id ?? r.csvRow}
+                            className={r.hasProgress ? 'text-destructive font-medium' : ''}
+                          >
+                            {r.hasProgress && '⚠ '}
+                            {tCommon('nameQuoted', { name: r.name })}
+                            {r.hasProgress && t('removeCandidateBlockedSuffix')}
+                          </li>
+                        ))}
+                    </ul>
+                  )}
+                </div>
+              )}
 
               {/* [B1] フィルタ */}
               <div className="flex items-center gap-2 flex-wrap">

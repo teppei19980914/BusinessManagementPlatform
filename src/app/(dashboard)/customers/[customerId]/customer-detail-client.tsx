@@ -24,7 +24,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { linkifyNodes } from '@/components/ui/linkified-text';
+import { MarkdownDisplay, MarkdownTextarea } from '@/components/ui/markdown-textarea';
 import {
   Dialog,
   DialogContent,
@@ -233,11 +233,10 @@ export function CustomerDetailClient({ customer, projects }: Props) {
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="edit-notes">{t('fieldNotes')}</Label>
-                  <textarea
-                    id="edit-notes"
-                    className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  <MarkdownTextarea
                     value={editForm.notes}
-                    onChange={(e) => setEditForm({ ...editForm, notes: e.target.value })}
+                    onChange={(v) => setEditForm({ ...editForm, notes: v })}
+                    previousValue={customer.notes ?? ''}
                     maxLength={1000}
                     rows={3}
                   />
@@ -380,8 +379,8 @@ export function CustomerDetailClient({ customer, projects }: Props) {
           </div>
           <div className="sm:col-span-2">
             <dt className="text-xs font-medium text-muted-foreground">{t('fieldNotes')}</dt>
-            <dd className="mt-1 whitespace-pre-wrap text-sm">
-              {customer.notes ? linkifyNodes(customer.notes) : '—'}
+            <dd className="mt-1 text-sm">
+              {customer.notes ? <MarkdownDisplay value={customer.notes} /> : '—'}
             </dd>
           </div>
         </dl>

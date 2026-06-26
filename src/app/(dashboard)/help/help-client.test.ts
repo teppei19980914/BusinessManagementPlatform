@@ -5,9 +5,10 @@
  * 文字列として読み込んで matcher を当てる) でユーザに見せる要素の存在 invariant を担保する。
  * help-client.tsx は React レンダリングを伴うため、機能テストは Playwright (e2e) に委ねる。
  *
- * 担保対象:
- *   - 「サービスについて」FAQ カテゴリ存在
- *   - マスコット FAQ 質問文・たすきフクロウの紹介・public/mascot-owl.png の参照
+ * i18n 化 (v1.4.0) 以降: JP 文言はすべて src/i18n/messages/ja/help.json に移動した。
+ * コンテンツ invariant は source (TSX) + catalog (ja/help.json) の両方を参照して担保する。
+ * source チェック: 構造 (import / コンポーネント名 / hook 呼出)
+ * content チェック: JP 文言が source または catalog のいずれかに存在する
  */
 
 import { describe, it, expect } from 'vitest';
@@ -15,23 +16,29 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const CLIENT_FILE = join(__dirname, 'help-client.tsx');
+const CATALOG_FILE = join(__dirname, '../../../i18n/messages/ja/help.json');
+
 const source = readFileSync(CLIENT_FILE, 'utf8');
+const catalog = readFileSync(CATALOG_FILE, 'utf8');
+// JP content invariants can be checked against source OR catalog (rendered output = both)
+const content = source + '\n' + catalog;
 
 describe('HelpClient のマスコット FAQ invariant (feat/mascot-owl 2026-05-27)', () => {
   it('「サービスについて」カテゴリが存在する', () => {
-    expect(source).toMatch(/<FaqCategory\s+title="サービスについて">/);
+    expect(catalog).toContain('サービスについて');
+    expect(source).toMatch(/t\('sections\.aboutService'\)/);
   });
 
   it('マスコットを問う質問 (フクロウ言及) を 1 件以上含む', () => {
     // ユーザがヘッダー / favicon の正体を調べたときに /help で確実に答えに辿り着けることを担保。
-    expect(source).toMatch(/q="[^"]*フクロウ[^"]*"/);
+    expect(catalog).toMatch(/フクロウ/);
   });
 
   it('回答内に "たすきフクロウ" の名前と 3 軸 (知恵 / 記憶 / 夜でも見守る) の象徴を含む', () => {
-    expect(source).toMatch(/たすきフクロウ/);
-    expect(source).toMatch(/知恵/);
-    expect(source).toMatch(/記憶/);
-    expect(source).toMatch(/夜でも見守る/);
+    expect(content).toMatch(/たすきフクロウ/);
+    expect(content).toMatch(/知恵/);
+    expect(content).toMatch(/記憶/);
+    expect(content).toMatch(/夜でも見守る/);
   });
 
   it('next/image を import し /mascot-owl.png を表示する', () => {
@@ -63,51 +70,51 @@ describe('HelpClient のマスコット FAQ invariant (feat/mascot-owl 2026-05-2
 describe('HelpClient PR1 緊急 FAQ invariant (退会 / 請求 / 容量)', () => {
   it('退会 FAQ がプラン別の正確な期間を含む (Beginner 180 日 / Expert・Pro セルフ解約 + 90 日)', () => {
     // A-1-1: 旧「30 日 Grace」誤記の再混入防止と、新仕様 (Beginner Day 180 / Expert・Pro セルフ解約) の存在担保。
-    expect(source).toMatch(/q="退会するとデータはどうなりますか？"/);
-    expect(source).toMatch(/180 日/);
-    expect(source).toMatch(/セルフ解約/);
-    // 旧誤記 (30 日 Grace) が完全に消えていることを確認。
-    expect(source).not.toMatch(/30 日間の Grace/);
+    expect(catalog).toContain('退会するとデータはどうなりますか？');
+    expect(catalog).toContain('180 日');
+    expect(catalog).toContain('セルフ解約');
+    // 旧誤記 (30 日 Grace) が完全に消えていること。
+    expect(content).not.toMatch(/30 日間の Grace/);
   });
 
   it('再加入 FAQ が「同じ組織で復元できない」旨を明示', () => {
-    expect(source).toMatch(/q="退会したあと、同じ組織で再加入できますか？"/);
-    expect(source).toMatch(/組織 ID は再利用できません/);
+    expect(catalog).toContain('退会したあと、同じ組織で再加入できますか？');
+    expect(catalog).toContain('組織 ID は再利用できません');
   });
 
   it('「請求と支払いについて」FaqCategory に 8 件 (請求 5 + 容量 3) が含まれる', () => {
     // B-1-a-1〜5 + B-1-c-1〜3
-    expect(source).toMatch(/<FaqCategory[^>]*title="請求と支払いについて[^"]*"/);
-    expect(source).toMatch(/q="いつ請求されますか？"/);
-    expect(source).toMatch(/q="月途中でプランを変えたら料金はどうなりますか？"/);
-    expect(source).toMatch(/q="支払い方法はクレジットカード以外にありますか？"/);
-    expect(source).toMatch(/q="請求書 PDF はどこからダウンロードできますか？"/);
-    expect(source).toMatch(/q="消費税はどう計算されますか？"/);
-    expect(source).toMatch(/q="Beginner プランで DB 容量 50 MB を超えるとどうなりますか？"/);
-    expect(source).toMatch(/q="DB 容量・ファイル容量はどこで確認できますか？"/);
+    expect(catalog).toContain('請求と支払いについて');
+    expect(catalog).toContain('いつ請求されますか？');
+    expect(catalog).toContain('月途中でプランを変えたら料金はどうなりますか？');
+    expect(catalog).toContain('支払い方法はクレジットカード以外にありますか？');
+    expect(catalog).toContain('請求書 PDF はどこからダウンロードできますか？');
+    expect(catalog).toContain('消費税はどう計算されますか？');
+    expect(catalog).toContain('Beginner プランで DB 容量 50 MB を超えるとどうなりますか？');
+    expect(catalog).toContain('DB 容量・ファイル容量はどこで確認できますか？');
     // 2026-05-31: 累積ハードキャップ撤廃に伴い「50 GB ハードキャップ」Q を「累積上限なし」Q に改定。
-    expect(source).toMatch(/q="データ容量・ファイル容量に上限はありますか？大量に蓄積しても保存は止まりませんか？"/);
-    // 旧ハードキャップ文言が再混入しないこと (たすきフクロウ AI チャットが旧仕様で回答しないよう担保)。
-    expect(source).not.toMatch(/ハードキャップ/);
-    expect(source).not.toMatch(/全プラン共通で.*新規データの保存・編集が止まります/);
+    expect(catalog).toContain('データ容量・ファイル容量に上限はありますか？大量に蓄積しても保存は止まりませんか？');
+    // 旧ハードキャップ文言が再混入しないこと
+    expect(content).not.toMatch(/ハードキャップ/);
+    expect(content).not.toMatch(/全プラン共通で.*新規データの保存・編集が止まります/);
   });
 
   it('請求サイクル文言が「翌月 25 日固定」「土日祝に当たる場合は翌営業日」を含む', () => {
     // PAYMENT_TERMS.md §1.1 と同期。誤った日付 (毎月 1 日 / 月末払い等) が混入しないこと。
-    expect(source).toMatch(/翌月 25 日/);
-    expect(source).toMatch(/土日祝に当たる場合は翌営業日/);
+    expect(catalog).toContain('翌月 25 日');
+    expect(catalog).toContain('土日祝に当たる場合は翌営業日');
   });
 
   it('Pro/Expert → Beginner 戻せない FAQ が存在し、月次予算上限 ¥0 運用を案内', () => {
     // B-1-b-1: ADR-0013 と beginnerEverUpgraded フラグの整合。
-    expect(source).toMatch(/q="Expert \/ Pro から Beginner プランに戻せますか？"/);
-    expect(source).toMatch(/月次予算上限」を ¥0/);
+    expect(catalog).toContain('Expert / Pro から Beginner プランに戻せますか？');
+    expect(catalog).toContain('月次予算上限」を ¥0');
   });
 
   it('シードデータ参照 FAQ から旧「Phase 2」文言が削除されている', () => {
     // A-1-2: suggestion.service.ts では seedDataEnabled フラグで実装済。Phase 2 という社内用語は不要。
-    expect(source).toMatch(/q="シードデータ \(運営が用意した参考事例\) を使いたくありません"/);
-    expect(source).not.toMatch(/Phase 2 テナント分離適用後/);
+    expect(catalog).toContain('シードデータ (運営が用意した参考事例) を使いたくありません');
+    expect(content).not.toMatch(/Phase 2 テナント分離適用後/);
   });
 });
 
@@ -120,75 +127,75 @@ describe('HelpClient PR1 緊急 FAQ invariant (退会 / 請求 / 容量)', () =>
  */
 describe('HelpClient PR2 専門用語書き直し invariant', () => {
   it('WP/Activity FAQ に実業務例 (営業企画) と「半日〜1 週間」表現を含む', () => {
-    expect(source).toMatch(/営業企画プロジェクト/);
-    expect(source).toMatch(/半日〜1 週間/);
-    expect(source).not.toMatch(/集約タスク/);
-    expect(source).not.toMatch(/0\.5〜5 人日/);
+    expect(catalog).toContain('営業企画プロジェクト');
+    expect(catalog).toContain('半日〜1 週間');
+    expect(content).not.toMatch(/集約タスク/);
+    expect(content).not.toMatch(/0\.5〜5 人日/);
   });
 
   it('ナレッジ/振り返り FAQ で KPT を「Keep \\(続けたい\\) / Problem \\(困った\\) / Try \\(次は工夫する\\)」と展開', () => {
-    expect(source).toMatch(/Keep \(続けたい\)/);
-    expect(source).toMatch(/Problem \(困った\)/);
-    expect(source).toMatch(/Try \(次は工夫する\)/);
+    expect(catalog).toContain('Keep (続けたい)');
+    expect(catalog).toContain('Problem (困った)');
+    expect(catalog).toContain('Try (次は工夫する)');
     // 旧「KPT 形式」のみの記述が残っていないこと
-    expect(source).not.toMatch(/KPT 形式/);
+    expect(content).not.toMatch(/KPT 形式/);
   });
 
   it('提案エンジン FAQ に「より高機能な AI」と ADR-0026 由来の「数秒〜のタイムラグ」言及を含む', () => {
-    expect(source).toMatch(/より高機能な AI/);
-    expect(source).toMatch(/数秒〜のタイムラグ/);
+    expect(catalog).toContain('より高機能な AI');
+    expect(catalog).toContain('数秒〜のタイムラグ');
     // 旧専門用語の除去
-    expect(source).not.toMatch(/意味的類似度ベース/);
-    expect(source).not.toMatch(/Claude Sonnet 生成/);
+    expect(content).not.toMatch(/意味的類似度ベース/);
+    expect(content).not.toMatch(/Claude Sonnet 生成/);
   });
 
   it('PR #470 追加 3 件の「特徴量」「private」などの専門表現が消えている', () => {
     // A-2-3b: 「特徴量」→「検索用データ」、「private」→「自分のみ」へ平易化
-    expect(source).not.toMatch(/意味検索用の特徴量/);
-    expect(source).not.toMatch(/下書き \/ private/);
-    expect(source).toMatch(/検索用データ/);
+    expect(content).not.toMatch(/意味検索用の特徴量/);
+    expect(content).not.toMatch(/下書き \/ private/);
+    expect(catalog).toContain('検索用データ');
   });
 
   it('他テナント情報 FAQ から「最上位の認可境界」「super_admin」を排除', () => {
-    expect(source).not.toMatch(/最上位の認可境界/);
-    expect(source).not.toMatch(/super_admin/);
-    expect(source).toMatch(/テナント \(= 会社\) ごとにデータは完全に分かれて/);
+    expect(content).not.toMatch(/最上位の認可境界/);
+    expect(content).not.toMatch(/super_admin/);
+    expect(catalog).toContain('テナント (= 会社) ごとにデータは完全に分かれて');
   });
 
   it('月次予算超過 FAQ から「縮退モード」「HTTP 200」「タグ：テキスト = 5：5」を排除', () => {
-    expect(source).not.toMatch(/縮退モード/);
-    expect(source).not.toMatch(/HTTP 200/);
-    expect(source).not.toMatch(/タグ：テキスト = 5：5/);
-    expect(source).toMatch(/AI 機能の一部が一時停止/);
+    expect(content).not.toMatch(/縮退モード/);
+    expect(content).not.toMatch(/HTTP 200/);
+    expect(content).not.toMatch(/タグ：テキスト = 5：5/);
+    expect(catalog).toContain('AI 機能の一部が一時停止');
   });
 });
 
 describe('HelpClient PR2 新規 FAQ 5 件 invariant', () => {
   it('「アカウント・ログインについて」FaqCategory が新設され 3 件の Q を含む', () => {
-    expect(source).toMatch(/<FaqCategory title="アカウント・ログインについて">/);
-    expect(source).toMatch(/q="組織 ID を忘れました"/);
-    expect(source).toMatch(/q="パスワード設定リンクの有効期限はどれくらいですか？"/);
-    expect(source).toMatch(/q="招待メールが届きません"/);
+    expect(catalog).toContain('アカウント・ログインについて');
+    expect(catalog).toContain('組織 ID を忘れました');
+    expect(catalog).toContain('パスワード設定リンクの有効期限はどれくらいですか？');
+    expect(catalog).toContain('招待メールが届きません');
     // 重要数値: 90 日 (履歴) / 24 時間 (リンク期限)
-    expect(source).toMatch(/最大 5 件・90 日間/);
-    expect(source).toMatch(/24 時間で期限切れ/);
-    // 送信元アドレス明示
-    expect(source).toMatch(/noreply@tasukiba\.com/);
+    expect(catalog).toContain('最大 5 件・90 日間');
+    expect(catalog).toContain('24 時間で期限切れ');
+    // 送信元アドレス明示 (source の JSX 内に直接記載)
+    expect(content).toMatch(/noreply@tasukiba\.com/);
   });
 
   it('「AI に送られるデータ」FAQ が送信対象/非送信対象を両方明示', () => {
-    expect(source).toMatch(/q="AI に送られるデータは何ですか？"/);
-    expect(source).toMatch(/Anthropic \(Claude\) と Voyage AI/);
+    expect(catalog).toContain('AI に送られるデータは何ですか？');
+    expect(catalog).toContain('Anthropic (Claude) と Voyage AI');
     // 非送信対象の明示 (信頼確保)
-    expect(source).toMatch(/パスワードなどの認証情報/);
-    expect(source).toMatch(/添付ファイルの中身/);
-    expect(source).toMatch(/コメント本文/);
+    expect(catalog).toContain('パスワードなどの認証情報');
+    expect(catalog).toContain('添付ファイルの中身');
+    expect(catalog).toContain('コメント本文');
   });
 
   it('「バックアップ・エクスポート」FAQ がテナント設定 ZIP + 個別 CSV 経路を明示', () => {
-    expect(source).toMatch(/q="データのバックアップ・エクスポートはできますか？"/);
-    expect(source).toMatch(/ZIP 形式で一括エクスポート/);
-    expect(source).toMatch(/個別の CSV ダウンロード/);
+    expect(catalog).toContain('データのバックアップ・エクスポートはできますか？');
+    expect(catalog).toContain('ZIP 形式で一括エクスポート');
+    expect(catalog).toContain('個別の CSV ダウンロード');
   });
 });
 
@@ -200,63 +207,63 @@ describe('HelpClient PR2 新規 FAQ 5 件 invariant', () => {
  */
 describe('HelpClient PR3 書き直し 4 件 invariant', () => {
   it('リスクと課題 FAQ から「顕在化」「ブロッカー」が消え平易表現になっている', () => {
-    expect(source).not.toMatch(/顕在化/);
-    expect(source).not.toMatch(/ブロッカー/);
-    expect(source).toMatch(/まだ起きていない、起きるかもしれない問題/);
-    expect(source).toMatch(/警戒した結果/);
+    expect(content).not.toMatch(/顕在化/);
+    expect(content).not.toMatch(/ブロッカー/);
+    expect(catalog).toContain('まだ起きていない、起きるかもしれない問題');
+    expect(catalog).toContain('警戒した結果');
   });
 
   it('プラン違い FAQ が表形式化され「基本 AI」「高機能 AI」表現を使用', () => {
-    expect(source).toMatch(/q="プラン \(Beginner \/ Expert \/ Pro\) の違いは？"/);
-    expect(source).toMatch(/基本 AI \(Claude Haiku\)/);
-    expect(source).toMatch(/高機能 AI \(Claude Sonnet\)/);
+    expect(catalog).toContain('プラン (Beginner / Expert / Pro) の違いは？');
+    expect(catalog).toContain('基本 AI (Claude Haiku)');
+    expect(catalog).toContain('高機能 AI (Claude Sonnet)');
     // 旧箇条書きの記述は撤去
-    expect(source).not.toMatch(/プロジェクト作成\/更新が 50 回到達すると当該機能のみ縮退/);
+    expect(content).not.toMatch(/プロジェクト作成\/更新が 50 回到達すると当該機能のみ縮退/);
   });
 
   it('CSV エラー対処 FAQ に Excel 補足 (CSV UTF-8 保存 / Alt + Enter) を含む', () => {
-    expect(source).toMatch(/CSV UTF-8 \(コンマ区切り\) \(\*.csv\)/);
-    expect(source).toMatch(/Alt \+ Enter/);
-    expect(source).toMatch(/Option \+ 改行/);
+    expect(catalog).toContain('CSV UTF-8 (コンマ区切り) (*.csv)');
+    expect(catalog).toContain('Alt + Enter');
+    expect(catalog).toContain('Option + 改行');
   });
 
   it('「ダウングレード (Pro → Beginner)」FAQ を撤去し「Expert と Pro の切替」に置換', () => {
-    expect(source).not.toMatch(/q="ダウングレード \(Pro → Beginner\) は即時反映されますか？"/);
-    expect(source).toMatch(/q="Expert と Pro の切替はいつ反映されますか？"/);
-    expect(source).toMatch(/切替ボタンを押した瞬間に即時反映/);
+    expect(content).not.toMatch(/q="ダウングレード \(Pro → Beginner\) は即時反映されますか？"/);
+    expect(catalog).toContain('Expert と Pro の切替はいつ反映されますか？');
+    expect(catalog).toContain('切替ボタンを押した瞬間に即時反映');
   });
 });
 
 describe('HelpClient PR3 新規 12 件 invariant', () => {
   it('「権限とロールについて」FaqCategory が新設され 3 件の Q を含む (表形式の比較)', () => {
-    expect(source).toMatch(/<FaqCategory title="権限とロールについて">/);
-    expect(source).toMatch(/q="運営者 \/ テナント管理者 \/ 一般メンバーの違いは？"/);
-    expect(source).toMatch(/q="自分のロールはどこで確認できますか？"/);
-    expect(source).toMatch(/q="退職者が担当していたナレッジ・課題はどう引き継ぎますか？"/);
-    expect(source).toMatch(/担当者 \(assignee\) を別のメンバーに付け替える/);
+    expect(catalog).toContain('権限とロールについて');
+    expect(catalog).toContain('運営者 / テナント管理者 / 一般メンバーの違いは？');
+    expect(catalog).toContain('自分のロールはどこで確認できますか？');
+    expect(catalog).toContain('退職者が担当していたナレッジ・課題はどう引き継ぎますか？');
+    expect(catalog).toContain('担当者 (assignee) を別のメンバーに付け替える');
   });
 
   it('業務利用カテゴリにプロジェクト運用 3 件 (誤削除 / closed / テンプレ複製) が追加', () => {
-    expect(source).toMatch(/q="プロジェクトを誤って削除しました、復元できますか？"/);
-    expect(source).toMatch(/q="終了 \(closed\) したプロジェクトは編集できますか？"/);
-    expect(source).toMatch(/q="プロジェクトをテンプレートから複製できますか？"/);
-    expect(source).toMatch(/削除後 <strong>30 日以内/);
+    expect(catalog).toContain('プロジェクトを誤って削除しました、復元できますか？');
+    expect(catalog).toContain('終了 (closed) したプロジェクトは編集できますか？');
+    expect(catalog).toContain('プロジェクトをテンプレートから複製できますか？');
+    expect(catalog).toContain('削除後 <strong>30 日以内');
   });
 
   it('業務利用カテゴリに検索/提案 3 件 (ヒット 0 / draft / なぜ機能キャッシュ) が追加', () => {
-    expect(source).toMatch(/q="チャット検索で結果が 0 件になります"/);
-    expect(source).toMatch(/q="「下書き \/ 自分のみ」のデータも提案に出てきますか？"/);
-    expect(source).toMatch(/q="「なぜ参考になる\?」ボタンは押すたびに ¥15 課金されますか？"/);
-    expect(source).toMatch(/50〜200 字程度の文章で、業務文脈や専門用語を含める/);
-    expect(source).toMatch(/2 回目以降はキャッシュから表示され、追加課金は発生しません/);
+    expect(catalog).toContain('チャット検索で結果が 0 件になります');
+    expect(catalog).toContain('「下書き / 自分のみ」のデータも提案に出てきますか？');
+    expect(catalog).toContain('「なぜ参考になる?」ボタンは押すたびに ¥15 課金されますか？');
+    expect(catalog).toContain('50〜200 字程度の文章で、業務文脈や専門用語を含める');
+    expect(catalog).toContain('2 回目以降はキャッシュから表示され、追加課金は発生しません');
   });
 
   it('データとプライバシーカテゴリに visibility 3 件 (使い分け / 後から変更 / @メンション個人メモ) が追加', () => {
-    expect(source).toMatch(/q="ナレッジの公開範囲 \(下書き \/ プロジェクト内 \/ 全メンバー\) はどう使い分けますか？"/);
-    expect(source).toMatch(/q="公開範囲を後から変更できますか？"/);
-    expect(source).toMatch(/q="@メンションした個人メモは相手から見えますか？"/);
+    expect(catalog).toContain('ナレッジの公開範囲 (下書き / プロジェクト内 / 全メンバー) はどう使い分けますか？');
+    expect(catalog).toContain('公開範囲を後から変更できますか？');
+    expect(catalog).toContain('@メンションした個人メモは相手から見えますか？');
     // visibility=draft が提案対象外であることを明示
-    expect(source).toMatch(/提案エンジン対象外/);
+    expect(catalog).toContain('提案エンジン対象外');
   });
 });
 
@@ -267,26 +274,26 @@ describe('HelpClient PR3 新規 12 件 invariant', () => {
  */
 describe('HelpClient PR4 低優先 4 件 invariant', () => {
   it('「通知が来ません」FAQ が @メンション通知のみと未実装の事実を明示', () => {
-    expect(source).toMatch(/q="通知が来ません"/);
-    expect(source).toMatch(/@メンションされた時のみ/);
-    expect(source).toMatch(/通知の ON\/OFF 設定機能は現時点でありません/);
+    expect(catalog).toContain('通知が来ません');
+    expect(catalog).toContain('@メンションされた時のみ');
+    expect(catalog).toContain('通知の ON/OFF 設定機能は現時点でありません');
   });
 
   it('「メール通知はありますか？」FAQ が招待 + Beginner 期限警告のみと明示', () => {
-    expect(source).toMatch(/q="メール通知はありますか？"/);
-    expect(source).toMatch(/招待メールと Beginner プラン期限警告/);
+    expect(catalog).toContain('メール通知はありますか？');
+    expect(catalog).toContain('招待メールと Beginner プラン期限警告');
     // 全 5 マイルストーン (60/75/90/150/170) を含む
-    expect(source).toMatch(/60 日 \/ 75 日 \/ 90 日 \/ 150 日 \/ 170 日/);
+    expect(catalog).toContain('60 日 / 75 日 / 90 日 / 150 日 / 170 日');
   });
 
   it('「推奨ブラウザ / スマホ」FAQ が主要 4 ブラウザ + レスポンシブ対応を明示', () => {
-    expect(source).toMatch(/q="推奨ブラウザは何ですか？スマートフォンでも使えますか？"/);
-    expect(source).toMatch(/Chrome \/ Edge \/ Safari \/ Firefox/);
-    expect(source).toMatch(/レスポンシブ対応/);
+    expect(catalog).toContain('推奨ブラウザは何ですか？スマートフォンでも使えますか？');
+    expect(catalog).toContain('Chrome / Edge / Safari / Firefox');
+    expect(catalog).toContain('レスポンシブ対応');
   });
 
   it('「利用規約・プライバシーポリシー」FAQ が LP 公式 URL を明示', () => {
-    expect(source).toMatch(/q="利用規約・プライバシーポリシーはどこにありますか？"/);
+    expect(catalog).toContain('利用規約・プライバシーポリシーはどこにありますか？');
     expect(source).toMatch(/teppei19980914\.github\.io\/HomePage\/ja\/product\/tasukiba-user\/#terms/);
   });
 });
@@ -303,12 +310,12 @@ describe('HelpClient G2-f/g チャットFAB一本化 + 全文検索ボックス 
   });
 
   it('旧「下のフクロウチャット」誘導文言が残っていない', () => {
-    expect(source).not.toMatch(/下のフクロウチャット/);
+    expect(content).not.toMatch(/下のフクロウチャット/);
   });
 
   it('FAQ キーワード検索ボックス (FaqSearchBox) を備え、FilterBar を流用する', () => {
     expect(source).toMatch(/FaqSearchBox/);
-    expect(source).toMatch(/キーワード検索/);
+    expect(content).toMatch(/キーワード検索/);
     expect(source).toMatch(/from\s+'@\/components\/common\/filter-bar'/);
   });
 
@@ -317,7 +324,7 @@ describe('HelpClient G2-f/g チャットFAB一本化 + 全文検索ボックス 
   });
 
   it('画面右下のたすきフクロウ (FAB) への誘導文言を含む', () => {
-    expect(source).toMatch(/画面右下のたすきフクロウ/);
+    expect(content).toMatch(/画面右下のたすきフクロウ/);
   });
 });
 
@@ -338,6 +345,6 @@ describe('HelpClient G1-c 新FAQの data-driven 描画 invariant', () => {
   });
 
   it('「はじめての方へ・役割別ガイド」セクションを持つ', () => {
-    expect(source).toMatch(/はじめての方へ・役割別ガイド/);
+    expect(content).toMatch(/はじめての方へ・役割別ガイド/);
   });
 });

@@ -26,6 +26,7 @@ import { prisma } from '@/lib/db';
 import { getTenantTodayString } from '@/lib/tenant-time';
 import { resolveTimezone } from '@/config/i18n';
 import { classifyWorkloadLevel, type WorkloadLevel } from '@/config/workload';
+import { distributeEffortByDay } from '@/lib/task-day-distribution';
 
 /**
  * 分析の対象期間 (YYYY-MM-DD, テナント TZ 暦日)。
@@ -804,6 +805,7 @@ export async function getAssigneeDailyCapacity(
       plannedStartDate: true,
       plannedEndDate: true,
       plannedEffort: true,
+      includeWeekends: true,
     },
   });
 
@@ -824,9 +826,10 @@ export async function getAssigneeDailyCapacity(
     const effort = Number(a.plannedEffort);
     if (effort <= 0) continue;
 
-    const days = countInclusiveDays(a.plannedStartDate, a.plannedEndDate);
-    if (days <= 0) continue;
-    const perDay = effort / days;
+    const startStr = a.plannedStartDate.toISOString().split('T')[0]!;
+    const endStr = a.plannedEndDate.toISOString().split('T')[0]!;
+    const entries = distributeEffortByDay(startStr, endStr, effort, a.includeWeekends);
+    if (entries.length === 0) continue;
 
     const key = a.assigneeId ?? UNASSIGNED;
     const acc = byAssignee.get(key) ?? {
@@ -835,15 +838,13 @@ export async function getAssigneeDailyCapacity(
       dailyMap: new Map<string, number>(),
     };
 
-    // 期間の各日に perDay を加算 (本日以降、かつ未来キャップ以内のみ横軸に載せる)。
-    const cursor = new Date(a.plannedStartDate);
-    for (let i = 0; i < days; i++) {
-      const ymd = toYmd(cursor);
+    // 本日以降、かつ未来キャップ以内の稼働日のみ横軸に載せる
+    for (const entry of entries) {
+      const ymd = entry.date;
       if (ymd >= today && (futureCap == null || ymd <= futureCap)) {
-        acc.dailyMap.set(ymd, (acc.dailyMap.get(ymd) ?? 0) + perDay);
+        acc.dailyMap.set(ymd, (acc.dailyMap.get(ymd) ?? 0) + entry.dailyEffort);
         if (ymd > maxDateSeen) maxDateSeen = ymd;
       }
-      cursor.setUTCDate(cursor.getUTCDate() + 1);
     }
     byAssignee.set(key, acc);
   }
@@ -888,13 +889,6 @@ export async function getAssigneeDailyCapacity(
     );
 
   return { today, dates, assignees };
-}
-
-/** 期間 (inclusive) の日数を返す。start > end なら 0。 */
-function countInclusiveDays(start: Date, end: Date): number {
-  const ms = end.getTime() - start.getTime();
-  if (ms < 0) return 0;
-  return Math.floor(ms / (24 * 60 * 60 * 1000)) + 1;
 }
 
 /** start..end (両端含む) の暦日を 1 日刻みで列挙 (YYYY-MM-DD)。 */

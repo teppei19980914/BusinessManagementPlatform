@@ -31,6 +31,7 @@ function makeTask(overrides: Partial<TaskDTO>): TaskDTO {
     status: 'not_started',
     progressRate: 0,
     isMilestone: false,
+    includeWeekends: false,
     notes: null,
     ...overrides,
   };

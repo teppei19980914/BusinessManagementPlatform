@@ -152,6 +152,10 @@ export default defineConfig({
         //   の認可・storageProvider 判定) で mobile viewport 固有の挙動と無関係。
         //   chromium project でのみ実行する。
         /26-file-attachment\.spec\.ts/,
+        // feat/v1.4.0 (2026-06): カンバンビューはモバイルで非表示 (CSS hidden)。
+        //   view-toggle-tree/kanban ボタンが aria-hidden 扱いになり expect toBeVisible が fail。
+        //   機能ロジックは chromium (PC) で担保し、mobile では実行しない。
+        /06b-wbs-kanban-view\.spec\.ts/,
       ],
     },
   ],

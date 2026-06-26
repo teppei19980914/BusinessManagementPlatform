@@ -62,21 +62,16 @@ function formatDateJa(d: Date | null): string {
   return d.toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
 }
 
-const LEVEL_BADGE_COLORS: Record<DbCapacityWarningLevel, string> = {
-  none: 'bg-green-100 text-green-800',
-  l1: 'bg-blue-100 text-blue-800',
-  l2: 'bg-yellow-100 text-yellow-800',
-  l3: 'bg-red-100 text-red-800',
-};
-const LEVEL_BADGE_KEYS: Record<DbCapacityWarningLevel, string> = {
-  none: 'dbCapacityLevelNone',
-  l1: 'dbCapacityLevelL1',
-  l2: 'dbCapacityLevelL2',
-  l3: 'dbCapacityLevelL3',
-};
-
 export async function DbCapacitySection({ tenantId }: { tenantId: string }) {
-  const t = await getTranslations('tenantSettings');
+  const t = await getTranslations('dbCapacitySection');
+
+  const LEVEL_BADGES: Record<DbCapacityWarningLevel, { label: string; color: string }> = {
+    none: { label: t('levelNone'), color: 'bg-green-100 text-green-800' },
+    l1: { label: t('levelL1'), color: 'bg-blue-100 text-blue-800' },
+    l2: { label: t('levelL2'), color: 'bg-yellow-100 text-yellow-800' },
+    l3: { label: t('levelL3'), color: 'bg-red-100 text-red-800' },
+  };
+
   const data = await prisma.tenant.findFirst({
     where: { id: tenantId, deletedAt: null },
     select: {
@@ -107,9 +102,8 @@ export async function DbCapacitySection({ tenantId }: { tenantId: string }) {
   // 現在値で classify (= 表示用の現状ステータス、Expert/Pro 用)
   const currentLevel = classifyDbCapacityLevel(typed.storageBytesPeakThisMonth);
   const safeLevel: DbCapacityWarningLevel =
-    currentLevel in LEVEL_BADGE_COLORS ? currentLevel : 'none';
-  const badgeColor = LEVEL_BADGE_COLORS[safeLevel];
-  const badgeLabel = t(LEVEL_BADGE_KEYS[safeLevel]);
+    currentLevel in LEVEL_BADGES ? currentLevel : 'none';
+  const badge = LEVEL_BADGES[safeLevel];
 
   // 進捗率: Beginner は 50MB 基準、Expert/Pro は 50GB (L3 監視アラート閾値) 基準
   //   2026-05-31: 50GB は累積ハードキャップではなく監視アラート閾値 (ADR-0030、write は止めない)
@@ -118,6 +112,9 @@ export async function DbCapacitySection({ tenantId }: { tenantId: string }) {
     100,
     (Number(typed.storageBytesPeakThisMonth) / capBytes) * 100,
   );
+
+  const beginnerFreeMb = BEGINNER_DB_FREE_TIER_BYTES / SI_MB_BYTES;
+  const expertFreeMb = DB_CAPACITY_FREE_TIER_BYTES / SI_MB_BYTES;
 
   return (
     <section
@@ -132,11 +129,11 @@ export async function DbCapacitySection({ tenantId }: { tenantId: string }) {
           id="db-capacity-section-title"
           className="text-lg font-semibold text-gray-900"
         >
-          {isBeginner ? t('dbCapacityTitleBeginner') : t('dbCapacityTitleStandard')}
+          {t('titleDb')}{isBeginner ? t('titleBeginnerSuffix') : t('titleExpertSuffix')}
         </h2>
         {!isBeginner && (
-          <span className={`rounded-full px-3 py-1 text-xs font-medium ${badgeColor}`}>
-            {badgeLabel}
+          <span className={`rounded-full px-3 py-1 text-xs font-medium ${badge.color}`}>
+            {badge.label}
           </span>
         )}
         {isBeginner && beginnerOverFreeTier && (
@@ -144,17 +141,17 @@ export async function DbCapacitySection({ tenantId }: { tenantId: string }) {
             className="rounded-full bg-red-100 px-3 py-1 text-xs font-medium text-red-800"
             data-testid="beginner-db-quota-exceeded-badge"
           >
-            {t('dbCapacityBeginnerOverFreeBadge')}
+            {t('badgeOverQuota')}
           </span>
         )}
         {isBeginner && !beginnerOverFreeTier && beginnerNearFreeTier && (
           <span className="rounded-full bg-yellow-100 px-3 py-1 text-xs font-medium text-yellow-800">
-            {t('dbCapacityBeginnerNearFreeBadge')}
+            {t('badgeNear80')}
           </span>
         )}
         {isBeginner && !beginnerNearFreeTier && (
           <span className="rounded-full bg-green-100 px-3 py-1 text-xs font-medium text-green-800">
-            {t('dbCapacityBeginnerWithinFreeBadge')}
+            {t('badgeWithinFree')}
           </span>
         )}
       </div>
@@ -166,18 +163,18 @@ export async function DbCapacitySection({ tenantId }: { tenantId: string }) {
           role="alert"
           data-testid="beginner-db-block-banner"
         >
-          <p className="font-semibold">{t('dbCapacityBeginnerOverFreeBannerTitle')}</p>
+          <p className="font-semibold">{t('bannerTitle')}</p>
           <p className="mt-1">
-            {t.rich('dbCapacityBeginnerOverFreeBannerBody', {
-              strong: (chunks) => <strong>{chunks}</strong>,
-            })}
+            {t('bannerPara1Prefix')}{' '}
+            <strong>{t('bannerRecalcBtn')}</strong>{' '}
+            {t('bannerPara1Suffix')}
           </p>
           <p className="mt-1 text-xs">
-            {t('dbCapacityBeginnerOverFreeBannerUpgradeLeading')}
+            {t('bannerPara2Prefix')}{' '}
             <a href="?tab=overview" className="font-semibold underline">
-              {t('dbCapacityBeginnerOverFreeBannerUpgradeLink')}
-            </a>
-            {t('dbCapacityBeginnerOverFreeBannerUpgradeTrailing')}
+              {t('bannerUpgradeLink')}
+            </a>{' '}
+            {t('bannerPara2Suffix')}
           </p>
         </div>
       )}
@@ -185,30 +182,30 @@ export async function DbCapacitySection({ tenantId }: { tenantId: string }) {
       {/* 主要数値 */}
       <dl className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <div>
-          <dt className="text-sm font-medium text-gray-500">{t('dbCapacityCurrentUsage')}</dt>
+          <dt className="text-sm font-medium text-gray-500">{t('statCurrentUsage')}</dt>
           <dd className="mt-1 text-2xl font-semibold text-gray-900">
             {formatBytes(typed.storageBytesUsed)}
           </dd>
           <p className="mt-1 text-xs text-gray-500">
-            {t('dbCapacityLatestPrefix', { value: formatDateJa(typed.storageBytesUsedAt) })}
+            {t('statCurrentLatest', { date: formatDateJa(typed.storageBytesUsedAt) })}
           </p>
         </div>
         <div>
-          <dt className="text-sm font-medium text-gray-500">{t('dbCapacityPeakLabel')}</dt>
+          <dt className="text-sm font-medium text-gray-500">{t('statMonthlyPeak')}</dt>
           <dd className="mt-1 text-2xl font-semibold text-gray-900">
             {formatBytes(typed.storageBytesPeakThisMonth)}
           </dd>
           <p className="mt-1 text-xs text-gray-500">
-            {t('dbCapacityReachedPrefix', { value: formatDateJa(typed.storageBytesPeakAt) })}
+            {t('statPeakReached', { date: formatDateJa(typed.storageBytesPeakAt) })}
           </p>
         </div>
         <div>
-          <dt className="text-sm font-medium text-gray-500">{t('dbCapacityEstimatedJpy')}</dt>
+          <dt className="text-sm font-medium text-gray-500">{t('statEstimatedBilling')}</dt>
           <dd className="mt-1 text-2xl font-semibold text-gray-900">
             {formatJpy(estimatedJpy)}
           </dd>
           <p className="mt-1 text-xs text-gray-500">
-            {t('dbCapacityEstimatedJpyHint')}
+            {t('statBillingNote')}
           </p>
         </div>
       </dl>
@@ -219,9 +216,9 @@ export async function DbCapacitySection({ tenantId }: { tenantId: string }) {
           <span>0</span>
           <span>
             {isBeginner
-              ? t('dbCapacityBeginnerFreeTierLabel', { sizeMb: BEGINNER_DB_FREE_TIER_BYTES / SI_MB_BYTES })
-              : t('dbCapacityStandardL3Label')}
-            {t('dbCapacityUsagePercentSuffix', { percent: usagePercent.toFixed(1) })}
+              ? t('progressBeginnerLabel', { mb: beginnerFreeMb })
+              : t('progressExpertLabel')}{' '}
+            ({usagePercent.toFixed(1)}%)
           </span>
         </div>
         <div className="h-2 w-full overflow-hidden rounded-full bg-gray-200">
@@ -242,7 +239,7 @@ export async function DbCapacitySection({ tenantId }: { tenantId: string }) {
                       : 'bg-green-500'
             }`}
             style={{ width: `${usagePercent}%` }}
-            aria-label={t('dbCapacityUsageAria', { percent: usagePercent.toFixed(1) })}
+            aria-label={t('progressAriaLabel', { percent: usagePercent.toFixed(1) })}
           />
         </div>
       </div>
@@ -250,53 +247,48 @@ export async function DbCapacitySection({ tenantId }: { tenantId: string }) {
       {/* 料金体系の説明 */}
       <details className="mt-6 rounded border border-gray-200 bg-gray-50 p-4">
         <summary className="cursor-pointer text-sm font-medium text-gray-700">
-          {isBeginner ? t('dbCapacityRulesBeginnerSummary') : t('dbCapacityRulesStandardSummary')}
+          {isBeginner ? t('summaryBeginner') : t('summaryExpert')}
         </summary>
         <div className="mt-3 space-y-2 text-sm text-gray-600">
           {isBeginner ? (
             <>
               <p>
-                {t.rich('dbCapacityBeginnerRuleFreeTier', {
-                  strong: (chunks) => <strong>{chunks}</strong>,
-                  sizeMb: BEGINNER_DB_FREE_TIER_BYTES / SI_MB_BYTES,
-                })}
+                <strong>{t('detailFreeTierLabel')}</strong>{' '}
+                {t('detailBeginnerFreeContent', { mb: beginnerFreeMb })}
               </p>
               <p>
-                {t.rich('dbCapacityBeginnerRuleOverflow', {
-                  strong: (chunks) => <strong>{chunks}</strong>,
-                })}
+                <strong>{t('detailOverageBehaviorLabel')}</strong>{' '}
+                {t('detailBeginnerOverageBehaviorPre')}
+                <strong>{t('detailNotGenerated')}</strong>
+                {' (ADR-0025)'}
               </p>
               <p>
-                {t.rich('dbCapacityBeginnerRuleRecalc', {
-                  strong: (chunks) => <strong>{chunks}</strong>,
-                })}
+                <strong>{t('detailAfterDeletionLabel')}</strong>{' '}
+                {t('detailBeginnerAfterDeletion')}
               </p>
               <p className="text-xs text-gray-500">
-                {t('dbCapacityBeginnerRuleUpgrade')}
+                {t('detailBeginnerUpgradeNote')}
               </p>
             </>
           ) : (
             <>
               <p>
-                {t.rich('dbCapacityStandardRuleFreeTier', {
-                  strong: (chunks) => <strong>{chunks}</strong>,
-                  sizeMb: DB_CAPACITY_FREE_TIER_BYTES / SI_MB_BYTES,
-                })}
+                <strong>{t('detailFreeTierLabel')}</strong>{' '}
+                {t('detailExpertFreeContent', { mb: expertFreeMb })}
               </p>
               <p>
-                {t.rich('dbCapacityStandardRuleOverage', {
-                  strong: (chunks) => <strong>{chunks}</strong>,
+                <strong>{t('detailOveragePriceLabel')}</strong>{' '}
+                {t('detailExpertOveragePrice')}
+              </p>
+              <p className="text-xs text-gray-500">
+                {t('detailExpertExample', {
+                  l1: DB_CAPACITY_L1_USER_WARNING_BYTES / SI_GB_BYTES,
+                  l2: DB_CAPACITY_L2_ADMIN_ALERT_BYTES / SI_GB_BYTES,
+                  l3: DB_CAPACITY_L3_HARD_CAP_BYTES / SI_GB_BYTES,
                 })}
               </p>
               <p className="text-xs text-gray-500">
-                {t('dbCapacityStandardRuleExamples', {
-                  l1Gb: DB_CAPACITY_L1_USER_WARNING_BYTES / SI_GB_BYTES,
-                  l2Gb: DB_CAPACITY_L2_ADMIN_ALERT_BYTES / SI_GB_BYTES,
-                  l3Gb: DB_CAPACITY_L3_HARD_CAP_BYTES / SI_GB_BYTES,
-                })}
-              </p>
-              <p className="text-xs text-gray-500">
-                {t('dbCapacityStandardRuleNote')}
+                {t('detailExpertNote')}
               </p>
             </>
           )}

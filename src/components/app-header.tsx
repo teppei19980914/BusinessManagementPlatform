@@ -428,7 +428,7 @@ function AccountMenu({ user }: { user: AppHeaderUser }) {
             onClick={() => setOpen(false)}
           >
             <span aria-hidden className="mr-1">🌐</span>
-            サービス紹介ページ
+            {tNav('productPage')}
           </a>
           {(() => {
             const discordUrl = getDiscordInviteUrl();
@@ -466,9 +466,7 @@ function AccountMenu({ user }: { user: AppHeaderUser }) {
                 // network error
               }
               if (!res || !res.ok) {
-                window.alert(
-                  'ログアウト処理に失敗しました。ネットワーク接続を確認のうえ、ページを再読み込みしてから再度お試しください。',
-                );
+                window.alert(tNav('signOutNetworkError'));
                 return;
               }
               window.location.href = LOGIN_ROUTE;

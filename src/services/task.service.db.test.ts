@@ -449,9 +449,9 @@ describe('exportWbs (T-19, 7 列)', () => {
     expect(lines[1]).toContain('wp-1,WP,WP 1,1,');
     // 2 行目: ACT, level=2
     expect(lines[2]).toContain('act-1,ACT,ACT 1,2,');
-    // 各行 7 カラムある (= カンマ 6 個)
-    expect(lines[1].split(',').length).toBe(7);
-    expect(lines[2].split(',').length).toBe(7);
+    // 各行 8 カラムある (= カンマ 7 個, includeWeekends 列追加後)
+    expect(lines[1].split(',').length).toBe(8);
+    expect(lines[2].split(',').length).toBe(8);
   });
 
   it('taskIds 指定時は where.id.in に反映', async () => {
@@ -881,8 +881,9 @@ describe('getAssigneeDailyWorkload (PR H / #7)', () => {
         assigneeId: 'u-1',
         assignee: { name: 'Alice' },
         plannedStartDate: new Date('2026-04-01T00:00:00Z'),
-        plannedEndDate: new Date('2026-04-04T00:00:00Z'), // 4 日 (1,2,3,4 inclusive)
+        plannedEndDate: new Date('2026-04-04T00:00:00Z'), // 4 日 (1,2,3,4 inclusive) ※04-04(土)含む
         plannedEffort: 8 as unknown,
+        includeWeekends: true, // 全暦日で均等按分するよう明示
       },
     ] as never);
 

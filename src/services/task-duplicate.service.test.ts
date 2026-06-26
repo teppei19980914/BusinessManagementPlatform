@@ -57,6 +57,7 @@ const baseTask = {
   plannedEffort: 0,
   priority: null,
   isMilestone: false,
+  includeWeekends: false,
   notes: null,
 };
 
@@ -214,6 +215,39 @@ describe('duplicateTasks: 階層保持 + 実行', () => {
     expect(created[0].progressRate).toBe(0);
     expect(created[0].actualStartDate).toBe(null);
     expect(created[0].actualEndDate).toBe(null);
+  });
+
+  it('ACT の includeWeekends=true が複製先に引き継がれる', async () => {
+    // ACT は root に置けないため、配置先 WP (target-wp-1) を用意する
+    const act = {
+      ...baseTask,
+      id: 'act-1',
+      type: 'activity',
+      assigneeId: 'user-1',
+      plannedStartDate: new Date('2026-06-22'),
+      plannedEndDate: new Date('2026-06-26'),
+      plannedEffort: 8,
+      priority: 'medium',
+      isMilestone: false,
+      includeWeekends: true,
+    };
+    const created: Array<Record<string, unknown>> = [];
+    vi.mocked(prisma.task.findMany).mockImplementation(((async (args: unknown) => {
+      const w = (args as { where: { id?: { in: string[] }; parentTaskId?: string | null } }).where;
+      if (w.id?.in) return [act] as never;
+      return [] as never;
+    }) as never));
+    // 配置先 WP として work_package を返す
+    vi.mocked(prisma.task.findFirst).mockResolvedValue({ id: 'target-wp-1', type: 'work_package' } as never);
+    vi.mocked(prisma.task.create).mockImplementation(((async (args: unknown) => {
+      const data = (args as { data: Record<string, unknown> }).data;
+      const c = { ...data, id: `new-${created.length + 1}` };
+      created.push(c);
+      return c as never;
+    }) as never));
+
+    await duplicateTasks({ projectId, taskIds: ['act-1'], targetParentId: 'target-wp-1', userId, viewerTenantId: tenantId });
+    expect(created[0].includeWeekends).toBe(true);
   });
 
   it('名称衝突: 同 root 配下に同名 WP が既存 → "(コピー)" suffix で renamedCount=1', async () => {

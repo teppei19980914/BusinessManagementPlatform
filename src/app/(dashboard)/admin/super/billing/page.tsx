@@ -18,75 +18,75 @@ import { getBillingSummary, getRecentMonths } from '@/services/billing-dashboard
 const RECENT_MONTHS_COUNT = 6;
 
 export default async function BillingDashboardPage() {
-  const t = await getTranslations('superAdmin');
+  const t = await getTranslations('adminBilling');
   const months = getRecentMonths(RECENT_MONTHS_COUNT);
   const summaries = await getBillingSummary(months);
   const currentMonth = summaries[0];
 
   return (
     <div className="space-y-6">
-      <h1 className="text-xl font-semibold">{t('billingDashboardTitle')}</h1>
+      <h1 className="text-xl font-semibold">{t('dashboardTitle')}</h1>
       <p className="text-sm text-muted-foreground">
-        {t('billingDashboardDescription')}
-        <code className="rounded bg-muted px-1">BillingHistory</code>
-        {t('billingDashboardDescriptionTail')}
+        {t('dashboardDescPre')}
+        <code className="rounded bg-muted px-1">BillingHistory</code>{' '}
+        {t('dashboardDescSuffix')}
       </p>
 
       {/* 当月サマリ */}
       {currentMonth && (
         <section className="space-y-3">
           <h2 className="text-lg font-semibold">
-            {t('billingCurrentMonthTitle', { month: currentMonth.yearMonth })}
+            {t('currentMonthHeading', { month: currentMonth.yearMonth })}
           </h2>
           <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
             <SummaryCard
-              label={t('billingCardTotalAmount')}
+              label={t('cardTotalAmount')}
               value={formatYen(currentMonth.totalAmount)}
               tone="neutral"
             />
             <SummaryCard
-              label={t('billingCardPaid')}
+              label={t('cardPaid')}
               value={formatYen(currentMonth.paidAmount)}
-              subValue={t('billingCardCountSuffix', { count: currentMonth.countByStatus.paid ?? 0 })}
+              subValue={t('countItems', { count: currentMonth.countByStatus.paid ?? 0 })}
               tone="success"
             />
             <SummaryCard
-              label={t('billingCardPending')}
+              label={t('cardPending')}
               value={formatYen(currentMonth.pendingAmount)}
-              subValue={t('billingCardCountSuffix', { count: currentMonth.countByStatus.pending ?? 0 })}
+              subValue={t('countItems', { count: currentMonth.countByStatus.pending ?? 0 })}
               tone="neutral"
             />
             <SummaryCard
-              label={t('billingCardFailed')}
+              label={t('cardFailed')}
               value={formatYen(currentMonth.failedAmount)}
-              subValue={t('billingCardCountSuffix', { count: currentMonth.countByStatus.failed ?? 0 })}
+              subValue={t('countItems', { count: currentMonth.countByStatus.failed ?? 0 })}
               tone={(currentMonth.countByStatus.failed ?? 0) > 0 ? 'error' : 'neutral'}
             />
             <SummaryCard
-              label={t('billingCardReplaced')}
+              label={t('cardReplaced')}
               value={formatYen(currentMonth.replacedAmount)}
-              subValue={t('billingCardCountSuffix', { count: currentMonth.countByStatus.replaced_by_stripe ?? 0 })}
+              subValue={t('countItems', { count: currentMonth.countByStatus.replaced_by_stripe ?? 0 })}
               tone="neutral"
             />
           </div>
 
           {/* 支払方法別内訳 */}
           <div className="rounded-md border p-3 text-sm">
-            <h3 className="mb-2 font-semibold">{t('billingByPaymentMethodTitle')}</h3>
+            <h3 className="mb-2 font-semibold">{t('payMethodBreakdownTitle')}</h3>
             <div className="flex flex-wrap gap-4 text-xs">
               <span>
-                {t('billingMethodCreditCard')}
-                {t.rich('billingMethodCountStrong', { count: currentMonth.countByPaymentMethod.credit_card ?? 0, strong: (chunks) => <strong>{chunks}</strong> })}
+                {t('payMethodCreditCard')}{' '}
+                <strong>{t('countItems', { count: currentMonth.countByPaymentMethod.credit_card ?? 0 })}</strong>
               </span>
               <span>
-                {t('billingMethodInvoice')}
-                {t.rich('billingMethodCountStrong', { count: currentMonth.countByPaymentMethod.invoice ?? 0, strong: (chunks) => <strong>{chunks}</strong> })}
+                {t('payMethodInvoice')}{' '}
+                <strong>{t('countItems', { count: currentMonth.countByPaymentMethod.invoice ?? 0 })}</strong>
               </span>
               {currentMonth.countByPaymentMethod.bank_transfer != null
                 && currentMonth.countByPaymentMethod.bank_transfer > 0 && (
                   <span>
-                    {t('billingMethodBankTransferLegacy')}
-                    {t.rich('billingMethodCountStrong', { count: currentMonth.countByPaymentMethod.bank_transfer, strong: (chunks) => <strong>{chunks}</strong> })}
+                    {t('payMethodBankTransferOld')}{' '}
+                    <strong>{t('countItems', { count: currentMonth.countByPaymentMethod.bank_transfer })}</strong>
                   </span>
                 )}
             </div>
@@ -96,27 +96,27 @@ export default async function BillingDashboardPage() {
             href={`/admin/super/billing/${currentMonth.yearMonth}`}
             className="inline-flex items-center text-sm text-info underline-offset-2 hover:underline"
           >
-            {t('billingCurrentMonthDetailsLink')}
+            {t('linkCurrentMonthDetail')}
           </Link>
         </section>
       )}
 
       {/* 過去 6 ヶ月推移 */}
       <section className="space-y-2">
-        <h2 className="text-lg font-semibold">{t('billingRecentMonthsTitle', { count: RECENT_MONTHS_COUNT })}</h2>
+        <h2 className="text-lg font-semibold">{t('recentMonthsHeading', { months: RECENT_MONTHS_COUNT })}</h2>
         {summaries.length === 0 ? (
-          <p className="text-sm text-muted-foreground">{t('billingHistoryEmpty')}</p>
+          <p className="text-sm text-muted-foreground">{t('noHistory')}</p>
         ) : (
           <div className="overflow-x-auto rounded-md border">
             <table className="w-full text-sm">
               <thead className="bg-muted">
                 <tr>
-                  <th className="px-3 py-2 text-left">{t('billingColMonth')}</th>
-                  <th className="px-3 py-2 text-right">{t('billingColTotalAmount')}</th>
-                  <th className="px-3 py-2 text-right">{t('billingColPaid')}</th>
-                  <th className="px-3 py-2 text-right">{t('billingColPending')}</th>
-                  <th className="px-3 py-2 text-right">{t('billingColFailed')}</th>
-                  <th className="px-3 py-2 text-left">{t('billingColActions')}</th>
+                  <th className="px-3 py-2 text-left">{t('colMonth')}</th>
+                  <th className="px-3 py-2 text-right">{t('colTotalAmount')}</th>
+                  <th className="px-3 py-2 text-right">{t('colPaidAmount')}</th>
+                  <th className="px-3 py-2 text-right">{t('colPendingAmount')}</th>
+                  <th className="px-3 py-2 text-right">{t('colFailedAmount')}</th>
+                  <th className="px-3 py-2 text-left">{t('colAction')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -144,7 +144,7 @@ export default async function BillingDashboardPage() {
                         href={`/admin/super/billing/${s.yearMonth}`}
                         className="text-info underline-offset-2 hover:underline"
                       >
-                        {t('billingDetailLink')}
+                        {t('linkDetail')}
                       </Link>
                     </td>
                   </tr>

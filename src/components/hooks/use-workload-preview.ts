@@ -38,6 +38,8 @@ export type UseWorkloadPreviewArgs = {
   endDate: string;
   plannedEffort: number;
   excludeTaskId?: string;
+  /** true=土日祝日を稼働日に含む、false=平日のみ（デフォルト: false） */
+  includeWeekends: boolean;
   /** false なら fetch せず data=null (PM/TL ロール以外で false にして表示抑制) */
   enabled: boolean;
 };
@@ -79,6 +81,7 @@ export function useWorkloadPreview(args: UseWorkloadPreviewArgs): {
           plannedEffort: String(args.plannedEffort),
         });
         if (args.excludeTaskId) qs.set('excludeTaskId', args.excludeTaskId);
+        qs.set('includeWeekends', String(args.includeWeekends));
         const res = await fetch(
           `/api/projects/${args.projectId}/tasks/workload/preview?${qs.toString()}`,
           { signal: controller.signal },
@@ -109,6 +112,7 @@ export function useWorkloadPreview(args: UseWorkloadPreviewArgs): {
     args.endDate,
     args.plannedEffort,
     args.excludeTaskId,
+    args.includeWeekends,
     args.enabled,
   ]);
 

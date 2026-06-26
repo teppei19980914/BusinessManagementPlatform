@@ -21,10 +21,10 @@ import { join } from 'node:path';
 const PAGE_FILE = join(__dirname, 'page.tsx');
 const source = readFileSync(PAGE_FILE, 'utf8');
 
-/** legend / 主要マーカーの出現位置を返す (存在しなければ -1)。 */
-function indexOf(needle: string): number {
-  return source.indexOf(needle);
-}
+const JA_CATALOG = readFileSync(
+  join(__dirname, '../../../i18n/messages/ja.json'),
+  'utf8',
+);
 
 describe('A1: 組織 ID はサーバ自動採番 (入力欄なし)', () => {
   it('組織 ID (slug) の入力欄を持たない', () => {
@@ -36,13 +36,13 @@ describe('A1: 組織 ID はサーバ自動採番 (入力欄なし)', () => {
 
   it('組織 ID が自動発行される旨を案内する', () => {
     expect(source).toContain('data-testid="signup-org-id-auto-note"');
-    expect(source).toContain('自動で発行されます');
+    expect(JA_CATALOG).toContain('自動で発行されます');
   });
 
   it('送信成功時に採番された組織 ID を受け取り、成功画面に表示する', () => {
     expect(source).toContain('setAssignedSlug');
     expect(source).toContain('data-testid="signup-success-slug"');
-    expect(source).toContain('あなたの組織 ID');
+    expect(JA_CATALOG).toContain('あなたの組織 ID');
   });
 
   it('招待メール再送は採番された組織 ID (assignedSlug) を使う', () => {
@@ -56,24 +56,25 @@ describe('A3: 送信後画面のメール予告 (実メールと一致)', () => 
   });
 
   it('差出人・件名は email-verification.service.ts の実値と一致', () => {
-    // 差出人アドレス
+    // 差出人アドレス (ソース内にハードコード維持)
     expect(source).toContain('noreply@tasukiba.com');
-    // 件名 (sendVerificationEmail の subject と一致)
-    expect(source).toContain('たすきば - アカウントの設定');
+    // 件名 (カタログに移動)
+    expect(JA_CATALOG).toContain('たすきば - アカウントの設定');
   });
 
   it('到着目安と有効期限 (24 時間) を予告する', () => {
-    expect(source).toContain('1 分以内');
-    expect(source).toContain('24 時間');
+    expect(JA_CATALOG).toContain('1 分以内');
+    expect(JA_CATALOG).toContain('24 時間');
   });
 });
 
 describe('B1: セクション順 = 組織情報 → 初期管理者 → プラン選択 → 請求先', () => {
   it('legend の出現順が並べ替え後の順序になっている', () => {
-    const tenant = indexOf('テナント (組織) 情報');
-    const admin = indexOf('初期管理者 (ログイン用)');
-    const plan = indexOf('プラン選択 *');
-    const billing = indexOf('請求先情報');
+    // i18n 化後はリテラルがカタログへ移動したため、ソース内のキー参照の出現順で検証する
+    const tenant = source.indexOf("signup.orgInfoLegend");
+    const admin = source.indexOf("signup.adminLegend");
+    const plan = source.indexOf("signup.planLegend");
+    const billing = source.indexOf("signup.billingLegend");
 
     expect(tenant).toBeGreaterThan(-1);
     expect(admin).toBeGreaterThan(-1);

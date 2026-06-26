@@ -1,6 +1,17 @@
 import { z } from 'zod/v4';
+import { isWeekendOrHoliday } from '@/lib/jp-holidays';
 
 const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+
+/** includeWeekends=false のとき、日付が土日祝日でないかを検証する。*/
+function validateNotWeekendIfNeeded(
+  date: string | null | undefined,
+  includeWeekends: boolean | null | undefined,
+): boolean {
+  if (includeWeekends === true) return true; // オンなら土日祝OK
+  if (!date) return true; // 日付なしはOK（必須チェックは別）
+  return !isWeekendOrHoliday(date);
+}
 
 /**
  * ワークパッケージ作成スキーマ
@@ -18,8 +29,8 @@ export const createWorkPackageSchema = z.object({
 
 /**
  * アクティビティ作成スキーマ
- * - 担当者必須（実作業ノード）
- * - 日付・工数を直接入力
+ * - 担当者・日付・工数はオプション（未スケジュールタスクを許容: カンバン未スケジュール行に表示）
+ * - 日付・工数は後からドラッグ&ドロップや編集で設定可
  */
 export const createActivitySchema = z.object({
   type: z.literal('activity'),
@@ -27,14 +38,21 @@ export const createActivitySchema = z.object({
   wbsNumber: z.string().max(50).optional(),
   name: z.string().min(1, 'アクティビティ名を入力してください').max(100),
   description: z.string().max(2000).optional(),
-  assigneeId: z.string().uuid('担当者を選択してください'),
-  plannedStartDate: z.string().regex(dateRegex, '日付形式が不正です'),
-  plannedEndDate: z.string().regex(dateRegex, '日付形式が不正です'),
-  plannedEffort: z.number().positive('予定工数は正の数で入力してください'),
+  assigneeId: z.string().uuid('担当者のIDが不正です').optional().nullable(),
+  plannedStartDate: z.string().regex(dateRegex, '日付形式が不正です').optional().nullable(),
+  plannedEndDate: z.string().regex(dateRegex, '日付形式が不正です').optional().nullable(),
+  plannedEffort: z.number().positive('予定工数は正の数で入力してください').optional(),
   priority: z.enum(['low', 'medium', 'high']).optional(),
   isMilestone: z.boolean().optional(),
+  includeWeekends: z.boolean().optional(),
   notes: z.string().max(1000).optional(),
-});
+}).refine(
+  (v) => validateNotWeekendIfNeeded(v.plannedStartDate, v.includeWeekends),
+  { message: '「土日祝日を含める」がオフの場合、開始予定日に土日祝日は設定できません', path: ['plannedStartDate'] },
+).refine(
+  (v) => validateNotWeekendIfNeeded(v.plannedEndDate, v.includeWeekends),
+  { message: '「土日祝日を含める」がオフの場合、終了予定日に土日祝日は設定できません', path: ['plannedEndDate'] },
+);
 
 /**
  * 統合作成スキーマ（type で分岐）
@@ -62,8 +80,15 @@ export const updateTaskSchema = z.object({
   status: z.enum(['not_started', 'in_progress', 'completed', 'on_hold']).optional(),
   progressRate: z.number().int().min(0).max(100).optional(),
   isMilestone: z.boolean().optional(),
+  includeWeekends: z.boolean().optional(),
   notes: z.string().max(1000).optional().nullable(),
-});
+}).refine(
+  (v) => validateNotWeekendIfNeeded(v.plannedStartDate, v.includeWeekends),
+  { message: '「土日祝日を含める」がオフの場合、開始予定日に土日祝日は設定できません', path: ['plannedStartDate'] },
+).refine(
+  (v) => validateNotWeekendIfNeeded(v.plannedEndDate, v.includeWeekends),
+  { message: '「土日祝日を含める」がオフの場合、終了予定日に土日祝日は設定できません', path: ['plannedEndDate'] },
+);
 
 export const updateProgressSchema = z.object({
   progressRate: z.number().int().min(0).max(100, '進捗率は0〜100で入力してください'),

@@ -85,7 +85,7 @@ function LoginForm() {
     //   詳細: KDD §5.X+72
     const clearRes = await fetch('/api/auth/explicit-signout', { method: 'POST' });
     if (!clearRes.ok) {
-      setError('セッションのクリアに失敗しました。ページを再読み込みしてから再度お試しください。');
+      setError(t('sessionClearFailed'));
       setIsLoading(false);
       return;
     }
@@ -306,9 +306,9 @@ function LoginForm() {
             </p>
             {/* P-G (2026-05-08): セルフサインアップ導線 */}
             <p className="text-center text-xs text-muted-foreground">
-              新規組織でご利用ですか?{' '}
+              {t('signupPromptPre')}
               <a href="/signup" className="text-info hover:underline">
-                サインアップ
+                {t('signupLink')}
               </a>
             </p>
           </form>
@@ -329,7 +329,7 @@ function LoginForm() {
         className="mt-6 w-full max-w-[min(90vw,28rem)] text-center text-xs text-muted-foreground"
       >
         <p>
-          はじめての方は{' '}
+          {t('setupGuidePre')}
           <a
             href={SETUP_GUIDE_URL}
             target="_blank"
@@ -337,9 +337,9 @@ function LoginForm() {
             className="text-info hover:underline"
             data-testid="login-setup-guide-link"
           >
-            セットアップガイド
+            {t('setupGuideLink')}
           </a>
-          {' '}をご参照ください
+          {t('setupGuidePost')}
         </p>
       </div>
     </div>

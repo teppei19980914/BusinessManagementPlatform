@@ -27,6 +27,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Image from 'next/image';
 import { useSession } from 'next-auth/react';
+import { useTranslations } from 'next-intl';
 import { cn } from '@/lib/utils';
 import { CHAT_PERSONA } from '@/config';
 import type { HelpChatOutput } from '@/app/api/help/chat/route';
@@ -41,18 +42,6 @@ import {
 
 const MAX_HISTORY_TURNS = 50;
 const MAX_QUERY_CHARS = 2000;
-
-// G1-f (2026-05-31): 初期状態 (会話 0 件) で表示する質問例チップ。
-//   ★全ロールで必ず回答が返る visibleTo='all' の例のみ★ にする (権限外の例を出すと
-//   一般ロールが permission-denied で弾かれ「使えない」印象になるため)。
-//   - 「最初に何をすればいいですか?」→ getting-started-what-to-do (all)
-//   - 「リスクと課題の違いは?」→ risk-vs-issue (all)
-//   - 「データはどう扱われますか?」→ ai-data-sent / 他テナント分離 (all)
-const EXAMPLE_QUERIES = [
-  '最初に何をすればいいですか?',
-  'リスクと課題の違いは?',
-  'データはどう扱われますか?',
-] as const;
 
 type HelpChatTurn = {
   id: string;
@@ -101,6 +90,11 @@ export function HelpChatInput({
   hideHeader = false,
   onTurnsCountChange,
 }: HelpChatInputProps) {
+  const t = useTranslations('helpChatInput');
+  // G1-f (2026-05-31): 初期状態 (会話 0 件) で表示する質問例チップ。
+  //   ★全ロールで必ず回答が返る visibleTo='all' の例のみ★ にする (権限外の例を出すと
+  //   一般ロールが permission-denied で弾かれ「使えない」印象になるため)。
+  const exampleQueries = [t('exampleQuery1'), t('exampleQuery2'), t('exampleQuery3')];
   const [query, setQuery] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [rateLimited, setRateLimited] = useState(false);
@@ -193,7 +187,7 @@ export function HelpChatInput({
           error?: { message?: string };
           fallbackToAccordion?: boolean;
         };
-        const message = body.error?.message ?? `応答に失敗しました (${res.status})`;
+        const message = body.error?.message ?? t('errorWithStatus', { status: res.status });
         const fallback = !!body.fallbackToAccordion;
         if (res.status === 429 && fallback) {
           setRateLimited(true);
@@ -215,7 +209,7 @@ export function HelpChatInput({
       if (e instanceof DOMException && e.name === 'AbortError') {
         return;
       }
-      const message = e instanceof Error ? e.message : '応答に失敗しました';
+      const message = e instanceof Error ? e.message : t('errorFallback');
       setTurns((prev) =>
         prev.map((t) => (t.id === turnId ? { ...t, error: { message } } : t)),
       );
@@ -225,7 +219,7 @@ export function HelpChatInput({
         inFlightAbortRef.current = null;
       }
     }
-  }, [query, submitting, rateLimited, tooLong]);
+  }, [query, submitting, rateLimited, tooLong, t]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -243,8 +237,7 @@ export function HelpChatInput({
     setTurns([]);
   }, [viewerUserId]);
 
-  const defaultGreeting =
-    'こんにちは、たすきフクロウです。\nお困りごとを教えてください。FAQ や使い方ガイドから一緒にお探ししますね。';
+  const defaultGreeting = t('defaultGreeting');
 
   // ADR-0028 PR #471 (2026-05-30): ChatPanel タブ内に埋め込む場合 (variant='panel') は、
   //   ChatPanel のヘッダ (アバター + persona + クリア + 閉じる) と footer (入力欄スタイル) を
@@ -270,7 +263,7 @@ export function HelpChatInput({
 
   return (
     <section
-      aria-label="たすきフクロウ AI ヘルプチャット"
+      aria-label={t('ariaLabel')}
       className={containerClass}
       data-testid="help-chat-input"
     >
@@ -290,15 +283,15 @@ export function HelpChatInput({
           <div className="flex flex-col">
             <span className="text-sm font-semibold leading-tight">{CHAT_PERSONA.name}</span>
             <span className="text-[10px] text-muted-foreground leading-tight">
-              FAQ・使い方ガイドからお答えします
+              {t('tagline')}
             </span>
           </div>
           <button
             type="button"
             onClick={handleClearHistory}
             disabled={turns.length === 0}
-            aria-label="会話履歴をクリア"
-            title="会話履歴をクリア"
+            aria-label={t('clearHistory')}
+            title={t('clearHistory')}
             data-testid="help-chat-clear-history"
             className="ml-auto rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-muted-foreground"
           >
@@ -320,7 +313,7 @@ export function HelpChatInput({
             className="mb-3 ml-9 flex flex-wrap gap-1.5"
             data-testid="help-chat-example-chips"
           >
-            {EXAMPLE_QUERIES.map((ex) => (
+            {exampleQueries.map((ex) => (
               <button
                 key={ex}
                 type="button"
@@ -349,14 +342,14 @@ export function HelpChatInput({
             isPanel ? 'mx-3 mb-2' : 'mt-2',
           )}
         >
-          💡 本月の利用上限に達しました。下記の FAQ 一覧から探してみてください (来月 1 日に再開します)。
+          {t('rateLimitedMessage')}
         </div>
       )}
 
       <footer className={footerClass}>
         {tooLong && (
           <div className="mb-2 text-xs text-destructive">
-            質問は {MAX_QUERY_CHARS} 文字以内にしてください
+            {t('tooLongWarning', { max: MAX_QUERY_CHARS })}
           </div>
         )}
         <div className="flex items-end gap-2">
@@ -365,7 +358,7 @@ export function HelpChatInput({
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKeyDown}
             disabled={submitting || rateLimited}
-            placeholder="例: 最初に何をすればいいですか? / リスクと課題の違いは?"
+            placeholder={t('placeholder')}
             rows={2}
             data-testid="help-chat-input-textarea"
             className={cn(
@@ -378,14 +371,14 @@ export function HelpChatInput({
             type="button"
             onClick={handleSubmit}
             disabled={submitting || rateLimited || query.trim().length === 0 || tooLong}
-            aria-label="送信"
+            aria-label={t('submitAriaLabel')}
             data-testid="help-chat-submit"
             className={cn(
               'h-9 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground',
               'hover:bg-primary/80 disabled:opacity-50 disabled:hover:bg-primary',
             )}
           >
-            {submitting ? '考え中…' : '送信→'}
+            {submitting ? t('submitting') : t('submitLabel')}
           </button>
         </div>
       </footer>
@@ -398,6 +391,7 @@ export function HelpChatInput({
 // ================================================================
 
 function HelpChatTurnView({ turn }: { turn: HelpChatTurn }) {
+  const t = useTranslations('helpChatInput');
   const pending = !turn.result && !turn.error;
 
   return (
@@ -413,7 +407,7 @@ function HelpChatTurnView({ turn }: { turn: HelpChatTurn }) {
       ) : pending ? (
         <AssistantBubble>
           <div className="text-xs text-muted-foreground" role="status" aria-live="polite">
-            ⏳ ちょっと待ってくださいね、FAQ と使い方ガイドを探しています…
+            {t('pendingMessage')}
           </div>
         </AssistantBubble>
       ) : turn.result ? (
@@ -426,18 +420,19 @@ function HelpChatTurnView({ turn }: { turn: HelpChatTurn }) {
 }
 
 function AnswerCard({ result }: { result: HelpChatOutput }) {
+  const t = useTranslations('helpChatInput');
   const { answer, answerType, sourceFaqIds, sourceGuideStepIds, suggestSemanticSearch } = result;
 
   return (
     <div className="space-y-2">
       {answerType === 'guide-walkthrough' && (
-        <div className="text-[10px] text-muted-foreground">📘 使い方ガイドより</div>
+        <div className="text-[10px] text-muted-foreground">{t('answerTypeGuide')}</div>
       )}
       {answerType === 'permission-denied' && (
-        <div className="text-[10px] text-warning-foreground">🔒 開示制限</div>
+        <div className="text-[10px] text-warning-foreground">{t('answerTypePermission')}</div>
       )}
       {answerType === 'out-of-scope' && (
-        <div className="text-[10px] text-muted-foreground">💡 FAQ/ガイド外</div>
+        <div className="text-[10px] text-muted-foreground">{t('answerTypeOutOfScope')}</div>
       )}
       <p className="whitespace-pre-line leading-relaxed" data-testid="help-chat-answer">
         {answer}
@@ -445,7 +440,7 @@ function AnswerCard({ result }: { result: HelpChatOutput }) {
 
       {suggestSemanticSearch && (
         <div className="mt-2 rounded-md border border-blue-200 bg-blue-50 px-2 py-1.5 text-xs text-blue-700">
-          📊 画面右下のチャットアイコン (たすきフクロウ) から過去資産を検索できます。
+          {t('suggestSemanticSearch')}
         </div>
       )}
 

@@ -18,6 +18,8 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import { reconcileMentions } from './comment-section';
 import type { MentionInput } from '@/lib/validators/mention';
 
@@ -158,5 +160,33 @@ describe('reconcileMentions (fix/mention-count-reconcile 2026-05-26)', () => {
       expect(reconcileMentions('@user.name さん', mentions)).toHaveLength(1);
       expect(reconcileMentions('@userXname さん', mentions)).toHaveLength(0);
     });
+  });
+});
+
+/**
+ * Markdown 表示退行防止テスト (v1.4.0)。
+ *
+ * コメント本文の表示が MarkdownDisplay を通る実装に変更されたことを
+ * ソーステキストベースで担保する。将来の編集で誰かが `linkifyNodes` 直挿入に
+ * 戻してしまわないようにする安全網。
+ */
+describe('コメント Markdown 表示退行防止 (v1.4.0)', () => {
+  const source = readFileSync(join(__dirname, 'comment-section.tsx'), 'utf8');
+
+  it('MarkdownDisplay を @/components/ui/markdown-textarea から import している', () => {
+    expect(source).toMatch(
+      /import\s+\{[^}]*\bMarkdownDisplay\b[^}]*\}\s+from\s+['"]@\/components\/ui\/markdown-textarea['"]/,
+    );
+  });
+
+  it('コメント本文表示に MarkdownDisplay を使用している (data-testid="comment-content" の近傍)', () => {
+    // data-testid="comment-content" を含む div の直後に MarkdownDisplay が来るパターン
+    expect(source).toMatch(/data-testid="comment-content"[\s\S]{0,100}<MarkdownDisplay\b/);
+  });
+
+  it('コメント本文表示で linkifyNodes を直接呼び出していない', () => {
+    // linkifyNodes は MarkdownDisplay 内部で使われるが、
+    // comment-section.tsx 自体のソースに import が残っていないことを確認
+    expect(source).not.toMatch(/import\s+\{[^}]*\blinkifyNodes\b[^}]*\}\s+from/);
   });
 });

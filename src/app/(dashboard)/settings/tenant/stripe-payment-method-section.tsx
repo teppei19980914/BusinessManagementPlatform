@@ -137,7 +137,7 @@ export function StripePaymentMethodSection({
   onRefresh,
   cardSummary,
 }: StripePaymentMethodSectionProps): React.ReactElement {
-  const t = useTranslations('tenantSettings');
+  const t = useTranslations('stripePaymentSection');
   const { showError } = useToast();
   const [submitting, setSubmitting] = useState(false);
   const state = deriveStripeState(info);
@@ -160,8 +160,8 @@ export function StripePaymentMethodSection({
     if (state === 'invoice_only') return;
     const confirmMsg =
       state === 'credit_card_unregistered'
-        ? t('stripeRegisterConfirm')
-        : t('stripeChangeConfirm');
+        ? t('confirmRegister')
+        : t('confirmUpdate');
     const ok = window.confirm(confirmMsg);
     if (!ok) return;
     await callSetup();
@@ -182,16 +182,16 @@ export function StripePaymentMethodSection({
       });
       const json = await res.json();
       if (!res.ok) {
-        showError(json?.error?.message ?? t('stripeCheckoutLaunchFailed'));
+        showError(json?.error?.message ?? t('errorSetupFailed'));
         return;
       }
       if (json.data?.checkoutUrl == null) {
-        showError(t('stripeCheckoutUrlFailed'));
+        showError(t('errorCheckoutUrl'));
         return;
       }
       window.location.href = json.data.checkoutUrl;
     } catch {
-      showError(t('stripeNetworkError'));
+      showError(t('errorNetwork'));
     } finally {
       setSubmitting(false);
     }
@@ -201,20 +201,20 @@ export function StripePaymentMethodSection({
   //   状態バッジ (✅ 有効 / ⚠ 未登録 / ❌ 要対応 / 🏦 銀行振込) を currentLabel に明示。
   const currentLabel =
     state === 'invoice_only'
-      ? t('stripeBankTransferLabel')
+      ? t('stateInvoice')
       : state === 'credit_card_unregistered'
-        ? t('stripeCardUnregisteredLabel')
+        ? t('stateCcUnregistered')
         : state === 'credit_card_active'
-          ? t('stripeCardActiveLabel')
-          : t('stripeCardNeedsAttentionLabel');
+          ? t('stateCcActive')
+          : t('stateCcAttention');
 
   const description =
     state === 'invoice_only'
-      ? t('stripeBankTransferHint')
+      ? t('descInvoice')
       : state === 'credit_card_unregistered'
-        ? t('stripeCardUnregisteredHint')
+        ? t('descCcUnregistered')
         : state === 'credit_card_active'
-          ? t('stripeCardActiveHint')
+          ? t('descCcActive')
           : '';
 
   return (
@@ -223,11 +223,11 @@ export function StripePaymentMethodSection({
       aria-labelledby="stripe-payment-section-heading"
     >
       <h2 id="stripe-payment-section-heading" className="text-base font-semibold">
-        {t('stripePaymentMethodLabel')}
+        {t('sectionTitle')}
       </h2>
 
       <div className="space-y-3 text-sm">
-        <p>{t('stripeCurrentMethodPrefix', { label: currentLabel })}</p>
+        <p>{t('currentPaymentMethod')}{currentLabel}</p>
         {description && <p className="text-muted-foreground">{description}</p>}
 
         {/* PR #425 (2026-05-22): Stripe 登録カード情報の可視化。
@@ -242,16 +242,15 @@ export function StripePaymentMethodSection({
             className="rounded border border-info/40 bg-info/5 p-3"
             data-testid="stripe-card-summary"
           >
-            <p className="text-xs font-medium text-muted-foreground">{t('stripeBillingCardHeading')}</p>
+            <p className="text-xs font-medium text-muted-foreground">{t('cardSummaryTitle')}</p>
             <p className="mt-1 font-mono text-sm">
               {formatCardBrand(cardSummary.brand)} •••• {cardSummary.last4}
               <span className="ml-3 text-muted-foreground">
-                {t('stripeCardExpiryPrefix', { expiry: formatCardExpiry(cardSummary.expMonth, cardSummary.expYear) })}
+                {t('cardExpiry')}{formatCardExpiry(cardSummary.expMonth, cardSummary.expYear)}
               </span>
             </p>
             <p className="mt-1 text-xs text-muted-foreground">
-              {t('stripeCardActiveDescription')}
-              {t('stripeCardUpdateHint')}
+              {t('cardAutoCharge')}
             </p>
           </div>
         )}
@@ -263,9 +262,9 @@ export function StripePaymentMethodSection({
             role="alert"
             data-testid="stripe-card-summary-missing"
           >
-            <p className="font-semibold">{t('stripeCardFetchFailedTitle')}</p>
+            <p className="font-semibold">{t('cardMissingTitle')}</p>
             <p className="text-muted-foreground">
-              {t('stripeCardFetchFailedDetail')}
+              {t('cardMissingDesc')}
             </p>
           </div>
         )}
@@ -275,12 +274,12 @@ export function StripePaymentMethodSection({
             className="rounded border border-destructive/40 bg-destructive/10 p-3 text-sm"
             role="alert"
           >
-            <p className="font-semibold text-destructive">{t('stripeCardStatusWarning')}</p>
+            <p className="font-semibold text-destructive">{t('attentionTitle')}</p>
             <p className="text-muted-foreground">
-              {info.cardVerificationStatus === 'expired' && t('stripeCardStatusExpired')}
-              {info.cardVerificationStatus === 'declined' && t('stripeCardStatusRejected')}
-              {info.cardVerificationStatus === 'never_verified' && t('stripeCardStatusUnverified')}
-              {info.autoSuspendScheduledAt != null && t('stripeCardStatusSuspensionWarning')}
+              {info.cardVerificationStatus === 'expired' && t('attentionExpired')}
+              {info.cardVerificationStatus === 'declined' && t('attentionDeclined')}
+              {info.cardVerificationStatus === 'never_verified' && t('attentionNeverVerified')}
+              {info.autoSuspendScheduledAt != null && t('attentionAutoSuspend')}
             </p>
           </div>
         )}
@@ -290,9 +289,9 @@ export function StripePaymentMethodSection({
             type="button"
             onClick={handleClick}
             disabled={!buttonActive || !stripeEnabled || submitting}
-            aria-label={t('stripeCardUpdateAria')}
+            aria-label={t('btnAriaLabel')}
           >
-            {submitting ? t('stripeProcessing') : t('stripeCardUpdateButton')}
+            {submitting ? t('btnProcessing') : t('btnUpdate')}
           </Button>
           {/* PR #425 (2026-05-22): 請求履歴閲覧リンク (既存の /settings/tenant/billing への遷移)。
               Customer Portal を撤去したため、請求履歴閲覧の導線をここに集約する。 */}
@@ -300,13 +299,13 @@ export function StripePaymentMethodSection({
             href="/settings/tenant/billing"
             className="text-sm text-info underline"
           >
-            {t('stripeViewBillingHistory')}
+            {t('billingHistoryLink')}
           </a>
         </div>
 
         {!stripeEnabled && (
           <p className="text-xs text-muted-foreground">
-            {t('stripePreparingNote')}
+            {t('stripeDisabledNote')}
           </p>
         )}
       </div>

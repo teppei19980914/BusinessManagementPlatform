@@ -21,6 +21,7 @@ import { useEffect, useRef, useState } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
 import { useSession } from 'next-auth/react';
+import { useTranslations } from 'next-intl';
 import {
   Dialog,
   DialogContent,
@@ -48,6 +49,7 @@ export function WelcomeOwlModal({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
+  const t = useTranslations('welcomeOwl');
   const discord = getDiscordInviteUrl();
   const close = () => onOpenChange(false);
   const handleAskOwl = () => {
@@ -65,17 +67,16 @@ export function WelcomeOwlModal({
         <DialogHeader className="items-center text-center">
           <Image
             src="/mascot-owl.png"
-            alt="たすきフクロウ"
+            alt={t('imgAlt')}
             width={72}
             height={72}
             className="mx-auto rounded-lg object-cover"
           />
           <DialogTitle className="text-base leading-relaxed">
-            たすきばへようこそ！私、たすきフクロウがご案内します 🦉
+            {t('title')}
           </DialogTitle>
           <DialogDescription className="leading-relaxed">
-            使い方に迷ったら、画面右下の私 (🦉 アイコン) にいつでも話しかけてくださいね。
-            下のいずれからでもお調べいただけます。
+            {t('description')}
           </DialogDescription>
         </DialogHeader>
 
@@ -86,7 +87,7 @@ export function WelcomeOwlModal({
             data-testid="welcome-owl-cta-chat"
             className="w-full"
           >
-            🦉 たすきフクロウに聞いてみる
+            {t('ctaChat')}
           </Button>
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             <Link
@@ -95,7 +96,7 @@ export function WelcomeOwlModal({
               data-testid="welcome-owl-cta-guide"
               className={LINK_BUTTON_CLASS}
             >
-              📘 使い方ガイド
+              {t('ctaGuide')}
             </Link>
             <Link
               href={HELP_ROUTE}
@@ -103,7 +104,7 @@ export function WelcomeOwlModal({
               data-testid="welcome-owl-cta-help"
               className={LINK_BUTTON_CLASS}
             >
-              ❓ よくある質問
+              {t('ctaHelp')}
             </Link>
           </div>
           {discord && (
@@ -115,13 +116,13 @@ export function WelcomeOwlModal({
               data-testid="welcome-owl-cta-discord"
               className={LINK_BUTTON_CLASS}
             >
-              💬 コミュニティ（Discord）をのぞいてみる
+              {t('ctaDiscord')}
             </a>
           )}
         </div>
 
         <p className="text-xs text-muted-foreground">
-          この案内は「よくある質問」ページの「🦉 はじめてのご案内をもう一度見る」ボタンから、いつでも開けます。
+          {t('footnote')}
         </p>
 
         <div className="flex justify-center">
@@ -131,7 +132,7 @@ export function WelcomeOwlModal({
             onClick={close}
             data-testid="welcome-owl-close"
           >
-            案内を閉じる
+            {t('closeButton')}
           </Button>
         </div>
       </DialogContent>
@@ -205,6 +206,7 @@ export function WelcomeOwlAutoOpen() {
  */
 export function WelcomeOwlReplayButton() {
   const session = useSession();
+  const t = useTranslations('welcomeOwl');
   const [open, setOpen] = useState(false);
 
   if (session.data?.user?.systemRole === 'super_admin') return null;
@@ -217,7 +219,7 @@ export function WelcomeOwlReplayButton() {
         data-testid="welcome-owl-replay"
         className="inline-flex items-center gap-1.5 rounded-md border bg-card px-3 py-1.5 text-sm hover:bg-accent"
       >
-        🦉 はじめてのご案内をもう一度見る
+        {t('replayButton')}
       </button>
       <WelcomeOwlModal open={open} onOpenChange={setOpen} />
     </>

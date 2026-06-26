@@ -55,10 +55,12 @@ import {
   filterTreeByStatus,
   findAncestorIds,
   findTaskInTree,
+  flattenActivities,
   taskStatusColors,
   UNASSIGNED_KEY,
 } from '@/lib/task-tree-utils';
 import { nativeSelectClass } from '@/components/ui/native-select-style';
+import { SearchableSelect } from '@/components/ui/searchable-select';
 import { TASK_STATUSES, WBS_TYPES } from '@/types';
 import { AttachmentList } from '@/components/attachments/attachment-list';
 // PR #199: コメントセクション (タスク編集 dialog)
@@ -87,8 +89,10 @@ import { DateFieldWithActions } from '@/components/ui/date-field-with-actions';
 //   ため date-only 値の locale 表示ヘルパを使う。
 import { useFormatters } from '@/lib/use-formatters';
 import type { TaskDTO } from '@/services/task.service';
+import { countWorkingDays } from '@/lib/task-day-distribution';
 import type { MemberDTO } from '@/services/member.service';
-import { useSessionStringSet } from '@/lib/use-session-state';
+import { useSessionState, useSessionStringSet } from '@/lib/use-session-state';
+import { KanbanView } from './kanban-view';
 import { MultiSelectFilter } from '@/components/multi-select-filter';
 // ADR-0035: 一括削除をチャンク分割 + 上限付き並列送信で実行 (Netlify 10 秒枠と性能の両立)
 import { runChunkedBulk } from '@/lib/run-chunked-bulk';
@@ -113,6 +117,8 @@ type Props = {
    * 既定 false (後方互換)。
    */
   isReadOnly?: boolean;
+  /** テナント TZ 基準でサーバが算出した「今日」(YYYY-MM-DD)。カンバン列強調・初期スクロールに使用 */
+  today?: string;
 };
 
 // 旧ローカル statusColors は lib/task-tree-utils.ts の taskStatusColors に集約 (PR #63 DRY)
@@ -165,7 +171,7 @@ type TaskTreeNodeProps = {
   selectedIds: Set<string>;
   onToggleSelect: (id: string) => void;
   members: MemberDTO[];
-  parentOptions: { id: string; label: string }[];
+  parentOptions: { value: string; label: string }[];
   /** 編集アイコンクリック時に親 (TasksClient) の編集ダイアログを開くコールバック */
   onEditClick: (task: TaskDTO) => void;
   /** PR #61: WP の展開状態 (Set に含まれる ID は展開、含まれなければ折りたたみ) */
@@ -199,7 +205,7 @@ function TaskTreeNodeImpl({
   // 従来あったローカル display state（即時反映用）は、編集ダイアログ化に伴い廃止。
   // CRUD 後の reload + stale-while-revalidate（PR #33）で UI が追従する。
   const t = useTranslations('wbs');
-  const { showSuccessKey, showErrorKey } = useToast();
+  const { showSuccess, showError } = useToast();
   const { formatDateOnly } = useFormatters();
   const unsetLabel = t('unsetShort');
 
@@ -272,7 +278,7 @@ function TaskTreeNodeImpl({
           子の担当者が混在 / 全員未アサインの場合は DTO 側 assigneeName が undefined
           となり '-' が表示される。
         */}
-        <td className="px-1.5 py-1.5 md:px-3 md:py-2 whitespace-nowrap">{task.assigneeDisplayText || task.assigneeName || '-'}</td>
+        <td className="px-1.5 py-1.5 md:px-3 md:py-2 whitespace-nowrap">{task.assigneeName || '-'}</td>
         <td className="px-1.5 py-1.5 md:px-3 md:py-2 whitespace-nowrap">
           <Badge variant={statusColors[task.status] || 'outline'}>
             {TASK_STATUSES[task.status as keyof typeof TASK_STATUSES] || task.status}
@@ -323,10 +329,10 @@ function TaskTreeNodeImpl({
                     fetch(`/api/projects/${projectId}/tasks/${task.id}`, { method: 'DELETE' }),
                   );
                   if (!res.ok) {
-                    showErrorKey(isWP ? 'wbs.toastWpDeleteFailed' : 'wbs.toastActivityDeleteFailed');
+                    showError(isWP ? t('toastWpDeleteFailed') : t('toastActivityDeleteFailed'));
                     return;
                   }
-                  showSuccessKey(isWP ? 'wbs.toastWpDeleteSuccess' : 'wbs.toastActivityDeleteSuccess');
+                  showSuccess(isWP ? t('toastWpDeleteSuccess') : t('toastActivityDeleteSuccess'));
                   await reload();
                 }}
               >
@@ -428,7 +434,7 @@ function TaskMobileCardImpl({
   attachmentsByEntity,
 }: Omit<TaskTreeNodeProps, 'canSelectForProgress' | 'isSelected' | 'selectedIds' | 'onToggleSelect'>) {
   const t = useTranslations('wbs');
-  const { showSuccessKey, showErrorKey } = useToast();
+  const { showSuccess, showError } = useToast();
   const { formatDateOnly } = useFormatters();
   const unsetLabel = t('unsetShort');
   const isWP = task.type === 'work_package';
@@ -488,7 +494,7 @@ function TaskMobileCardImpl({
             </div>
             <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
               <dt className="text-xs text-muted-foreground">{t('columnAssignee')}</dt>
-              <dd>{task.assigneeDisplayText || task.assigneeName || '-'}</dd>
+              <dd>{task.assigneeName || '-'}</dd>
               <dt className="text-xs text-muted-foreground">{t('columnStatus')}</dt>
               <dd>
                 <Badge variant={statusColors[task.status] || 'outline'} className="text-[10px]">
@@ -537,10 +543,10 @@ function TaskMobileCardImpl({
                     fetch(`/api/projects/${projectId}/tasks/${task.id}`, { method: 'DELETE' }),
                   );
                   if (!res.ok) {
-                    showErrorKey(isWP ? 'wbs.toastWpDeleteFailed' : 'wbs.toastActivityDeleteFailed');
+                    showError(isWP ? t('toastWpDeleteFailed') : t('toastActivityDeleteFailed'));
                     return;
                   }
-                  showSuccessKey(isWP ? 'wbs.toastWpDeleteSuccess' : 'wbs.toastActivityDeleteSuccess');
+                  showSuccess(isWP ? t('toastWpDeleteSuccess') : t('toastActivityDeleteSuccess'));
                   await reload();
                 }}
               >
@@ -589,13 +595,13 @@ const TaskMobileCard = memo(TaskMobileCardImpl, (prev, next) =>
   && prev.attachmentsByEntity === next.attachmentsByEntity,
 );
 
-export function TasksClient({ projectId, tasks, members, projectRole, systemRole, userId, onReload, isReadOnly = false }: Props) {
+export function TasksClient({ projectId, tasks, members, projectRole, systemRole, userId, onReload, isReadOnly = false, today = '' }: Props) {
   const tAction = useTranslations('action');
   const tAttachment = useTranslations('attachment');
   const t = useTranslations('wbs');
   const router = useRouter();
   const { withLoading } = useLoading();
-  const { showError, showSuccessKey, showErrorKey } = useToast();
+  const { showSuccess, showError } = useToast();
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [error, setError] = useState('');
   // fix/wbs-filter-regression: モバイル時のフィルタ折りたたみ state (md+ では常時開)
@@ -612,6 +618,35 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
 
   // feat/closed-project-readonly (2026-06-05): クローズ済みは読み取り専用 (task:create/update を抑止)。
   const canEditPmTl = (systemRole === 'admin' || projectRole === 'pm_tl') && !isReadOnly;
+
+  // カンバン DnD: 日付・担当者変更 (admin / pm_tl のみ)
+  const handleTaskDrop = useCallback(
+    async (
+      taskId: string,
+      newStartDate: string,
+      newEndDate: string,
+      newAssigneeId: string | null,
+      includeWeekends: boolean,
+    ) => {
+      const res = await fetch(`/api/projects/${projectId}/tasks/${taskId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          plannedStartDate: newStartDate,
+          plannedEndDate: newEndDate,
+          assigneeId: newAssigneeId,
+          includeWeekends,
+        }),
+      });
+      if (!res.ok) {
+        showError(t('kanbanDragFailed'));
+        return;
+      }
+      showSuccess(t('kanbanDragMoved'));
+      await reload();
+    },
+    [projectId, reload, showError, showSuccess, t],
+  );
   // PR #361 (2026-05-14): 日次工数プレビュー (= タスクを設定できる PM/TL ロールのみに表示)
   //   edit dialog / create dialog 両方で使うため、トップレベルで 2 つの hook を呼ぶ
   //   (条件付き呼出禁止、enabled flag で skip 制御)。
@@ -695,6 +730,12 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     setStatusFilter(() => new Set());
   }, [setStatusFilter]);
 
+  // --- カンバン / ツリー ビュー切替 ---
+  const [viewMode, setViewMode] = useSessionState<'tree' | 'kanban'>(
+    `wbs:${projectId}:view-mode`,
+    'tree',
+  );
+
   // --- WP 展開状態 (PR #61: sessionStorage 永続化) ---
   const [expandedTaskIds, setExpandedTaskIds] = useSessionStringSet(
     `wbs:${projectId}:expanded-tasks`,
@@ -731,6 +772,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     plannedStartDate: string;
     plannedEndDate: string;
     plannedEffort: number;
+    includeWeekends: boolean;
     status: string;
     progressRate: number;
     actualStartDate: string;
@@ -748,6 +790,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     plannedStartDate: task.plannedStartDate ?? '',
     plannedEndDate: task.plannedEndDate ?? '',
     plannedEffort: task.plannedEffort,
+    includeWeekends: task.includeWeekends ?? false,
     status: task.status,
     progressRate: task.progressRate,
     actualStartDate: task.actualStartDate ?? '',
@@ -853,6 +896,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
         body.plannedStartDate = editForm.plannedStartDate || null;
         body.plannedEndDate = editForm.plannedEndDate || null;
         body.plannedEffort = editForm.plannedEffort;
+        body.includeWeekends = editForm.includeWeekends;
         // 2026-04-30: ACT のみ description を更新。空文字は null (明示クリア) として送る。
         body.description = editForm.description.trim() ? editForm.description.trim() : null;
         // feat/url-autolink: 備考も ACT のみ。空文字は null (明示クリア) として送る。
@@ -888,11 +932,11 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
         message = json.error?.message || json.error?.details?.[0]?.message || message;
       } catch {}
       setEditError(message);
-      showErrorKey('wbs.toastTaskUpdateFailed');
+      showError(t('toastTaskUpdateFailed'));
       return;
     }
     closeEditDialog();
-    showSuccessKey('wbs.toastTaskUpdateSuccess');
+    showSuccess(t('toastTaskUpdateSuccess'));
     await reload();
   }
 
@@ -1094,9 +1138,9 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     const added = json.data?.added ?? 0;
     const renamed = json.data?.renamedCount ?? 0;
     if (renamed > 0) {
-      showSuccessKey('wbs.toastBulkDuplicateSuccessWithRenamed', { added, renamed });
+      showSuccess(t('toastBulkDuplicateSuccessWithRenamed', { added, renamed }));
     } else {
-      showSuccessKey('wbs.toastBulkDuplicateSuccess', { added });
+      showSuccess(t('toastBulkDuplicateSuccess', { added }));
     }
     await reload();
     // total はトーストには出さない (renamed 件数の方がユーザに有用)
@@ -1141,9 +1185,9 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     setSelectedIds(new Set());
     const failed = result.failedIds.length;
     if (failed > 0) {
-      showErrorKey('wbs.toastBulkDeletePartialFailed', { failed, total });
+      showError(t('toastBulkDeletePartialFailed', { failed, total }));
     } else {
-      showSuccessKey('wbs.toastBulkDeleteSuccess', { total });
+      showSuccess(t('toastBulkDeleteSuccess', { total }));
     }
     await reload();
   }
@@ -1203,12 +1247,12 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     const err = await postBulkUpdate(updates);
     if (err) {
       setBulkEditError(err);
-      showErrorKey('wbs.toastBulkUpdatePlanFailed');
+      showError(t('toastBulkUpdatePlanFailed'));
       return;
     }
     setIsBulkEditOpen(false);
     setSelectedIds(new Set());
-    showSuccessKey('wbs.toastBulkUpdatePlanSuccess', { total });
+    showSuccess(t('toastBulkUpdatePlanSuccess', { total }));
     // ※ apply / values の明示リセットは不要。次回開く際に onOpenChange→
     //    handleBulkEditOpenChange(true) が必ずリセットを行うため。
     await reload();
@@ -1229,12 +1273,12 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     const err = await postBulkUpdate(updates);
     if (err) {
       setBulkActualError(err);
-      showErrorKey('wbs.toastBulkUpdateActualFailed');
+      showError(t('toastBulkUpdateActualFailed'));
       return;
     }
     setIsBulkActualOpen(false);
     setSelectedIds(new Set());
-    showSuccessKey('wbs.toastBulkUpdateActualSuccess', { total });
+    showSuccess(t('toastBulkUpdateActualSuccess', { total }));
     // ※ 同上。リセットは onOpenChange 経由
     await reload();
   }
@@ -1261,7 +1305,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
       }),
     );
     if (!res.ok) {
-      showErrorKey('wbs.toastExportFailed');
+      showError(t('toastExportFailed'));
       return;
     }
     const csvText = await res.text();
@@ -1273,7 +1317,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     a.download = `wbs-${new Date().toISOString().split('T')[0]}.csv`;
     a.click();
     URL.revokeObjectURL(url);
-    showSuccessKey('wbs.toastExportSuccess');
+    showSuccess(t('toastExportSuccess'));
   }
 
   // feat/wbs-overwrite-import: 上書きインポートダイアログ state
@@ -1284,11 +1328,11 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
 
   // 親候補: WP のフラット一覧（ツリーを再帰的に展開）
   const parentOptions = useMemo(() => {
-    function flattenWPs(nodes: TaskDTO[], depth = 0): { id: string; label: string }[] {
-      const result: { id: string; label: string }[] = [];
+    function flattenWPs(nodes: TaskDTO[], depth = 0): { value: string; label: string }[] {
+      const result: { value: string; label: string }[] = [];
       for (const node of nodes) {
         if (node.type === 'work_package') {
-          result.push({ id: node.id, label: `${'　'.repeat(depth)}${node.name}` });
+          result.push({ value: node.id, label: `${'　'.repeat(depth)}${node.name}` });
           if (node.children) {
             result.push(...flattenWPs(node.children, depth + 1));
           }
@@ -1310,6 +1354,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     plannedStartDate: '',
     plannedEndDate: '',
     plannedEffort: 0,
+    includeWeekends: false,
   });
 
   // PR-1 perf (2026-05-29): フォーム setter を functional updater + useCallback に統一。
@@ -1339,6 +1384,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     endDate: editForm?.plannedEndDate ?? '',
     plannedEffort: editForm?.plannedEffort ?? 0,
     excludeTaskId: editingTask?.id,
+    includeWeekends: editForm?.includeWeekends ?? false,
     enabled: canEditPmTl && editingTask?.type === 'activity',
   });
   const createWorkloadPreview = useWorkloadPreview({
@@ -1347,6 +1393,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     startDate: form.plannedStartDate,
     endDate: form.plannedEndDate,
     plannedEffort: form.plannedEffort,
+    includeWeekends: form.includeWeekends,
     enabled: canEditPmTl && isCreateOpen && createType === 'activity',
   });
 
@@ -1368,6 +1415,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
           plannedStartDate: form.plannedStartDate,
           plannedEndDate: form.plannedEndDate,
           plannedEffort: form.plannedEffort,
+          includeWeekends: form.includeWeekends,
           ...(form.description.trim() ? { description: form.description.trim() } : {}),
           ...(form.notes.trim() ? { notes: form.notes.trim() } : {}),
         };
@@ -1386,7 +1434,7 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
       const json = await res.json();
       const msg = json.error?.message || json.error?.details?.[0]?.message || t('createFailed');
       setError(msg);
-      showErrorKey(createType === 'work_package' ? 'wbs.toastWpCreateFailed' : 'wbs.toastActivityCreateFailed');
+      showError(createType === 'work_package' ? t('toastWpCreateFailed') : t('toastActivityCreateFailed'));
       return;
     }
 
@@ -1404,8 +1452,8 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
     setIsCreateOpen(false);
     setParentTaskId('');
     // fix/quick-ux item 8: 連続起票でも担当者は自分にリセット
-    setForm({ name: '', description: '', notes: '', assigneeId: userId, plannedStartDate: '', plannedEndDate: '', plannedEffort: 0 });
-    showSuccessKey(createType === 'work_package' ? 'wbs.toastWpCreateSuccess' : 'wbs.toastActivityCreateSuccess');
+    setForm({ name: '', description: '', notes: '', assigneeId: userId, plannedStartDate: '', plannedEndDate: '', plannedEffort: 0, includeWeekends: false });
+    showSuccess(createType === 'work_package' ? t('toastWpCreateSuccess') : t('toastActivityCreateSuccess'));
     await reload();
   }
 
@@ -1465,16 +1513,14 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                 </div>
                 <div className="space-y-2">
                   <Label>{t('parentWorkPackage')}</Label>
-                  <select
+                  <SearchableSelect
                     value={parentTaskId}
-                    onChange={(e) => setParentTaskId(e.target.value)}
-                    className={nativeSelectClass}
-                  >
-                    <option value="">{t('noParentTopLevel')}</option>
-                    {parentOptions.map((p) => (
-                      <option key={p.id} value={p.id}>{p.label}</option>
-                    ))}
-                  </select>
+                    onValueChange={setParentTaskId}
+                    options={[
+                      { value: '', label: t('noParentTopLevel') },
+                      ...parentOptions,
+                    ]}
+                  />
                 </div>
                 <div className="space-y-2">
                   <Label>{t('columnName')}</Label>
@@ -1514,7 +1560,22 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                       <div className="space-y-2">
                         <Label>{t('plannedEndDate')}</Label>
                         <DateFieldWithActions value={form.plannedEndDate} onChange={(v) => updateField('plannedEndDate', v)} required hideClear />
+                        {form.plannedStartDate && form.plannedEndDate && (
+                          <p className="text-xs text-muted-foreground">
+                            {t('workingDaysCount', { count: countWorkingDays(form.plannedStartDate, form.plannedEndDate, form.includeWeekends) })}
+                          </p>
+                        )}
                       </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        id="create-include-weekends"
+                        checked={form.includeWeekends}
+                        onChange={(e) => updateField('includeWeekends', e.target.checked)}
+                        className="rounded"
+                      />
+                      <Label htmlFor="create-include-weekends" className="cursor-pointer font-normal">{t('includeWeekendsLabel')}</Label>
                     </div>
                     <div className="space-y-2">
                       <Label>{t('plannedEffort')}</Label>
@@ -1628,6 +1689,27 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
               {t('filterClear')}
             </Button>
           )}
+          {/* ビュー切替トグル (PC のみ表示) */}
+          <div className="ml-auto hidden items-center rounded-md border border-input bg-card p-0.5 md:flex" role="group" aria-label={t('viewModeKanban')}>
+            <button
+              type="button"
+              onClick={() => setViewMode('tree')}
+              className={`rounded px-2.5 py-1 text-xs font-medium transition-colors ${viewMode === 'tree' ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+              aria-pressed={viewMode === 'tree'}
+              data-testid="view-toggle-tree"
+            >
+              {t('viewModeTree')}
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode('kanban')}
+              className={`rounded px-2.5 py-1 text-xs font-medium transition-colors ${viewMode === 'kanban' ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+              aria-pressed={viewMode === 'kanban'}
+              data-testid="view-toggle-kanban"
+            >
+              {t('viewModeKanban')}
+            </button>
+          </div>
         </div>
       </div>
 
@@ -1802,17 +1884,15 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                   )}
                   <div className="space-y-2">
                     <Label htmlFor="bulkDuplicateTarget">{t('bulkDuplicateTargetLabel')}</Label>
-                    <select
+                    <SearchableSelect
                       id="bulkDuplicateTarget"
                       value={bulkDuplicateTargetId}
-                      onChange={(e) => setBulkDuplicateTargetId(e.target.value)}
-                      className={nativeSelectClass}
-                    >
-                      <option value="">{t('bulkDuplicateTargetRoot')}</option>
-                      {parentOptions.map((p) => (
-                        <option key={p.id} value={p.id}>{p.label}</option>
-                      ))}
-                    </select>
+                      onValueChange={setBulkDuplicateTargetId}
+                      options={[
+                        { value: '', label: t('bulkDuplicateTargetRoot') },
+                        ...parentOptions,
+                      ]}
+                    />
                     <p className="text-xs text-muted-foreground">
                       {t('bulkDuplicateTargetHint')}
                     </p>
@@ -1847,10 +1927,25 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
         - 日付・操作列の whitespace-nowrap は保持（「2026-」等の折返し防止）
         - 名称列のみ折返し許容（長い名前に対応）
       */}
+      {/* カンバンビュー (PC のみ / viewMode === 'kanban' の場合) */}
+      {viewMode === 'kanban' && (
+        <KanbanView
+          tasks={flattenActivities(filteredTasks)}
+          members={members}
+          selectedIds={selectedIds}
+          canSelectForProgress={canSelectForProgress}
+          onToggleSelect={toggleSelect}
+          onEditClick={openEditDialog}
+          today={today}
+          canDragDrop={canEditPmTl}
+          onTaskDrop={handleTaskDrop}
+        />
+      )}
+
       {/* PR #128a-2: PC (md+) は既存 Table + ResizableColumnsProvider を維持 (PC UX 変更なし)
           Phase E (2026-04-29): tasks-client は WBS 用に native `<table>` (shadcn `<Table>` 不使用)
           のため共通 ResizableTableShell の対象外。Provider + ResetColumnsButton は直接記述する。 */}
-      <div className="hidden md:block">
+      <div className={viewMode === 'kanban' ? 'hidden' : 'hidden md:block'}>
         <ResizableColumnsProvider tableKey="project-tasks">
           <div className="flex justify-end pb-2">
             <ResetColumnsButton />
@@ -2013,16 +2108,14 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                   </div>
                   <div className="space-y-2">
                     <Label>{t('parentWp')}</Label>
-                    <select
+                    <SearchableSelect
                       value={editForm.parentTaskId}
-                      onChange={(e) => updateEditField('parentTaskId', e.target.value)}
-                      className={nativeSelectClass}
-                    >
-                      <option value="">{t('noParentTopLevel')}</option>
-                      {parentOptions.filter((p) => p.id !== editingTask.id).map((p) => (
-                        <option key={p.id} value={p.id}>{p.label}</option>
-                      ))}
-                    </select>
+                      onValueChange={(v) => updateEditField('parentTaskId', v)}
+                      options={[
+                        { value: '', label: t('noParentTopLevel') },
+                        ...parentOptions.filter((p) => p.value !== editingTask.id),
+                      ]}
+                    />
                   </div>
                   <div className="space-y-2">
                     <Label>{t('columnName')}</Label>
@@ -2053,6 +2146,21 @@ export function TasksClient({ projectId, tasks, members, projectRole, systemRole
                       <div className="space-y-2">
                         <Label>{t('plannedEndDate')}</Label>
                         <DateFieldWithActions value={editForm.plannedEndDate} onChange={(v) => updateEditField('plannedEndDate', v)} />
+                        {editForm.plannedStartDate && editForm.plannedEndDate && (
+                          <p className="text-xs text-muted-foreground">
+                            {t('workingDaysCount', { count: countWorkingDays(editForm.plannedStartDate, editForm.plannedEndDate, editForm.includeWeekends) })}
+                          </p>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          id="edit-include-weekends"
+                          checked={editForm.includeWeekends}
+                          onChange={(e) => updateEditField('includeWeekends', e.target.checked)}
+                          className="rounded"
+                        />
+                        <Label htmlFor="edit-include-weekends" className="cursor-pointer font-normal">{t('includeWeekendsLabel')}</Label>
                       </div>
                       <div className="space-y-2">
                         <Label>{t('estimatedEffort')}</Label>

@@ -54,6 +54,7 @@ import type { z } from 'zod/v4';
 import type { createTaskSchema, updateTaskSchema } from '@/lib/validators/task';
 // PR #361 (2026-05-14): 日次工数プレビュー閾値定数
 import { classifyWorkloadLevel, type WorkloadLevel } from '@/config/workload';
+import { distributeEffortByDay } from '@/lib/task-day-distribution';
 // fix/csv-import-multiline-text-data-loss: RFC 4180 準拠の multi-line cell 対応 CSV パーサ
 import { parse as parseCsvSync } from 'csv-parse/sync';
 
@@ -71,7 +72,8 @@ export type TaskDTO = {
   description: string | null;
   assigneeId: string | null;
   assigneeName?: string;
-  assigneeDisplayText?: string;
+  /** v1.3.0: 複数担当者を "名前 +N" 形式で表示するテキスト。単一担当者時は null。 */
+  assigneeDisplayText?: string | null;
   plannedStartDate: string | null;
   plannedEndDate: string | null;
   actualStartDate: string | null;
@@ -83,6 +85,7 @@ export type TaskDTO = {
   status: string;
   progressRate: number;
   isMilestone: boolean;
+  includeWeekends: boolean;
   notes: string | null;
   children?: TaskDTO[];
 };
@@ -98,7 +101,6 @@ function toTaskDTO(t: {
   description: string | null;
   assigneeId: string | null;
   assignee?: { name: string } | null;
-  assigneeDisplayText?: string | null;
   plannedStartDate: Date | null;
   plannedEndDate: Date | null;
   actualStartDate: Date | null;
@@ -109,6 +111,7 @@ function toTaskDTO(t: {
   status: string;
   progressRate: number;
   isMilestone: boolean;
+  includeWeekends: boolean;
   notes: string | null;
 }): TaskDTO {
   return {
@@ -122,7 +125,6 @@ function toTaskDTO(t: {
     description: t.description,
     assigneeId: t.assigneeId,
     assigneeName: t.assignee?.name,
-    assigneeDisplayText: t.assigneeDisplayText ?? undefined,
     plannedStartDate: safeDate(t.plannedStartDate),
     plannedEndDate: safeDate(t.plannedEndDate),
     actualStartDate: safeDate(t.actualStartDate),
@@ -133,6 +135,7 @@ function toTaskDTO(t: {
     status: t.status,
     progressRate: t.progressRate,
     isMilestone: t.isMilestone,
+    includeWeekends: t.includeWeekends,
     notes: t.notes,
   };
 }
@@ -298,6 +301,10 @@ export async function listTasksFlat(projectId: string, viewerTenantId: string): 
   return tasks.map(toTaskDTO);
 }
 
+// ================================================================
+// 2026-06-19 (v1.3.0): WBS 完了バナー表示判定
+// ================================================================
+
 /**
  * WBS 完了バナーの表示判定 (v1.3.0 資産導線機能)。
  *
@@ -386,6 +393,7 @@ export async function getAssigneeDailyWorkload(
       plannedStartDate: true,
       plannedEndDate: true,
       plannedEffort: true,
+      includeWeekends: true,
     },
   });
 
@@ -403,9 +411,10 @@ export async function getAssigneeDailyWorkload(
     const effort = Number(t.plannedEffort);
     if (effort <= 0) continue;
 
-    const days = countInclusiveDays(t.plannedStartDate, t.plannedEndDate);
-    if (days <= 0) continue;
-    const perDay = effort / days;
+    const startStr = t.plannedStartDate.toISOString().split('T')[0]!;
+    const endStr = t.plannedEndDate.toISOString().split('T')[0]!;
+    const entries = distributeEffortByDay(startStr, endStr, effort, t.includeWeekends);
+    if (entries.length === 0) continue;
 
     const acc = byAssignee.get(t.assigneeId) ?? {
       name: t.assignee?.name ?? '(unknown)',
@@ -416,12 +425,8 @@ export async function getAssigneeDailyWorkload(
     acc.taskCount += 1;
     acc.totalEffortHours += effort;
 
-    // 期間の各日に perDay を加算
-    const cursor = new Date(t.plannedStartDate);
-    for (let i = 0; i < days; i++) {
-      const ymd = cursor.toISOString().split('T')[0];
-      acc.dailyMap.set(ymd, (acc.dailyMap.get(ymd) ?? 0) + perDay);
-      cursor.setUTCDate(cursor.getUTCDate() + 1);
+    for (const entry of entries) {
+      acc.dailyMap.set(entry.date, (acc.dailyMap.get(entry.date) ?? 0) + entry.dailyEffort);
     }
     byAssignee.set(t.assigneeId, acc);
   }
@@ -437,13 +442,6 @@ export async function getAssigneeDailyWorkload(
         .sort((a, b) => a.date.localeCompare(b.date)),
     }))
     .sort((a, b) => b.totalEffortHours - a.totalEffortHours);
-}
-
-/** 期間 (inclusive) の日数を返す。start > end なら 0。 */
-function countInclusiveDays(start: Date, end: Date): number {
-  const ms = end.getTime() - start.getTime();
-  if (ms < 0) return 0;
-  return Math.floor(ms / (24 * 60 * 60 * 1000)) + 1;
 }
 
 function round(n: number, digits: number): number {
@@ -469,6 +467,8 @@ export type WorkloadPreviewInput = {
   excludeTaskId?: string;
   /** テナント境界 (severity-1 越境防止) */
   viewerTenantId: string;
+  /** true=土日祝日を稼働日に含む、false=平日のみ（デフォルト: false） */
+  includeWeekends?: boolean;
 };
 
 export type WorkloadPreviewResult = {
@@ -503,8 +503,7 @@ export async function previewActivityWorkload(
 ): Promise<WorkloadPreviewResult> {
   const startDate = new Date(`${input.startDate}T00:00:00.000Z`);
   const endDate = new Date(`${input.endDate}T00:00:00.000Z`);
-  const days = countInclusiveDays(startDate, endDate);
-  if (days <= 0 || Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
+  if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime()) || startDate > endDate) {
     return { maxDailyEffort: 0, maxDailyDate: null, level: classifyWorkloadLevel(0) };
   }
 
@@ -524,6 +523,7 @@ export async function previewActivityWorkload(
       plannedStartDate: true,
       plannedEndDate: true,
       plannedEffort: true,
+      includeWeekends: true,
     },
   });
 
@@ -534,40 +534,32 @@ export async function previewActivityWorkload(
     if (!t.plannedStartDate || !t.plannedEndDate) continue;
     const effort = Number(t.plannedEffort);
     if (effort <= 0) continue;
-    const taskDays = countInclusiveDays(t.plannedStartDate, t.plannedEndDate);
-    if (taskDays <= 0) continue;
-    const perDay = effort / taskDays;
-    const cursor = new Date(t.plannedStartDate);
-    for (let i = 0; i < taskDays; i++) {
-      const ymd = cursor.toISOString().split('T')[0]!;
-      dailyMap.set(ymd, (dailyMap.get(ymd) ?? 0) + perDay);
-      cursor.setUTCDate(cursor.getUTCDate() + 1);
+    const startStr = t.plannedStartDate.toISOString().split('T')[0]!;
+    const endStr = t.plannedEndDate.toISOString().split('T')[0]!;
+    const entries = distributeEffortByDay(startStr, endStr, effort, t.includeWeekends);
+    for (const entry of entries) {
+      dailyMap.set(entry.date, (dailyMap.get(entry.date) ?? 0) + entry.dailyEffort);
     }
   }
 
-  // 入力中タスクを加算 (plannedEffort > 0 のみ。0 でも下記の max 探索で問題ないが早期 return)
+  // 入力中タスクを加算
   if (input.plannedEffort > 0) {
-    const perDay = input.plannedEffort / days;
-    const cursor = new Date(startDate);
-    for (let i = 0; i < days; i++) {
-      const ymd = cursor.toISOString().split('T')[0]!;
-      dailyMap.set(ymd, (dailyMap.get(ymd) ?? 0) + perDay);
-      cursor.setUTCDate(cursor.getUTCDate() + 1);
+    const entries = distributeEffortByDay(input.startDate, input.endDate, input.plannedEffort, input.includeWeekends);
+    for (const entry of entries) {
+      dailyMap.set(entry.date, (dailyMap.get(entry.date) ?? 0) + entry.dailyEffort);
     }
   }
 
-  // 入力期間内の日付について最大値を探索
+  // 入力期間内の稼働日について最大値を探索
+  const inputEntries = distributeEffortByDay(input.startDate, input.endDate, 0, input.includeWeekends);
   let maxEffort = 0;
   let maxDate: string | null = null;
-  const cursor = new Date(startDate);
-  for (let i = 0; i < days; i++) {
-    const ymd = cursor.toISOString().split('T')[0]!;
-    const effort = dailyMap.get(ymd) ?? 0;
+  for (const entry of inputEntries) {
+    const effort = dailyMap.get(entry.date) ?? 0;
     if (effort > maxEffort) {
       maxEffort = effort;
-      maxDate = ymd;
+      maxDate = entry.date;
     }
-    cursor.setUTCDate(cursor.getUTCDate() + 1);
   }
 
   const rounded = round(maxEffort, 2);
@@ -659,12 +651,13 @@ export async function createTask(
       name: input.name,
       description: input.description,
       category: 'other',
-      assigneeId: isActivity ? input.assigneeId : null,
-      plannedStartDate: isActivity ? new Date(input.plannedStartDate) : null,
-      plannedEndDate: isActivity ? new Date(input.plannedEndDate) : null,
-      plannedEffort: isActivity ? input.plannedEffort : 0,
+      assigneeId: isActivity ? (input.assigneeId ?? null) : null,
+      plannedStartDate: isActivity && input.plannedStartDate ? new Date(input.plannedStartDate) : null,
+      plannedEndDate: isActivity && input.plannedEndDate ? new Date(input.plannedEndDate) : null,
+      plannedEffort: isActivity ? (input.plannedEffort ?? 0) : 0,
       priority: isActivity ? (input.priority || 'medium') : null,
       isMilestone: isActivity ? (input.isMilestone || false) : false,
+      includeWeekends: isActivity ? (input.includeWeekends ?? false) : false,
       notes: input.notes,
       createdBy: userId,
       updatedBy: userId,
@@ -804,6 +797,7 @@ export async function updateTask(
   if (input.priority !== undefined) data.priority = input.priority;
   if (input.progressRate !== undefined) data.progressRate = input.progressRate;
   if (input.isMilestone !== undefined) data.isMilestone = input.isMilestone;
+  if (input.includeWeekends !== undefined) data.includeWeekends = input.includeWeekends;
   if (input.notes !== undefined) data.notes = input.notes;
 
   // status / progressRate / actualStartDate / actualEndDate はステータス整合性ルールに基づき一括正規化する。
@@ -1328,21 +1322,11 @@ export async function recalculateAllProjectWps(
       actualEndDate: true,
       status: true,
       assigneeId: true,
-      assignee: { select: { name: true } },
     },
   });
 
   const wps = tasks.filter((t) => t.type === 'work_package');
   if (wps.length === 0) return { total: 0, updated: 0 };
-
-  // userId → 表示名マップ (assigneeDisplayText 計算用)
-  const userNameById = new Map<string, string>(
-    tasks
-      .filter((t): t is typeof t & { assigneeId: string; assignee: { name: string } } =>
-        t.assigneeId !== null && t.assignee !== null && t.assignee.name !== undefined,
-      )
-      .map((t) => [t.assigneeId, t.assignee.name]),
-  );
 
   // 親 ID → 直接の子タスク
   const childrenByParent = new Map<string, typeof tasks>();
@@ -1390,7 +1374,6 @@ export async function recalculateAllProjectWps(
           actualEndDate: childAgg.actualEndDate,
           status: childAgg.status,
           assigneeId: childAgg.assigneeId,
-          assigneeName: childAgg.assigneeId ? (userNameById.get(childAgg.assigneeId) ?? null) : null,
         };
       }
       // ACT はそのまま DB 値で集計
@@ -1403,7 +1386,6 @@ export async function recalculateAllProjectWps(
         actualEndDate: c.actualEndDate,
         status: c.status,
         assigneeId: c.assigneeId,
-        assigneeName: c.assignee?.name ?? null,
       };
     });
 
@@ -1522,7 +1504,8 @@ export type WpAggregationChild = {
   actualEndDate: Date | null;
   status: string;
   assigneeId: string | null;
-  assigneeName: string | null;
+  /** 複数担当者表示テキスト計算用。ACT は assignee.name、WP 子孫経由は省略可 */
+  assigneeName?: string | null;
 };
 
 export type WpAggregationResult = {
@@ -1540,9 +1523,7 @@ export type WpAggregationResult = {
    */
   assigneeId: string | null;
   /**
-   * 子 ACT に複数の異なる担当者がいる場合の表示テキスト（WP 専用）。
-   * 例: "田中 +2"（先頭担当者名 + 残り人数）。
-   * 担当者が 0 人または全員同一の場合は null（assigneeName で表示）。
+   * 複数担当者の場合 "田中 +2" 形式で表示するテキスト。単一担当者または未アサインは null。
    */
   assigneeDisplayText: string | null;
 };
@@ -1578,10 +1559,7 @@ export function aggregateWpFromChildren(children: WpAggregationChild[]): WpAggre
     dates.length > 0 ? new Date(Math.max(...dates.map((d) => d.getTime()))) : null;
 
   // ステータス自動判定
-  // 優先順位: completed(全員) > in_progress(1件以上) > on_hold(1件以上) > completed(一部) > not_started
-  // 「in_progress が 0 件・on_hold が 1 件以上」なら保留を優先する。
-  // 例: completed+on_hold → on_hold (アクティブな作業がなく残りが保留中)
-  //     completed+not_started → in_progress (一部完了、残りはこれから着手)
+  // 優先順位: completed(全員)> in_progress > on_hold > completed+not_started混在 → in_progress > not_started
   const statuses = children.map((c) => c.status);
   let wpStatus = 'not_started';
   if (statuses.every((s) => s === 'completed')) {
@@ -1614,18 +1592,14 @@ export function aggregateWpFromChildren(children: WpAggregationChild[]): WpAggre
   const uniformAssignee: string | null
     = distinctAssignees.size === 1 ? [...distinctAssignees][0] : null;
 
-  // 複数担当者の表示テキスト: 2 人以上の異なる担当者がいる場合は "田中 +N" 形式。
-  // 担当者が 0 人または全員同一の場合は null (assigneeName で表示するため不要)。
-  const nonNullAssignees = children.filter(
-    (c): c is WpAggregationChild & { assigneeId: string } => c.assigneeId !== null,
-  );
-  const uniqueAssigneeIds = [...new Set(nonNullAssignees.map((c) => c.assigneeId))];
+  // 複数担当者表示テキスト: 非 null な uniqueId が 2 件以上のとき "田中 +N" 形式
+  const nonNullAssigneeIds = [...distinctAssignees].filter((id): id is string => id !== null);
   let assigneeDisplayText: string | null = null;
-  if (uniqueAssigneeIds.length >= 2) {
-    const firstEntry = nonNullAssignees.find((c) => c.assigneeId === uniqueAssigneeIds[0]);
-    const firstName = firstEntry?.assigneeName ?? '';
-    const extraCount = uniqueAssigneeIds.length - 1;
-    assigneeDisplayText = firstName ? `${firstName} +${extraCount}` : null;
+  if (nonNullAssigneeIds.length >= 2) {
+    const firstName = children.find((c) => c.assigneeId !== null && c.assigneeName)?.assigneeName ?? null;
+    if (firstName) {
+      assigneeDisplayText = `${firstName} +${nonNullAssigneeIds.length - 1}`;
+    }
   }
 
   return {
@@ -1713,16 +1687,13 @@ async function recalculateWpOnly(taskId: string): Promise<boolean> {
           status: true,
           type: true,
           assigneeId: true,
-          assignee: { select: { name: true } },
         },
       },
     },
   });
   if (!task || task.type !== 'work_package') return false;
 
-  const aggregated = aggregateWpFromChildren(
-    task.childTasks.map((c) => ({ ...c, assigneeName: c.assignee?.name ?? null })),
-  );
+  const aggregated = aggregateWpFromChildren(task.childTasks);
 
   // C 案: 現在値と一致するなら update をスキップ
   if (isWpAggregationEqual(task, aggregated)) {
@@ -1759,16 +1730,13 @@ async function recalculateAncestors(taskId: string): Promise<void> {
           status: true,
           type: true,
           assigneeId: true,
-          assignee: { select: { name: true } },
         },
       },
     },
   });
   if (!task || task.type !== 'work_package') return;
 
-  const aggregated = aggregateWpFromChildren(
-    task.childTasks.map((c) => ({ ...c, assigneeName: c.assignee?.name ?? null })),
-  );
+  const aggregated = aggregateWpFromChildren(task.childTasks);
 
   // ADR-0035 (2026-06-05): C 案 (recalculateWpOnly / recalculateAllProjectWps と同じ最適化)。
   //   集計値が現在値と一致するなら自身の update をスキップし、上位への伝播も止める。
@@ -1856,7 +1824,7 @@ export async function getProgressLogs(
  * UI 側から個別編集する運用に集約 (CSV 編集を「計画調整」用途に限定)。
  */
 export const WBS_CSV_HEADERS = [
-  'ID', '種別', '名称', 'レベル', '予定開始日', '予定終了日', '予定工数',
+  'ID', '種別', '名称', 'レベル', '予定開始日', '予定終了日', '予定工数', '土日祝日を含める',
 ] as const;
 
 /** CSV フィールドをエスケープ（ダブルクォート） */
@@ -2015,6 +1983,7 @@ export async function exportWbs(
       safeDate(t.plannedStartDate) ?? '',
       safeDate(t.plannedEndDate) ?? '',
       String(Number(t.plannedEffort)),
+      String(t.includeWeekends),
     ].join(',');
     lines.push(line);
   }

@@ -57,6 +57,9 @@ const tenantSettingsSource = readFileSync(TENANT_SETTINGS_FILE, 'utf8');
 const tenantCreateFormSource = readFileSync(TENANT_CREATE_FORM_FILE, 'utf8');
 const tenantCreatePageSource = readFileSync(TENANT_CREATE_PAGE_FILE, 'utf8');
 
+const JA_CATALOG_FILE = join(__dirname, '../../../../i18n/messages/ja.json');
+const jaCatalog = readFileSync(JA_CATALOG_FILE, 'utf8');
+
 describe('クレジットカード払い UI ガード (feat/credit-card-ui-guard / 二段ガード設計)', () => {
   it('tenant-settings-client.tsx: BillingContactSection が stripeEnabled prop を受け取る', () => {
     // BillingContactSection の引数に stripeEnabled が宣言されている (= 親から伝搬される)
@@ -79,7 +82,9 @@ describe('クレジットカード払い UI ガード (feat/credit-card-ui-guard
   });
 
   it('tenant-settings-client.tsx: stripeEnabled=false 時のラベルに「準備中」表記がある (UX 明示)', () => {
-    expect(tenantSettingsSource).toMatch(/クレジットカード \(準備中\)/);
+    // i18n 化後はリテラルが ja.json に移動。ソースが i18n キーを参照し、カタログに「準備中」が存在することを確認。
+    expect(tenantSettingsSource).toContain('billingContactPaymentCreditCardDisabled');
+    expect(jaCatalog).toContain('クレジットカード (準備中)');
   });
 
   it('tenant-create-form.tsx: TenantCreateForm が stripeEnabled prop を受け取る', () => {
@@ -129,7 +134,9 @@ describe('退行検知: 旧「無条件 enable」が復活していない', () =
 
 describe('整合性: 銀行振込 (invoice) は常に enable のまま', () => {
   it('tenant-settings-client.tsx: invoice option は無条件 enable', () => {
-    expect(tenantSettingsSource).toMatch(/<option\s+value="invoice"\s*>\s*銀行振込/);
+    // i18n 化後はラベルが t() 経由。disabled なしの invoice option がソースに存在し、カタログに「銀行振込」があることを確認。
+    expect(tenantSettingsSource).toMatch(/<option\s+value="invoice"\s*>/);
+    expect(jaCatalog).toContain('銀行振込');
   });
 
   it('tenant-create-form.tsx: invoice option は無条件 enable (= disabled 属性なし)', () => {

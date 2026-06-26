@@ -20,9 +20,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { usePathname, useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
+import { Eye } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
-import { linkifyNodes } from '@/components/ui/linkified-text';
+import { MarkdownDisplay } from '@/components/ui/markdown-textarea';
 import { useLoading } from '@/components/loading-overlay';
 import { useToast } from '@/components/toast-provider';
 import { useSession } from 'next-auth/react';
@@ -162,8 +163,10 @@ function MentionAutocompleteTextarea({
   placeholder: string;
   ariaLabel: string;
 }) {
+  const tCommon = useTranslations('common');
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const [showSuggest, setShowSuggest] = useState(false);
+  const [showPreview, setShowPreview] = useState(false);
   const [candidates, setCandidates] = useState<MentionCandidatesResponse['data']>({
     groups: [],
     users: [],
@@ -249,52 +252,77 @@ function MentionAutocompleteTextarea({
   }
 
   return (
-    <div className="relative">
-      <textarea
-        ref={textareaRef}
-        value={value}
-        onChange={handleChange}
-        placeholder={placeholder}
-        maxLength={COMMENT_CONTENT_MAX_LENGTH}
-        aria-label={ariaLabel}
-        className="min-h-[72px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-      />
-      {showSuggest && (candidates.groups.length > 0 || candidates.users.length > 0) && (
-        <ul
-          className="absolute left-0 right-0 top-full z-50 mt-1 max-h-64 overflow-y-auto rounded-md border bg-card shadow-md"
-          data-testid="mention-suggest"
+    <div className="space-y-2">
+      <div className="flex items-center gap-2">
+        <Button
+          type="button"
+          variant={showPreview ? 'default' : 'outline'}
+          size="sm"
+          className="h-7 px-2 text-xs"
+          onClick={() => setShowPreview((v) => !v)}
         >
-          {candidates.groups.map((g) => (
-            <li key={`g:${g.kind}`}>
-              <button
-                type="button"
-                onClick={() => handleSelectGroup(g)}
-                className="block w-full px-3 py-1.5 text-left text-sm hover:bg-accent"
-              >
-                <span className="text-info">@{g.label}</span>
-                <span className="ml-2 text-xs text-muted-foreground">グループ</span>
-              </button>
-            </li>
-          ))}
-          {candidates.users.map((u) => (
-            <li key={`u:${u.id}`}>
-              <button
-                type="button"
-                onClick={() => handleSelectUser(u)}
-                className="block w-full px-3 py-1.5 text-left text-sm hover:bg-accent"
-              >
-                <span>@{u.name}</span>
-                <span className="ml-2 text-xs text-muted-foreground">{u.email}</span>
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
+          <Eye className="size-3" />
+          {tCommon('preview')}
+        </Button>
+      </div>
+      <div className={`grid gap-3 ${showPreview ? 'md:grid-cols-2' : 'grid-cols-1'}`}>
+        <div className="relative">
+          <textarea
+            ref={textareaRef}
+            value={value}
+            onChange={handleChange}
+            placeholder={placeholder}
+            maxLength={COMMENT_CONTENT_MAX_LENGTH}
+            aria-label={ariaLabel}
+            className="min-h-[72px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+          />
+          {showSuggest && (candidates.groups.length > 0 || candidates.users.length > 0) && (
+            <ul
+              className="absolute left-0 right-0 top-full z-50 mt-1 max-h-64 overflow-y-auto rounded-md border bg-card shadow-md"
+              data-testid="mention-suggest"
+            >
+              {candidates.groups.map((g) => (
+                <li key={`g:${g.kind}`}>
+                  <button
+                    type="button"
+                    onClick={() => handleSelectGroup(g)}
+                    className="block w-full px-3 py-1.5 text-left text-sm hover:bg-accent"
+                  >
+                    <span className="text-info">@{g.label}</span>
+                    <span className="ml-2 text-xs text-muted-foreground">グループ</span>
+                  </button>
+                </li>
+              ))}
+              {candidates.users.map((u) => (
+                <li key={`u:${u.id}`}>
+                  <button
+                    type="button"
+                    onClick={() => handleSelectUser(u)}
+                    className="block w-full px-3 py-1.5 text-left text-sm hover:bg-accent"
+                  >
+                    <span>@{u.name}</span>
+                    <span className="ml-2 text-xs text-muted-foreground">{u.email}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+        {showPreview && (
+          <div
+            className="rounded-md border border-input bg-muted/30 px-3 py-2 text-sm overflow-auto"
+            style={{ minHeight: '72px' }}
+            aria-label={tCommon('preview')}
+          >
+            <MarkdownDisplay value={value} />
+          </div>
+        )}
+      </div>
     </div>
   );
 }
 
-/** 既存の plain textarea (編集モード用、mention 補完不要な箇所で再利用) */
+/** 編集モード用 textarea（プレビュートグル付き） */
 function CommentTextarea({
   value,
   onChange,
@@ -306,15 +334,42 @@ function CommentTextarea({
   placeholder: string;
   ariaLabel: string;
 }) {
+  const tCommon = useTranslations('common');
+  const [showPreview, setShowPreview] = useState(false);
   return (
-    <textarea
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      placeholder={placeholder}
-      maxLength={COMMENT_CONTENT_MAX_LENGTH}
-      aria-label={ariaLabel}
-      className="min-h-[72px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-    />
+    <div className="space-y-2">
+      <div className="flex items-center gap-2">
+        <Button
+          type="button"
+          variant={showPreview ? 'default' : 'outline'}
+          size="sm"
+          className="h-7 px-2 text-xs"
+          onClick={() => setShowPreview((v) => !v)}
+        >
+          <Eye className="size-3" />
+          {tCommon('preview')}
+        </Button>
+      </div>
+      <div className={`grid gap-3 ${showPreview ? 'md:grid-cols-2' : 'grid-cols-1'}`}>
+        <textarea
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
+          maxLength={COMMENT_CONTENT_MAX_LENGTH}
+          aria-label={ariaLabel}
+          className="min-h-[72px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+        />
+        {showPreview && (
+          <div
+            className="rounded-md border border-input bg-muted/30 px-3 py-2 text-sm overflow-auto"
+            style={{ minHeight: '72px' }}
+            aria-label={tCommon('preview')}
+          >
+            <MarkdownDisplay value={value} />
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -588,11 +643,9 @@ export function CommentSection({ entityType, entityId, canPost = true, postDisab
                   </div>
                 ) : (
                   <>
-                    {/* whitespace-pre-wrap で改行を保持。URL は linkifyNodes でリンク化
-                        (react-markdown は通さず素テキスト + a 要素のみ生成のため XSS 安全) */}
-                    <p className="whitespace-pre-wrap break-words" data-testid="comment-content">
-                      {linkifyNodes(c.content)}
-                    </p>
+                    <div data-testid="comment-content">
+                      <MarkdownDisplay value={c.content} />
+                    </div>
                     {canMutate(c) && !mutationsLocked && (
                       <div className="mt-1 flex justify-end gap-1">
                         <Button

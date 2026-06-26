@@ -63,6 +63,7 @@ export type SyncImportRow = {
   plannedStartDate: string | null;
   plannedEndDate: string | null;
   plannedEffort: number | null;
+  includeWeekends: boolean;
   /**
    * CSV 上の親行 tempRowIndex (level スタックから決定)。root (level=1) は null。
    *
@@ -86,6 +87,7 @@ export const WBS_SYNC_CSV_HEADERS = [
   '予定開始日',
   '予定終了日',
   '予定工数',
+  '土日祝日を含める',
 ] as const;
 
 export type SyncDiffAction = 'CREATE' | 'UPDATE' | 'NO_CHANGE' | 'REMOVE_CANDIDATE';
@@ -238,6 +240,8 @@ export function parseSyncImportCsv(csvText: string): ParseSyncImportResult {
     const plannedEndDate = (fields[5] ?? '').trim() || null;
     const plannedEffortStr = (fields[6] ?? '').trim();
     const plannedEffort = plannedEffortStr ? parseFloat(plannedEffortStr) : null;
+    const includeWeekendsStr = (fields[7] ?? '').trim().toLowerCase();
+    const includeWeekends = includeWeekendsStr === 'true';
 
     // [A1] parentRowIndex 決定: level=1 は null, それ以外は stack[level-2]
     //   親が直前に無い不正 CSV (level=3 だが level=2 が無い等) は null としておき、
@@ -257,6 +261,7 @@ export function parseSyncImportCsv(csvText: string): ParseSyncImportResult {
       plannedStartDate,
       plannedEndDate,
       plannedEffort: plannedEffort != null && !isNaN(plannedEffort) ? plannedEffort : null,
+      includeWeekends,
       parentRowIndex,
     });
   }
@@ -288,6 +293,7 @@ type DbTaskSnapshot = {
   status: string;
   progressRate: number;
   isMilestone: boolean;
+  includeWeekends: boolean;
   notes: string | null;
   createdBy: string;
   updatedBy: string;
@@ -389,6 +395,7 @@ export async function computeSyncDiff(
       status: true,
       progressRate: true,
       isMilestone: true,
+      includeWeekends: true,
       notes: true,
       createdBy: true,
       updatedBy: true,
@@ -591,6 +598,12 @@ export async function computeSyncDiff(
           'plannedEffort',
           Number(dbTask.plannedEffort),
           row.plannedEffort ?? Number(dbTask.plannedEffort),
+        );
+        compareField(
+          fieldChanges,
+          'includeWeekends',
+          dbTask.includeWeekends,
+          row.includeWeekends,
         );
       }
     }
@@ -803,6 +816,7 @@ export async function applySyncImport(
               plannedStartDate: isActivity && row.plannedStartDate ? new Date(row.plannedStartDate) : null,
               plannedEndDate: isActivity && row.plannedEndDate ? new Date(row.plannedEndDate) : null,
               plannedEffort: isActivity ? (row.plannedEffort ?? 0) : 0,
+              includeWeekends: isActivity ? row.includeWeekends : false,
               priority: isActivity ? 'medium' : null,
               isMilestone: false,
               status: 'not_started',
@@ -839,6 +853,7 @@ export async function applySyncImport(
             updateData.plannedStartDate = row.plannedStartDate ? new Date(row.plannedStartDate) : null;
             updateData.plannedEndDate = row.plannedEndDate ? new Date(row.plannedEndDate) : null;
             updateData.plannedEffort = row.plannedEffort ?? 0;
+            updateData.includeWeekends = row.includeWeekends;
           }
           return prisma.task.update({ where: { id: row.id }, data: updateData });
         }),
@@ -942,6 +957,7 @@ async function rollbackToSnapshot(
         status: orig.status,
         progressRate: orig.progressRate,
         isMilestone: orig.isMilestone,
+        includeWeekends: orig.includeWeekends,
         notes: orig.notes,
         updatedBy: userId,
       },

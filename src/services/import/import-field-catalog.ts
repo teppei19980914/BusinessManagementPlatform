@@ -47,6 +47,7 @@ export const IMPORT_FIELD_CATALOG: Record<ImportEntityKind, ImportFieldDef[]> = 
     { field: 'plannedStartDate', label: '開始予定日', hint: 'アクティビティのみ' },
     { field: 'plannedEndDate', label: '終了予定日', hint: 'アクティビティのみ' },
     { field: 'plannedEffort', label: '予定工数(人時)', hint: 'アクティビティのみ・0 以上の数値（小数第一位まで。例: 8 / 8.5）' },
+    { field: 'includeWeekends', label: '土日祝日を含める', hint: 'true / false（省略時は false）' },
   ],
   risk: [
     { field: 'projectName', label: 'プロジェクト名', hint: '紐づけるプロジェクト名 (空なら紐づけなし)' },

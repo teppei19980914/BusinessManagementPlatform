@@ -18,41 +18,42 @@ export default async function SuperAdminLayout({ children }: { children: React.R
   if (user.systemRole !== 'super_admin') {
     redirect('/');
   }
-  const t = await getTranslations('superAdmin');
+
+  const t = await getTranslations('adminSuperLayout');
 
   return (
     <div className="space-y-6">
       <div className="rounded-md bg-amber-100 p-3 text-sm text-amber-900 dark:bg-amber-900/30 dark:text-amber-200">
-        <strong>{t('layoutBannerBold')}</strong>{t('layoutBannerBody')}
+        <strong>{t('systemAdminArea')}</strong> {t('systemAdminDesc')}
       </div>
       <nav className="flex gap-4 border-b pb-2 text-sm">
         <Link href="/admin/super" className="hover:underline">
-          {t('layoutNavSummary')}
+          {t('navSummary')}
         </Link>
         <Link href="/admin/super/tenants" className="hover:underline">
-          {t('layoutNavTenants')}
+          {t('navTenants')}
         </Link>
         <Link href="/admin/super/usage" className="hover:underline">
-          {t('layoutNavUsage')}
+          {t('navUsage')}
         </Link>
         <Link href="/admin/super/cron-history" className="hover:underline">
-          {t('layoutNavCronHistory')}
+          {t('navCronHistory')}
         </Link>
         {/* PR-V7 #6 (2026-05-19): Stripe DLQ 監視 + 手動再投入 */}
         <Link href="/admin/super/stripe-dlq" className="hover:underline">
-          {t('layoutNavStripeDlq')}
+          Stripe DLQ
         </Link>
         {/* PR-V7 #8 (2026-05-19): 請求ダッシュボード (= 月次サマリ + 詳細) */}
         <Link href="/admin/super/billing" className="hover:underline">
-          {t('layoutNavBilling')}
+          {t('navBilling')}
         </Link>
         {/* PR-V8 (2026-05-19): 診断ダッシュボード (= 想定外事象の検知 + 修復) */}
         <Link href="/admin/super/diagnostics" className="hover:underline">
-          {t('layoutNavDiagnostics')}
+          {t('navDiagnostics')}
         </Link>
         {/* ADR-0036: 全ユーザ共通の周知バナー (画面上部の帯メッセージ) 管理 */}
         <Link href="/admin/super/banners" className="hover:underline">
-          {t('layoutNavBanners')}
+          {t('navBanners')}
         </Link>
       </nav>
       {children}

@@ -25,6 +25,9 @@ import { join } from 'node:path';
 const CLIENT_FILE = join(__dirname, 'chat-panel.tsx');
 const source = readFileSync(CLIENT_FILE, 'utf8');
 
+const JA_MESSAGES_FILE = join(__dirname, '../../i18n/messages/ja.json');
+const chatPanelJa = (JSON.parse(readFileSync(JA_MESSAGES_FILE, 'utf8')) as Record<string, Record<string, string>>).chatPanel;
+
 describe('ChatPanel のマスコット統合 invariant', () => {
   it('next/image を import している', () => {
     expect(source).toMatch(/import\s+Image\s+from\s+'next\/image'/);
@@ -195,19 +198,25 @@ describe('ChatPanel 結果表示のアコーディオン invariant (H-3 / H-4)',
       .replace(/\/\*[\s\S]*?\*\//g, '') // ブロックコメント (JSDoc 含む) 除去
       .replace(/\{\/\*[\s\S]*?\*\/\}/g, '') // JSX 内の {/* */} 除去
       .replace(/\/\/.*$/gm, ''); // 行コメント除去
-    expect(codeOnly).toMatch(/中程度の関連/);
+    // 表示文字列は i18n キー経由で出力 (直書き文字列ではなく t() 呼出を確認)
+    expect(codeOnly).toMatch(/t\('mediumCollapsed'/);
+    expect(chatPanelJa.mediumCollapsed).toMatch(/中程度の関連/);
+    expect(chatPanelJa.mediumExpandedLabel).toMatch(/中程度の関連/);
     expect(codeOnly).not.toMatch(/関連の可能性/);
   });
 
   it('strong / weak のセクション label は既存文言を維持', () => {
-    expect(source).toMatch(/強く関連/);
-    expect(source).toMatch(/弱い関連性/);
+    // 表示文字列は i18n キー経由 (ja.json で確認)
+    expect(chatPanelJa.strongSectionTitle).toMatch(/強く関連/);
+    expect(chatPanelJa.weakCollapsed).toMatch(/弱い関連性/);
   });
 });
 
 describe('ChatPanel フクロウの会話文言 invariant (人間味調整)', () => {
   it('初回挨拶は「気になることや知りたいことをチャットしてください」を含む', () => {
-    expect(source).toMatch(/気になることや知りたいことをチャットしてください/);
+    // 表示文字列は i18n キー経由
+    expect(source).toMatch(/t\('greetingBody'\)/);
+    expect(chatPanelJa.greetingBody).toMatch(/気になることや知りたいことをチャットしてください/);
   });
 
   it('初回挨拶は turns の有無に依存せず常時描画される (turns.length === 0 ガードが撤去されている)', () => {
@@ -219,31 +228,38 @@ describe('ChatPanel フクロウの会話文言 invariant (人間味調整)', ()
   });
 
   it('検索中の表示は「ちょっと待ってくださいね、過去資産から探しています」', () => {
-    expect(source).toMatch(/ちょっと待ってくださいね/);
+    expect(source).toMatch(/t\('pendingMessage'\)/);
+    expect(chatPanelJa.pendingMessage).toMatch(/ちょっと待ってくださいね/);
   });
 
   it('結果サマリは「N件…見つけました。関連が強い順にご紹介しますね」の文体', () => {
-    expect(source).toMatch(/見つけました/);
-    expect(source).toMatch(/関連が強い順にご紹介/);
+    expect(source).toMatch(/t\('foundCount'/);
+    expect(chatPanelJa.foundCount).toMatch(/見つけました/);
+    expect(chatPanelJa.foundCount).toMatch(/関連が強い順にご紹介/);
   });
 
   it('0 件時は「うーん、関連する資産は見つかりませんでした…」の文体', () => {
-    expect(source).toMatch(/うーん、関連する資産は見つかりませんでした/);
+    expect(source).toMatch(/t\('noResults'\)/);
+    expect(chatPanelJa.noResults).toMatch(/うーん、関連する資産は見つかりませんでした/);
   });
 
   it('縮退モード時の文言は「ごめんなさい、AI 機能が一時的に使えないようです」', () => {
-    expect(source).toMatch(/ごめんなさい、AI 機能が一時的に使えないようです/);
+    expect(source).toMatch(/t\('degradedNotice'/);
+    expect(chatPanelJa.degradedNotice).toMatch(/ごめんなさい、AI 機能が一時的に使えないようです/);
   });
 
   it('短いクエリ警告は「もう少し詳しく書いていただけると」の柔らかい表現', () => {
-    expect(source).toMatch(/もう少し詳しく書いていただける/);
+    expect(source).toMatch(/t\('warningShortQuery'\)/);
+    expect(chatPanelJa.warningShortQuery).toMatch(/もう少し詳しく書いていただける/);
     // 旧実装の機械的な「クエリが短いと検索精度が下がる可能性があります」は撤去
     expect(source).not.toMatch(/クエリが短いと検索精度が下がる可能性があります/);
   });
 
   it('プライバシー告知バナーは厳密さを保つため文体維持 (Voyage AI / 機微情報を明示)', () => {
-    expect(source).toMatch(/外部 AI サービス \(Voyage AI\)/);
-    expect(source).toMatch(/機微情報の入力はお控えください/);
+    // 文言は i18n キー経由 (ja.json で確認)
+    expect(source).toMatch(/t\('voyageNotice'\)/);
+    expect(chatPanelJa.voyageNotice).toMatch(/外部 AI サービス \(Voyage AI\)/);
+    expect(chatPanelJa.voyageNotice).toMatch(/機微情報の入力はお控えください/);
   });
 });
 
@@ -348,7 +364,9 @@ describe('ChatPanel mode タブ統合 (ADR-0028)', () => {
   });
 
   it('サブタイトルは mode に応じて切替 (検索 / ヘルプ・ガイド)', () => {
-    expect(source).toMatch(/mode === 'search' \? '過去資産を意味検索' : 'FAQ・使い方ガイド'/);
+    expect(source).toMatch(/mode === 'search' \? t\('subtitleSearch'\) : t\('subtitleHelp'\)/);
+    expect(chatPanelJa.subtitleSearch).toBe('過去資産を意味検索');
+    expect(chatPanelJa.subtitleHelp).toBe('FAQ・使い方ガイド');
   });
 
   it('tabIndex は roving tab index pattern (active=0、inactive=-1)', () => {
@@ -384,14 +402,17 @@ describe('ChatPanel 2 巡目検証 (state 保持 + a11y 強化)', () => {
   });
 
   it('クリアボタン aria-label を mode 別動的化 (a11y screen reader 区別)', () => {
+    // 文言は i18n キー経由 (ja.json で確認)
     expect(source).toMatch(
-      /aria-label=\{[\s\S]{0,30}?mode === 'search'[\s\S]{0,200}?'過去資産検索の会話履歴をクリア'[\s\S]{0,200}?'ヘルプ・ガイドの会話履歴をクリア'/,
+      /aria-label=\{[\s\S]{0,30}?mode === 'search'[\s\S]{0,200}?t\('ariaLabelClearSearch'\)[\s\S]{0,200}?t\('ariaLabelClearHelp'\)/,
     );
+    expect(chatPanelJa.ariaLabelClearSearch).toBe('過去資産検索の会話履歴をクリア');
+    expect(chatPanelJa.ariaLabelClearHelp).toBe('ヘルプ・ガイドの会話履歴をクリア');
   });
 
   it('クリアボタン title (tooltip) も mode 別動的化 (aria-label と同文言)', () => {
     expect(source).toMatch(
-      /title=\{[\s\S]{0,30}?mode === 'search'[\s\S]{0,200}?'過去資産検索の会話履歴をクリア'/,
+      /title=\{[\s\S]{0,30}?mode === 'search'[\s\S]{0,200}?t\('ariaLabelClearSearch'\)/,
     );
   });
 });

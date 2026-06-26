@@ -26,4 +26,9 @@ describe('toSyncImportRows', () => {
     const rows = toSyncImportRows(wbs);
     expect(rows[1]).toMatchObject({ name: '基本設計', plannedStartDate: '2026-06-01', plannedEffort: 8 });
   });
+
+  it('includeWeekends はデフォルト false（外部インポートは平日のみ稼働）', () => {
+    const rows = toSyncImportRows(wbs);
+    expect(rows.every((r) => r.includeWeekends === false)).toBe(true);
+  });
 });

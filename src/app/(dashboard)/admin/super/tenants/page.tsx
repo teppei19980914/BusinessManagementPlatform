@@ -18,25 +18,24 @@ import {
 import { reconcileAllTenantsApiUsage } from '@/services/api-usage-recalc.service';
 
 export default async function SuperAdminTenantsListPage() {
-  const t = await getTranslations('superAdmin');
+  const t = await getTranslations('adminTenants');
   const [tenants, defaultTenant, reconciles] = await Promise.all([
     listAllTenants(),
     getDefaultTenantOwnSummary(),
     reconcileAllTenantsApiUsage(),
   ]);
   const reconcileByTenant = new Map(reconciles.map((r) => [r.tenantId, r]));
-  const apiSumTitle = t('tenantsColApiSumTitle');
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">{t('tenantsListTitle')}</h1>
+        <h1 className="text-2xl font-bold">{t('pageTitle')}</h1>
         {/* P-G (2026-05-08): 新規テナント払い出し導線 */}
         <Link
           href="/admin/super/tenants/new"
           className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-xs hover:bg-primary/90"
         >
-          {t('tenantsListNewTenantLink')}
+          {t('btnNewTenant')}
         </Link>
       </div>
 
@@ -44,14 +43,14 @@ export default async function SuperAdminTenantsListPage() {
       <DefaultTenantRow defaultTenant={defaultTenant} />
 
       <section className="space-y-2">
-        <h2 className="text-lg font-semibold">{t('tenantsListCustomerTenantsTitle')}</h2>
+        <h2 className="text-lg font-semibold">{t('customerTenantsTitle')}</h2>
         <p className="text-sm text-muted-foreground">
-          {t('tenantsListCustomerTenantsDescription')}
+          {t('customerTenantsDesc')}
         </p>
 
         {tenants.length === 0 ? (
           <p className="rounded border p-8 text-center text-muted-foreground">
-            {t('tenantsListCustomerEmpty')}
+            {t('noCustomerTenants')}
           </p>
         ) : (
           <div className="overflow-x-auto">
@@ -59,13 +58,13 @@ export default async function SuperAdminTenantsListPage() {
               <thead>
                 <tr className="border-b text-left">
                   <th className="p-2">#</th>
-                  <th className="p-2">{t('tenantsColTenantName')}</th>
-                  <th className="p-2">{t('tenantsColPlan')}</th>
-                  <th className="p-2 text-right" title={apiSumTitle}>{t('tenantsColApiCallThisMonth')}</th>
-                  <th className="p-2 text-right" title={apiSumTitle}>{t('tenantsColApiCostThisMonth')}</th>
-                  <th className="p-2 text-right" title={t('tenantsColDriftTitle')}>{t('tenantsColDrift')}</th>
-                  <th className="p-2 text-right">{t('tenantsColUserCount')}</th>
-                  <th className="p-2">{t('tenantsColCreatedAt')}</th>
+                  <th className="p-2">{t('colTenantName')}</th>
+                  <th className="p-2">{t('colPlan')}</th>
+                  <th className="p-2 text-right" title={t('colApiCallsTooltip')}>{t('colApiCalls')}</th>
+                  <th className="p-2 text-right" title={t('colApiCostTooltip')}>{t('colApiCost')}</th>
+                  <th className="p-2 text-right" title={t('colDriftTooltip')}>drift</th>
+                  <th className="p-2 text-right">{t('colUsers')}</th>
+                  <th className="p-2">{t('colCreatedAt')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -90,11 +89,7 @@ export default async function SuperAdminTenantsListPage() {
                           <Link
                             href={`/admin/super/tenants/${tenant.id}/diagnostics`}
                             className="text-red-700 hover:underline dark:text-red-300"
-                            title={t('tenantsDriftRowTitle', {
-                              counter: tenant.currentMonthApiCallCount,
-                              sum: sumCall,
-                              diff: tenant.currentMonthApiCallCount - sumCall,
-                            })}
+                            title={t('driftTitle', { counter: tenant.currentMonthApiCallCount, sum: sumCall, diff: tenant.currentMonthApiCallCount - sumCall })}
                           >
                             ⚠ {(r.driftRatio * 100).toFixed(0)}%
                           </Link>
@@ -125,28 +120,28 @@ async function DefaultTenantRow({
 }: {
   defaultTenant: DefaultTenantOwnSummary | null;
 }) {
-  const t = await getTranslations('superAdmin');
+  const t = await getTranslations('adminTenants');
   return (
     <section className="space-y-2 rounded border border-info/40 bg-info/5 p-4">
-      <h2 className="text-lg font-semibold">{t('tenantsDefaultTenantTitle')}</h2>
+      <h2 className="text-lg font-semibold">{t('defaultTenantTitle')}</h2>
       <p className="text-xs text-muted-foreground">
-        {t('tenantsDefaultTenantDescription')}
+        {t('defaultTenantDesc')}
       </p>
       {!defaultTenant ? (
         <p className="text-sm text-muted-foreground">
-          {t('tenantsDefaultTenantMissing')}
+          {t('defaultTenantNotFound')}
         </p>
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full border-collapse text-sm">
             <thead>
               <tr className="border-b text-left">
-                <th className="p-2">{t('tenantsColTenantName')}</th>
-                <th className="p-2">{t('tenantsColPlan')}</th>
-                <th className="p-2 text-right">{t('tenantsColApiCallThisMonth')}</th>
-                <th className="p-2 text-right">{t('tenantsColApiCostThisMonth')}</th>
-                <th className="p-2 text-right">{t('tenantsColUserCount')}</th>
-                <th className="p-2">{t('tenantsColCreatedAt')}</th>
+                <th className="p-2">{t('colTenantName')}</th>
+                <th className="p-2">{t('colPlan')}</th>
+                <th className="p-2 text-right">{t('colApiCalls')}</th>
+                <th className="p-2 text-right">{t('colApiCost')}</th>
+                <th className="p-2 text-right">{t('colUsers')}</th>
+                <th className="p-2">{t('colCreatedAt')}</th>
               </tr>
             </thead>
             <tbody>
@@ -169,7 +164,7 @@ async function DefaultTenantRow({
                 </td>
                 <td className="p-2 text-right">
                   ¥{defaultTenant.currentMonthApiCostJpy.toLocaleString()}
-                  <span className="ml-1 text-xs text-muted-foreground">{t('tenantsDefaultTenantNotBilled')}</span>
+                  <span className="ml-1 text-xs text-muted-foreground">{t('defaultFreeLabel')}</span>
                 </td>
                 <td className="p-2 text-right">{defaultTenant.activeUserCount}</td>
                 <td className="p-2">{defaultTenant.createdAt.toISOString().split('T')[0]}</td>
