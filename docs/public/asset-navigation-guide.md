@@ -1,4 +1,4 @@
-# 資産導線 (昇華・関連リンク・WBS完了バナー) ご利用ガイド
+﻿# 資産導線 (昇華・関連リンク・WBS完了バナー) ご利用ガイド
 
 たすきば Knowledge Relay の **資産導線** 機能のガイドです。リスク・課題・ナレッジ・振り返り・メモを「使い切り」で終わらせず、互いにつなげて再利用するための 2 つの仕組み (昇華 / 手動リンク) と、振り返りのタイミングに気づくための「WBS完了バナー」をご説明します。
 
@@ -124,7 +124,7 @@
 
 ## 関連ドキュメント
 
-- [リスク・課題 ご利用ガイド](./risk-issue-guide.md) / [ナレッジ ご利用ガイド](./knowledge-guide.md)
-- [振り返り ご利用ガイド](./retrospective-guide.md) / [メモ ご利用ガイド](./memo-guide.md)
-- [タスク・WBS ご利用ガイド](./task-wbs-guide.md)
-- [しくみ・用語ガイド](./concepts-guide.md) / [ロールと権限](./roles-permissions-guide.md)
+- [リスク・課題 ご利用ガイド](./risk-issue-guide) / [ナレッジ ご利用ガイド](./knowledge-guide)
+- [振り返り ご利用ガイド](./retrospective-guide) / [メモ ご利用ガイド](./memo-guide)
+- [タスク・WBS ご利用ガイド](./task-wbs-guide)
+- [しくみ・用語ガイド](./concepts-guide) / [ロールと権限](./roles-permissions-guide)

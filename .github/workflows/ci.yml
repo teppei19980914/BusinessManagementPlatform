@@ -1,4 +1,4 @@
-# メイン CI ワークフロー (PR #82 で有効化 / PR #83 でカバレッジ統合):
+﻿# メイン CI ワークフロー (PR #82 で有効化 / PR #83 でカバレッジ統合):
 #
 #   PR / push 時に lint / test / build を自動実行する。
 #   Stop hook (ローカル) と同等のチェックを GitHub 側でも回し、
@@ -37,15 +37,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v6
+        uses: pnpm/action-setup@b0f76dfb45f55f8421693e4803ac7bb65143bd34 # v6
         with:
           version: 10
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
           node-version: '22'
           cache: 'pnpm'
@@ -63,6 +63,15 @@ jobs:
         # docs/test/E2E_COVERAGE.md に未記載の新規 page.tsx / route.ts を検出して fail。
         # E2E 範囲の横展開漏れを構造的に防止する。
         run: pnpm e2e:coverage-check
+
+      - name: Migration sync check (schema.prisma 変更時のファイル生成漏れ検知 / v1.5.0 教訓)
+        # prisma/schema.prisma が変更されたにもかかわらず prisma/migrations/ に
+        # マイグレーションファイルが追加されていない場合に fail する。
+        # 背景: migrate deploy はファイルがなければ何もしないため、
+        #        ファイル未生成のまま main にマージされると本番 DB が未作成になり全 API が 500 になる。
+        # PR のみ実行 (push to main はすでにマージ済みのため不要)。
+        if: github.event_name == 'pull_request'
+        run: pnpm check:migration-sync origin/${{ github.base_ref }}
 
       - name: Banned auth patterns check (fix/session-clearance / PR #415)
         # NextAuth 既定 signOut の Set-Cookie 脱落で誤ユーザログイン事故が起きた

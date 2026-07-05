@@ -356,9 +356,7 @@ export function TenantSettingsClient({
           ============================================================ */}
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
-          {/* feat/collapsed-nav-screen-title (2026-06-05): 画面名「テナント設定」の見出しは撤去。
-              ナビ折りたたみ幅でのみ CollapsedNavScreenTitle (layout) が表示する (他画面と統一)。
-              テナント名 / 組織 ID の識別情報はここに残す。 */}
+          {/* 画面名「テナント設定」見出しは撤去 — CollapsedNavScreenTitle (layout) が全画面幅で表示する。テナント名 / 組織 ID の識別情報はここに残す。 */}
           <p className="text-sm text-muted-foreground">
             {t('headerTenantName', { name: info.name })}
             {info.tenantSeq != null && <span className="ml-2">{t('headerTenantSeq', { seq: info.tenantSeq })}</span>}
@@ -394,6 +392,7 @@ export function TenantSettingsClient({
           - overview: プラン / 設定 / データ管理 / 解約
           - usage   : 当月使用量 / ストレージ / 縮退モード警告
           - billing : 請求先 / 支払い方法 / 請求履歴リンク
+          - banner  : 自テナント向け帯メッセージ管理 (ADR-0037)
           ============================================================ */}
       <Tabs value={activeTab} onValueChange={handleTabChange}>
         <TabsList className="h-auto flex-wrap [&>*]:flex-none" data-testid="tenant-settings-tabs">
@@ -405,6 +404,9 @@ export function TenantSettingsClient({
           </TabsTrigger>
           <TabsTrigger value="billing" data-testid="tab-billing">
             {t('tabBilling')}
+          </TabsTrigger>
+          <TabsTrigger value="banner" data-testid="tab-banner">
+            {t('tabBanner')}
           </TabsTrigger>
         </TabsList>
 
@@ -601,6 +603,20 @@ export function TenantSettingsClient({
               className="inline-flex items-center justify-center rounded-md border bg-background px-3 py-1.5 text-sm font-medium shadow-xs hover:bg-muted/30"
             >
               {t('billingHistoryLink')}
+            </Link>
+          </section>
+        </TabsContent>
+
+        {/* --- バナータブ (ADR-0037) --- */}
+        <TabsContent value="banner" className="mt-4 space-y-6">
+          <section className="rounded border p-4 text-sm">
+            <h2 className="mb-2 text-lg font-semibold">{t('tabBanner')}</h2>
+            <p className="mb-4 text-muted-foreground">{t('bannerTabDescription')}</p>
+            <Link
+              href="/settings/tenant/banners"
+              className="inline-flex items-center justify-center rounded-md border bg-background px-3 py-1.5 text-sm font-medium shadow-xs hover:bg-muted/30"
+            >
+              {t('bannerTabManageLink')}
             </Link>
           </section>
         </TabsContent>
@@ -1547,7 +1563,7 @@ function DataImportSection() {
           />
           {file && (
             <p className="mt-1 text-xs text-muted-foreground">
-              {t('dataImportZipFileSelected', { name: file.name, sizeKb: Math.round(file.size / 1024).toLocaleString() })}
+              {t('dataImportZipFileSelected', { fileName: file.name, sizeKb: Math.round(file.size / 1024).toLocaleString() })}
             </p>
           )}
         </div>

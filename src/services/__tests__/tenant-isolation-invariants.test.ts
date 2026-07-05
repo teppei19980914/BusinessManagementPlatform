@@ -395,6 +395,8 @@ const TENANT_AGNOSTIC_MODELS = new Set([
   // 冪等性確保が責務。テナント解決はハンドラ内で event payload から行うため、本テーブル自体に
   // tenantId 列はない (= 越境リスクなし、global event log)。
   'stripeWebhookEvent',
+  // v1.5.0 アイデア出し機能: upvote は thread 経由でテナント確認済の後に threadId_userId で操作
+  'ideaQaUpvote',
 ]);
 
 /** 越境を許す model (super_admin 専用集計など、CROSS_TENANT_ALLOWED_FILES とセット運用) */

@@ -268,6 +268,61 @@ export async function generateDailyNotifications(now: Date = new Date()): Promis
   return { endCreated: endResult.count };
 }
 
+// ============================================================
+// 資産共有通知 (v1.5.0)
+// ============================================================
+
+/**
+ * 公開資産を指定ユーザに共有する通知を一括生成する (POST /api/assets/share 経由)。
+ *
+ * 設計:
+ *   - entityType は 'knowledge' | 'risk' | 'issue' | 'retrospective' | 'memo' の 5 種。
+ *   - 通知 link は entity-link.ts の buildEntityCommentLink() と同一パターン
+ *     (全○○画面の `?{type}Id={id}` deep link)。呼出側で事前構築して渡す。
+ *   - dedupeKey は `asset_share:{entityType}:{entityId}:{recipientUserId}:{Date.now()}` で
+ *     ミリ秒タイムスタンプを付与し UNIQUE 制約を満たしつつ重複防止なし (ユーザ意図の再共有を許容)。
+ *   - 送信者自身が recipientUserIds に含まれていた場合は自動除外 (エラーにしない)。
+ *   - createMany + skipDuplicates で dedupeKey 衝突を安全に処理する (ミリ秒衝突は実質起きないが防衛)。
+ *
+ * @returns 実際に生成した通知件数
+ */
+export async function shareAsset(params: {
+  entityType: 'knowledge' | 'risk' | 'issue' | 'retrospective' | 'memo';
+  entityId: string;
+  senderUserId: string;
+  senderDisplayName: string;
+  recipientUserIds: string[];
+  assetTitle: string;
+  link: string;
+  tenantId: string;
+}): Promise<{ count: number }> {
+  const { entityType, entityId, senderUserId, senderDisplayName, recipientUserIds, assetTitle, link, tenantId } = params;
+
+  // 送信者自身を除外
+  const targets = recipientUserIds.filter((id) => id !== senderUserId);
+  if (targets.length === 0) return { count: 0 };
+
+  const now = Date.now();
+  const title = `${senderDisplayName}さんが「${assetTitle}」を共有しました`;
+  // Notification.title VARCHAR(200) 制限を超えた場合に切り詰める
+  const safeTitle = title.length <= 200 ? title : `${title.slice(0, 198)}…`;
+
+  const data = targets.map((userId, i) => ({
+    tenantId,
+    userId,
+    type: 'asset_share' as const,
+    entityType,
+    entityId,
+    title: safeTitle,
+    link,
+    // ミリ秒 + index で同一バッチ内の重複も防ぐ
+    dedupeKey: `asset_share:${entityType}:${entityId}:${userId}:${now}:${i}`,
+  }));
+
+  const result = await prisma.notification.createMany({ data, skipDuplicates: true });
+  return { count: result.count };
+}
+
 /**
  * 既読 + readAt が 30 日以上前の通知を物理削除する。日次 cron 内で同時実行。
  * MVP は 30 日固定。将来要望次第でユーザ設定化検討。

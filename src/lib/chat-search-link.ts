@@ -37,6 +37,7 @@
  */
 
 import type { ChatSearchHit } from '@/services/chat-search.service';
+import type { ProjectChatSearchHit } from '@/services/project-chat-search.service';
 
 export interface BuildChatHitLinkOptions {
   /** ログイン中ユーザの id。memo の自分/他人 判定に使用。 */
@@ -73,6 +74,46 @@ export function buildChatHitLink(
     default: {
       const _exhaustive: never = hit.kind;
       throw new Error(`Unknown chat hit kind: ${String(_exhaustive)}`);
+    }
+  }
+}
+
+/**
+ * プロジェクトスコープ意味検索 (PJ内から探す) のヒット → 遷移 URL を生成する。
+ *
+ * 振り分けルール:
+ *   - knowledge / risk / issue / retrospective: グローバル一覧 (auto-open) と同じ URL パターン。
+ *       ※ プロジェクト配下の各ページには useAutoOpenDialog がないため。
+ *   - qa_thread / whiteboard_session / voting_session: プロジェクト詳細 ?tab=tools に遷移。
+ *       ※ アイデアツールはプロジェクト詳細画面のツールタブ内にのみ存在する。
+ *
+ * @param hit   プロジェクトスコープ検索結果の 1 件
+ * @param projectId  対象プロジェクト ID (idea 系の deep link に使用)
+ */
+export function buildProjectChatHitLink(
+  hit: ProjectChatSearchHit,
+  projectId: string,
+): string {
+  const id = encodeURIComponent(hit.id);
+  const pid = encodeURIComponent(projectId);
+  switch (hit.kind) {
+    case 'knowledge':
+      return `/knowledge?knowledgeId=${id}`;
+    case 'risk':
+      return `/risks?riskId=${id}`;
+    case 'issue':
+      return `/issues?riskId=${id}`;
+    case 'retrospective':
+      return `/retrospectives?retroId=${id}`;
+    case 'qa_thread':
+      return `/projects/${pid}?tab=tools&ideaTab=qa`;
+    case 'whiteboard_session':
+      return `/projects/${pid}?tab=tools&ideaTab=whiteboard`;
+    case 'voting_session':
+      return `/projects/${pid}?tab=tools&ideaTab=live`;
+    default: {
+      const _exhaustive: never = hit.kind;
+      throw new Error(`Unknown project chat hit kind: ${String(_exhaustive)}`);
     }
   }
 }

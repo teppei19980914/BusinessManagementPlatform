@@ -69,7 +69,7 @@ PR 本文には以下を含めると後の引き継ぎがスムーズです:
 1. [`CHANGELOG.md`](../../../CHANGELOG.md) の新バージョンエントリを追記 (Keep a Changelog 形式)
 2. [`package.json`](../../../package.json) の `version` を bump
 3. Netlify Site settings で `NEXT_PUBLIC_RELEASE_DATE` をリリース日に更新
-4. 告知が必要なら [`docs/public/announcements/{YYYY-MM-DD}-{slug}.md`](../../public/announcements/) を新規作成
+4. 告知が必要なら [`docs/public/announcements/{YYYY-MM-DD}-{slug}.md`](../../public/announcements/) を新規作成（本文内でガイドへリンクする場合は `./` 相対パスではなく `/guide/slug` 絶対パスを使用）
 5. 本番 deploy 後に `/changelog` (ヘッダ AccountMenu「バージョンアップ情報」経由) と `/announcements` を目視で反映確認 (`/settings/about` は ADR-0031 で廃止済)
 
 **完全な手順とチェックリストは [docs/operations/RELEASE_PROCEDURE.md](./RELEASE_PROCEDURE.md) を参照**。

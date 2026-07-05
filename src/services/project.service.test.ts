@@ -44,6 +44,10 @@ vi.mock('@/lib/db', () => {
     projectMember: { deleteMany: vi.fn() },
     attachment: { updateMany: vi.fn(), deleteMany: vi.fn() },
     suggestionExplanation: { deleteMany: vi.fn() },
+    // v1.5.0: プロジェクトクローズ時のカスケードクローズ用
+    ideaVotingSession: { updateMany: vi.fn().mockResolvedValue({ count: 0 }) },
+    ideaWhiteboardSession: { updateMany: vi.fn().mockResolvedValue({ count: 0 }) },
+    ideaQaThread: { updateMany: vi.fn().mockResolvedValue({ count: 0 }) },
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     $transaction: vi.fn(async (arg: any) => {
       if (typeof arg === 'function') {
@@ -359,6 +363,47 @@ describe('createProject / getProject / updateProject / deleteProject', () => {
     await updateProject('p-1', { status: 'planning' }, 'u-1', TEST_TENANT_ID);
     const call = getMockCallArg(vi.mocked(prisma.project.update));
     expect(call.data.status).toBe('planning');
+  });
+
+  // v1.5.0 カスケードクローズ: updateProject が UI の実際の status 変更経路
+  it('updateProject: status=closed への遷移時: 投票/ホワイトボード/Q&A を一括カスケードクローズする (v1.5.0)', async () => {
+    vi.mocked(prisma.project.findFirst).mockResolvedValue({
+      purpose: 'p', background: 'b', scope: 's',
+      businessDomainTags: [], techStackTags: [], processTags: [],
+    } as never);
+    vi.mocked(prisma.project.update).mockResolvedValue(pRow({ status: 'closed' }) as never);
+    vi.mocked(prisma.ideaVotingSession.updateMany).mockResolvedValue({ count: 2 } as never);
+    vi.mocked(prisma.ideaWhiteboardSession.updateMany).mockResolvedValue({ count: 1 } as never);
+    vi.mocked(prisma.ideaQaThread.updateMany).mockResolvedValue({ count: 3 } as never);
+
+    await updateProject('p-1', { status: 'closed' }, 'u-1', TEST_TENANT_ID);
+
+    expect(prisma.ideaVotingSession.updateMany).toHaveBeenCalledWith({
+      where: { projectId: 'p-1', tenantId: TEST_TENANT_ID, status: 'active', deletedAt: null },
+      data: expect.objectContaining({ status: 'closed', closedAt: expect.any(Date) }),
+    });
+    expect(prisma.ideaWhiteboardSession.updateMany).toHaveBeenCalledWith({
+      where: { projectId: 'p-1', tenantId: TEST_TENANT_ID, status: 'active', deletedAt: null },
+      data: expect.objectContaining({ status: 'closed', closedAt: expect.any(Date) }),
+    });
+    expect(prisma.ideaQaThread.updateMany).toHaveBeenCalledWith({
+      where: { projectId: 'p-1', tenantId: TEST_TENANT_ID, status: 'open', deletedAt: null },
+      data: { status: 'closed' },
+    });
+  });
+
+  it('updateProject: status が closed 以外の場合はカスケードクローズを実行しない', async () => {
+    vi.mocked(prisma.project.findFirst).mockResolvedValue({
+      purpose: 'p', background: 'b', scope: 's',
+      businessDomainTags: [], techStackTags: [], processTags: [],
+    } as never);
+    vi.mocked(prisma.project.update).mockResolvedValue(pRow({ status: 'executing' }) as never);
+
+    await updateProject('p-1', { status: 'executing' }, 'u-1', TEST_TENANT_ID);
+
+    expect(prisma.ideaVotingSession.updateMany).not.toHaveBeenCalled();
+    expect(prisma.ideaWhiteboardSession.updateMany).not.toHaveBeenCalled();
+    expect(prisma.ideaQaThread.updateMany).not.toHaveBeenCalled();
   });
 
   // ========================================================
@@ -987,6 +1032,52 @@ describe('changeProjectStatus', () => {
         data: expect.objectContaining({ status: 'estimating', updatedBy: 'u-1' }),
       }),
     );
+  });
+
+  it('closed への遷移時: 投票/ホワイトボード/Q&A を一括カスケードクローズする', async () => {
+    vi.mocked(prisma.project.findFirst).mockResolvedValue(pRow({ status: 'executing' }) as never);
+    vi.mocked(canTransition).mockReturnValue({ allowed: true });
+    vi.mocked(prisma.project.update).mockResolvedValue(pRow({ status: 'closed' }) as never);
+    vi.mocked(prisma.ideaVotingSession.updateMany).mockResolvedValue({ count: 2 } as never);
+    vi.mocked(prisma.ideaWhiteboardSession.updateMany).mockResolvedValue({ count: 1 } as never);
+    vi.mocked(prisma.ideaQaThread.updateMany).mockResolvedValue({ count: 3 } as never);
+
+    const r = await changeProjectStatus('p-1', 'closed', 'u-1', TEST_TENANT_ID);
+    expect(r.status).toBe('closed');
+
+    // 投票セッションを active → closed に一括クローズ
+    expect(prisma.ideaVotingSession.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ projectId: 'p-1', tenantId: TEST_TENANT_ID, status: 'active', deletedAt: null }),
+        data: expect.objectContaining({ status: 'closed' }),
+      }),
+    );
+    // ホワイトボードセッションを active → closed に一括クローズ
+    expect(prisma.ideaWhiteboardSession.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ projectId: 'p-1', tenantId: TEST_TENANT_ID, status: 'active', deletedAt: null }),
+        data: expect.objectContaining({ status: 'closed' }),
+      }),
+    );
+    // Q&A スレッドを open → closed に一括クローズ
+    expect(prisma.ideaQaThread.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ projectId: 'p-1', tenantId: TEST_TENANT_ID, status: 'open', deletedAt: null }),
+        data: expect.objectContaining({ status: 'closed' }),
+      }),
+    );
+  });
+
+  it('closed 以外への遷移時: カスケードクローズを実行しない', async () => {
+    vi.mocked(prisma.project.findFirst).mockResolvedValue(pRow({ status: 'planning' }) as never);
+    vi.mocked(canTransition).mockReturnValue({ allowed: true });
+    vi.mocked(prisma.project.update).mockResolvedValue(pRow({ status: 'executing' }) as never);
+
+    await changeProjectStatus('p-1', 'executing', 'u-1', TEST_TENANT_ID);
+
+    expect(prisma.ideaVotingSession.updateMany).not.toHaveBeenCalled();
+    expect(prisma.ideaWhiteboardSession.updateMany).not.toHaveBeenCalled();
+    expect(prisma.ideaQaThread.updateMany).not.toHaveBeenCalled();
   });
 });
 

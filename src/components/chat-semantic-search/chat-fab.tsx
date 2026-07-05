@@ -20,15 +20,28 @@
 
 import { useEffect, useState } from 'react';
 import Image from 'next/image';
+import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import { CHAT_PERSONA } from '@/config';
 import { OPEN_HELP_CHAT_EVENT } from '@/lib/open-help-chat';
 import { ChatPanel } from './chat-panel';
 
+/**
+ * 現在のパスが `/projects/[projectId]` (またはその配下) なら projectId を返す。
+ * プロジェクト詳細画面でのみ「PJ内から探す」タブを有効化するために使用する。
+ */
+function useProjectIdFromPath(): string | undefined {
+  const pathname = usePathname();
+  // /projects/[projectId] または /projects/[projectId]/... にマッチ
+  const match = pathname?.match(/^\/projects\/([^/]+)(?:\/|$)/);
+  return match?.[1] ?? undefined;
+}
+
 const FAB_SIZE_PX = 64;
 
 export function ChatSemanticSearchFab() {
   const [open, setOpen] = useState(false);
+  const projectId = useProjectIdFromPath();
 
   // G2-e-3 (2026-05-31): オンボーディングモーダル等から「ヘルプ・ガイド」タブで
   //   チャットを開く要求 (requestOpenHelpChat) を購読する。mode は sessionStorage 経由で
@@ -81,7 +94,7 @@ export function ChatSemanticSearchFab() {
           />
         </button>
       )}
-      {open && <ChatPanel onClose={() => setOpen(false)} />}
+      {open && <ChatPanel onClose={() => setOpen(false)} projectId={projectId} />}
     </>
   );
 }

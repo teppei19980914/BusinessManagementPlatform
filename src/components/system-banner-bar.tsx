@@ -62,7 +62,10 @@ export function SystemBannerBar({ banner }: SystemBannerBarProps) {
       className={`border-b px-4 py-2 text-sm ${BANNER_SEVERITY_CLASSES[banner.severity]}`}
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex-1"><MarkdownDisplay value={banner.message} /></div>
+        {/* バナー背景 (赤/青) と text-info (青) が同系色になりリンクが不可視になるのを防ぐ。
+            MarkdownDisplay 内の <a> は text-info で固定されているため、親側で currentColor
+            (= バナーの text-white / text-yellow-950) に上書きする (v1.3.0 の実績パターン)。 */}
+        <div className="flex-1 [&_a]:text-current [&_a]:font-semibold"><MarkdownDisplay value={banner.message} /></div>
         <button
           type="button"
           onClick={handleClose}

@@ -44,20 +44,22 @@ flowchart TD
     ADMIN --> ROLE_HIST[権限変更履歴]
 ```
 
-### 11.2 プロジェクト詳細のタブ構成
+### 11.2 プロジェクト詳細のタブ構成 (v1.5.0 2階層タブ)
 
-プロジェクト詳細画面はハブ画面として機能し、以下のタブで各機能に遷移する。
+v1.5.0 より親タブ＋サブタブの 2 階層構成に変更。PC/Mobile 共通でサブタブ表示 (旧 dropdown 廃止)。
 
-| タブ | パス | 表示条件 |
+| 親タブ | サブタブ | 表示条件 |
 |---|---|---|
-| 概要 | /projects/:id | 常時表示 |
-| 見積もり | /projects/:id/estimates | admin, pm_tl のみ |
-| WBS管理 | /projects/:id/tasks | 常時表示 |
-| 進捗確認 (ガント表示 + 担当者別確認、旧称: ガントチャート) | /projects/:id/gantt | 常時表示 |
-| リスク/課題 | /projects/:id/risks | 常時表示 |
-| ナレッジ | /projects/:id/knowledge | 常時表示 |
-| 振り返り | /projects/:id/retrospectives | 完了以降表示 |
-| メンバー | /projects/:id/members | admin, pm_tl のみ |
+| 概要 | — | 常時表示 |
+| 見積もり | — | admin/pm_tl のみ |
+| 進捗管理 | WBS管理 / 進捗確認 | 常時表示 |
+| 資産 | リスク一覧 / 課題一覧 / 振り返り一覧 / ナレッジ一覧 | 常時表示 |
+| 参考情報 | 稼働分析 / 提案 | admin/pm_tl のみ |
+| ツール | ライブ投票 / 事前投票 / ホワイトボード / 匿名FAQ | 常時表示 |
+| メンバー | — | admin/pm_tl のみ (close 済みでも閲覧可、canManage=false で追加/編集ボタン非表示) |
+| ステークホルダー | — | admin/pm_tl のみ |
+
+**URL 後方互換**: `?tab=tasks` → 進捗管理 (WBS管理 サブタブ)、`?tab=gantt` → 進捗管理 (進捗確認 サブタブ)、`?tab=risks` 等 → 資産 (各サブタブ)。
 
 ---
 
@@ -1807,7 +1809,7 @@ super_admin / テナント管理者のダッシュボードで「DB 容量」「
 | **MarkdownDisplay / MarkdownRenderInner** ([`ui/markdown-textarea.tsx`](../../src/components/ui/markdown-textarea.tsx) export / [`ui/markdown-render-inner.tsx`](../../src/components/ui/markdown-render-inner.tsx)) | read-only で Markdown を描画 (all-memos 詳細 dialog / project-detail 概要タブで再利用)。`MarkdownRenderInner` は react-markdown + remark-gfm + remark-breaks (~150KB) を `next/dynamic` (`ssr: true`) で別 chunk 化し、Markdown を含むときだけロード (PR-2 perf 2026-05-29) | `MarkdownDisplay({ value, className? })`。XSS 対策で raw HTML 不許可、改行は `<br>` 変換 (remark-breaks) |
 | **SearchableSelect** ([`ui/searchable-select.tsx`](../../src/components/ui/searchable-select.tsx)) | 項目数が多い / 増える Select の代替 (PR #126)。Base UI Combobox ベース。検索欄は **viewport 高さの 50% に収まらない件数のときのみ** 動的表示 (`computeThreshold`)。ユーザ / メンバー / 顧客選択、および **WBS タスク作成・編集・一括複製ダイアログの親 WP 選択 (v1.4.0)** に採用。固定件数 select は従来の `<Select>` 維持 | `value` / `onValueChange` / `options: {value, label, disabled?}[]` / `placeholder?` / `disabled?` / `id?` / `aria-label?` / `className?`。フィルタは `includes()` ベース (ReDoS 回避)。階層インデントは全角スペースをラベル先頭に付与して表現 |
 | **EntitySyncImportDialog** ([`dialogs/entity-sync-import-dialog.tsx`](../../src/components/dialogs/entity-sync-import-dialog.tsx)) | §33 の WBS 専用 sync-import を **flat entity 向けに一般化** した汎用ダイアログ (T-22 Phase 22a)。risks / retrospectives / knowledge / memos の sync-import を共通化。WBS 版 (`wbs-sync-import-dialog.tsx`) から階層関連ロジックを除いた版で、entity 種別を prop で受けて使い回す | `apiBasePath` / `i18nNamespace` / `open` / `onOpenChange` / `onImported`。2 ステップ UX (`?dryRun=1` プレビュー → 確定実行)、削除モード (keep/warn/delete)、DB 容量事前判定パネル (`StoragePrecheckPanel`、Beginner block / L3 block で実行拒否) を内包 |
-| **AppHeader** ([`app-header.tsx`](../../src/components/app-header.tsx)) | 全画面共通ヘッダ (feat/app-header-footer-unification 2026-05-24、旧 DashboardHeader 等 3 系統を統合)。`user: AppHeaderUser \| null` で表示切替 (ログイン後=ナビ + NotificationBell + AccountMenu / ログイン前=アプリ名 + ログイン導線) | `sticky top-0 z-40` + auto-hide (下スクロールで隠れ上スクロールで再表示、先頭 64px は常時 visible)。dropdown 開放中は auto-hide 抑止 (`HeaderMenuContext` + `useReportHeaderMenuOpen`)。flat ↔ 3 分類 dropdown の切替 breakpoint は `xl:` (1280px)。adminOnly / superAdminOnly / visibleToSuperAdmin の 3 フラグで項目出し分け。**dropdown 折りたたみ幅 (xl: 未満) では active 項目が見えないため、画面名を `CollapsedNavScreenTitle` で補完表示する (§38.10)** |
+| **AppHeader** ([`app-header.tsx`](../../src/components/app-header.tsx)) | 全画面共通ヘッダ (feat/app-header-footer-unification 2026-05-24、旧 DashboardHeader 等 3 系統を統合)。`user: AppHeaderUser \| null` で表示切替 (ログイン後=ナビ + NotificationBell + AccountMenu / ログイン前=アプリ名 + ログイン導線) | `sticky top-0 z-40` + auto-hide (下スクロールで隠れ上スクロールで再表示、先頭 64px は常時 visible)。dropdown 開放中は auto-hide 抑止 (`HeaderMenuContext` + `useReportHeaderMenuOpen`)。**v1.5.0 より画面幅によらず常時グループ dropdown 表示に統一** (旧 xl: ブレークポイントによる flat/dropdown 切替は廃止)。adminOnly / superAdminOnly / visibleToSuperAdmin の 3 フラグで項目出し分け。**dropdown では active 項目が見えないため、画面名を `CollapsedNavScreenTitle` で常時補完表示する (§38.10)** |
 | **AppFooter** ([`app-footer.tsx`](../../src/components/app-footer.tsx)) | 全画面共通フッタ (Server Component)。root layout の children の後に `mt-auto` で配置。**ADR-0031 (2026-05-31) で認証状態 2 層出し分けに全面改修**: ① **共通情報** (ログイン前後で常時表示) = 製品ページ / 利用規約 / プライバシーポリシー / 運営者情報 / 特定商取引法に基づく表記、すべて外部 LP (tasukiba-user) の各アンカーへ集約 (`target="_blank"`)。② **ログイン後限定** (`isAuthenticated` のみ) = お知らせ (アプリ内 `/announcements`、next/link) / セキュリティ報告 (LP `#security`)。旧「© copyright + 最終更新日 + サービス情報 (`/settings/about`)」は全廃し、バージョン / 更新履歴はヘッダ AccountMenu「バージョンアップ情報」(→ `/changelog`) へ移設。`/settings/about` ページは削除済 | `isAuthenticated: boolean` (root layout が `auth()` で解決、MFA 未検証=false=共通情報のみ)。`data-authenticated` 属性で状態を露出。**auto-hide 対象外** (fixed/sticky でなく document 末尾。下スクロール時は既に画面外のため「隠す」対象なし)。fixed-bottom 化する場合は ChatFab (fixed bottom-4) / Toast (fixed bottom-0 z-50) との重なり調整が必須。詳細は [ADR-0031](../adr/0031-footer-auth-aware-and-about-removal.md) |
 
 ---
@@ -1843,7 +1845,7 @@ super_admin / テナント管理者のダッシュボードで「DB 容量」「
 | 個人 | 設定 | `SETTINGS_ROUTE` (`/settings`) | 個人設定 (アカウント情報 / 画面テーマ / パスワード変更 / MFA。言語・TZ はテナント設定へ移管済) |
 | ヘルプ | 📘 使い方ガイド | `GUIDE_ROUTE` (`/guide`) | ロール別 audience フィルタ |
 | ヘルプ | ❓ よくある質問 | `HELP_ROUTE` (`/help`) | visibleTo フィルタ |
-| 情報 | 🆕 バージョンアップ情報 | `/changelog` | 旧フッタ/`/settings/about` から移設 (ADR-0031)。ログイン後のみ到達 |
+| 情報 | 🆕 バージョンアップ情報 | `/changelog` | 旧フッタ/`/settings/about` から移設 (ADR-0031)。ログイン後のみ到達。各機能名リンクは `/guide/[slug]` (公開ページ、認証不要) を別タブで開く |
 | 外部 | 🌐 サービス紹介ページ | `PRODUCT_LP_URL` (別タブ) | 公開 LP |
 | 外部 | 💬 Discord | `getDiscordInviteUrl()` (別タブ) | **招待 URL が設定されている時のみ表示** (条件付き) |
 | 認証 | ログアウト | `POST /api/auth/explicit-signout` → `/login` | NextAuth 既定 `signOut()` は Netlify で Set-Cookie 脱落の罠があるため、**自前 route で tokenVersion increment + cookie 削除**。応答 OK を確認してから遷移 ([[feedback_session_clearance_pattern]]) |
@@ -1852,12 +1854,12 @@ super_admin / テナント管理者のダッシュボードで「DB 容量」「
 - a11y: トリガの `aria-label` にロールラベルを含め、開く前に screen reader で身元判別可能。
 - 公開向け説明は [public/screen-reference.md](../../docs/public/screen-reference.md) §6、FAQ/ガイド `account-menu-overview`。
 
-### 38.10 ナビ折りたたみ時の画面名表示 (CollapsedNavScreenTitle, feat/collapsed-nav-screen-title 2026-06-05)
+### 38.10 画面名表示 (CollapsedNavScreenTitle, feat/collapsed-nav-screen-title 2026-06-05 / v1.5.0 更新)
 
-ヘッダのナビは `xl:` (1280px) 未満で **flat → 3 分類 dropdown** に折りたたまれる (§38 AppHeader / `groupedBreakpointClass = 'flex xl:hidden'`)。dropdown では active な nav 項目がラベルとして見えず、**今どの画面を開いているか分かりにくい**。これを補うため、ナビが折りたたまれる幅でだけ画面名を表示する。
+ヘッダのナビは v1.5.0 より**常時グループ dropdown** に統一された (§38 AppHeader)。dropdown では active な nav 項目がグループラベル (「プロジェクト▼」等) として見えるが、具体的な画面名は見えにくいため、**画面上部に現在の画面名を常時表示する**。
 
 - **コンポーネント**: [`src/components/collapsed-nav-screen-title.tsx`](../../src/components/collapsed-nav-screen-title.tsx) (Client、`usePathname()`)。
-- **表示条件**: `xl:hidden` で **xl: 未満のときだけ表示** (flat ナビで active 項目が直接見える xl: 以上では非表示)。AppHeader の `groupedBreakpointClass` と breakpoint を一致させている。
+- **表示条件**: **全画面幅で常時表示** (v1.5.0 で `xl:hidden` を撤廃。旧実装は xl: 未満のみ表示だったが、ナビが常時 dropdown に統一されたため全幅で表示)。
 - **配置 (UI 統一)**: dashboard layout の `<main>` 先頭に置き、**全画面で同じ位置** (コンテンツ最上部) に出す。画面側で個別の見出しを持つ必要はない。
 - **単一ソース化 (2026-06-05)**: 本コンポーネントを唯一の画面名表示源とし、各画面が個別に持っていた**常時表示の画面見出しは撤去**した (例: 個人設定 `設定` / マイタスク `マイタスク` / テナント設定 `テナント設定` の `<h1>/<h2>`)。これにより「広い幅 = ナビの active タブが現在地を示す → 画面見出し不要」「狭い幅 = 本コンポーネントが補完」を全画面で統一。撤去でロード確認用 testid (`account-info-section` / `my-tasks-screen` / `tenant-settings-slug` 等) に依存する E2E は heading assertion から testid assertion へ移行済。
   - **視覚回帰**: 画面見出し撤去で settings 系の desktop baseline、本コンポーネント追加で全 dashboard 画面の **mobile baseline** が変化するため、導入時は `[gen-visual]` でベースライン再生成が必須。
@@ -1932,11 +1934,43 @@ WBS 画面で ACT (Activity) を作成・編集する際、担当者の **1 人 
 - **タスク**: 説明・備考は MarkdownTextarea のプレビューで `MarkdownDisplay` 経由。
 - **対象外 (意図的)**: 見積 notes (テーブルで truncate 表示) — 切り詰め表示でリンク化は不適。
 
-### 40.5 セキュリティ
+### 40.5 有色背景コンテキストでのリンク色オーバーライド (必須)
 
-react-markdown は raw HTML を許可せず、プレーン経路も `linkifyNodes` が `<a>` のみ生成するため、本文の HTML/スクリプトは実行されない。リンクは `rel="noopener noreferrer"` + `target="_blank"`。
+`MarkdownDisplay` / `linkifyNodes` が生成する `<a>` 要素は `text-info`
+(`oklch(0.55 0.18 240)` ≈ blue-600) で固定されている。**白/灰背景では問題ないが、
+有色背景 (赤・青・黄 等) の上に重ねると WCAG AA のコントラスト比 (4.5:1) を下回る
+おそれがある。**
 
-### 40.6 ADR 要否
+**ルール**: `MarkdownDisplay` または `linkifyNodes` を有色背景コンポーネント内で
+使う場合は、**必ず親要素に `[&_a]:text-current` を付与**し、バナーの文字色
+(`text-white` / `text-yellow-950` 等) をリンクに継承させること。
+
+```tsx
+// ✅ 有色背景内 — [&_a]:text-current で継承
+<div className="bg-blue-600 text-white">
+  <div className="[&_a]:text-current [&_a]:font-semibold">
+    <MarkdownDisplay value={message} />
+  </div>
+</div>
+
+// ❌ 有色背景内でそのまま使う — text-info が blue-on-blue になり不可視
+<div className="bg-blue-600 text-white">
+  <div><MarkdownDisplay value={message} /></div>
+</div>
+```
+
+**実績**: `system-banner-bar.tsx` (ADR-0036) が `[&_a]:text-current [&_a]:font-semibold`
+を付与している。v1.4.0 の Markdown 対応切り替え時にこの override を外したことで
+デグレが発生したため、[ADR-0036](../adr/0036-system-broadcast-banner.md) に教訓として記録済。
+
+**自動検出**: `e2e/specs/21-system-banner.spec.ts` が `@axe-core/playwright` で
+`color-contrast` ルールを自動検査し、同種のデグレを CI で検知する。
+
+### 40.6 セキュリティ
+
+react-markdown は raw HTML を許可せず、プレーン経路も `linkifyNodes` が `<a>` のみ生成するため、本文の HTML/スクリプトは実行されない。リンクの `target` は `href` の種別で出し分ける: 同一ページ内アンカー (`#...`) はそのままスクロール、それ以外は `target="_blank" rel="noopener noreferrer"` で新タブ表示。
+
+### 40.7 ADR 要否
 
 本機能は既存の MarkdownDisplay/MarkdownTextarea 基盤に表示ヘルパを 1 つ足す **UI レンダリング規約**であり、データモデル変更や後戻りしにくいアーキテクチャ判断を含まない (タスク備考欄も既存カラム `Task.notes` の UI 露出にすぎない)。よって **ADR は作成せず、本 §40 を設計上の正本**とする。
 
@@ -1983,9 +2017,109 @@ v1.4.0 でコメント / 顧客ノート / システムバナーへの Markdown 
 
 ### 41.4 XSS 安全性
 
-react-markdown は raw HTML 挿入 API を使わない設計になっている。`rehype-raw` を組み込んでいないため、ユーザ入力の HTML タグは文字列として表示され実行されない。リンクは `target="_blank" rel="noopener noreferrer"` が自動付与される。
+react-markdown は raw HTML 挿入 API を使わない設計になっている。`rehype-raw` を組み込んでいないため、ユーザ入力の HTML タグは文字列として表示され実行されない。リンクは `href` が `#` で始まる同一ページ内アンカーはそのままスクロール、それ以外は `target="_blank" rel="noopener noreferrer"` で新タブ表示。
 
 ### 41.5 パフォーマンス
 
 `isMarkdown()` 分岐により、Markdown 構文が含まれないテキスト (URL のみ / プレーン文章) では react-markdown chunk を読み込まず `linkifyNodes` の軽量パスを通る。`MarkdownRenderInner` は `next/dynamic` で遅延ロードされ、初回レンダリングのバンドルサイズに影響しない (§40.3 perf 方針を維持)。
+
+---
+
+## DESIGN §42. 画面上部バナー帯 (SystemBanner / TenantBanner) の統合パターン (v1.5.0)
+
+[ADR-0036](../adr/0036-system-broadcast-banner.md) (システム周知バナー) と [ADR-0037](../adr/0037-tenant-banner.md) (テナントバナー) の両バナーを `dashboard/layout.tsx` で統合表示する設計を本節に記録する。
+
+### 42.1 コンポーネント共用
+
+`SystemBannerBar` ([src/components/system-banner-bar.tsx](../../src/components/system-banner-bar.tsx)) は **SystemBanner と TenantBanner の両方**をレンダリングする共有コンポーネント。props 型は `{ id: string; message: string; severity: BannerSeverity }` で、バナー種別を問わない汎用設計。
+
+### 42.2 取得と表示優先度 (layout.tsx)
+
+`src/app/(dashboard)/layout.tsx` の `Promise.all` で 2 種を**並列** SSR 取得し、severity の重みで降順ソートして上から描画する。
+
+```typescript
+const SEVERITY_WEIGHT: Record<BannerSeverity, number> = { high: 3, medium: 2, low: 1 };
+
+bannerQueue.sort((a, b) => {
+  const diff = SEVERITY_WEIGHT[b.severity] - SEVERITY_WEIGHT[a.severity];
+  return diff !== 0 ? diff : (a._sys ? -1 : 1); // 同 severity は SystemBanner が上
+});
+```
+
+### 42.3 最大同時表示数
+
+- SystemBanner: テナント横断で最大 1 本 (1 本制約)
+- TenantBanner: テナント内で最大 1 本 (1 本制約)
+- 同時表示: 最大 2 本 (system + tenant) → ヘッダー下に 2 段になる
+
+### 42.4 ×閉じと再表示
+
+いずれのバナーも `banner-dismiss-storage.ts` (sessionStorage + userId スコープ) で閉じ状態を管理する。`bannerId` をキーとするため、両種を区別なく同一ロジックで処理できる。再ログイン後は再表示される。
+
+### 42.5 管理 UI
+
+| バナー種別 | 管理ページ | 権限 |
+|---|---|---|
+| SystemBanner | `/admin/super/banners/` | super_admin |
+| TenantBanner | `/settings/tenant/banners/` | tenant_admin (`systemRole === 'admin'`) |
+
+TenantBanner 管理ページは `/settings/tenant?tab=banner` の「バナー」タブから誘導される (4 番目のタブ)。
+
+## DESIGN §43. WP 担当者集約・複数担当者 +N 表示パターン (v1.5.0)
+
+## 43. WP 担当者集約・複数担当者 +N 表示パターン (v1.5.0)
+
+WP (Work Package) は直接の子タスクの担当者を 1 階層下だけ集約し、担当者列に表示する。ACT は直接入力された担当者を表示する。
+
+### 43.1 集約ルール
+
+| 子の状態 | 親 WP の担当者 (`assigneeId`) | 表示テキスト (`assigneeDisplayText`) |
+|---|---|---|
+| 子が 0 件 | `null` | `null` |
+| 子が全員同一担当者 (例: 全員 user-A) | `user-A` の ID | `null` (通常の担当者名を表示) |
+| 子に 2 名以上の異なる担当者 | `null` | `"田中 +N"` (N = 担当者数 - 1) |
+| 子が全員未アサイン (`null`) | `null` | `null` |
+| 子の一部が未アサイン、一部がアサイン済 | `null` | `null` (担当者が混在扱い) |
+
+- **集約深度は 1 階層のみ**: 最上位 WP は子 WP を、子 WP は孫 WP や ACT を集約する。孫以下は関与しない。
+- **子 WP が `assigneeDisplayText` を持つ場合** (= 孫の担当者が複数): 子 WP の `assigneeId` は `null` になるため、親 WP からは「未アサインの子 WP」として扱われる。結果、親 WP の担当者も `null` / `null` になる。
+
+### 43.2 表示ロジック
+
+WBS 一覧 (`tasks-client.tsx`) とガントチャート (`gantt/route.ts` → クライアント) は共通の優先順位で担当者を表示する:
+
+```
+assigneeDisplayText || assigneeName || '-'
+```
+
+| フィールド | 意味 |
+|---|---|
+| `assigneeDisplayText` | 複数担当者がいる WP 専用の集約テキスト (例: `"田中 +2"`) |
+| `assigneeName` | 単一担当者の氏名 (WP も ACT も共通) |
+| `'-'` | 担当者未アサイン時のフォールバック |
+
+カンバンビューは ACT のみを表示するため WP の `assigneeDisplayText` は不使用。
+
+### 43.3 DB カラムと算出タイミング
+
+- カラム: `tasks.assignee_display_text` VARCHAR(200) (migration `20260619_add_task_assignee_display_text`)
+- 算出関数: `aggregateWpFromChildren` (`task.service.ts`) — 純粋関数、入力は `WpAggregationChild[]`
+- 書き込みタイミング:
+  - ACT / WP 単件更新時: `recalculateAncestors` が祖先チェーン全体を再計算
+  - 一括更新時: `recalculateAllProjectWps` が全 WP を深度降順で一括再計算 (ADR-0037)
+
+### 43.4 `"田中 +N"` の構成
+
+```ts
+// aggregateWpFromChildren 内 (task.service.ts)
+const nonNullAssigneeIds = [...distinctAssignees].filter((id) => id !== null);
+if (nonNullAssigneeIds.length >= 2) {
+  const firstName = children.find((c) => c.assigneeId !== null && c.assigneeName)?.assigneeName;
+  if (firstName) assigneeDisplayText = `${firstName} +${nonNullAssigneeIds.length - 1}`;
+}
+```
+
+- `firstName`: 最初に見つかった非 null 担当者の氏名 (フルネーム)
+- `N`: 残りのユニーク担当者数 (= ユニーク担当者数 - 1)
+- 担当者氏名が取得できない場合は `null` のまま (安全側に倒す)
 

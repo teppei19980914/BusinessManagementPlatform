@@ -26,6 +26,8 @@ vi.mock('@/lib/db', () => {
     emailVerificationToken: { deleteMany: vi.fn() },
     recoveryCode: { deleteMany: vi.fn() },
     projectMember: { deleteMany: vi.fn(), findMany: vi.fn().mockResolvedValue([]) },
+    task: { updateMany: vi.fn() },
+    notification: { deleteMany: vi.fn() },
     session: { deleteMany: vi.fn() },
     passwordResetToken: { deleteMany: vi.fn() },
     passwordHistory: { deleteMany: vi.fn() },
@@ -647,6 +649,20 @@ describe('cancelInvitation (2026-06-03)', () => {
     // user.delete (物理削除) を含む transaction が実行される
     expect(prisma.$transaction).toHaveBeenCalled();
     expect(prisma.user.delete).toHaveBeenCalledWith({ where: { id: 'u-1' } });
+  });
+
+  it('project_members / tasks.assigneeId / notifications を user.delete 前にクリーンアップする', async () => {
+    vi.mocked(prisma.user.findFirst).mockResolvedValue({ id: 'u-2', email: 'b@b.co' } as never);
+
+    await cancelInvitation('u-2', 'admin-1', 'tenant-A');
+
+    expect(prisma.projectMember.deleteMany).toHaveBeenCalledWith({ where: { userId: 'u-2' } });
+    expect(prisma.task.updateMany).toHaveBeenCalledWith({
+      where: { assigneeId: 'u-2' },
+      data: { assigneeId: null },
+    });
+    expect(prisma.notification.deleteMany).toHaveBeenCalledWith({ where: { userId: 'u-2', tenantId: 'tenant-A' } });
+    expect(prisma.user.delete).toHaveBeenCalledWith({ where: { id: 'u-2' } });
   });
 
   it('対象が招待中でない場合は USER_NOT_FOUND で何も削除しない', async () => {

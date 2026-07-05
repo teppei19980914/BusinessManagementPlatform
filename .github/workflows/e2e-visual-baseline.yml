@@ -1,4 +1,4 @@
-# 視覚回帰 baseline 生成ワークフロー (PR #96)
+﻿# 視覚回帰 baseline 生成ワークフロー (PR #96)
 #
 # 目的:
 #   Linux CI 環境 (Ubuntu + Playwright Chromium) で baseline PNG を生成し、
@@ -91,7 +91,7 @@ jobs:
       CI: 'true'
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           ref: ${{ inputs.branch || github.ref }}
           # commit push に必要 (actions/checkout の token は fetch 専用)。
@@ -102,12 +102,12 @@ jobs:
           token: ${{ secrets.CI_TRIGGER_PAT || secrets.GITHUB_TOKEN }}
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v6
+        uses: pnpm/action-setup@b0f76dfb45f55f8421693e4803ac7bb65143bd34 # v6
         with:
           version: 10
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
           node-version: '22'
           cache: 'pnpm'
@@ -149,7 +149,7 @@ jobs:
 
       - name: Upload generated PNGs as artifact
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: visual-baselines-${{ github.run_id }}
           path: e2e/visual/**/*.png

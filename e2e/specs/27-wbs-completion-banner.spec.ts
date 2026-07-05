@@ -83,6 +83,7 @@ test.describe('@feature:project:wbs-completion-banner WBS 完了バナー (v1.3.
         plannedStartDate: today,
         plannedEndDate: in7,
         plannedEffort: 4,
+        includeWeekends: true,
       },
     });
     expect(actRes.ok(), `ACT create: ${await actRes.text()}`).toBeTruthy();

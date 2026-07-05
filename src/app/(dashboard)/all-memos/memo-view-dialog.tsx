@@ -15,8 +15,10 @@
  *   そのため別 component として独立させる方が両者の責務が明確になる。
  */
 
+import { useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
@@ -32,6 +34,8 @@ import { AttachmentList } from '@/components/attachments/attachment-list';
 // v1.3.0 資産導線機能: 手動リンクセクション
 import { AssetLinkSection } from '@/components/common/asset-link-section';
 import { CommentSection } from '@/components/comments/comment-section';
+// v1.5.0: 公開資産共有ダイアログ
+import { ShareAssetDialog } from '@/components/dialogs/share-asset-dialog';
 import { useFormatters } from '@/lib/use-formatters';
 import type { MemoDTO } from '@/services/memo.service';
 
@@ -44,6 +48,7 @@ type Props = {
 export function MemoViewDialog({ memo, open, onOpenChange }: Props) {
   const tField = useTranslations('field');
   const tMemo = useTranslations('memo');
+  const [shareOpen, setShareOpen] = useState(false);
   // 作成日時/更新日時は監査列のため秒まで表示 (formatDateTimeSeconds = 全画面共通の設計)
   const { formatDateTimeSeconds } = useFormatters();
   const { fullscreenClassName, FullscreenToggle } = useDialogFullscreen();
@@ -53,6 +58,7 @@ export function MemoViewDialog({ memo, open, onOpenChange }: Props) {
   };
 
   return (
+    <>
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className={`max-w-[min(90vw,36rem)] max-h-[85vh] overflow-y-auto ${fullscreenClassName}`}>
         <DialogHeader>
@@ -100,13 +106,33 @@ export function MemoViewDialog({ memo, open, onOpenChange }: Props) {
             />
             {/* v1.3.0 資産導線機能: 手動リンク (リスク/課題/ナレッジ/振り返り/メモ 5 資産間) */}
             <AssetLinkSection entityType="memo" entityId={memo.id} isPublic={memo.visibility === 'public'} />
-            {/* PR #213: コメント機能。CommentSection は fieldset 外に配置。
-                認可は API 側で visibility-aware に判定される (public memo は誰でも投稿可、
-                draft memo は作成者本人のみ)。 */}
-            <CommentSection entityType="memo" entityId={memo.id} />
+            {/* v1.5.0: 公開メモのみ共有ボタンを表示 (全メモ画面は visibility='public' のみ表示だが防衛的に確認) */}
+            {memo.visibility === 'public' && (
+              <Button
+                variant="outline"
+                className="w-full"
+                onClick={() => setShareOpen(true)}
+              >
+                共有する
+              </Button>
+            )}
+            {/* PR #213: コメント機能。CommentSection は fieldset 外に配置。v1.5.0: 公開時のみ表示 */}
+            {memo.visibility === 'public' && (
+              <CommentSection entityType="memo" entityId={memo.id} />
+            )}
           </div>
         )}
       </DialogContent>
     </Dialog>
+    {memo && memo.visibility === 'public' && (
+      <ShareAssetDialog
+        entityType="memo"
+        entityId={memo.id}
+        assetTitle={memo.title}
+        open={shareOpen}
+        onOpenChange={setShareOpen}
+      />
+    )}
+    </>
   );
 }

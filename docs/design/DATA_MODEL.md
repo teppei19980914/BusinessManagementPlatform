@@ -1,29 +1,29 @@
 # データモデルとテーブル定義 (Program Design)
 
-本ドキュメントは **`prisma/schema.prisma` (46 model) と実 Postgres (Supabase) の完全ミラー** を目的とした基盤文書です。1 ファイルで全テーブルの構造・インデックス・FK ポリシー・PostgreSQL 拡張・RLS・ベクトル検索の実装まで把握できることをゴールとします。
+本ドキュメントは **`prisma/schema.prisma` (57 model) と実 Postgres (Supabase) の完全ミラー** を目的とした基盤文書です。1 ファイルで全テーブルの構造・インデックス・FK ポリシー・PostgreSQL 拡張・RLS・ベクトル検索の実装まで把握できることをゴールとします。
 
 > ⚠️ **最終的な真値は [prisma/schema.prisma](../../prisma/schema.prisma) と実 DB**。本ドキュメントは schema を 1:1 に転記し設計判断を補足したものです。schema に存在しないカラム・テーブルは記載しません (推測でカラムを足さない方針)。マイグレーション戦略は [../operations/DB_MIGRATION_PROCEDURE.md](../operations/develop/DB_MIGRATION_PROCEDURE.md) を参照。
 
-最終再生成: 2026-06-19 (v1.3.0 資産導線機能で risk_issue_promotions / issue_knowledge_promotions / asset_links を追加、schema.prisma 46 model + Supabase introspection 照合)。
+最終再生成: 2026-06-27 (v1.5.0 アイデア出し機能で idea_voting_sessions 系 4 table / idea_whiteboard_sessions 系 2 table / idea_qa_threads 系 3 table / idea_asset_links を追加; 同日 tenant_banners を追加、schema.prisma 57 model + Supabase introspection 照合)。
 
 ---
 
 ## 目次
 
-- [§1. テーブル一覧 (42 + Prisma 管理表)](#1-テーブル一覧-42--prisma-管理表)
+- [§1. テーブル一覧 (57 + Prisma 管理表)](#1-テーブル一覧-57--prisma-管理表)
 - [§2. PostgreSQL 拡張機能](#2-postgresql-拡張機能)
 - [§3. ベクトル検索の実装 (pgvector)](#3-ベクトル検索の実装-pgvector)
 - [§4. 全文検索インデックス (pg_trgm)](#4-全文検索インデックス-pg_trgm)
 - [§5. RLS とテナント分離](#5-rls-とテナント分離)
 - [§6. FK onDelete ポリシー](#6-fk-ondelete-ポリシー)
 - [§7. ER 図](#7-er-図)
-- [§8. テーブル定義 (§8.1〜§8.46)](#8-テーブル定義)
+- [§8. テーブル定義 (§8.1〜§8.57)](#8-テーブル定義)
 - [§14. 初期データ・シード設計](#14-初期データシード設計)
 - [§15. インデックス戦略](#15-インデックス戦略)
 
 ---
 
-## §1. テーブル一覧 (46 + Prisma 管理表)
+## §1. テーブル一覧 (57 + Prisma 管理表)
 
 | # | 物理名 | 日本語名 | 区分 |
 |---|---|---|---|
@@ -73,6 +73,17 @@
 | 8.44 | `risk_issue_promotions` | リスク→課題 昇華リンク | 業務 / M2M |
 | 8.45 | `issue_knowledge_promotions` | 課題→ナレッジ 昇華リンク | 業務 / M2M |
 | 8.46 | `asset_links` | 資産間 汎用手動リンク (5 資産) | 業務 / M2M |
+| 8.47 | `idea_voting_sessions` | アイデア投票セッション | 業務 / アイデア |
+| 8.48 | `idea_voting_options` | 投票選択肢 | 業務 / アイデア |
+| 8.49 | `idea_voting_submissions` | 投票提出 (1 人 1 セッション) | 業務 / アイデア |
+| 8.50 | `idea_voting_allocations` | 投票票配分 (dot 投票) | 業務 / アイデア |
+| 8.51 | `idea_whiteboard_sessions` | ホワイトボードセッション | 業務 / アイデア |
+| 8.52 | `idea_whiteboard_notes` | ホワイトボード付箋 | 業務 / アイデア |
+| 8.53 | `idea_qa_threads` | 匿名 Q&A スレッド | 業務 / アイデア |
+| 8.54 | `idea_qa_answers` | Q&A 回答 | 業務 / アイデア |
+| 8.55 | `idea_qa_upvotes` | Q&A いいね | 業務 / アイデア |
+| 8.56 | `idea_asset_links` | アイデア-資産間 逆引きリンク | 業務 / アイデア |
+| 8.57 | `tenant_banners` | テナント向けバナー (テナント管理者が自テナントに設定) | 運用 |
 | — | `_prisma_migrations` | Prisma マイグレーション管理表 (65 行) | システム |
 
 > `_prisma_migrations` は Prisma Migrate が管理するシステム表で `public` スキーマに存在する (適用済みマイグレーションのチェックサム・適用時刻を記録)。アプリは直接参照せず、本ドキュメントでは存在のみ注記。
@@ -344,7 +355,7 @@ erDiagram
 | MFA 失敗回数 | mfa_failed_count | INT | NO | 0 | 3 回で 30 分ロック |
 | MFA ロック解除日時 | mfa_locked_until | TIMESTAMPTZ | YES | NULL | |
 | 最終ログイン日時 | last_login_at | TIMESTAMPTZ | YES | NULL | |
-| 招待受諾日時 | invitation_accepted_at | TIMESTAMPTZ | YES | NULL | **NULL = 招待中**（パスワード未設定）、値あり = 受諾済。アカウント状態(招待中/有効/無効)を `is_active` と合わせて導出。2026-06-03 追加 (migration `20260610`) |
+| 招待受諾日時 | invitation_accepted_at | TIMESTAMPTZ | YES | NULL | **NULL = 招待中**（パスワード未設定）、値あり = 受諾済。アカウント状態(招待中/有効/無効)を `is_active` と合わせて導出。2026-06-03 追加 (migration `20260610`)。ZIP インポート作成ユーザ・テナント初期 admin は `now()` を設定し「有効（要 PW 再設定）」として登録（v1.5.0）|
 | パスワード変更強制 | force_password_change | BOOLEAN | NO | false | |
 | トークンバージョン | token_version | INT | NO | 0 | JWT 失効カウンタ (increment で全 JWT 失効) |
 | テーマ設定 | theme_preference | VARCHAR(30) | NO | 'light' | |
@@ -908,8 +919,8 @@ polymorphic (entity_type + entity_id) で 7 種 (issue/task/risk/retrospective/k
 | ID | id | UUID | NO | gen_random_uuid() | 主キー |
 | テナント | tenant_id | UUID | NO | - | FK→tenants.id |
 | ユーザ | user_id | UUID | NO | - | FK→users.id (受信者) |
-| 種別 | type | VARCHAR(40) | NO | - | task_end_due 等 |
-| エンティティ種別 | entity_type | VARCHAR(30) | NO | - | |
+| 種別 | type | VARCHAR(40) | NO | - | task_end_due / comment_mention / asset_share 等。`src/lib/validators/notification.ts` の `NOTIFICATION_TYPES` で列挙 |
+| エンティティ種別 | entity_type | VARCHAR(30) | NO | - | knowledge / risk / issue / retrospective / memo 等。`NOTIFICATION_ENTITY_TYPES` で列挙 |
 | エンティティ ID | entity_id | UUID | NO | - | |
 | タイトル | title | VARCHAR(200) | NO | - | |
 | リンク | link | VARCHAR(500) | NO | - | |
@@ -918,6 +929,8 @@ polymorphic (entity_type + entity_id) で 7 種 (issue/task/risk/retrospective/k
 | 作成日時 | created_at | TIMESTAMPTZ | NO | now() | |
 
 **インデックス**: UNIQUE(dedupe_key)=`idx_notifications_dedupe` / `idx_notifications_user_unread` (user_id, read_at, created_at DESC) / `idx_notifications_tenant`
+
+**v1.5.0 拡張**: `type = 'asset_share'` を追加 (公開資産共有通知、`POST /api/assets/share`)。`entity_type` に `memo` を追加 (それまでは knowledge/risk/issue/retrospective のみ対応)。DB マイグレーションは不要 (VARCHAR 列の許容値はアプリ層 Zod バリデーションで管理)。
 
 ### 8.31 memos（個人メモ）
 
@@ -1225,6 +1238,31 @@ Risk / Issue / Knowledge / Retrospective / Memo の 5 資産間で「既存 ↔ 
 **インデックス**: `idx_asset_links_from` (tenant_id, from_entity_type, from_entity_id) / `idx_asset_links_to` (tenant_id, to_entity_type, to_entity_id)
 
 > **対称重複防止**: A→B と B→A は同一リンクとみなし、作成時にアプリ層で両方向を検索して既存なら `ALREADY_LINKED` で弾く。**孤立リンク**: entity 削除時、各エンティティの delete service 関数 (`deleteRisk`/`deleteKnowledge`/`deleteRetrospective`/`deleteMemo`) から `deleteAssetLinksForEntity` を呼んで同時にクリーンアップする (FK が無いため DB cascade に依存できない)。
+
+---
+
+### 8.57 tenant_banners（テナントバナー / ADR-0037）
+
+画面上部に出すテナント限定の帯メッセージ。**テナントスコープ** (`tenant_id` 必須) = テナント管理者 (`systemRole === 'admin'`) が自テナントのユーザ向けに設定する。`system_banners` (グローバル / ADR-0036) とは独立して動作し、同時に最大 2 本 (system + tenant) 表示される。
+
+| 論理名 | 物理名 | 型 | NULL | デフォルト | 説明 |
+|---|---|---|---|---|---|
+| ID | id | UUID | NO | gen_random_uuid() | 主キー |
+| テナント | tenant_id | UUID | NO | - | FK→tenants.id (**CASCADE**)。テナント分離の要 (ADR-0024) |
+| メッセージ | message | VARCHAR(500) | NO | - | 帯に表示する本文 |
+| 緊急度 | severity | VARCHAR(10) | NO | - | 'high'(赤) / 'medium'(黄) / 'low'(青)。正本は `src/lib/validators/system-banner.ts` |
+| 表示開始 | start_at | TIMESTAMPTZ | NO | - | この日時から表示 |
+| 表示終了 | end_at | TIMESTAMPTZ | NO | - | この日時で表示終了 (start_at <= now < end_at で表示) |
+| 有効 | enabled | BOOLEAN | NO | true | false=取り下げ (期間内でも非表示・履歴は残る) |
+| 作成者 | created_by | UUID | NO | - | 作成した tenant_admin の User.id。FK なし (system_banners と同設計) |
+| 作成日時 | created_at | TIMESTAMPTZ | NO | now() | |
+| 更新日時 | updated_at | TIMESTAMPTZ | NO | @updatedAt | |
+
+**インデックス**: `idx_tenant_banners_active` (tenant_id, enabled, start_at, end_at) — `getActiveTenantBanner` と重複判定 (`assertNoOverlap`) の hot path 用。
+
+> **1 本制約 (テナント内)**: enabled なバナー同士の表示期間は **同テナント内で** 重複不可 (service 層で担保 / 409 `OVERLAP`)。他テナントのバナーとは独立。
+>
+> **取得方法**: `tenantId` は必ず `session.user.tenantId` から取得し、URL パラメータ・リクエストボディからは受け取らない (ADR-0037 §1)。
 
 ---
 

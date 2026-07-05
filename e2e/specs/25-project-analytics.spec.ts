@@ -1,20 +1,20 @@
 /**
- * E2E: 分析タブ (feat/project-analytics-tab / v1.2.0)
+ * E2E: 稼働分析サブタブ (feat/project-analytics-tab / v1.2.0, v1.5.0 タブ構造改修)
  *
  * カバー範囲:
- *   プロジェクト詳細画面の「分析」タブ (提案の左隣) の表示制御と描画を検証する。
- *   - admin / pm_tl: 分析タブが表示され、初期は予実カーブ 1 枚のみ描画される。
+ *   プロジェクト詳細画面の「参考情報」→「稼働分析」サブタブの表示制御と描画を検証する。
+ *   - admin / pm_tl: 参考情報タブが表示され、稼働分析サブタブで予実カーブが描画される。
  *     ツールバーのチップで残りパネルを表示でき、対象期間 (プリセット/カスタム) を
  *     操作できる (render + トグル smoke。集計の正しさは
  *     src/services/analytics.service.test.ts、期間フィルタは同 + analytics-range.test.ts、
  *     認可は route.test.ts で担保)
- *   - member: 分析タブは非表示 (PM/PL + admin のみ)
+ *   - member: 参考情報タブは非表示 (PM/PL + admin のみ)
  *
  * 方針:
- *   既存 02-project-detail-tabs.spec.ts と同様の sharedContext / viewport 分岐パターンを踏襲。
+ *   既存 02-project-detail-tabs.spec.ts と同様の sharedContext パターンを踏襲。
  *   CRUD 検証ではなく render smoke に絞る (タブ→API→描画の経路が通ることの確認)。
  *
- * Mobile (lg-) では分析タブは「資産」プルダウンに集約される (hidden lg:inline-flex)。
+ * v1.5.0 変更: PC/Mobile 共通でサブタブ表示に統一 (旧「資産」プルダウン廃止)。
  */
 
 import { test, expect, type BrowserContext, type Page } from '@playwright/test';
@@ -50,17 +50,10 @@ let memberUserId = '';
 
 test.describe.configure({ mode: 'serial', retries: 0 });
 
-/** 分析タブを開く (PC は直接クリック、Mobile は資産プルダウン経由)。 */
-async function openAnalyticsTab(page: Page, isMobile: boolean) {
-  if (isMobile) {
-    await page.getByRole('button', { name: '資産メニューを開く' }).click({ force: true });
-    const menuItem = page.getByRole('menuitem', { name: '分析' });
-    await expect(menuItem).toBeVisible({ timeout: 5_000 });
-    await menuItem.click({ force: true });
-    await expect(menuItem).toBeHidden({ timeout: 5_000 });
-  } else {
-    await page.getByRole('tab', { name: '分析' }).click();
-  }
+/** 稼働分析サブタブを開く (「参考情報」親タブ→「稼働分析」サブタブの 2 ステップ)。PC/Mobile 共通。 */
+async function openAnalyticsTab(page: Page) {
+  await page.getByRole('tab', { name: '参考情報' }).click();
+  await page.getByRole('tab', { name: '稼働分析' }).click();
 }
 
 // 各パネルのタイトル (heading とツールバーのチップ button に同じ文字列が使われる)。
@@ -73,7 +66,7 @@ const PANEL_TITLES = {
 } as const;
 
 /**
- * 分析タブを開いた直後の検証。
+ * 稼働分析サブタブを開いた直後の検証。
  *   - 初期は予実カーブ 1 枚のみ表示 (見づらさ解消のため。残り 4 枚は heading 非表示)。
  *   - ツールバーのチップ (button) で他パネルを表示でき、heading が現れることを確認。
  * チップは button、パネル見出しは heading のため role で区別する
@@ -101,7 +94,7 @@ async function expectAnalyticsRendered(page: Page) {
   }
 }
 
-test.describe('@feature:project:analytics 分析タブ', () => {
+test.describe('@feature:project:analytics 稼働分析サブタブ', () => {
   test.beforeAll(async ({ browser }) => {
     await ensureInitialAdmin(ADMIN_EMAIL, ADMIN_PW, { forcePasswordChange: false });
     pmUserId = await ensureGeneralUser(PM_EMAIL, PM_NAME, PM_PW);
@@ -134,19 +127,14 @@ test.describe('@feature:project:analytics 分析タブ', () => {
     await disconnectDb();
   });
 
-  test('admin: 分析タブが表示され、クリックで予実カーブが描画される', async () => {
+  test('admin: 参考情報タブ→稼働分析サブタブで予実カーブが描画される', async () => {
     const page = sharedPage;
-    const isMobile = test.info().project.name === 'chromium-mobile';
     await page.goto(`/projects/${projectId}`);
     await page.waitForLoadState('networkidle');
 
-    if (isMobile) {
-      await expect(page.getByRole('button', { name: '資産メニューを開く' })).toBeVisible();
-    } else {
-      await expect(page.getByRole('tab', { name: '分析' })).toBeVisible();
-    }
+    await expect(page.getByRole('tab', { name: '参考情報' })).toBeVisible();
 
-    await openAnalyticsTab(page, isMobile);
+    await openAnalyticsTab(page);
     await expectAnalyticsRendered(page);
 
     // 対象期間: プリセット切替 + カスタムで日付入力が現れることを確認 (smoke)。
@@ -164,33 +152,28 @@ test.describe('@feature:project:analytics 分析タブ', () => {
     await snapshotStep(page, 'project-analytics-admin');
   });
 
-  test('pm_tl: 分析タブが表示され、クリックで予実カーブが描画される', async () => {
+  test('pm_tl: 参考情報タブ→稼働分析サブタブで予実カーブが描画される', async () => {
     const page = sharedPage;
-    const isMobile = test.info().project.name === 'chromium-mobile';
     await loginAsGeneral(page, sharedContext, { email: PM_EMAIL, password: PM_PW });
     await page.goto(`/projects/${projectId}`);
     await page.waitForLoadState('networkidle');
 
-    if (isMobile) {
-      await expect(page.getByRole('button', { name: '資産メニューを開く' })).toBeVisible();
-    } else {
-      await expect(page.getByRole('tab', { name: '分析' })).toBeVisible();
-    }
+    await expect(page.getByRole('tab', { name: '参考情報' })).toBeVisible();
 
-    await openAnalyticsTab(page, isMobile);
+    await openAnalyticsTab(page);
     await expectAnalyticsRendered(page);
     await snapshotStep(page, 'project-analytics-pmtl');
   });
 
-  test('member: 分析タブは非表示 (PM/PL + admin のみ)', async () => {
+  test('member: 参考情報タブは非表示 (PM/PL + admin のみ)', async () => {
     const page = sharedPage;
     await loginAsGeneral(page, sharedContext, { email: MEMBER_EMAIL, password: MEMBER_PW });
     await page.goto(`/projects/${projectId}`);
     await page.waitForLoadState('networkidle');
 
-    // 概要は見えるが、分析タブ (role=tab) はロールゲートで一切 render されない
+    // 概要は見えるが、参考情報タブ (role=tab) はロールゲートで一切 render されない
     await expect(page.getByRole('tab', { name: '概要' })).toBeVisible();
-    await expect(page.getByRole('tab', { name: '分析' })).toHaveCount(0);
+    await expect(page.getByRole('tab', { name: '参考情報' })).toHaveCount(0);
     await snapshotStep(page, 'project-analytics-member-hidden');
   });
 });

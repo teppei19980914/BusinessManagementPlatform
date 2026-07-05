@@ -253,17 +253,20 @@ export async function createUser(
     where: { email: input.email, invitationAcceptedAt: null, isActive: false, ...tenantScope },
   });
   if (existingInvited) {
+    // FK クリーンアップ: cancelInvitation と同一の RESTRICT/NO ACTION テーブルを先に削除。
+    //   再招待時に既存の招待中ユーザが project_members 等に紐付く場合に備える。
+    const uid = existingInvited.id;
+    const tid = existingInvited.tenantId;
     await prisma.$transaction([
-      prisma.emailVerificationToken.deleteMany({
-        where: { userId: existingInvited.id, tenantId: existingInvited.tenantId },
-      }),
-      prisma.recoveryCode.deleteMany({
-        where: { userId: existingInvited.id, tenantId: existingInvited.tenantId },
-      }),
-      prisma.roleChangeLog.deleteMany({
-        where: { targetUserId: existingInvited.id, tenantId: existingInvited.tenantId },
-      }),
-      prisma.user.delete({ where: { id: existingInvited.id } }),
+      prisma.projectMember.deleteMany({ where: { userId: uid } }),
+      prisma.task.updateMany({ where: { assigneeId: uid }, data: { assigneeId: null } }),
+      prisma.notification.deleteMany({ where: { userId: uid, tenantId: tid } }),
+      prisma.passwordResetToken.deleteMany({ where: { userId: uid } }),
+      prisma.passwordHistory.deleteMany({ where: { userId: uid } }),
+      prisma.emailVerificationToken.deleteMany({ where: { userId: uid, tenantId: tid } }),
+      prisma.recoveryCode.deleteMany({ where: { userId: uid, tenantId: tid } }),
+      prisma.roleChangeLog.deleteMany({ where: { targetUserId: uid, tenantId: tid } }),
+      prisma.user.delete({ where: { id: uid } }),
     ]);
   }
 
@@ -395,7 +398,15 @@ export async function cancelInvitation(
     throw new Error('USER_NOT_FOUND');
   }
   // Phase 2-10: tenantId フィルタで二重防御。未受諾のため監査本体の履歴は無い。
+  // FK クリーンアップ: ON DELETE RESTRICT / NO ACTION テーブルを user.delete 前に処理。
+  //   project_members / tasks.assignee_id (nullable) / notifications は RESTRICT/NO ACTION のため
+  //   物理削除前に明示削除が必要。deleteUser と対称になるよう passwordResetToken / passwordHistory も含める。
   await prisma.$transaction([
+    prisma.projectMember.deleteMany({ where: { userId } }),
+    prisma.task.updateMany({ where: { assigneeId: userId }, data: { assigneeId: null } }),
+    prisma.notification.deleteMany({ where: { userId, tenantId } }),
+    prisma.passwordResetToken.deleteMany({ where: { userId } }),
+    prisma.passwordHistory.deleteMany({ where: { userId } }),
     prisma.emailVerificationToken.deleteMany({ where: { userId, tenantId } }),
     prisma.recoveryCode.deleteMany({ where: { userId, tenantId } }),
     prisma.roleChangeLog.deleteMany({ where: { targetUserId: userId, tenantId } }),

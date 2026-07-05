@@ -155,6 +155,7 @@ test.describe('@feature:project:wbs WBS 管理 (PR #96)', () => {
         plannedStartDate: today,
         plannedEndDate: in7,
         plannedEffort: 8,
+        includeWeekends: true,
       },
     });
     expect(res.ok(), `ACT create: ${await res.text()}`).toBeTruthy();
@@ -418,6 +419,7 @@ test.describe('@feature:project:wbs WBS 管理 (PR #96)', () => {
           plannedStartDate: today,
           plannedEndDate: in7,
           plannedEffort: 4,
+          includeWeekends: true,
         },
       });
       expect(r.ok(), `bulk ACT create ${name}: ${await r.text()}`).toBeTruthy();
@@ -534,6 +536,7 @@ test.describe('@feature:project:wbs WBS 管理 (PR #96)', () => {
           plannedStartDate: today,
           plannedEndDate: in7,
           plannedEffort: 4,
+          includeWeekends: true,
         },
       });
       expect(r.ok(), `ACT ${nm}: ${await r.text()}`).toBeTruthy();
@@ -611,6 +614,7 @@ test.describe('@feature:project:wbs WBS 管理 (PR #96)', () => {
         plannedStartDate: today,
         plannedEndDate: in7,
         plannedEffort: 6,
+        includeWeekends: true,
       },
     });
     expect(actRes.ok(), `SU ACT: ${await actRes.text()}`).toBeTruthy();
@@ -673,6 +677,7 @@ test.describe('@feature:project:wbs WBS 管理 (PR #96)', () => {
         plannedStartDate: today,
         plannedEndDate: in7,
         plannedEffort: 4,
+        includeWeekends: true,
         description: '詳細は https://example.com/specにアクセスしてください。',
       },
     });
@@ -731,6 +736,7 @@ test.describe('@feature:project:wbs WBS 管理 (PR #96)', () => {
         plannedStartDate: today,
         plannedEndDate: in7,
         plannedEffort: 4,
+        includeWeekends: true,
       },
     });
     expect(actRes.ok(), `ACT: ${await actRes.text()}`).toBeTruthy();
@@ -798,6 +804,7 @@ test.describe('@feature:project:wbs WBS 管理 (PR #96)', () => {
             plannedStartDate: today,
             plannedEndDate: in14,
             plannedEffort: 2,
+            includeWeekends: true,
           },
         });
         expect(actRes.ok(), `chunk ACT ${w}-${a}: ${await actRes.text()}`).toBeTruthy();

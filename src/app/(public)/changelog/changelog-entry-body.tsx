@@ -12,6 +12,7 @@
  */
 
 import ReactMarkdown from 'react-markdown';
+import rehypeSlug from 'rehype-slug';
 import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
 
@@ -24,6 +25,7 @@ export function ChangelogEntryBody({ body }: ChangelogEntryBodyProps) {
     <div className="text-sm leading-relaxed">
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkBreaks]}
+        rehypePlugins={[rehypeSlug]}
         components={{
           h3: ({ children, ...props }) => (
             <h3 className="mt-4 text-base font-semibold" {...props}>
@@ -50,17 +52,19 @@ export function ChangelogEntryBody({ body }: ChangelogEntryBodyProps) {
               {children}
             </ol>
           ),
-          a: ({ children, href, ...props }) => (
-            <a
-              href={href}
-              target={href?.startsWith('http') ? '_blank' : undefined}
-              rel={href?.startsWith('http') ? 'noopener noreferrer' : undefined}
-              className="text-primary hover:underline"
-              {...props}
-            >
-              {children}
-            </a>
-          ),
+          a: ({ children, href, ...props }) => {
+            const isSamePageAnchor = href?.startsWith('#') ?? false;
+            return (
+              <a
+                href={href}
+                {...(!isSamePageAnchor && { target: '_blank', rel: 'noopener noreferrer' })}
+                className="text-blue-600 hover:underline dark:text-blue-400"
+                {...props}
+              >
+                {children}
+              </a>
+            );
+          },
           code: ({ children, ...props }) => (
             <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs" {...props}>
               {children}

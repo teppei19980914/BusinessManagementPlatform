@@ -34,6 +34,7 @@ export async function GET(
     id: t.id,
     name: t.name,
     assigneeName: t.assigneeName,
+    assigneeDisplayText: t.assigneeDisplayText,
     startDate: t.plannedStartDate,
     endDate: t.plannedEndDate,
     progressRate: t.progressRate,

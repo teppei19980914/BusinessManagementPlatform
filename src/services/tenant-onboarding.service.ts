@@ -452,10 +452,13 @@ async function createTenantInternal(
         email: input.initialAdminEmail,
         passwordHash: placeholderHash,
         systemRole: 'admin',
-        // 検証メール経由でパスワード設定するまで非アクティブ
-        // (isActive: false で十分。deletedAt セットは NG = 過去 typo を 2026-05-20 削除)
-        isActive: false,
-        forcePasswordChange: false,
+        // 初期 admin は「招待中」でなく「有効（要 PW 再設定）」として作成する。
+        //   invitationAcceptedAt: null のままだと管理者一覧に「招待中」と表示され、
+        //   削除操作が cancelInvitation 経路になる。メールからのパスワード設定フロー
+        //   (sendVerificationEmail + forcePasswordChange) は引き続き必須とする。
+        isActive: true,
+        invitationAcceptedAt: new Date(),
+        forcePasswordChange: true,
       },
       select: { id: true },
     });

@@ -1,8 +1,8 @@
-# 表示言語ガイド (日本語 / English)
+﻿# 表示言語ガイド (日本語 / English)
 
 > たすきば Knowledge Relay の **表示言語** を切替える方法と、現時点で英語表示に対応している画面の一覧です。
 >
-> 関連: [個人設定ガイド](./settings-guide.md) / [テナント設定ガイド](./tenant-settings-guide.md) / [画面一覧リファレンス](./screen-reference.md)
+> 関連: [個人設定ガイド](./settings-guide) / [テナント設定ガイド](./tenant-settings-guide) / [画面一覧リファレンス](./screen-reference)
 
 ---
 
@@ -110,7 +110,7 @@
 
 ## 6. 関連ドキュメント
 
-- [個人設定ガイド](./settings-guide.md)
-- [テナント設定ガイド](./tenant-settings-guide.md)
-- [画面一覧リファレンス](./screen-reference.md)
+- [個人設定ガイド](./settings-guide)
+- [テナント設定ガイド](./tenant-settings-guide)
+- [画面一覧リファレンス](./screen-reference)
 - 開発者向け: 新規言語の追加手順は `docs/i18n/ADD_NEW_LOCALE.md` を参照

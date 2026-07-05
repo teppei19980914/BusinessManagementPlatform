@@ -47,7 +47,8 @@ import type {
   ChatSearchHit,
   ChatSearchResult,
 } from '@/services/chat-search.service';
-import { ChatSearchResultCard } from './result-card';
+import type { ProjectChatSearchResult } from '@/services/project-chat-search.service';
+import { ChatSearchResultCard, ProjectChatSearchResultCard } from './result-card';
 import { HelpChatInput } from '@/components/help-chat/help-chat-input';
 import {
   CHAT_SEARCH_HISTORY_BASE_KEY,
@@ -59,7 +60,10 @@ import {
   purgeAllHistory,
 } from '@/lib/chat-history-storage';
 
+const PROJECT_SEARCH_HISTORY_BASE_KEY = 'tasukiba_pj_search_v1';
+
 type DegradedReason = NonNullable<ChatSearchResult['degradeReason']>;
+type ProjectDegradedReason = NonNullable<ProjectChatSearchResult['degradeReason']>;
 
 /**
  * 1 つの会話ターン (ユーザ発言 + フクロウの応答) を表す型。
@@ -72,6 +76,13 @@ type ChatTurn = {
   error?: string;
 };
 
+type ProjectChatTurn = {
+  id: string;
+  userQuery: string;
+  result?: ProjectChatSearchResult;
+  error?: string;
+};
+
 /**
  * 保持する会話ターンの上限件数。
  * sessionStorage の 5MB 制限 + DOM ノード数の暴走 + DevTools 改ざんによる UI freeze 攻撃を防ぐ。
@@ -80,7 +91,7 @@ type ChatTurn = {
  */
 const MAX_HISTORY_TURNS = 50;
 
-/** ChatTurn の最小 shape ガード (load 時の trim/検証に使用)。 */
+/** ChatTurn / ProjectChatTurn の最小 shape ガード (load 時の trim/検証に使用)。 */
 function isChatTurn(item: unknown): item is ChatTurn {
   return (
     item !== null &&
@@ -88,6 +99,9 @@ function isChatTurn(item: unknown): item is ChatTurn {
     typeof (item as { id?: unknown }).id === 'string' &&
     typeof (item as { userQuery?: unknown }).userQuery === 'string'
   );
+}
+function isProjectChatTurn(item: unknown): item is ProjectChatTurn {
+  return isChatTurn(item);
 }
 
 /**
@@ -98,14 +112,17 @@ function isChatTurn(item: unknown): item is ChatTurn {
  *
  * mode は sessionStorage に保存し、パネル再オープン / リロード後も同じタブを維持する。
  * 値が壊れていたら 'search' に fail-safe (= 既存 UX に倒す)。
+ * 'project' タブは projectId が渡されたときのみ表示される。非プロジェクトページで
+ * sessionStorage に 'project' が残っていた場合は 'search' に fallback する。
  */
-type PanelMode = 'search' | 'help';
+type PanelMode = 'search' | 'help' | 'project';
 const PANEL_MODE_STORAGE_KEY = 'tasukiba_chat_panel_mode_v1';
 
-function loadPanelMode(): PanelMode {
+function loadPanelMode(hasProjectId: boolean): PanelMode {
   if (typeof window === 'undefined') return 'search';
   try {
     const raw = window.sessionStorage.getItem(PANEL_MODE_STORAGE_KEY);
+    if (raw === 'project') return hasProjectId ? 'project' : 'search';
     if (raw === 'help' || raw === 'search') return raw;
     return 'search';
   } catch {
@@ -130,22 +147,29 @@ function generateTurnId(): string {
   return `turn-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-export function ChatPanel({ onClose }: { onClose: () => void }) {
+/**
+ * @param projectId プロジェクト詳細ページで渡す。'project' タブの表示制御と API 呼び出しに使用。
+ */
+export function ChatPanel({ onClose, projectId }: { onClose: () => void; projectId?: string }) {
   const t = useTranslations('chatPanel');
-  // ADR-0028: タブで「過去資産検索」と「ヘルプ・ガイド」を切替。default は既存挙動互換で search。
-  const [mode, setMode] = useState<PanelMode>(() => loadPanelMode());
+  const hasProjectId = Boolean(projectId);
+  // ADR-0028: タブで「全資産から探す」「たすきばを知る」「PJ内から探す」を切替。
+  // projectId がない画面では 'project' タブを表示せず、'search' に fallback する。
+  const [mode, setMode] = useState<PanelMode>(() => loadPanelMode(hasProjectId));
   const handleSwitchMode = useCallback((next: PanelMode) => {
     setMode(next);
     savePanelMode(next);
   }, []);
 
   // ADR-0028 PR #471 (2026-05-30): help mode の turns 数と remount key を ChatPanel 側で管理。
-  //   ChatPanel のヘッダにある統一クリアボタン (ゴミ箱) から両 mode の履歴をクリアできるよう、
-  //   help mode の turns 数は HelpChatInput からの callback で受け取り、
-  //   クリア操作は HelpChatInput の sessionStorage を直接消去 + remount key 更新で
-  //   HelpChatInput の内部 state を破棄する設計。
   const [helpTurnsCount, setHelpTurnsCount] = useState(0);
   const [helpResetKey, setHelpResetKey] = useState(0);
+
+  // project mode の会話履歴 (PJ内から探す)。
+  // プロジェクトごとにスコープキーを分離するため、projectId を storageKey に組み込む。
+  const [projectTurns, setProjectTurns] = useState<ProjectChatTurn[]>([]);
+  const [projectHydrated, setProjectHydrated] = useState(false);
+  const loadedProjectUserRef = useRef<string | null>(null);
 
   const [query, setQuery] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -206,11 +230,36 @@ export function ChatPanel({ onClose }: { onClose: () => void }) {
   useEffect(() => {
     if (!isUnauthenticated) return;
     purgeAllHistory(CHAT_SEARCH_HISTORY_BASE_KEY);
+    purgeAllHistory(PROJECT_SEARCH_HISTORY_BASE_KEY);
     loadedUserRef.current = null;
+    loadedProjectUserRef.current = null;
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setTurns([]);
+    setProjectTurns([]);
     setHydrated(false);
+    setProjectHydrated(false);
   }, [isUnauthenticated]);
+
+  // PJ内から探すの履歴を viewerUserId + projectId スコープで load する。
+  // projectId が変わる (= 別プロジェクトに移動) ときも再 load される。
+  const projectStorageKey = projectId
+    ? `${PROJECT_SEARCH_HISTORY_BASE_KEY}_p_${projectId}`
+    : null;
+  useEffect(() => {
+    if (!viewerUserId || !projectStorageKey) return;
+    const compositeKey = `${viewerUserId}:${projectStorageKey}`;
+    if (loadedProjectUserRef.current === compositeKey) return;
+    loadedProjectUserRef.current = compositeKey;
+    setProjectTurns(
+      loadScopedHistory(projectStorageKey, viewerUserId, isProjectChatTurn, MAX_HISTORY_TURNS),
+    );
+    setProjectHydrated(true);
+  }, [viewerUserId, projectStorageKey]);
+
+  useEffect(() => {
+    if (!projectHydrated || !viewerUserId || !projectStorageKey || isUnauthenticated) return;
+    saveScopedHistory(projectStorageKey, viewerUserId, projectTurns, MAX_HISTORY_TURNS);
+  }, [projectTurns, projectHydrated, viewerUserId, projectStorageKey, isUnauthenticated]);
 
   // 最新ターンの状態変化 (新規追加 / result 到着 / error) に追従して下端へスクロール。
   // turns.length と「最終ターンの status」を依存に含め、結果到着のタイミングでも reflow する。
@@ -301,8 +350,60 @@ export function ChatPanel({ onClose }: { onClose: () => void }) {
     });
   }, []);
 
+  // PJ内から探す 専用の submit ハンドラ。
+  const [projectSubmitting, setProjectSubmitting] = useState(false);
+  const [projectQuery, setProjectQuery] = useState('');
+  const projectInFlightAbortRef = useRef<AbortController | null>(null);
+
+  const handleProjectSubmit = useCallback(async () => {
+    if (projectSubmitting || projectQuery.trim().length === 0 || !projectId) return;
+
+    projectInFlightAbortRef.current?.abort();
+    const ac = new AbortController();
+    projectInFlightAbortRef.current = ac;
+
+    const turnId = generateTurnId();
+    const submittedQuery = projectQuery;
+
+    setProjectSubmitting(true);
+    setProjectTurns((prev) => [...prev, { id: turnId, userQuery: submittedQuery }]);
+    setProjectQuery('');
+
+    try {
+      const res = await fetch(`/api/projects/${projectId}/chat/search`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: submittedQuery }),
+        signal: ac.signal,
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: { message?: string } };
+        const message = body.error?.message ?? t('searchErrorWithStatus', { status: res.status });
+        setProjectTurns((prev) =>
+          prev.map((turn) => (turn.id === turnId ? { ...turn, error: message } : turn)),
+        );
+      } else {
+        const body = (await res.json()) as { data: ProjectChatSearchResult };
+        setProjectTurns((prev) =>
+          prev.map((turn) => (turn.id === turnId ? { ...turn, result: body.data } : turn)),
+        );
+      }
+    } catch (e) {
+      if (e instanceof DOMException && e.name === 'AbortError') return;
+      const message = e instanceof Error ? e.message : t('searchErrorDefault');
+      setProjectTurns((prev) =>
+        prev.map((turn) => (turn.id === turnId ? { ...turn, error: message } : turn)),
+      );
+    } finally {
+      if (projectInFlightAbortRef.current === ac) {
+        setProjectSubmitting(false);
+        projectInFlightAbortRef.current = null;
+      }
+    }
+  }, [projectQuery, projectSubmitting, projectId]);
+
   // 履歴クリア (手動)。ユーザが明示的に「過去の会話を消したい」と意思表示した場合に呼ばれる。
-  // ADR-0028 PR #471: ChatPanel ヘッダの統一クリアボタンから両 mode をクリアできるよう
+  // ADR-0028 PR #471: ChatPanel ヘッダの統一クリアボタンから全 mode をクリアできるよう
   //   現 mode に応じて対象履歴を切替 (UI の見た目は完全一致)。
   const handleClearHistory = useCallback(() => {
     // ユーザスコープキーから現ユーザ分のみ削除する (越境防御と同じキー体系)。
@@ -310,6 +411,9 @@ export function ChatPanel({ onClose }: { onClose: () => void }) {
     if (mode === 'search') {
       clearScopedHistory(CHAT_SEARCH_HISTORY_BASE_KEY, viewerUserId);
       setTurns([]);
+    } else if (mode === 'project') {
+      if (projectStorageKey) clearScopedHistory(projectStorageKey, viewerUserId);
+      setProjectTurns([]);
     } else {
       // help mode: HelpChatInput が管理する help チャットのスコープキーを直接削除 +
       //   remount (helpResetKey) で内部 state を破棄。
@@ -317,7 +421,7 @@ export function ChatPanel({ onClose }: { onClose: () => void }) {
       setHelpResetKey((k) => k + 1);
       setHelpTurnsCount(0);
     }
-  }, [mode, viewerUserId]);
+  }, [mode, viewerUserId, projectStorageKey]);
 
   return (
     <aside
@@ -345,7 +449,11 @@ export function ChatPanel({ onClose }: { onClose: () => void }) {
               {CHAT_PERSONA.name}
             </span>
             <span className="text-[10px] text-muted-foreground leading-tight">
-              {mode === 'search' ? t('subtitleSearch') : t('subtitleHelp')}
+              {mode === 'search'
+                ? t('subtitleSearch')
+                : mode === 'project'
+                  ? t('subtitleProject')
+                  : t('subtitleHelp')}
             </span>
           </div>
         </div>
@@ -364,16 +472,26 @@ export function ChatPanel({ onClose }: { onClose: () => void }) {
           <button
             type="button"
             onClick={handleClearHistory}
-            disabled={mode === 'search' ? turns.length === 0 : helpTurnsCount === 0}
+            disabled={
+              mode === 'search'
+                ? turns.length === 0
+                : mode === 'project'
+                  ? projectTurns.length === 0
+                  : helpTurnsCount === 0
+            }
             aria-label={
               mode === 'search'
                 ? t('ariaLabelClearSearch')
-                : t('ariaLabelClearHelp')
+                : mode === 'project'
+                  ? t('ariaLabelClearProject')
+                  : t('ariaLabelClearHelp')
             }
             title={
               mode === 'search'
                 ? t('ariaLabelClearSearch')
-                : t('ariaLabelClearHelp')
+                : mode === 'project'
+                  ? t('ariaLabelClearProject')
+                  : t('ariaLabelClearHelp')
             }
             data-testid="chat-panel-clear-history"
             className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-muted-foreground"
@@ -437,6 +555,27 @@ export function ChatPanel({ onClose }: { onClose: () => void }) {
         >
           {t('tabHelp')}
         </button>
+        {/* PJ内から探すタブ: projectId がある (= プロジェクト詳細画面) ときのみ表示 */}
+        {hasProjectId && (
+          <button
+            type="button"
+            role="tab"
+            id="chat-panel-tab-project"
+            aria-selected={mode === 'project'}
+            aria-controls="chat-panel-panel-project"
+            tabIndex={mode === 'project' ? 0 : -1}
+            onClick={() => handleSwitchMode('project')}
+            data-testid="chat-panel-tab-project"
+            className={cn(
+              'flex-1 px-3 py-2 text-xs font-medium border-b-2 transition-colors',
+              mode === 'project'
+                ? 'border-primary text-foreground'
+                : 'border-transparent text-muted-foreground hover:text-foreground',
+            )}
+          >
+            {t('tabProject')}
+          </button>
+        )}
       </div>
 
       {/*
@@ -492,6 +631,30 @@ export function ChatPanel({ onClose }: { onClose: () => void }) {
           onTurnsCountChange={setHelpTurnsCount}
         />
       </div>
+      {/* PJ内から探すタブパネル: projectId があるときのみ mount */}
+      {hasProjectId && (
+        <div
+          role="tabpanel"
+          id="chat-panel-panel-project"
+          aria-labelledby="chat-panel-tab-project"
+          hidden={mode !== 'project'}
+          className={mode === 'project' ? 'flex flex-1 min-h-0 flex-col' : ''}
+        >
+          {mode === 'project' && projectId && (
+            <ProjectSearchModeBody
+              projectId={projectId}
+              turns={projectTurns}
+              query={projectQuery}
+              setQuery={setProjectQuery}
+              submitting={projectSubmitting}
+              handleSubmit={handleProjectSubmit}
+              handleCardClick={handleCardClick}
+              bottomAnchorRef={bottomAnchorRef}
+              isNavigating={isNavigating}
+            />
+          )}
+        </div>
+      )}
     </aside>
   );
 }
@@ -631,6 +794,316 @@ function SearchModeBody({
           </button>
         </div>
       </footer>
+    </div>
+  );
+}
+
+/**
+ * 「PJ内から探す」モードの本体。SearchModeBody と同構造だが ProjectChatSearchResult を使う。
+ */
+function ProjectSearchModeBody({
+  projectId,
+  turns,
+  query,
+  setQuery,
+  submitting,
+  handleSubmit,
+  handleCardClick,
+  bottomAnchorRef,
+  isNavigating,
+}: {
+  projectId: string;
+  turns: ProjectChatTurn[];
+  query: string;
+  setQuery: (q: string) => void;
+  submitting: boolean;
+  handleSubmit: () => void;
+  handleCardClick: () => void;
+  bottomAnchorRef: React.RefObject<HTMLDivElement | null>;
+  isNavigating: boolean;
+}) {
+  const t = useTranslations('chatPanel');
+  const tooLong = query.length > CHAT_SEARCH_INPUT_MAX_CHARS;
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+        e.preventDefault();
+        handleSubmit();
+      }
+    },
+    [handleSubmit],
+  );
+
+  return (
+    <div className="flex flex-1 min-h-0 flex-col">
+      <div className="border-b border-border bg-muted/50 px-4 py-2 text-xs text-muted-foreground">
+        {t('voyageNotice')}
+      </div>
+      <div className="flex-1 overflow-y-auto p-4 text-sm" data-testid="chat-panel-project-messages">
+        <AssistantBubble>
+          <div data-testid="chat-project-initial-greeting">
+            <p className="leading-relaxed">
+              {t('greetingProjectHello', { name: CHAT_PERSONA.name })}
+            </p>
+            <p className="mt-1 leading-relaxed">{t('greetingProjectBody')}</p>
+          </div>
+        </AssistantBubble>
+
+        {turns.map((turn) => (
+          <ProjectChatTurnView
+            key={turn.id}
+            turn={turn}
+            projectId={projectId}
+            onCardClick={handleCardClick}
+          />
+        ))}
+
+        {isNavigating && (
+          <div
+            role="status"
+            aria-live="polite"
+            className="mb-3 rounded-md border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground"
+          >
+            {t('navigationPending')}
+          </div>
+        )}
+        <div ref={bottomAnchorRef} />
+      </div>
+
+      <footer className="border-t border-border p-3">
+        {tooLong && (
+          <div className="mb-2 text-xs text-destructive">
+            {t('warningTooLong', { max: CHAT_SEARCH_INPUT_MAX_CHARS })}
+          </div>
+        )}
+        <div className="flex items-end gap-2">
+          <textarea
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={handleKeyDown}
+            disabled={submitting}
+            placeholder={t('inputPlaceholder')}
+            rows={2}
+            className={cn(
+              'flex-1 resize-none rounded-md border border-input bg-background px-3 py-2 text-sm',
+              'focus:outline-none focus:ring-2 focus:ring-ring',
+              'disabled:opacity-50',
+            )}
+          />
+          <button
+            type="button"
+            onClick={handleSubmit}
+            disabled={submitting || query.trim().length === 0 || tooLong}
+            aria-label={t('ariaLabelSend')}
+            className={cn(
+              'h-9 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground',
+              'hover:bg-primary/80 disabled:opacity-50 disabled:hover:bg-primary',
+            )}
+          >
+            {submitting ? t('btnSearching') : t('btnSend')}
+          </button>
+        </div>
+      </footer>
+    </div>
+  );
+}
+
+function ProjectChatTurnView({
+  turn,
+  projectId,
+  onCardClick,
+}: {
+  turn: ProjectChatTurn;
+  projectId: string;
+  onCardClick: () => void;
+}) {
+  const t = useTranslations('chatPanel');
+  const [strongExpanded, setStrongExpanded] = useState(false);
+  const [mediumExpanded, setMediumExpanded] = useState(false);
+  const [weakExpanded, setWeakExpanded] = useState(false);
+  const pending = !turn.result && !turn.error;
+
+  return (
+    <>
+      <UserBubble text={turn.userQuery} />
+      {turn.error ? (
+        <div
+          role="alert"
+          className="mb-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive"
+        >
+          {turn.error}
+        </div>
+      ) : pending ? (
+        <AssistantBubble>
+          <div className="text-xs text-muted-foreground" role="status" aria-live="polite">
+            {t('pendingProjectMessage')}
+          </div>
+        </AssistantBubble>
+      ) : turn.result ? (
+        <AssistantBubble>
+          {turn.result.degraded && (
+            <div className="mb-2 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs">
+              {t('degradedNotice', { label: turn.result.degradeReason ?? '' })}
+            </div>
+          )}
+          <ProjectChatResults
+            result={turn.result}
+            projectId={projectId}
+            strongExpanded={strongExpanded}
+            mediumExpanded={mediumExpanded}
+            weakExpanded={weakExpanded}
+            onToggleStrong={() => setStrongExpanded((v) => !v)}
+            onToggleMedium={() => setMediumExpanded((v) => !v)}
+            onToggleWeak={() => setWeakExpanded((v) => !v)}
+            onCardClick={onCardClick}
+          />
+        </AssistantBubble>
+      ) : null}
+    </>
+  );
+}
+
+function ProjectChatResults({
+  result,
+  projectId,
+  strongExpanded,
+  mediumExpanded,
+  weakExpanded,
+  onToggleStrong,
+  onToggleMedium,
+  onToggleWeak,
+  onCardClick,
+}: {
+  result: ProjectChatSearchResult;
+  projectId: string;
+  strongExpanded: boolean;
+  mediumExpanded: boolean;
+  weakExpanded: boolean;
+  onToggleStrong: () => void;
+  onToggleMedium: () => void;
+  onToggleWeak: () => void;
+  onCardClick: () => void;
+}) {
+  const t = useTranslations('chatPanel');
+  const allHits = [
+    ...result.results.knowledges,
+    ...result.results.risksIssues,
+    ...result.results.retrospectives,
+    ...result.results.qaThreads,
+    ...result.results.whiteboardSessions,
+    ...result.results.votingSessions,
+  ];
+
+  if (allHits.length === 0) {
+    return (
+      <div className="rounded-md border border-border bg-muted/50 px-3 py-4 text-center text-xs text-muted-foreground">
+        {t('noResults')}
+      </div>
+    );
+  }
+
+  const strong = allHits.filter((h) => h.tier === 'strong').sort((a, b) => b.score - a.score);
+  const medium = allHits.filter((h) => h.tier === 'medium').sort((a, b) => b.score - a.score);
+  const weak = allHits.filter((h) => h.tier === 'weak').sort((a, b) => b.score - a.score);
+  const strongInitial = strong.slice(0, SUGGESTION_TIER_STRONG_INITIAL_VISIBLE);
+  const strongRest = strong.slice(SUGGESTION_TIER_STRONG_INITIAL_VISIBLE);
+
+  return (
+    <div>
+      <div className="mb-3 text-xs text-muted-foreground">
+        {t('foundCount', { count: result.totalCount, scope: t('scopeAssets') })}
+      </div>
+
+      {strong.length > 0 && (
+        <section className="mb-4">
+          <h3 className="mb-2 text-xs font-semibold text-foreground">
+            {t('strongSectionTitle', { count: strong.length })}
+          </h3>
+          <div className="flex flex-col gap-2">
+            {strongInitial.map((hit) => (
+              <ProjectChatSearchResultCard
+                key={`${hit.kind}-${hit.id}`}
+                hit={hit}
+                projectId={projectId}
+                onClick={onCardClick}
+              />
+            ))}
+            {strongRest.length > 0 && (
+              <>
+                <button
+                  type="button"
+                  onClick={onToggleStrong}
+                  aria-expanded={strongExpanded}
+                  className="mt-1 text-xs font-medium text-muted-foreground hover:text-foreground"
+                >
+                  {strongExpanded
+                    ? t('strongShowLess', { count: strongRest.length })
+                    : t('strongShowMore', { count: strongRest.length })}
+                </button>
+                {strongExpanded &&
+                  strongRest.map((hit) => (
+                    <ProjectChatSearchResultCard
+                      key={`${hit.kind}-${hit.id}`}
+                      hit={hit}
+                      projectId={projectId}
+                      onClick={onCardClick}
+                    />
+                  ))}
+              </>
+            )}
+          </div>
+        </section>
+      )}
+
+      {medium.length > 0 && (
+        <section className="mb-4">
+          <button
+            type="button"
+            onClick={onToggleMedium}
+            aria-expanded={mediumExpanded}
+            className="mb-2 text-xs font-semibold text-foreground hover:text-muted-foreground"
+          >
+            {mediumExpanded ? t('mediumExpandedLabel', { count: medium.length }) : t('mediumCollapsed', { count: medium.length })}
+          </button>
+          {mediumExpanded && (
+            <div className="flex flex-col gap-2">
+              {medium.map((hit) => (
+                <ProjectChatSearchResultCard
+                  key={`${hit.kind}-${hit.id}`}
+                  hit={hit}
+                  projectId={projectId}
+                  onClick={onCardClick}
+                />
+              ))}
+            </div>
+          )}
+        </section>
+      )}
+
+      {weak.length > 0 && (
+        <section>
+          <button
+            type="button"
+            onClick={onToggleWeak}
+            aria-expanded={weakExpanded}
+            className="mb-2 text-xs font-semibold text-muted-foreground hover:text-foreground"
+          >
+            {weakExpanded ? t('weakExpandedLabel', { count: weak.length }) : t('weakCollapsed', { count: weak.length })}
+          </button>
+          {weakExpanded && (
+            <div className="flex flex-col gap-2">
+              {weak.map((hit) => (
+                <ProjectChatSearchResultCard
+                  key={`${hit.kind}-${hit.id}`}
+                  hit={hit}
+                  projectId={projectId}
+                  onClick={onCardClick}
+                />
+              ))}
+            </div>
+          )}
+        </section>
+      )}
     </div>
   );
 }

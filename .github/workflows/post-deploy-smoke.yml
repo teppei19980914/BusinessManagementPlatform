@@ -1,4 +1,4 @@
-# Post-Deploy Production Smoke Test
+﻿# Post-Deploy Production Smoke Test
 #
 # 目的:
 #   main への push 後、Netlify deploy 完了を待ってから e2e/smoke/production-smoke.spec.ts を
@@ -59,15 +59,15 @@ jobs:
       SMOKE_ADMIN_PASSWORD: ${{ secrets.SMOKE_ADMIN_PASSWORD }}
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v6
+        uses: pnpm/action-setup@b0f76dfb45f55f8421693e4803ac7bb65143bd34 # v6
         with:
           version: 10
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
           node-version: '22'
           cache: 'pnpm'
@@ -98,7 +98,7 @@ jobs:
       - name: Upload smoke HTML report
         # 失敗時も必ずアップロードして原因調査を可能にする
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: smoke-report-${{ github.run_id }}
           path: playwright-report-smoke/
@@ -106,7 +106,7 @@ jobs:
 
       - name: Upload smoke test-results (traces / screenshots / videos)
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: smoke-test-results-${{ github.run_id }}
           path: test-results/

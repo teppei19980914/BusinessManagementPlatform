@@ -70,10 +70,12 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  // 経路 A 失敗時: Bearer に関する誤設定を診断するため、reason が `server_secret_missing` /
-  //   `no_bearer_header` 以外なら専用 error code で 401 を返す (= cron-job.org 設定誤りを
-  //   レスポンス body から直接特定できる)。`no_bearer_header` は「Cookie 認証フォールバック対象」
-  //   なので経路 B に進む。
+  // 経路 A 失敗時の分岐:
+  //   - no_bearer_header: Authorization ヘッダなし = 管理画面手動実行 → 経路 B へ
+  //   - server_secret_missing: Bearer ヘッダはあるが CRON_SECRET 未設定 → 500
+  //   - invalid_bearer_format / secret_mismatch: cron-job.org 設定誤り → 401
+  //   ※ cron-auth.ts の修正により、Authorization ヘッダがない場合は必ず no_bearer_header
+  //     が返るため、no_bearer_header 以外で経路 B に進むことはない。
   if (authResult.reason === 'invalid_bearer_format') {
     return NextResponse.json(
       { error: { code: 'CRON_BEARER_MALFORMED', message: 'Authorization header must start with "Bearer "' } },

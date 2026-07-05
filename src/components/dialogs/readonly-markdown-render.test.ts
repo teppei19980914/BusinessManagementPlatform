@@ -181,3 +181,95 @@ describe('v1.4.0 横展開 Markdown 表示退行防止', () => {
     expect(src).toMatch(/<MarkdownDisplay\b/);
   });
 });
+
+/**
+ * v1.5.0 CommentSection 表示条件 + 共有ボタン退行防止テスト。
+ *
+ * 背景:
+ *   v1.5.0 で非公開資産 (draft/private) のコメントセクションを非表示にした。
+ *   非公開メモに @mention → 通知リンクをクリック → NotFound になる問題の修正。
+ *   また公開資産にのみ「共有する」ボタンを追加。
+ *
+ *   将来の編集で visibility ガードが外れると:
+ *   - 非公開コメントに @mention → NotFound 通知が再発する
+ *   - 非公開資産に共有ボタンが表示され、後続 API が 404 を返す UX 劣化が起きる
+ *
+ * 本テストの役割:
+ *   各ダイアログのソースに `visibility === 'public'` ガードがあることを担保し、
+ *   将来の編集でガードが消えた際にすぐ気づけるようにする。
+ */
+describe('v1.5.0 CommentSection・共有ボタン表示条件 (visibility=\'public\') 退行防止', () => {
+  const ASSET_DIALOGS = [
+    {
+      filename: 'knowledge-edit-dialog.tsx',
+      label: 'KnowledgeEditDialog',
+      dir: DIALOG_DIR,
+    },
+    {
+      filename: 'risk-edit-dialog.tsx',
+      label: 'RiskEditDialog',
+      dir: DIALOG_DIR,
+    },
+    {
+      filename: 'retrospective-edit-dialog.tsx',
+      label: 'RetrospectiveEditDialog',
+      dir: DIALOG_DIR,
+    },
+  ];
+
+  for (const { filename, label, dir } of ASSET_DIALOGS) {
+    describe(`${label}: ${filename}`, () => {
+      const source = readFileSync(join(dir, filename), 'utf8');
+
+      it('ShareAssetDialog を import している', () => {
+        expect(source).toMatch(
+          /import\s+\{[^}]*\bShareAssetDialog\b[^}]*\}\s+from\s+['"]@\/components\/dialogs\/share-asset-dialog['"]/,
+        );
+      });
+
+      it('CommentSection が visibility === \'public\' ガード内にある', () => {
+        // `visibility === 'public'` の条件式と CommentSection が近傍にあることを確認
+        expect(source).toMatch(/visibility\s*===\s*['"]public['"]\s*[\s\S]{0,300}?<CommentSection\b/);
+      });
+
+      it('共有ボタンが visibility === \'public\' ガード内にある', () => {
+        // 共有するボタンのテキストが visibility 条件下にある
+        expect(source).toMatch(/visibility\s*===\s*['"]public['"]\s*[\s\S]{0,300}?共有する/);
+      });
+    });
+  }
+
+  describe('memos-client.tsx (個人メモ編集)', () => {
+    const memoSource = readFileSync(
+      join(DIALOG_DIR, '../../app/(dashboard)/memos/memos-client.tsx'),
+      'utf8',
+    );
+
+    it('ShareAssetDialog を import している', () => {
+      expect(memoSource).toMatch(
+        /import\s+\{[^}]*\bShareAssetDialog\b[^}]*\}\s+from\s+['"]@\/components\/dialogs\/share-asset-dialog['"]/,
+      );
+    });
+
+    it('CommentSection が visibility === \'public\' ガード内にある', () => {
+      expect(memoSource).toMatch(/visibility\s*===\s*['"]public['"]\s*[\s\S]{0,300}?<CommentSection\b/);
+    });
+  });
+
+  describe('MemoViewDialog (全メモ画面)', () => {
+    const memoViewSource = readFileSync(
+      join(DIALOG_DIR, '../../app/(dashboard)/all-memos/memo-view-dialog.tsx'),
+      'utf8',
+    );
+
+    it('ShareAssetDialog を import している', () => {
+      expect(memoViewSource).toMatch(
+        /import\s+\{[^}]*\bShareAssetDialog\b[^}]*\}\s+from\s+['"]@\/components\/dialogs\/share-asset-dialog['"]/,
+      );
+    });
+
+    it('CommentSection が visibility === \'public\' ガード内にある', () => {
+      expect(memoViewSource).toMatch(/visibility\s*===\s*['"]public['"]\s*[\s\S]{0,300}?<CommentSection\b/);
+    });
+  });
+});

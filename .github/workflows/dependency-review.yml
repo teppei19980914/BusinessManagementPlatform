@@ -1,4 +1,4 @@
-# Dependency Review (GitHub 公式 action)
+﻿# Dependency Review (GitHub 公式 action)
 # https://docs.github.com/en/code-security/supply-chain-security/understanding-your-software-supply-chain/about-dependency-review
 #
 # 役割:
@@ -29,10 +29,10 @@ jobs:
     name: Dependency Review
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
       - name: Dependency Review
-        uses: actions/dependency-review-action@v5
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5
         with:
           # 脆弱性レベル: high 以上で fail (low/moderate は警告のみ)
           fail-on-severity: high

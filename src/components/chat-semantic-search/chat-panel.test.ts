@@ -72,7 +72,7 @@ describe('ChatPanel のマスコット統合 invariant', () => {
   });
 
   it('結果カードは ChatSearchResultCard (result-card.tsx) 経由で描画する', () => {
-    expect(source).toMatch(/import\s*\{\s*ChatSearchResultCard\s*\}\s*from\s*'\.\/result-card'/);
+    expect(source).toMatch(/ChatSearchResultCard.*from\s*['"]\.\/result-card['"]/);
   });
 
   it('ヘッダ avatar に priority は付与しない (KDD §5.X+166)', () => {
@@ -281,8 +281,8 @@ describe('ChatPanel mode タブ統合 (ADR-0028)', () => {
     );
   });
 
-  it('PanelMode 型を search | help で定義している', () => {
-    expect(source).toMatch(/type\s+PanelMode\s*=\s*'search'\s*\|\s*'help'/);
+  it('PanelMode 型を search | help | project で定義している', () => {
+    expect(source).toMatch(/type\s+PanelMode\s*=\s*'search'\s*\|\s*'help'\s*\|\s*'project'/);
   });
 
   it('sessionStorage 用 key を tasukiba_chat_panel_mode_v1 として定義', () => {
@@ -295,10 +295,10 @@ describe('ChatPanel mode タブ統合 (ADR-0028)', () => {
   });
 
   it("loadPanelMode は不正値 / 未設定時に 'search' へ fail-safe", () => {
-    // 'help' | 'search' のいずれでもなければ 'search' に倒す実装になっている
-    expect(source).toMatch(
-      /raw === 'help' \|\| raw === 'search'[\s\S]{0,30}?return raw[\s\S]{0,30}?return 'search'/,
-    );
+    // 'help' | 'search' | 'project' のいずれでもなければ 'search' に倒す実装になっている
+    // 'project' は projectId の有無で条件付き fail-safe (非 project ページでの 'project' 保存値を戻す)
+    expect(source).toMatch(/function loadPanelMode\(/);
+    expect(source).toMatch(/return 'search'/);
   });
 
   it('WAI-ARIA tablist + tab + tabpanel を備える', () => {
@@ -338,10 +338,11 @@ describe('ChatPanel mode タブ統合 (ADR-0028)', () => {
     );
   });
 
-  it('クリアボタン disabled は現 mode の turns 数で判定 (search:turns / help:helpTurnsCount)', () => {
-    expect(source).toMatch(
-      /disabled=\{mode === 'search' \? turns\.length === 0 : helpTurnsCount === 0\}/,
-    );
+  it('クリアボタン disabled は現 mode の turns 数で判定 (search/project/help の 3 分岐)', () => {
+    // 3 モード対応の条件式
+    expect(source).toMatch(/mode === 'search'[\s\S]{0,30}?turns\.length === 0/);
+    expect(source).toMatch(/mode === 'project'[\s\S]{0,30}?projectTurns\.length === 0/);
+    expect(source).toMatch(/helpTurnsCount === 0/);
   });
 
   it('help mode のクリアは user-scoped 削除 (HELP_CHAT_HISTORY_BASE_KEY) + helpResetKey で remount', () => {
@@ -363,10 +364,13 @@ describe('ChatPanel mode タブ統合 (ADR-0028)', () => {
     expect(helpPanelMatch![1]).not.toContain('overflow-hidden');
   });
 
-  it('サブタイトルは mode に応じて切替 (検索 / ヘルプ・ガイド)', () => {
-    expect(source).toMatch(/mode === 'search' \? t\('subtitleSearch'\) : t\('subtitleHelp'\)/);
-    expect(chatPanelJa.subtitleSearch).toBe('過去資産を意味検索');
+  it('サブタイトルは mode に応じて切替 (全資産から探す / たすきばを知る / PJ内から探す)', () => {
+    expect(source).toMatch(/mode === 'search'[\s\S]{0,30}?t\('subtitleSearch'\)/);
+    expect(source).toMatch(/mode === 'project'[\s\S]{0,30}?t\('subtitleProject'\)/);
+    expect(source).toMatch(/t\('subtitleHelp'\)/);
+    expect(chatPanelJa.subtitleSearch).toBe('全資産を意味検索');
     expect(chatPanelJa.subtitleHelp).toBe('FAQ・使い方ガイド');
+    expect(chatPanelJa.subtitleProject).toBe('このPJ内を意味検索');
   });
 
   it('tabIndex は roving tab index pattern (active=0、inactive=-1)', () => {
@@ -402,17 +406,89 @@ describe('ChatPanel 2 巡目検証 (state 保持 + a11y 強化)', () => {
   });
 
   it('クリアボタン aria-label を mode 別動的化 (a11y screen reader 区別)', () => {
-    // 文言は i18n キー経由 (ja.json で確認)
-    expect(source).toMatch(
-      /aria-label=\{[\s\S]{0,30}?mode === 'search'[\s\S]{0,200}?t\('ariaLabelClearSearch'\)[\s\S]{0,200}?t\('ariaLabelClearHelp'\)/,
-    );
-    expect(chatPanelJa.ariaLabelClearSearch).toBe('過去資産検索の会話履歴をクリア');
-    expect(chatPanelJa.ariaLabelClearHelp).toBe('ヘルプ・ガイドの会話履歴をクリア');
+    // 3 モード対応: search / project / help
+    expect(source).toMatch(/t\('ariaLabelClearSearch'\)/);
+    expect(source).toMatch(/t\('ariaLabelClearProject'\)/);
+    expect(source).toMatch(/t\('ariaLabelClearHelp'\)/);
+    expect(chatPanelJa.ariaLabelClearSearch).toBe('全資産から探すの会話履歴をクリア');
+    expect(chatPanelJa.ariaLabelClearHelp).toBe('たすきばを知るの会話履歴をクリア');
+    expect(chatPanelJa.ariaLabelClearProject).toBe('PJ内から探すの会話履歴をクリア');
   });
 
   it('クリアボタン title (tooltip) も mode 別動的化 (aria-label と同文言)', () => {
-    expect(source).toMatch(
-      /title=\{[\s\S]{0,30}?mode === 'search'[\s\S]{0,200}?t\('ariaLabelClearSearch'\)/,
-    );
+    expect(source).toMatch(/title=\{[\s\S]{0,30}?mode === 'search'[\s\S]{0,200}?t\('ariaLabelClearSearch'\)/);
+  });
+});
+
+/**
+ * v1.5.0 (2026-06-29): 「PJ内から探す」3本目タブ追加
+ *
+ * 担保対象:
+ *   - projectId prop を受け取り、あるときだけ 3rd タブを表示
+ *   - project モード専用の ProjectSearchModeBody / ProjectChatTurnView / ProjectChatResults
+ *   - ProjectChatSearchResultCard を result-card.tsx から import
+ *   - PJ内から探す history は PROJECT_SEARCH_HISTORY_BASE_KEY でスコープ化
+ *   - tabProject / subtitleProject / ariaLabelClearProject / greetingProjectBody 等の i18n キー
+ */
+describe('ChatPanel 「PJ内から探す」3rd タブ (v1.5.0)', () => {
+  it('projectId prop を受け取り ChatPanel を定義する', () => {
+    // destructured params: { onClose, projectId } - `?` は type annotation 側にある
+    expect(source).toMatch(/export function ChatPanel\(\{[^}]*projectId/);
+  });
+
+  it('hasProjectId フラグで 3rd タブの表示制御をする', () => {
+    expect(source).toMatch(/hasProjectId/);
+    expect(source).toMatch(/Boolean\(projectId\)/);
+  });
+
+  it('3rd タブのボタンは data-testid="chat-panel-tab-project" を持つ', () => {
+    expect(source).toMatch(/data-testid="chat-panel-tab-project"/);
+  });
+
+  it('WAI-ARIA: 3rd タブパネルの tabpanel/tab attributes', () => {
+    expect(source).toMatch(/aria-selected=\{mode === 'project'\}/);
+    expect(source).toMatch(/aria-controls="chat-panel-panel-project"/);
+    expect(source).toMatch(/aria-labelledby="chat-panel-tab-project"/);
+  });
+
+  it('tabIndex roving pattern は 3rd タブにも適用', () => {
+    expect(source).toMatch(/tabIndex=\{mode === 'project' \? 0 : -1\}/);
+  });
+
+  it('ProjectSearchModeBody コンポーネントが定義されている', () => {
+    expect(source).toMatch(/function ProjectSearchModeBody\(/);
+  });
+
+  it('ProjectChatResults コンポーネントが定義されている', () => {
+    expect(source).toMatch(/function ProjectChatResults\(/);
+  });
+
+  it('ProjectChatSearchResultCard を result-card.tsx から import する', () => {
+    expect(source).toMatch(/ProjectChatSearchResultCard.*from.*['"]\.\/result-card['"]/);
+  });
+
+  it('PJ内履歴は PROJECT_SEARCH_HISTORY_BASE_KEY でスコープ化する', () => {
+    expect(source).toMatch(/PROJECT_SEARCH_HISTORY_BASE_KEY/);
+    expect(source).toMatch(/tasukiba_pj_search_v1/);
+  });
+
+  it('ProjectChatTurn 型が定義されている', () => {
+    expect(source).toMatch(/type\s+ProjectChatTurn\s*=/);
+  });
+
+  it('プロジェクト検索 API は /api/projects/{projectId}/chat/search に POST する', () => {
+    expect(source).toMatch(/\/api\/projects\/\$\{projectId\}\/chat\/search/);
+  });
+
+  it('PJ内から探すの greetingProjectBody i18n キーが ja.json に存在する', () => {
+    expect(chatPanelJa.greetingProjectBody).toMatch(/このプロジェクト内の情報を探します/);
+  });
+
+  it('PJ内から探すの pendingProjectMessage i18n キーが ja.json に存在する', () => {
+    expect(chatPanelJa.pendingProjectMessage).toMatch(/このプロジェクト内から探しています/);
+  });
+
+  it('tabProject i18n キーが ja.json に存在し「PJ内から探す」を含む', () => {
+    expect(chatPanelJa.tabProject).toMatch(/PJ内から探す/);
   });
 });

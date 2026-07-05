@@ -26,6 +26,7 @@ import {
   generateDailyNotifications,
   cleanupReadNotifications,
   todayInJst,
+  shareAsset,
 } from './notification.service';
 import { prisma } from '@/lib/db';
 
@@ -74,6 +75,78 @@ describe('listNotificationsForUser', () => {
     await listNotificationsForUser('u-1', 'tenant-A', { includeRead: true });
     const findCall = vi.mocked(prisma.notification.findMany).mock.calls[0][0];
     expect(findCall?.where).toEqual({ userId: 'u-1', tenantId: 'tenant-A' });
+  });
+});
+
+// ============================================================
+// shareAsset (v1.5.0)
+// ============================================================
+
+describe('shareAsset', () => {
+  const BASE = {
+    entityType: 'knowledge' as const,
+    entityId: 'k-1',
+    senderUserId: 'u-sender',
+    senderDisplayName: '田中 太郎',
+    assetTitle: '障害対応ナレッジ',
+    link: '/knowledge?knowledgeId=k-1',
+    tenantId: 'tenant-A',
+  };
+
+  it('受信者全員に通知を createMany で生成する', async () => {
+    vi.mocked(prisma.notification.createMany).mockResolvedValue({ count: 2 } as never);
+
+    const result = await shareAsset({ ...BASE, recipientUserIds: ['u-1', 'u-2'] });
+
+    expect(result.count).toBe(2);
+    const call = vi.mocked(prisma.notification.createMany).mock.calls[0][0];
+    expect(call?.data).toHaveLength(2);
+    const firstRow = (call?.data as Array<{ userId: string; type: string; title: string }>)[0];
+    expect(firstRow?.userId).toBe('u-1');
+    expect(firstRow?.type).toBe('asset_share');
+    expect(firstRow?.title).toContain('田中 太郎');
+    expect(firstRow?.title).toContain('障害対応ナレッジ');
+  });
+
+  it('送信者自身が recipientUserIds に含まれていた場合は除外する', async () => {
+    vi.mocked(prisma.notification.createMany).mockResolvedValue({ count: 1 } as never);
+
+    await shareAsset({ ...BASE, recipientUserIds: ['u-sender', 'u-1'] });
+
+    const call = vi.mocked(prisma.notification.createMany).mock.calls[0][0];
+    const ids = (call?.data as Array<{ userId: string }>).map((r) => r.userId);
+    expect(ids).not.toContain('u-sender');
+    expect(ids).toContain('u-1');
+  });
+
+  it('受信者が送信者のみの場合は createMany を呼ばず count=0 を返す', async () => {
+    const result = await shareAsset({ ...BASE, recipientUserIds: ['u-sender'] });
+
+    expect(result.count).toBe(0);
+    expect(prisma.notification.createMany).not.toHaveBeenCalled();
+  });
+
+  it('タイトルが 200 字を超える場合は切り詰める', async () => {
+    vi.mocked(prisma.notification.createMany).mockResolvedValue({ count: 1 } as never);
+    const longTitle = 'あ'.repeat(200);
+
+    await shareAsset({ ...BASE, assetTitle: longTitle, recipientUserIds: ['u-1'] });
+
+    const call = vi.mocked(prisma.notification.createMany).mock.calls[0][0];
+    const title = (call?.data as Array<{ title: string }>)[0]?.title ?? '';
+    expect(title.length).toBeLessThanOrEqual(200);
+    expect(title).toMatch(/…$/);
+  });
+
+  it('dedupeKey は受信者ごとにユニーク (同一バッチ内で重複しない)', async () => {
+    vi.mocked(prisma.notification.createMany).mockResolvedValue({ count: 3 } as never);
+
+    await shareAsset({ ...BASE, recipientUserIds: ['u-1', 'u-2', 'u-3'] });
+
+    const call = vi.mocked(prisma.notification.createMany).mock.calls[0][0];
+    const keys = (call?.data as Array<{ dedupeKey: string }>).map((r) => r.dedupeKey);
+    const unique = new Set(keys);
+    expect(unique.size).toBe(3);
   });
 });
 

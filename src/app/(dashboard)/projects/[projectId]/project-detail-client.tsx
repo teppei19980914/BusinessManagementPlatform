@@ -29,9 +29,6 @@ import Link from 'next/link';
 import { ClickableCard } from '@/components/common/clickable-row';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
-import { Menu } from '@base-ui/react/menu';
-import { ChevronDownIcon } from 'lucide-react';
-import { cn } from '@/lib/utils';
 import { useLoading } from '@/components/loading-overlay';
 import { useToast } from '@/components/toast-provider';
 import { Button } from '@/components/ui/button';
@@ -122,6 +119,12 @@ const AnalyticsClient = dynamic<React.ComponentProps<typeof AnalyticsClientType>
   () => import('./analysis/analysis-client').then((m) => m.AnalyticsClient),
   { ssr: false, loading: () => LAZY_TAB_LOADING },
 );
+// v1.5.0: アイデア出し機能タブ
+import type { IdeaClient as IdeaClientType } from './idea/idea-client';
+const IdeaClient = dynamic<React.ComponentProps<typeof IdeaClientType>>(
+  () => import('./idea/idea-client').then((m) => m.IdeaClient),
+  { ssr: false, loading: () => LAZY_TAB_LOADING },
+);
 import type { StakeholderDTO } from '@/services/stakeholder.service';
 // feat/markdown-textarea: Markdown 入力 + プレビュー + 既存値との差分表示
 import { MarkdownTextarea, MarkdownDisplay } from '@/components/ui/markdown-textarea';
@@ -157,6 +160,10 @@ type Props = {
   /** v1.3.0 資産導線機能: 実 ProjectMember ロールが pm_tl か (admin 短絡なし、WBS 完了バナーの可視性ゲート) */
   isActualProjectPmTl: boolean;
 };
+
+// プロジェクト詳細画面の親タブ値。URL ?tab= の許可リストとしても使用。
+const PARENT_TABS = ['overview', 'estimates', 'progress', 'assets', 'reference', 'tools', 'members', 'stakeholders'] as const;
+type ParentTab = typeof PARENT_TABS[number];
 
 /**
  * 遅延ロードタブの状態に応じて loading / error / content を切り替える表示ラッパー。
@@ -293,14 +300,31 @@ export function ProjectDetailClient({
   // URL クエリを見てモーダルを開くかを決定し、モーダル閉鎖時は URL から除去する。
   const searchParams = useSearchParams();
 
-  // 通知 deep link で `?tab=` 指定があれば、それを初期 active tab に使う (権限 tab に限る)。
-  // 不正値 / 権限不足 tab を指定された場合は 'overview' fallback。
-  const initialTabFromUrl = (() => {
-    const t = searchParams.get('tab');
-    const allowed = ['overview', 'estimates', 'tasks', 'gantt', 'risks', 'issues', 'retrospectives', 'knowledge', 'analytics', 'members', 'stakeholders', 'suggestions'];
-    return t && allowed.includes(t) ? t : 'overview';
+  // 通知 deep link で `?tab=` 指定があれば初期 active tab を決定する。
+  // 後方互換: 旧サブタブ値 (tasks/gantt/risks/...) は親タブ値にマップし、
+  // サブタブの初期値として反映する。不正値は 'overview' にフォールバック。
+  const initialTabParam = searchParams.get('tab') ?? '';
+  const initialActiveTab: ParentTab = (() => {
+    if ((PARENT_TABS as readonly string[]).includes(initialTabParam)) return initialTabParam as ParentTab;
+    if (initialTabParam === 'tasks' || initialTabParam === 'gantt') return 'progress';
+    if (['risks', 'issues', 'retrospectives', 'knowledge'].includes(initialTabParam)) return 'assets';
+    if (initialTabParam === 'analytics' || initialTabParam === 'suggestions') return 'reference';
+    return 'overview';
   })();
-  const [activeTab, setActiveTab] = useState(initialTabFromUrl);
+  const initialProgressSubTab: 'tasks' | 'gantt' = initialTabParam === 'gantt' ? 'gantt' : 'tasks';
+  const initialAssetsSubTab: 'risks' | 'issues' | 'retrospectives' | 'knowledge' = (
+    ['issues', 'retrospectives', 'knowledge'].includes(initialTabParam)
+      ? initialTabParam
+      : 'risks'
+  ) as 'risks' | 'issues' | 'retrospectives' | 'knowledge';
+  // canEdit=false (close 済みプロジェクト) では提案サブタブを表示できないため analytics に fallback
+  const initialReferenceSubTab: 'analytics' | 'suggestions' = (
+    initialTabParam === 'suggestions' && canEdit ? 'suggestions' : 'analytics'
+  );
+  const [activeTab, setActiveTab] = useState<ParentTab>(initialActiveTab);
+  const [progressSubTab, setProgressSubTab] = useState<'tasks' | 'gantt'>(initialProgressSubTab);
+  const [assetsSubTab, setAssetsSubTab] = useState<'risks' | 'issues' | 'retrospectives' | 'knowledge'>(initialAssetsSubTab);
+  const [referenceSubTab, setReferenceSubTab] = useState<'analytics' | 'suggestions'>(initialReferenceSubTab);
 
   const [isSuggestionsModalOpen, setIsSuggestionsModalOpen] = useState(
     searchParams.get('suggestions') === '1',
@@ -311,36 +335,33 @@ export function ProjectDetailClient({
     router.replace(`/projects/${project.id}`);
   }, [router, project.id]);
 
-  // タブ切替時のデータロード処理 (handleTabChange と初期 mount 時 effect から共通利用)
-  const loadTabData = useCallback((value: string) => {
+  // 親タブ切替時のデータロード (handleTabChange と初期 mount 時 effect から共通利用)。
+  // assets は activeSubTab に応じて必要なエンティティのみ取得する。
+  const loadTabData = useCallback((
+    value: string,
+    assetsSub: 'risks' | 'issues' | 'retrospectives' | 'knowledge' = 'risks',
+  ) => {
     switch (value) {
       case 'estimates':
         estimates.load();
         break;
-      case 'tasks':
+      case 'progress':
+        // WBS管理・進捗確認どちらも tasks tree + members が必要
         tasks.load();
         members.load();
         break;
-      case 'gantt':
-        tasks.load();
-        // Gantt の担当者フィルタで使う（WBS と同仕様）
+      case 'assets': {
+        // 担当者 selector の選択肢 (feat/asset-assignee-expansion 2026-05-26)
         members.load();
+        if (assetsSub === 'risks' || assetsSub === 'issues') {
+          risks.load();
+        } else if (assetsSub === 'retrospectives') {
+          retros.load();
+        } else if (assetsSub === 'knowledge') {
+          knowledges.load();
+        }
         break;
-      case 'risks':
-      case 'issues':
-        risks.load();
-        members.load();
-        break;
-      case 'retrospectives':
-        retros.load();
-        // feat/asset-assignee-expansion (2026-05-26): 担当者 selector の選択肢
-        members.load();
-        break;
-      case 'knowledge':
-        knowledges.load();
-        // feat/asset-assignee-expansion (2026-05-26): 担当者 selector の選択肢
-        members.load();
-        break;
+      }
       case 'members':
         members.load();
         // feat/crud-permission-redesign (2026-05-20): admin/pm_tl の両方でメンバー追加候補をロード。
@@ -357,18 +378,26 @@ export function ProjectDetailClient({
   }, [estimates, tasks, members, risks, retros, knowledges, stakeholders, allUsers, systemRole, projectRole]);
 
   function handleTabChange(value: string) {
-    setActiveTab(value);
-    loadTabData(value);
+    setActiveTab(value as ParentTab);
+    loadTabData(value, assetsSubTab);
+  }
+
+  // 資産サブタブ切替: 選択したサブタブのデータを遅延ロード
+  function handleAssetsSubTabChange(value: string) {
+    const v = value as typeof assetsSubTab;
+    setAssetsSubTab(v);
+    loadTabData('assets', v);
   }
 
   // 通知 deep link (e.g. /projects/[id]?tab=stakeholders&stakeholderId=...) で着地した際、
   // initial active tab のデータが lazy fetch されないため mount 時に 1 度だけ強制ロード。
+  // 後方互換: 旧 ?tab=tasks 等は initialActiveTab='progress' に解決済み。
   // PR feat/notification-deep-link-completion / 2026-05-01。
   useEffect(() => {
-    if (initialTabFromUrl !== 'overview') {
-      loadTabData(initialTabFromUrl);
+    if (initialActiveTab !== 'overview') {
+      loadTabData(initialActiveTab, initialAssetsSubTab);
     }
-  }, [initialTabFromUrl, loadTabData]);
+  }, [initialActiveTab, initialAssetsSubTab, loadTabData]);
 
   // CRUD 直後に呼ぶ再取得ハンドラ。router.refresh() は概要タブのプロジェクト基本情報のみで
   // 十分なため、タブ内 CRUD ではタブローカルの load(true) のみで完結させる。
@@ -635,140 +664,30 @@ export function ProjectDetailClient({
       {/* タブ - 全機能をタブ内に直接埋め込み */}
       <Tabs value={activeTab} onValueChange={handleTabChange}>
         {/*
-          fix/stakeholder-hotfix: タブ多数 + 狭い viewport で 1 タブだけ次行に折り返した際、
-          基底 TabsTrigger の `flex-1` により単独タブが 100% 幅に伸びる不具合を解消。
-          - h-auto         : 基底 `h-8` を解除し複数行レイアウトを許可
-          - [&>*]:flex-none: 子 TabsTrigger の `flex-1` を打ち消しコンテンツ幅にする
+          v1.5.0 タブ再構成: 関連機能を親タブに集約し、各親タブ内でサブタブを切り替える。
+          - 進捗管理: WBS管理 / 進捗確認
+          - 資産: リスク一覧 / 課題一覧 / 振り返り一覧 / ナレッジ一覧
+          - 参考情報: 稼働分析 / 提案 (admin/pm_tl のみ)
+          - ツール: ライブ投票 / 事前投票 / ホワイトボード / 匿名FAQ
+          PC/Mobile 共通でサブタブ表示に統一 (旧 dropdown は廃止)。
+          h-auto / [&>*]:flex-none は wrap 時の 1 本ストレッチ防止。
         */}
         <TabsList className="h-auto flex-wrap [&>*]:flex-none">
           <TabsTrigger value="overview">{t('tabOverview')}</TabsTrigger>
           {canEdit && <TabsTrigger value="estimates">{t('tabEstimates')}</TabsTrigger>}
-          {/*
-            2026-04-30 (Task 1): ガントチャートを WBS タブ内ボタンから独立タブ化。
-            「○○一覧」(資産プルダウン) と同じ responsive 方式:
-              - PC (lg+): 「WBS管理」「ガントチャート」を独立タブとして表示
-              - Mobile (lg-): 「進捗管理 ▼」プルダウンに WBS / ガントチャートを集約
-          */}
-          {/* PC 表示: 個別タブ (lg+) */}
-          <TabsTrigger value="tasks" className="hidden lg:inline-flex">{t('tabTasks')}</TabsTrigger>
-          <TabsTrigger value="gantt" className="hidden lg:inline-flex">{t('tabGantt')}</TabsTrigger>
-          {/* Mobile 表示: 進捗管理プルダウン (lg-)。配下の値が active なら親も active 表示。 */}
-          <Menu.Root>
-            <Menu.Trigger
-              className={cn(
-                'inline-flex items-center gap-1 rounded-md px-3 py-1 text-sm transition-colors hover:bg-accent lg:hidden',
-                ['tasks', 'gantt'].includes(activeTab)
-                  ? 'bg-background font-medium shadow-sm text-foreground'
-                  : 'text-muted-foreground',
-              )}
-              aria-label={t('progressMenuAria')}
-            >
-              <span>{t('progressMenuLabel')}</span>
-              <ChevronDownIcon className="size-3.5" />
-            </Menu.Trigger>
-            <Menu.Portal>
-              <Menu.Positioner sideOffset={4} className="isolate z-50">
-                <Menu.Popup
-                  className={cn(
-                    'min-w-[180px] origin-(--transform-origin) rounded-md border bg-card text-card-foreground shadow-md',
-                    'data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95',
-                    'data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95',
-                  )}
-                >
-                  {[
-                    { value: 'tasks', label: t('tabTasks') },
-                    { value: 'gantt', label: t('tabGantt') },
-                  ].map((opt) => (
-                    <Menu.Item
-                      key={opt.value}
-                      onClick={() => handleTabChange(opt.value)}
-                      className={cn(
-                        'block w-full cursor-pointer px-4 py-2 text-left text-sm transition-colors hover:bg-accent',
-                        activeTab === opt.value ? 'bg-accent font-medium' : 'text-foreground',
-                      )}
-                    >
-                      {opt.label}
-                    </Menu.Item>
-                  ))}
-                </Menu.Popup>
-              </Menu.Positioner>
-            </Menu.Portal>
-          </Menu.Root>
-          {/*
-            PR #167 (feat/asset-tab-responsive-mobile):
-            画面幅 lg+ では各「○○一覧」を従来通り独立タブとして表示、
-            画面幅 lg- (1024px 未満) では「資産 ▼」プルダウン 1 つに集約する
-            (ナビ全体: 概要 / 見積もり / WBS管理 / 資産▼ / メンバー / ステークホルダー)。
-            app-header.tsx の 3 分類プルダウン pattern と同じ仕組み。
-          */}
-          {/* PC 表示: 個別タブ (lg+) */}
-          <TabsTrigger value="risks" className="hidden lg:inline-flex">{t('tabRisks')}</TabsTrigger>
-          <TabsTrigger value="issues" className="hidden lg:inline-flex">{t('tabIssues')}</TabsTrigger>
-          <TabsTrigger value="retrospectives" className="hidden lg:inline-flex">{t('tabRetrospectives')}</TabsTrigger>
-          <TabsTrigger value="knowledge" className="hidden lg:inline-flex">{t('tabKnowledge')}</TabsTrigger>
-          {/* 分析タブ: WBS 予実カーブ等の進捗分析。PM/PL + admin のみ表示 (現在地・生産性の把握)。
-              読み取り専用のため closed プロジェクトでも表示する (isReadOnlyByStatus に依存しない)。 */}
+          <TabsTrigger value="progress">{t('tabProgress')}</TabsTrigger>
+          <TabsTrigger value="assets">{t('tabAssets')}</TabsTrigger>
+          {/* 参考情報タブ: 稼働分析 + 提案。admin/pm_tl のみ表示。 */}
           {(systemRole === 'admin' || projectRole === 'pm_tl') && (
-            <TabsTrigger value="analytics" className="hidden lg:inline-flex">{t('tabAnalytics')}</TabsTrigger>
+            <TabsTrigger value="reference">{t('tabReference')}</TabsTrigger>
           )}
-          {/* PR #65 核心機能: 過去プロジェクトから流用できるナレッジ・課題を常時提案。
-              feat/crud-permission-redesign (2026-05-20): PM/TL + admin のみ。adopt 操作も PM/TL 判断のため。 */}
-          {canEdit && (
-            <TabsTrigger value="suggestions" className="hidden lg:inline-flex">{t('tabSuggestions')}</TabsTrigger>
-          )}
-          {/* Mobile 表示: 資産プルダウン (lg-)。配下の値が active なら親も active 表示。 */}
-          <Menu.Root>
-            <Menu.Trigger
-              className={cn(
-                'inline-flex items-center gap-1 rounded-md px-3 py-1 text-sm transition-colors hover:bg-accent lg:hidden',
-                ['risks', 'issues', 'retrospectives', 'knowledge', 'analytics', 'suggestions'].includes(activeTab)
-                  ? 'bg-background font-medium shadow-sm text-foreground'
-                  : 'text-muted-foreground',
-              )}
-              aria-label={t('assetsMenuAria')}
-            >
-              <span>{t('assetsMenuLabel')}</span>
-              <ChevronDownIcon className="size-3.5" />
-            </Menu.Trigger>
-            <Menu.Portal>
-              <Menu.Positioner sideOffset={4} className="isolate z-50">
-                <Menu.Popup
-                  className={cn(
-                    'min-w-[180px] origin-(--transform-origin) rounded-md border bg-card text-card-foreground shadow-md',
-                    'data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95',
-                    'data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95',
-                  )}
-                >
-                  {[
-                    { value: 'risks', label: t('tabRisks') },
-                    { value: 'issues', label: t('tabIssues') },
-                    { value: 'retrospectives', label: t('tabRetrospectives') },
-                    { value: 'knowledge', label: t('tabKnowledge') },
-                    // 分析タブ: PM/PL + admin のみ。提案の左隣に配置。
-                    ...((systemRole === 'admin' || projectRole === 'pm_tl') ? [{ value: 'analytics', label: t('tabAnalytics') }] : []),
-                    // feat/crud-permission-redesign (2026-05-20): suggestions は PM/TL + admin のみ
-                    ...(canEdit ? [{ value: 'suggestions', label: t('tabSuggestions') }] : []),
-                  ].map((opt) => (
-                    <Menu.Item
-                      key={opt.value}
-                      onClick={() => handleTabChange(opt.value)}
-                      className={cn(
-                        'block w-full cursor-pointer px-4 py-2 text-left text-sm transition-colors hover:bg-accent',
-                        activeTab === opt.value ? 'bg-accent font-medium' : 'text-foreground',
-                      )}
-                    >
-                      {opt.label}
-                    </Menu.Item>
-                  ))}
-                </Menu.Popup>
-              </Menu.Positioner>
-            </Menu.Portal>
-          </Menu.Root>
-          {(systemRole === 'admin' || projectRole === 'pm_tl') && !isReadOnlyByStatus && (
+          {/* v1.5.0: ツールタブ (投票・ホワイトボード・匿名FAQ)。全メンバー閲覧可。 */}
+          <TabsTrigger value="tools">{t('tabTools')}</TabsTrigger>
+          {/* メンバータブ: admin/pm_tl のみ。v1.5.0 より close 済みプロジェクトでも閲覧可 (一覧のみ)。 */}
+          {(isSystemAdmin || projectRole === 'pm_tl') && (
             <TabsTrigger value="members">{t('tabMembers')}</TabsTrigger>
           )}
-          {/* feat/stakeholder-management: ステークホルダー管理 (PMBOK 13)。
-              個人情報・人物評を含むため PM/TL + admin のみ表示・閲覧可。 */}
+          {/* feat/stakeholder-management: 個人情報・人物評を含むため PM/TL + admin のみ。 */}
           {(systemRole === 'admin' || projectRole === 'pm_tl') && (
             <TabsTrigger value="stakeholders">{t('tabStakeholders')}</TabsTrigger>
           )}
@@ -935,177 +854,185 @@ export function ProjectDetailClient({
           </TabsContent>
         )}
 
-        {/* WBS/タスクタブ（tasks と members が必要）*/}
-        <TabsContent value="tasks" className="mt-4">
-          <LazyTabContent state={tasks.state}>
-            {(tasksData) => (
-              <LazyTabContent state={members.state}>
-                {(membersData) => (
-                  <TasksClient
-                    projectId={project.id}
-                    tasks={tasksData.tree}
-                    members={membersData}
-                    projectRole={projectRole}
-                    systemRole={systemRole}
-                    userId={userId}
-                    onReload={reloadTasks}
-                    isReadOnly={isReadOnlyByStatus}
-                    today={today}
-                  />
+        {/* 進捗管理タブ: WBS管理 / 進捗確認 サブタブ */}
+        <TabsContent value="progress" className="mt-4">
+          <Tabs value={progressSubTab} onValueChange={(v) => setProgressSubTab(v as typeof progressSubTab)}>
+            <TabsList className="h-auto flex-wrap [&>*]:flex-none">
+              <TabsTrigger value="tasks">{t('tabTasks')}</TabsTrigger>
+              <TabsTrigger value="gantt">{t('tabGantt')}</TabsTrigger>
+            </TabsList>
+            <TabsContent value="tasks" className="mt-4">
+              <LazyTabContent state={tasks.state}>
+                {(tasksData) => (
+                  <LazyTabContent state={members.state}>
+                    {(membersData) => (
+                      <TasksClient
+                        projectId={project.id}
+                        tasks={tasksData.tree}
+                        members={membersData}
+                        projectRole={projectRole}
+                        systemRole={systemRole}
+                        userId={userId}
+                        onReload={reloadTasks}
+                        isReadOnly={isReadOnlyByStatus}
+                        today={today}
+                      />
+                    )}
+                  </LazyTabContent>
                 )}
               </LazyTabContent>
-            )}
-          </LazyTabContent>
-        </TabsContent>
-
-        {/* 2026-04-30 (Task 1): ガントチャートを独立タブとして復活。
-            WBS と同じ tasks tree + members を使うため lazy fetch も同じ load() を共用。 */}
-        <TabsContent value="gantt" className="mt-4">
-          <LazyTabContent state={tasks.state}>
-            {(tasksData) => (
-              <LazyTabContent state={members.state}>
-                {(membersData) => (
-                  <GanttClient
-                    projectId={project.id}
-                    tasks={tasksData.tree}
-                    members={membersData}
-                    today={today}
-                    tenantTimeZone={tenantTimeZone}
-                    tenantLocale={tenantLocale}
-                  />
+            </TabsContent>
+            <TabsContent value="gantt" className="mt-4">
+              <LazyTabContent state={tasks.state}>
+                {(tasksData) => (
+                  <LazyTabContent state={members.state}>
+                    {(membersData) => (
+                      <GanttClient
+                        projectId={project.id}
+                        tasks={tasksData.tree}
+                        members={membersData}
+                        today={today}
+                        tenantTimeZone={tenantTimeZone}
+                        tenantLocale={tenantLocale}
+                      />
+                    )}
+                  </LazyTabContent>
                 )}
               </LazyTabContent>
-            )}
-          </LazyTabContent>
+            </TabsContent>
+          </Tabs>
         </TabsContent>
 
-        {/* リスクタブ (PR #60 #1: risk のみ表示) */}
-        <TabsContent value="risks" className="mt-4">
-          <LazyTabContent state={risks.state}>
-            {(risksData) => (
-              <LazyTabContent state={members.state}>
-                {(membersData) => (
-                  <RisksClient
-                    projectId={project.id}
-                    risks={risksData}
-                    members={membersData}
-                    canCreate={canCreateOwnedList}
-                    currentUserId={userId}
-                    systemRole={systemRole}
-                    isReadOnly={isReadOnlyByStatus}
-                    typeFilter="risk"
-                    onReload={reloadRisks}
-                  />
+        {/* 資産タブ: リスク一覧 / 課題一覧 / 振り返り一覧 / ナレッジ一覧 サブタブ */}
+        <TabsContent value="assets" className="mt-4">
+          <Tabs value={assetsSubTab} onValueChange={handleAssetsSubTabChange}>
+            <TabsList className="h-auto flex-wrap [&>*]:flex-none">
+              <TabsTrigger value="risks">{t('tabRisks')}</TabsTrigger>
+              <TabsTrigger value="issues">{t('tabIssues')}</TabsTrigger>
+              <TabsTrigger value="retrospectives">{t('tabRetrospectives')}</TabsTrigger>
+              <TabsTrigger value="knowledge">{t('tabKnowledge')}</TabsTrigger>
+            </TabsList>
+            <TabsContent value="risks" className="mt-4">
+              <LazyTabContent state={risks.state}>
+                {(risksData) => (
+                  <LazyTabContent state={members.state}>
+                    {(membersData) => (
+                      <RisksClient
+                        projectId={project.id}
+                        risks={risksData}
+                        members={membersData}
+                        canCreate={canCreateOwnedList}
+                        currentUserId={userId}
+                        systemRole={systemRole}
+                        isReadOnly={isReadOnlyByStatus}
+                        typeFilter="risk"
+                        onReload={reloadRisks}
+                      />
+                    )}
+                  </LazyTabContent>
                 )}
               </LazyTabContent>
-            )}
-          </LazyTabContent>
-        </TabsContent>
-
-        {/* 課題タブ (PR #60 #1: issue のみ表示) */}
-        <TabsContent value="issues" className="mt-4">
-          <LazyTabContent state={risks.state}>
-            {(risksData) => (
-              <LazyTabContent state={members.state}>
-                {(membersData) => (
-                  <RisksClient
-                    projectId={project.id}
-                    risks={risksData}
-                    members={membersData}
-                    canCreate={canCreateOwnedList}
-                    currentUserId={userId}
-                    systemRole={systemRole}
-                    isReadOnly={isReadOnlyByStatus}
-                    typeFilter="issue"
-                    onReload={reloadRisks}
-                  />
+            </TabsContent>
+            <TabsContent value="issues" className="mt-4">
+              <LazyTabContent state={risks.state}>
+                {(risksData) => (
+                  <LazyTabContent state={members.state}>
+                    {(membersData) => (
+                      <RisksClient
+                        projectId={project.id}
+                        risks={risksData}
+                        members={membersData}
+                        canCreate={canCreateOwnedList}
+                        currentUserId={userId}
+                        systemRole={systemRole}
+                        isReadOnly={isReadOnlyByStatus}
+                        typeFilter="issue"
+                        onReload={reloadRisks}
+                      />
+                    )}
+                  </LazyTabContent>
                 )}
               </LazyTabContent>
-            )}
-          </LazyTabContent>
-        </TabsContent>
-
-        {/* 振り返りタブ */}
-        {/* feat/asset-assignee-expansion (2026-05-26): 担当者 selector 用に members も lazy fetch */}
-        <TabsContent value="retrospectives" className="mt-4">
-          <LazyTabContent state={retros.state}>
-            {(data) => (
-              <LazyTabContent state={members.state}>
-                {(membersData) => (
-                  <RetrospectivesClient
-                    projectId={project.id}
-                    retros={data}
-                    members={membersData}
-                    canCreate={canCreateOwnedList}
-                    currentUserId={userId}
-                    today={today}
-                    isReadOnly={isReadOnlyByStatus}
-                    onReload={reloadRetros}
-                  />
+            </TabsContent>
+            {/* feat/asset-assignee-expansion (2026-05-26): 担当者 selector 用に members も lazy fetch */}
+            <TabsContent value="retrospectives" className="mt-4">
+              <LazyTabContent state={retros.state}>
+                {(data) => (
+                  <LazyTabContent state={members.state}>
+                    {(membersData) => (
+                      <RetrospectivesClient
+                        projectId={project.id}
+                        retros={data}
+                        members={membersData}
+                        canCreate={canCreateOwnedList}
+                        currentUserId={userId}
+                        today={today}
+                        isReadOnly={isReadOnlyByStatus}
+                        onReload={reloadRetros}
+                      />
+                    )}
+                  </LazyTabContent>
                 )}
               </LazyTabContent>
-            )}
-          </LazyTabContent>
-        </TabsContent>
-
-        {/*
-          ナレッジ一覧タブ (PR #52 以降):
-            - このプロジェクトに紐づくナレッジのみ表示 (project-scoped)
-            - 作成/削除はプロジェクトメンバーのみ (ProjectKnowledgeClient 内で制御)
-            - 作成時に projectId を自動で関連付けるため「全ナレッジ」にも即反映
-        */}
-        {/* feat/asset-assignee-expansion (2026-05-26): 担当者 selector 用に members も lazy fetch */}
-        <TabsContent value="knowledge" className="mt-4">
-          <LazyTabContent state={knowledges.state}>
-            {(result) => (
-              <LazyTabContent state={members.state}>
-                {(membersData) => (
-                  <ProjectKnowledgeClient
-                    projectId={project.id}
-                    knowledges={result}
-                    members={membersData}
-                    canCreate={canCreateOwnedList}
-                    currentUserId={userId}
-                    isReadOnly={isReadOnlyByStatus}
-                    onReload={reloadKnowledges}
-                  />
+            </TabsContent>
+            <TabsContent value="knowledge" className="mt-4">
+              <LazyTabContent state={knowledges.state}>
+                {(result) => (
+                  <LazyTabContent state={members.state}>
+                    {(membersData) => (
+                      <ProjectKnowledgeClient
+                        projectId={project.id}
+                        knowledges={result}
+                        members={membersData}
+                        canCreate={canCreateOwnedList}
+                        currentUserId={userId}
+                        isReadOnly={isReadOnlyByStatus}
+                        onReload={reloadKnowledges}
+                      />
+                    )}
+                  </LazyTabContent>
                 )}
               </LazyTabContent>
-            )}
-          </LazyTabContent>
+            </TabsContent>
+          </Tabs>
         </TabsContent>
 
-        {/*
-          分析タブ: WBS 予実カーブ等の進捗分析。PM/PL + admin のみ表示し、
-          現在地 (完了に向けた到達度) と生産性 (消化ペース) を可視化する。
-          SuggestionsPanel と同様に独自 fetch を持つため LazyTabContent 不要。
-          読み取り専用のため closed プロジェクトでも表示する。
-        */}
+        {/* 参考情報タブ: 稼働分析 / 提案 サブタブ (admin/pm_tl のみ) */}
         {(systemRole === 'admin' || projectRole === 'pm_tl') && (
-          <TabsContent value="analytics" className="mt-4">
-            <AnalyticsClient projectId={project.id} viewerUserId={userId} />
+          <TabsContent value="reference" className="mt-4">
+            <Tabs value={referenceSubTab} onValueChange={(v) => setReferenceSubTab(v as typeof referenceSubTab)}>
+              <TabsList className="h-auto flex-wrap [&>*]:flex-none">
+                <TabsTrigger value="analytics">{t('tabAnalytics')}</TabsTrigger>
+                {/* 提案タブ: canEdit (admin/pm_tl) のみ。closed プロジェクトは canEdit=false のため非表示。 */}
+                {canEdit && <TabsTrigger value="suggestions">{t('tabSuggestions')}</TabsTrigger>}
+              </TabsList>
+              <TabsContent value="analytics" className="mt-4">
+                <AnalyticsClient projectId={project.id} viewerUserId={userId} />
+              </TabsContent>
+              {canEdit && (
+                <TabsContent value="suggestions" className="mt-4">
+                  <SuggestionsPanel projectId={project.id} canAdopt={canEdit} tenantPlan={tenantPlan} />
+                </TabsContent>
+              )}
+            </Tabs>
           </TabsContent>
         )}
 
-        {/*
-          参考タブ (PR #65 核心機能): 過去プロジェクトから流用可能な
-          ナレッジ・課題を類似度スコア付きで表示し、採用操作を提供する。
-          本タブは独自の fetch (SuggestionsPanel 内) を持つため LazyTabContent 不要。
-          feat/crud-permission-redesign (2026-05-20): PM/TL + admin のみ表示。
-          canAdopt は canCreate (member 含む) ではなく canEdit (admin/pm_tl) に変更し、
-          採用 (プロジェクト紐付け) 権限を PM/TL 判断に統一。
-        */}
-        {canEdit && (
-          <TabsContent value="suggestions" className="mt-4">
-            <SuggestionsPanel projectId={project.id} canAdopt={canEdit} tenantPlan={tenantPlan} />
-          </TabsContent>
-        )}
+        {/* ツールタブ (v1.5.0): 投票・ホワイトボード・匿名FAQ。全メンバー閲覧可。
+            member 以上はセッション作成・投稿・クローズが可能。 */}
+        <TabsContent value="tools" className="mt-4">
+          <IdeaClient
+            projectId={project.id}
+            canSubmit={projectRole !== null && projectRole !== 'viewer' && !isReadOnlyByStatus}
+            canManage={projectRole !== null && projectRole !== 'viewer' && !isReadOnlyByStatus}
+          />
+        </TabsContent>
 
-        {/* メンバータブ（admin/pm_tl のみ表示、両方 allUsers が必要）
-            feat/crud-permission-redesign (2026-05-20): PM/TL もメンバー管理可能になったため、
-            canManage=admin||pm_tl + canManagePmTl=admin の 2 軸で UI を制御。
-            feat/closed-project-readonly (2026-06-05): クローズ済みは member:manage が 403 になるため非表示。 */}
-        {(isSystemAdmin || projectRole === 'pm_tl') && !isReadOnlyByStatus && (
+        {/* メンバータブ（admin/pm_tl のみ表示）
+            v1.5.0: close 済みプロジェクトでも閲覧可 (canManage=false で追加/編集ボタン非表示)。
+            feat/crud-permission-redesign (2026-05-20): PM/TL もメンバー管理可能。
+            canManage=admin||pm_tl + canManagePmTl=admin の 2 軸で UI を制御。 */}
+        {(isSystemAdmin || projectRole === 'pm_tl') && (
           <TabsContent value="members" className="mt-4">
             <LazyTabContent state={members.state}>
               {(membersData) => (
@@ -1115,10 +1042,9 @@ export function ProjectDetailClient({
                       projectId={project.id}
                       members={membersData}
                       allUsers={allUsersData}
-                      canManage={true}
+                      canManage={!isReadOnlyByStatus}
                       canManagePmTl={isSystemAdmin}
                       onReload={reloadMembers}
-                      // feat/crud-permission-redesign (2026-05-20 追加要件): 自分自身のロール変更禁止
                       currentUserId={userId}
                     />
                   )}

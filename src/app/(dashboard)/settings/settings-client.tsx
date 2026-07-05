@@ -335,8 +335,7 @@ export function SettingsClient({
           規約 / 特商法) は外部 LP に集約し、フッタ共通情報から到達する方針へ統一したため。
           /settings/about ページ自体も本 PR で削除済。
       */}
-      {/* feat/collapsed-nav-screen-title (2026-06-05): 画面名「設定」見出しは撤去。
-          ナビ折りたたみ幅でのみ CollapsedNavScreenTitle (layout) が表示する (他画面と統一)。 */}
+      {/* 画面名「設定」見出しは撤去 — CollapsedNavScreenTitle (layout) が全画面幅で表示する。 */}
 
       {/* feat/settings-tenant-identity (2026-05-21): アカウント情報セクション。
           一般ユーザが「次回ログイン時の組織 ID」「自分のメール / 氏名 / ロール」を

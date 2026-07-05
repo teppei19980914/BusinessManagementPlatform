@@ -1,6 +1,6 @@
 # API 設計 — 全 route 網羅リファレンス (Program Design)
 
-本ドキュメントは **実装 (`src/app/api/**/route.ts`) の完全ミラー** であり、開発者がこの 1 ファイルで全 API を把握できることを目的とする。route の実在とメソッドは全て一次ソース (route handler の `export` 宣言) で確認済 (2026-05-31 時点 / 全 **143 route**)。
+本ドキュメントは **実装 (`src/app/api/**/route.ts`) の完全ミラー** であり、開発者がこの 1 ファイルで全 API を把握できることを目的とする。route の実在とメソッドは全て一次ソース (route handler の `export` 宣言) で確認済 (2026-07-03 時点 / 全 **161 route**)。
 
 データモデルは [DATA_MODEL.md](./DATA_MODEL.md)、認可・セキュリティ設計の根拠は [SECURITY.md](./SECURITY.md)、cron スケジュール詳細は [CRON_JOBS.md](./CRON_JOBS.md) を参照。
 
@@ -23,12 +23,12 @@
   - `requireActualProjectMember(user, projectId)` — admin 短絡を行わず実 ProjectMember row を要求。
   - `requireStorageQuotaForWrite(tenantId, bytes)` — write 入口の pre-check。**1 操作ペイロードが 5MB (`DB_WRITE_PAYLOAD_MAX_BYTES`) を超えると 413 `PAYLOAD_TOO_LARGE`、Beginner 無料枠 (DB 50MB) 超過で 403 `BEGINNER_DB_QUOTA_EXCEEDED`**。累積 50GB ハードキャップ判定は撤廃 (ADR-0030 / 2026-05-31、青天井従量化)。
   - super_admin 専用 route は `isSuperAdmin(user)` (`src/lib/permissions/role.ts`) で判定。
-- **cron 認可**: `checkCronAuthorization(req)` / `isCronAuthorized(req)` (`src/lib/cron-auth.ts`)。`Authorization: Bearer <CRON_SECRET>` を `timingSafeEqual` で定数時間比較 (CRON_SECRET 最小 32 文字)。全 cron route の **GET は 405 METHOD_NOT_ALLOWED** を返し、実処理は POST のみ。
+- **cron 認可**: `checkCronAuthorization(req)` / `isCronAuthorized(req)` (`src/lib/cron-auth.ts`)。`Authorization: Bearer <CRON_SECRET>` を `timingSafeEqual` で定数時間比較 (CRON_SECRET 最小 32 文字)。全 cron route の **GET は 405 METHOD_NOT_ALLOWED** を返し、実処理は POST のみ。`Authorization` ヘッダが存在しない場合は `no_bearer_header` を返し (CRON_SECRET チェックより先に判定)、route 側は管理画面手動実行経路 (Route B) へ進む (v1.5.0 修正)。
 - **webhook 認可**: `/api/webhooks/stripe` は Stripe signature 検証 (`constructEvent`) が唯一の認可。生 body (`req.text()`) を使用。
 - **バリデーション**: Zod スキーマ。失敗時は `400 { error: { code: 'VALIDATION_ERROR', details: <ZodIssue[]> } }`。
 - **ページネーション**: `?page=&limit=` (デフォルト page=1 / limit=20、最大 100)。ただし下記「横断一覧」は **全件返却でページング無し**。
 
-### 7.2 全エンドポイント一覧 (ドメイン別 / 143 route)
+### 7.2 全エンドポイント一覧 (ドメイン別 / 161 route)
 
 凡例 — 認可列: 「認証」=ログイン必須 / 「admin」=admin・super_admin / 「super_admin」=super_admin のみ / 「PM」=`checkProjectPermission` / 「member」=実 ProjectMember / 「cron」=Bearer CRON_SECRET / 「token」=メール等のトークン / 「不要」=未認証可。
 
@@ -213,6 +213,12 @@
 | /api/notifications/[id] | PATCH | 認証 | 既読化 (本人) |
 | /api/notifications/mark-all-read | POST | 認証 | 全件既読化 |
 
+#### 資産共有 (assets) — 1 route
+
+| パス | メソッド | 認可 | 概要 |
+|---|---|---|---|
+| /api/assets/share | POST | 認証 | 公開資産 (knowledge/risk/issue/retrospective/memo) をテナントメンバーへ bell 通知で共有。`entityType`, `entityId`, `recipientUserIds[]` を受け取り、公開確認 + 同テナント有効ユーザ確認後 `notification.type='asset_share'` を batch insert。送信者本人は除外。自己のみの場合は count=0 で 200。 |
+
 #### メモ (memos) — 6 route
 
 | パス | メソッド | 認可 | 概要 |
@@ -255,7 +261,7 @@
 | /api/chat/search | POST | 認証 | 5 資産横断の意味検索 (embedding cosine)。ファイル系キーワード検出時は添付ファイル本文のみ検索 (file scope)。§16 参照 |
 | /api/help/chat | POST | 認証 | たすきフクロウ AI ヘルプチャット (FaqEmbedding/GuideEmbedding RAG、ADR-0028)。viewer の systemRole から isTenantAdmin 判定 |
 
-#### テナント (自己, tenants/me) — 12 route
+#### テナント (自己, tenants/me) — 16 route
 
 | パス | メソッド | 認可 | 概要 |
 |---|---|---|---|
@@ -275,6 +281,10 @@
 | /api/tenants/me/migration-import/connect/preview | POST | admin | API連携 (ベータ): 取得+正規化→プレビュー保存 (確定は migration-import/apply 流用) |
 | /api/tenants/me/sample-data | POST | admin | スターターデータ取込 (管理テナントからクローン、容量 precheck) |
 | /api/tenants/me/sample-data | DELETE | admin | スターターデータ一括削除 (is_seed_sample=true のみ) |
+| /api/tenants/me/banners | GET | admin | テナントバナー一覧 (履歴) 取得 (ADR-0037) |
+| /api/tenants/me/banners | POST | admin | テナントバナー作成 (期間重複時 409 OVERLAP、tenantId は session から取得) |
+| /api/tenants/me/banners/[id] | PATCH | admin | テナントバナー編集・取り下げ/再開 (所有権確認) |
+| /api/tenants/me/banners/[id] | DELETE | admin | テナントバナー物理削除 (所有権確認) |
 
 #### テナント課金 (Stripe, tenants/me/billing) — 7 route
 
@@ -298,8 +308,8 @@
 | /api/admin/users/[userId]/unlock | POST | admin | ロック解除 (PW + MFA 一括) |
 | /api/admin/users/[userId]/recovery-codes | POST | admin | リカバリコード再発行 (10 個を 1 回返却) |
 | /api/admin/users/[userId]/resend-invitation | POST | admin | 招待メール再送 (招待中ユーザのみ。2026-06-03 追加) |
-| /api/admin/users/[userId]/cancel-invitation | POST | admin | 招待取消 (招待中を物理削除し席を解放。2026-06-03 追加) |
-| /api/admin/users/lock-inactive | POST | admin/cron | 非アクティブユーザ一括ロック (日次 cron + 手動) |
+| /api/admin/users/[userId]/cancel-invitation | POST | admin | 招待取消 (招待中を物理削除し席を解放。2026-06-03 追加)。v1.5.0: user.delete 前に projectMember / notification / task.assigneeId / passwordResetToken / passwordHistory / emailVerificationToken / recoveryCode / roleChangeLog を Transaction 内でクリーンアップ (FK RESTRICT 対策) |
+| /api/admin/users/lock-inactive | POST | admin/cron | 非アクティブユーザ一括ロック (日次 cron + 手動)。認可 2 経路: `Authorization: Bearer <CRON_SECRET>` ヘッダあり → cron 経路 (全テナント横断)、ヘッダなし (`no_bearer_header`) → admin セッション認証経路 (自テナントのみ) |
 | /api/admin/audit-logs | GET | admin | 監査ログ一覧 |
 | /api/admin/role-change-logs | GET | admin | 権限変更履歴 |
 | /api/admin/usage-summary | GET | admin | 利用量サマリ |
@@ -358,6 +368,44 @@
 | /api/settings/theme | PATCH | 認証 | テーマ設定 (専用 cookie 方式) |
 | /api/client-errors | POST | 認証(任意) | クライアントエラー収集 (認証済なら userId 記録) |
 
+#### アイデア出し (idea) — 15 route (v1.5.0)
+
+権限列凡例: `idea:read` = 閲覧 / `idea:submit` = 提出 / `idea:manage` = 作成・クローズ・削除。
+
+| パス | メソッド | 認可 | 概要 |
+|---|---|---|---|
+| /api/projects/[projectId]/idea/voting | GET | PM + idea:read | 投票セッション一覧 (`?kind=live|pre` でフィルタ可) |
+| /api/projects/[projectId]/idea/voting | POST | member + idea:manage | 投票セッション作成 |
+| /api/projects/[projectId]/idea/voting/[sessionId] | GET | PM + idea:read | 投票セッション単件取得 (匿名化: active 中は自分の提出のみ) |
+| /api/projects/[projectId]/idea/voting/[sessionId] | DELETE | member + idea:manage | 投票セッション論理削除 (作成者のみ) + 関連 idea_asset_links 削除 |
+| /api/projects/[projectId]/idea/voting/[sessionId]/close | POST | member + idea:manage | セッション手動クローズ (作成者のみ。自動クローズは lazy evaluation) |
+| /api/projects/[projectId]/idea/voting/[sessionId]/submit | POST | member + idea:submit | 投票提出 UPSERT (binary: reason 必須 / dot: allocations 合計 ≤ votesPerMember) |
+| /api/projects/[projectId]/idea/whiteboard | GET | PM + idea:read | ホワイトボードセッション一覧 |
+| /api/projects/[projectId]/idea/whiteboard | POST | member + idea:manage | ホワイトボードセッション作成 |
+| /api/projects/[projectId]/idea/whiteboard/[sessionId] | GET | PM + idea:read | ホワイトボードセッション単件取得 (active 中は自分の付箋のみ) |
+| /api/projects/[projectId]/idea/whiteboard/[sessionId] | DELETE | member + idea:manage | ホワイトボードセッション論理削除 (作成者のみ) + 関連 idea_asset_links 削除 |
+| /api/projects/[projectId]/idea/whiteboard/[sessionId]/close | POST | member + idea:manage | セッション手動クローズ (作成者のみ) |
+| /api/projects/[projectId]/idea/whiteboard/[sessionId]/notes | GET | PM + idea:read | 付箋一覧 (active 中は自分のみ / closed 後は全員) |
+| /api/projects/[projectId]/idea/whiteboard/[sessionId]/notes | POST | member + idea:submit | 付箋投稿 (active 中のみ) |
+| /api/projects/[projectId]/idea/whiteboard/[sessionId]/notes/[noteId] | DELETE | member + idea:submit | 付箋削除 (投稿者のみ) |
+| /api/projects/[projectId]/idea/qa | GET | PM + idea:read | Q&A スレッド一覧 (`?status=open|closed` / `?sort=latest|created|upvotes`) |
+| /api/projects/[projectId]/idea/qa | POST | member + idea:submit | Q&A スレッド作成 |
+| /api/projects/[projectId]/idea/qa/[threadId] | GET | PM + idea:read | Q&A スレッド単件取得 |
+| /api/projects/[projectId]/idea/qa/[threadId] | DELETE | member + idea:submit | Q&A スレッド削除 (投稿者のみ) + 関連 idea_asset_links 削除 |
+| /api/projects/[projectId]/idea/qa/[threadId]/close | POST | member + idea:submit | スレッドクローズ (投稿者のみ) |
+| /api/projects/[projectId]/idea/qa/[threadId]/answers | POST | member + idea:submit | 回答投稿 (closed スレッドへも可) |
+| /api/projects/[projectId]/idea/qa/[threadId]/upvote | POST | member + idea:submit | いいね追加 |
+| /api/projects/[projectId]/idea/qa/[threadId]/upvote | DELETE | member + idea:submit | いいね取り消し |
+| /api/projects/[projectId]/idea/links | GET | PM + idea:read | 資産逆引きリンク一覧 (`?targetType=&targetId=`) |
+| /api/projects/[projectId]/idea/links | POST | member + idea:submit | アイデア-資産間リンク作成 |
+| /api/projects/[projectId]/idea/links/[linkId] | DELETE | member + idea:submit | アイデア-資産間リンク削除 (作成者のみ) |
+
+特記事項:
+- **匿名化**: `submittedBy` は DB に保存するがレスポンスには返さない。active 中は自分の提出・付箋のみ参照可。closed 後に全公開。
+- **自動クローズ**: `endsAt < now()` のセッションはリクエスト到達時に lazy evaluation でクローズ更新。
+- **UPSERT 投票**: 1 人 1 セッション 1 提出 (UNIQUE 制約)。再投票は DELETE→CREATE で既存を差し替え。
+- **孤立リンク防止**: セッション/スレッド DELETE 時に `deleteIdeaAssetLinksForSource` でポリモーフィック FK を持つ `idea_asset_links` を同一トランザクション後に削除。
+
 ### 7.3 ドメイン別 route 件数
 
 「件数」は **URL パス (= `route.ts` ファイル) 単位**。各ドメイン表は path × method 行で展開しているため、表の行数は下記件数を上回る。
@@ -377,6 +425,7 @@
 | 顧客 | 2 |
 | コメント / メンション候補 | 3 |
 | 通知 | 3 |
+| 資産共有 (assets) | 1 |
 | メモ | 5 |
 | 添付ファイル | 6 |
 | 提案エンジン | 4 |
@@ -387,7 +436,8 @@
 | super-admin | 18 |
 | cron | 11 |
 | webhook / health / 設定 / client-errors | 4 |
-| **合計** | **145** |
+| アイデア出し (idea) | 15 |
+| **合計** | **161** |
 
 ### 7.4 レスポンス共通形式 (実装準拠)
 

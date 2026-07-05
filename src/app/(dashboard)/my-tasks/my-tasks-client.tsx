@@ -185,8 +185,7 @@ export function MyTasksClient({ projectGroups, today, tenantTimeZone, tenantLoca
   );
 
   if (projectGroups.length === 0) {
-    // feat/collapsed-nav-screen-title (2026-06-05): 画面名「マイタスク」見出しは撤去。
-    //   ナビ折りたたみ幅でのみ CollapsedNavScreenTitle (layout) が表示する (他画面と統一)。
+    // 画面名「マイタスク」見出しは撤去 — CollapsedNavScreenTitle (layout) が全画面幅で表示する。
     return (
       <div className="space-y-6" data-testid="my-tasks-screen">
         <p className="py-8 text-center text-muted-foreground">{tMyTask('noAssigned')}</p>
@@ -208,8 +207,7 @@ export function MyTasksClient({ projectGroups, today, tenantTimeZone, tenantLoca
           </p>
         </div>
       )}
-      {/* feat/collapsed-nav-screen-title (2026-06-05): 画面名「マイタスク」見出しは撤去し、
-          操作ボタン列を右寄せに統一。画面名はナビ折りたたみ幅でのみ CollapsedNavScreenTitle が表示。 */}
+      {/* 画面名「マイタスク」見出しは撤去 — 操作ボタン列を右寄せに統一。CollapsedNavScreenTitle (layout) が全画面幅で表示する。 */}
       <div className="flex items-center justify-end gap-3">
         <div className="flex items-center gap-2">
           {/* feat/gantt-tab-restructure (PR-C item 7): 横断 Gantt 表示トグル */}

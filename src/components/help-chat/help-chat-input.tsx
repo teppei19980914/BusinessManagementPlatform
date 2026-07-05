@@ -26,6 +26,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Image from 'next/image';
+import Link from 'next/link';
 import { useSession } from 'next-auth/react';
 import { useTranslations } from 'next-intl';
 import { cn } from '@/lib/utils';
@@ -451,24 +452,24 @@ function AnswerCard({ result }: { result: HelpChatOutput }) {
               出典の種別ページ (FAQ → /help、ガイド → /guide) への遷移に修正する。
               /help では検索ボックスで当該 id の語を絞り込める。 */}
           {sourceFaqIds.map((id) => (
-            <a
+            <Link
               key={`faq-${id}`}
               href="/help"
               data-testid="help-chat-source-faq-link"
               className="rounded-full border border-border bg-muted px-2 py-0.5 text-muted-foreground hover:text-foreground"
             >
               📖 FAQ: {id}
-            </a>
+            </Link>
           ))}
           {sourceGuideStepIds.map((id) => (
-            <a
+            <Link
               key={`guide-${id}`}
               href="/guide"
               data-testid="help-chat-source-guide-link"
               className="rounded-full border border-border bg-muted px-2 py-0.5 text-muted-foreground hover:text-foreground"
             >
               📘 ガイド: {id}
-            </a>
+            </Link>
           ))}
         </div>
       )}
