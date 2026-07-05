@@ -20240,3 +20240,66 @@ legacy `showError` / `showSuccess` を即 zero-tolerance にしなかった理�
 - `scripts/i18n-banned-patterns-baseline.json` — 既知違反ファイルのカウントを保持するベースライン
 - `.husky/pre-commit` — git レベル pre-commit hook
 - `docs/i18n/HANDOFF_PHASE2.md §P9` — P9 全体の実装記録と次セッション用 TODO
+
+---
+
+## §5.X+213: Semgrep SAST が `github-actions-mutable-action-tag` で FAIL — GitHub Actions の `@vX` タグをコミット SHA にピン固定する (v1.5.0 / 2026-07-05)
+
+### 事象
+
+PR #552 (v1.5.0) の CI で **Semgrep SAST が 42 件の findings で FAIL** した。
+
+全件が同一ルール `yaml.github-actions.security.github-actions-mutable-action-tag` で、`.github/workflows/` 配下の全ワークフローファイルが `actions/checkout@v7` のようなミュータブルタグ参照を使っていたことが原因。タグは action owner が任意に動かせるため、サプライチェーン攻撃ベクタになる。
+
+```yaml
+# NG: タグ参照 (mutable)
+- uses: actions/checkout@v7
+
+# OK: SHA ピン + コメント (immutable)
+- uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+```
+
+**注意: この問題は main ブランチで既に発生していた pre-existing issue** であり、v1.5.0 PR で新規導入されたものではない。ただし、CI 全 green が PR マージ要件のため、このブランチで根本解決した。
+
+### 根本原因
+
+過去に CI ワークフローファイルを `@vX` タグで記述したまま運用しており、Semgrep の `p/security-audit` ルールセット更新でこのルールが Blocking に格上げされた。
+
+### 解決策
+
+1. **全ワークフローファイルを一括スキャン**して mutable 参照を特定
+
+   ```bash
+   grep -rn "uses:.*@v[0-9]" .github/workflows/ | grep -v "#"
+   ```
+
+2. **GitHub API でタグの SHA を取得**
+
+   ```bash
+   gh api "repos/actions/checkout/git/ref/tags/v7" --jq '.object.sha'
+   ```
+
+3. **`@vX` を `@SHA # vX` 形式に一括置換** (8 ファイル / 42 箇所)
+
+   | アクション | タグ | SHA (2026-07-05 時点) |
+   |---|---|---|
+   | `actions/checkout` | @v7 | `9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0` |
+   | `actions/upload-artifact` | @v7 | `043fb46d1a93c77aae656e7c1c64a875d1fc6a0a` |
+   | `actions/setup-node` | @v6 | `48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e` |
+   | `pnpm/action-setup` | @v6 | `b0f76dfb45f55f8421693e4803ac7bb65143bd34` |
+   | `github/codeql-action` | @v4 | `fb84f6228fd846d3c392887f22b18ce2d9139495` |
+   | `actions/github-script` | @v9 | `373c709c69115d41ff229c7e5df9f8788daa9553` |
+   | `actions/dependency-review-action` | @v5 | `a1d282b36b6f3519aa1f3fc636f609c47dddb294` |
+   | `lycheeverse/lychee-action` | @v2 | `8646ba30535128ac92d33dfc9133794bfdd9b411` |
+
+### 適用ルール
+
+- **新しい GitHub Actions アクションを追加するときは必ずタグの SHA を取得して固定形式で記述する**
+- Dependabot (`dependabot-auto-merge.yml`) はすでに SHA 固定形式で管理していたため問題なし — 今後 Dependabot が SHA を自動更新するため、Dependabot 管理外のアクションは手動で SHA を取得・更新する
+- タグがポイントするコミットは Annotated tag の場合と Lightweight tag の場合で API レスポンスが異なるが、`/git/ref/tags/{tag}` の `.object.sha` で統一取得できる
+
+### 関連
+
+- Semgrep ルール: `yaml.github-actions.security.github-actions-mutable-action-tag` (p/security-audit に含まれる)
+- Semgrep 公式: https://sg.run/2LgAL
+- 対象ファイル: `ci.yml`, `dependency-outdated.yml`, `dependency-review.yml`, `docs-link-check.yml`, `e2e-visual-baseline.yml`, `e2e.yml`, `post-deploy-smoke.yml`, `security.yml`
