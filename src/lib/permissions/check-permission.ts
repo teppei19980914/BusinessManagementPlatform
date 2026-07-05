@@ -59,7 +59,14 @@ export type Action =
   | 'analytics:read'
   // ユーザ管理
   | 'admin:users'
-  | 'admin:audit_logs';
+  | 'admin:audit_logs'
+  // アイデア出し機能 (v1.5.0)
+  // idea:read    = セッション一覧・結果の閲覧 (viewer 以上)
+  // idea:submit  = 投票・付箋・Q&A 投稿 (member 以上)
+  // idea:manage  = セッション作成・クローズ・削除 (member 以上; creator-only チェックはサービス層)
+  | 'idea:read'
+  | 'idea:submit'
+  | 'idea:manage';
 
 // ロール別の許可アクション
 const ROLE_PERMISSIONS: Record<string, Set<Action>> = {
@@ -74,6 +81,8 @@ const ROLE_PERMISSIONS: Record<string, Set<Action>> = {
     // 分析タブ: admin は閲覧可
     'analytics:read',
     'admin:users', 'admin:audit_logs',
+    // アイデア出し機能: admin は全操作可
+    'idea:read', 'idea:submit', 'idea:manage',
   ]),
   pm_tl: new Set([
     'project:create', 'project:read', 'project:update', 'project:change_status',
@@ -89,6 +98,8 @@ const ROLE_PERMISSIONS: Record<string, Set<Action>> = {
     'stakeholder:read', 'stakeholder:create', 'stakeholder:update', 'stakeholder:delete',
     // 分析タブ: PM/TL は閲覧可 (現在地・生産性の把握)
     'analytics:read',
+    // アイデア出し機能: PM/TL は全操作可
+    'idea:read', 'idea:submit', 'idea:manage',
   ]),
   member: new Set([
     'project:read',
@@ -101,6 +112,8 @@ const ROLE_PERMISSIONS: Record<string, Set<Action>> = {
     'knowledge:create', 'knowledge:read', 'knowledge:update',
     'risk:create', 'risk:read', 'risk:update',
     // ステークホルダー: member は閲覧不可 (個人情報保護)
+    // アイデア出し機能: member は投票・付箋・Q&A 投稿 + セッション作成可
+    'idea:read', 'idea:submit', 'idea:manage',
   ]),
   viewer: new Set([
     'project:read',
@@ -108,6 +121,8 @@ const ROLE_PERMISSIONS: Record<string, Set<Action>> = {
     'knowledge:read',
     'risk:read',
     // ステークホルダー: viewer も閲覧不可
+    // アイデア出し機能: viewer は閲覧のみ (投票・付箋・Q&A 投稿は不可)
+    'idea:read',
   ]),
 };
 
@@ -120,6 +135,8 @@ const STATE_RESTRICTIONS: Partial<Record<ProjectStatus, Set<Action>>> = {
     'task:read', 'knowledge:read', 'risk:read', 'stakeholder:read',
     // 分析は読み取り専用。完了案件こそ振り返り分析の価値が高いため closed でも許可。
     'analytics:read',
+    // アイデア機能: closed プロジェクトでも過去記録を閲覧可能。投票・投稿は不可。
+    'idea:read',
   ]),
 };
 

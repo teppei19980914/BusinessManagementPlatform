@@ -3,8 +3,8 @@
  *
  * 役割:
  *   現在の pathname から「画面名」に対応する i18n キー (`nav` namespace) を返す。
- *   ヘッダのナビが折りたたみ (xl: 未満で 3 分類 dropdown) になると、現在どの画面を開いて
- *   いるかが分かりにくいため、画面上部に画面名を表示する用途で使う (CollapsedNavScreenTitle)。
+ *   ヘッダのナビが常時グループ dropdown のため、現在どの画面を開いて
+ *   いるかが分かりにくい場合がある。画面上部に画面名を表示する用途で使う (CollapsedNavScreenTitle)。
  *
  * 設計:
  *   - ラベルは `nav` namespace を再利用する (新規 i18n キーを作らず drift を避ける)。

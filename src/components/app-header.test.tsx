@@ -192,20 +192,23 @@ describe('AppHeader の公式マスコット表示 invariant (feat/mascot-owl)',
   });
 });
 
-describe('AppHeader のナビ 1 行化 invariant', () => {
-  it('flat ナビ link に whitespace-nowrap を付与している (ラベル中の改行を防ぐ)', () => {
-    // FlatNavLink 内で whitespace-nowrap が付いていることを担保。
-    // 消えると 1366/1440px ノート PC で 2 行になる UX 退行を起こす。
+describe('AppHeader のナビ invariant (v1.5.0: 常時グループ dropdown)', () => {
+  it('GroupMenu trigger に whitespace-nowrap を付与している (ラベル中の改行を防ぐ)', () => {
+    // GroupMenu の Menu.Trigger 内で whitespace-nowrap が付いていることを担保。
+    // 消えると狭い viewport でグループ名が 2 行になる UX 退行を起こす。
     expect(source).toMatch(/whitespace-nowrap[^"]*rounded-md\s+px-3\s+py-1\.5/);
   });
 
-  it('flat / dropdown 切替 breakpoint は xl: 以上を使っている (旧 lg: は不可)', () => {
-    // lg: (1024px) だと 11 項目のフラット表示が 1366/1440px でも 2 行になる。
-    // xl: (1280px) に引き上げて flat モードが収まる幅でのみ有効化する。
-    expect(source).toMatch(/\bxl:flex\b/);
-    expect(source).toMatch(/\bxl:hidden\b/);
+  it('ナビは常時グループ dropdown で表示し、旧フラット/dropdown 切替クラスは存在しない (v1.5.0)', () => {
+    // v1.5.0: 画面幅によるフラット/dropdown 切替を廃止し、常時 GroupMenu を使用する。
+    // FlatNavLink (xl:flex) や旧切替クラス (xl:hidden) が混入していないことを担保。
+    expect(source).not.toMatch(/\bxl:flex\b/);
+    // グループ dropdown ナビは breakpoint 修飾なしの 'flex' で常時表示
+    expect(source).toMatch(/groupedNavClass\s*=\s*['"]flex['"]/);
     // 旧 lg: breakpoint が残っていないこと
     expect(source).not.toMatch(/\bhidden lg:flex\b/);
     expect(source).not.toMatch(/\bflex lg:hidden\b/);
+    // FlatNavLink コンポーネントが削除されていること
+    expect(source).not.toMatch(/\bFlatNavLink\b/);
   });
 });

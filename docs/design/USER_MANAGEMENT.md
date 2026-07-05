@@ -70,8 +70,9 @@
 | 2 | 受諾（有効化） | `setupPassword`（本人） | `invitationAcceptedAt=now` / `isActive=true` / `deletedAt=null` | **有効化の起点はパスワード設定完了の瞬間**（初回ログインではない）。`super_admin` は MFA 設定完了時（`setupInitialMfa`） |
 | 3 | 無効化 / 再有効化 | `updateUserStatus`（PATCH） | `isActive` 切替 + `tokenVersion++` + `updatedBy` | 無効化で既存 JWT 失効 → 即時ログアウト |
 | 4 | 削除 | `deleteUser`（DELETE） | `deletedAt=now` / `isActive=false` / MFA 解除 + `tokenVersion++`。ProjectMember / Session / RecoveryCode 等を**物理削除** | Task 担当・Risk 起票等の scalar 参照は履歴保全。自己削除不可 |
-| 5 | 招待取消 | `cancelInvitation`（POST） | 招待中ユーザを付随レコードごと**物理削除**（席を即解放） | 招待中（`invitationAcceptedAt=null`）のみ。受諾済は対象外 |
+| 5 | 招待取消 | `cancelInvitation`（POST） | 招待中ユーザを付随レコードごと**物理削除**（席を即解放）。事前に `projectMember / notification / task.assigneeId=null / passwordResetToken / passwordHistory / emailVerificationToken / recoveryCode / roleChangeLog` を Transaction 内でクリーンアップしてから `user.delete` | 招待中（`invitationAcceptedAt=null`）のみ。受諾済は対象外 |
 | 6 | 自動/手動ロック | `lockInactiveUsers` | 30 日（`INACTIVE_USER_LOCK_DAYS`）無アクティブの非 admin を `isActive=false` | cron（全テナント）/ 管理画面手動（自テナントのみ） |
+| 7 | ZIP インポート作成 | `importTenantData`（POST /api/tenants/me/import） | `invitationAcceptedAt=now` / `isActive=true` / `forcePasswordChange=true` / `systemRole='general'` | **追記モード**：既存データは削除せず新規エンティティのみ追加。email 一致の既存ユーザは「merge」（ID 再マップのみ、属性上書き禁止）。新規作成ユーザは「招待中」ではなく「有効（要 PW 再設定）」で登録 → 招待取消ではなくユーザ削除経路を使用可能 |
 
 ---
 

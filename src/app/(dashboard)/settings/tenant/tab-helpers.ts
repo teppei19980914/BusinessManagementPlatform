@@ -10,10 +10,11 @@
  *   overview = 概要 (プラン / 設定 / データ管理 / 解約)
  *   usage    = 使用量 (API 当月使用量 / ストレージ / 縮退モード警告)
  *   billing  = 請求 (請求先 / 支払い方法 / 請求履歴リンク)
+ *   banner   = バナー (自テナントユーザ向け帯メッセージ管理 ADR-0037)
  */
-export type TenantSettingsTab = 'overview' | 'usage' | 'billing';
+export type TenantSettingsTab = 'overview' | 'usage' | 'billing' | 'banner';
 
-export const TENANT_SETTINGS_TABS: ReadonlyArray<TenantSettingsTab> = ['overview', 'usage', 'billing'];
+export const TENANT_SETTINGS_TABS: ReadonlyArray<TenantSettingsTab> = ['overview', 'usage', 'billing', 'banner'];
 
 /**
  * URL クエリ `?tab=` の値を厳格な型に解決。不正値 / null / undefined は 'overview' フォールバック。

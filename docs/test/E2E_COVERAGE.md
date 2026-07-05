@@ -41,6 +41,7 @@
 - [x] `/changelog` — e2e/specs/15-version-and-announcements.spec.ts (feat/app-version-changelog-footer / 2026-05-23 / CHANGELOG.md 読み出し + v1.0.0 エントリ render + ページ titleと intro 文言)
 - [x] `/announcements` — e2e/specs/15-version-and-announcements.spec.ts (一覧 render + 2026-06-01 launch エントリの slug link + severity badge)
 - [x] `/announcements/[slug]` — e2e/specs/15-version-and-announcements.spec.ts (slug=2026-06-01-launch の詳細 render + frontmatter から title 表示 + 一覧へ戻るリンク)
+- [ ] `/guide/[slug]` — skip: feat/changelog-guide-links (2026-06-28) CHANGELOG.md の機能名リンクから遷移する外部公開ガイド個別ページ。ファイル不存在時の 404 + slug バリデーション (SAFE_SLUG) はサーバ側ロジックで担保。静的 Markdown 描画のみのため E2E は後続対応
 
 ### ダッシュボード
 - [x] `/projects` — e2e/specs/01-admin-and-member-setup.spec.ts (PR #92 / Step 5 作成 + Step 6b 一般ユーザ閲覧)
@@ -87,10 +88,13 @@
 - [ ] `/admin/super/diagnostics` — skip: PR-V8 (2026-05-19) 診断ダッシュボード (= API drift / cron 健全性 / 縮退モード / メール失敗 / alert 機構を俯瞰 + 修復ボタン経由で `/api/admin/super/tenants/[id]/repair-api-usage` 呼出)。SSR + Server Component で集約サービス (diagnostics.service / cron-health.service) を呼ぶのみ。ロジック検証はサービステスト (cron-health.service.test.ts 12 件 + api-usage-recalc.service.test.ts 12 件 + 既存 mail/degraded テスト) で担保
 - [ ] `/admin/super/tenants/[id]/diagnostics` — skip: PR-V8 (2026-05-19) 個別テナント診断 (counter vs SUM 整合性 + 直近 30 日 ApiCallLog 時系列 + counter 書き換え系 audit_log 抽出 + 月次履歴比較)。tenant-diagnostics.service.ts が集約、各個別ロジックは既存サービステストでカバー済 (api-usage-recalc / monthly-history-regenerate / audit)
 - [ ] `/admin/super/email-failures` — skip: PR-V7a (2026-05-19) メール送付失敗一覧画面 (= 直近 N 時間の success=false な EmailSendLog を表示)。SSR + Prisma findMany。サービス層 (src/services/email-send-log.service.test.ts の getRecentFailedEmails 3 件) で担保
-- [x] `/admin/super/banners` — e2e/specs/21-system-banner.spec.ts (ADR-0036 / 一覧に作成バナーが「表示中」で表示 + 帯の表示・色・×・再ログイン再表示・重複 409 を検証)
+- [x] `/admin/super/banners` — e2e/specs/21-system-banner.spec.ts (ADR-0036 / 一覧に作成バナーが「表示中」で表示 + 帯の表示・色・×・再ログイン再表示・重複 409 を検証 + **@axe-core/playwright で high/medium/low 全緊急度の color-contrast WCAG AA 自動検査**)
 - [ ] `/admin/super/banners/new` — skip: ADR-0036 super_admin 専用バナー作成フォーム。作成は API 経由で 21-system-banner.spec.ts (POST 201 / 409) が検証、フォーム送信整形は banner-form (tenant-create-form 同型) で担保
 - [ ] `/admin/super/banners/[id]/edit` — skip: ADR-0036 編集フォーム。更新ロジックは src/services/system-banner.service.test.ts (updateBanner 系) + API で担保
 - [ ] `/settings/tenant/billing` — skip: PR-V7a (2026-05-19) テナント管理者向け請求履歴表示。自テナント直近 6 ヶ月の BillingHistory + 入金日/期日/次回引落 表示。tenant-scoped クエリ (= viewerTenantId 必須)。サービス層 (src/services/billing-management.service.test.ts の getTenantBillingHistory 2 件) で担保
+- [x] `/settings/tenant/banners` — e2e/specs/22-tenant-banner.spec.ts (ADR-0037 / テナントバナー一覧 + バナータブ→管理ページリンク)
+- [ ] `/settings/tenant/banners/new` — skip: ADR-0037 テナントバナー作成フォーム。作成は API 経由で 22-tenant-banner.spec.ts (POST 201 / 409) が検証、フォーム送信整形は banner-form (system-banner-form 同型) + src/services/tenant-banner.service.test.ts で担保
+- [ ] `/settings/tenant/banners/[id]/edit` — skip: ADR-0037 編集フォーム。更新ロジックは src/services/tenant-banner.service.test.ts (updateTenantBanner 系) + API で担保
 
 ### その他
 - [ ] `/` (ルート) — skip: プロジェクト一覧へのリダイレクト、PR #B の /projects で間接カバー
@@ -171,10 +175,29 @@
 - [x] `/api/projects/[projectId]/retrospectives/bulk` (PATCH 一括 visibility, PR #162 → PR #165 → UI_PATTERNS §35) — e2e/specs/10-project-list-bulk-update.spec.ts
 - [x] `/api/projects/[projectId]/knowledge/bulk` (PATCH 一括 visibility, PR #162 → PR #165 → UI_PATTERNS §35) — e2e/specs/10-project-list-bulk-update.spec.ts
 
+### アイデア出し (v1.5.0)
+- [ ] `/api/projects/[projectId]/chat/search` — skip: PJ内セマンティック検索 (GET)。認可 (projectMembership) + pgvector 並列検索は src/app/api/projects/[projectId]/chat/search/route.test.ts で担保
+- [ ] `/api/projects/[projectId]/idea/voting` — skip: 投票セッション CRUD。unit test src/services/idea-voting.service.test.ts で tenantId 越境防止・maybeAutoClose・dot 投票配分を担保
+- [ ] `/api/projects/[projectId]/idea/voting/[sessionId]` — skip: 同上 (DELETE)
+- [ ] `/api/projects/[projectId]/idea/voting/[sessionId]/close` — skip: 同上 (手動クローズ)
+- [ ] `/api/projects/[projectId]/idea/voting/[sessionId]/submit` — skip: 同上 (投票送信)
+- [ ] `/api/projects/[projectId]/idea/whiteboard` — skip: ホワイトボードセッション CRUD。unit test src/services/idea-whiteboard.service.test.ts で担保
+- [ ] `/api/projects/[projectId]/idea/whiteboard/[sessionId]` — skip: 同上 (DELETE)
+- [ ] `/api/projects/[projectId]/idea/whiteboard/[sessionId]/close` — skip: 同上 (手動クローズ)
+- [ ] `/api/projects/[projectId]/idea/whiteboard/[sessionId]/notes` — skip: 同上 (付箋投稿)
+- [ ] `/api/projects/[projectId]/idea/whiteboard/[sessionId]/notes/[noteId]` — skip: 同上 (付箋削除)
+- [ ] `/api/projects/[projectId]/idea/qa` — skip: 匿名 Q&A スレッド CRUD。unit test src/services/idea-qa.service.test.ts で担保
+- [ ] `/api/projects/[projectId]/idea/qa/[threadId]` — skip: 同上 (DELETE)
+- [ ] `/api/projects/[projectId]/idea/qa/[threadId]/answers` — skip: 同上 (回答投稿)
+- [ ] `/api/projects/[projectId]/idea/qa/[threadId]/close` — skip: 同上 (解消)
+- [ ] `/api/projects/[projectId]/idea/qa/[threadId]/upvote` — skip: 同上 (いいね)
+- [ ] `/api/projects/[projectId]/idea/links` — skip: IdeaAssetLink 多態リンク。unit test src/services/idea-asset-link.service.test.ts + route test src/app/api/projects/[projectId]/idea/links/route.test.ts で担保
+
 ### 資産導線 (v1.3.0 / 昇華リンク・手動リンク・WBS完了バナー)
 - [ ] `/api/promotions` (GET) — skip: 昇華関係の取得 (4 パターン)。risk/issue/knowledge 各 CRUD 詳細ダイアログ同様 UI E2E は後続 PR、tenantId 越境防止 + クエリ振り分けは src/app/api/promotions/route.test.ts で担保
 - [ ] `/api/promotions/risk-to-issue` (POST) — skip: リスク→課題昇華。認可 (実メンバー + risk:create) / source 検証 (NOT_FOUND, INVALID_SOURCE_TYPE, SOURCE_NOT_PUBLIC) / audit log は src/app/api/promotions/risk-to-issue/route.test.ts + src/services/promotion.service.test.ts で担保
 - [ ] `/api/promotions/issue-to-knowledge` (POST) — skip: 課題→ナレッジ昇華。projectIds 指定時のメンバー検証 / source 検証 / audit log は src/app/api/promotions/issue-to-knowledge/route.test.ts + src/services/promotion.service.test.ts で担保
+- [ ] `/api/assets/share` (POST) — skip: 公開資産の共有通知 (v1.5.0)。asset 存在確認・visibility='public' 検証・受信者テナント検証・通知 createMany の分岐は src/app/api/assets/share/route.test.ts + src/services/notification.service.test.ts (shareAsset) で担保
 - [ ] `/api/asset-links` (GET/POST) — skip: Risk/Issue/Knowledge/Retrospective/Memo 5 資産間の汎用手動リンク。SELF_LINK_FORBIDDEN / NOT_FOUND / ALREADY_LINKED の分岐は src/app/api/asset-links/route.test.ts + src/services/asset-link.service.test.ts で担保
 - [ ] `/api/asset-links/[linkId]` (DELETE) — skip: 作成者本人のみ削除可 (404/403 を区別しない info-leak 防止)。src/app/api/asset-links/[linkId]/route.test.ts で担保
 - [ ] `/api/asset-links/candidates` (GET) — skip: 手動リンク追加 UI の候補検索 (公開可視のみ、自己除外)。src/app/api/asset-links/candidates/route.test.ts + src/services/asset-link.service.test.ts (searchLinkCandidates) で担保
@@ -259,6 +282,8 @@
 - [ ] `/api/tenants/me/migration-import/apply` (POST) — skip: ADR-0034 (2026-06-05) プレビュー確定 → DB 取込 API (新規作成のみ・embedding 非生成)。PREVIEW_NOT_FOUND / NOT_OWNED / EXPIRED / HAS_ERRORS + 越境防御 (findFirst に tenantId 直付与) は migration-import.service + batch-apply で実装、依存解決/トポロジカル取込は batch-preview/batch-apply のテストで担保。E2E は V1.x で検討
 - [ ] `/settings/tenant/migration-import` (page) — skip: ADR-0034 (2026-06-05) 手動CSV移行ウィザード (CSVを選ぶ→マッピング→プレビュー→完了) 画面。マッピング選択 + プレビュー描画が中心の client component。変換/検証ロジックは src/services/import/ のサービステストで担保、E2E は V1.x で検討
 - [x] `/settings/tenant/api-import` (page) — ADR-0034 (2026-06-05) 外部データ API 連携インポート ウィザード (ベータ・② API 連携)。サービス選択→接続フォーム表示→接続ボタン活性制御を e2e/specs/22-api-import-wizard.spec.ts で確認 (外部HTTPは叩かない)。取得/マッピング/プレビュー/取込の変換・検証は src/services/import/connectors/*.test.ts (HTTP境界モック) + batch-preview/apply で担保
+- [x] `/api/tenants/me/banners` (GET/POST) — e2e/specs/22-tenant-banner.spec.ts (ADR-0037 / POST 201 作成 + 期間重複 409 OVERLAP + 未認証 401) + src/services/tenant-banner.service.test.ts (CRUD 全経路 + テナント分離 7 件)
+- [x] `/api/tenants/me/banners/[id]` (PATCH/DELETE) — e2e/specs/22-tenant-banner.spec.ts (afterAll で DELETE) + src/services/tenant-banner.service.test.ts (updateTenantBanner: NOT_FOUND / INVALID_PERIOD / 重複自身除外 / 取り下げ / テナント分離, deleteTenantBanner: 所有権確認 + 別テナント NOT_FOUND)
 - [ ] `/api/tenants/me/migration-import/connect/discover` (POST) — skip: ADR-0034 (2026-06-05) 外部サービス接続→取得元 (DB/アプリ/サイト/タブ) 列挙 API。外部HTTP依存のため E2E 非対象。認可 (admin) / 未対応source / token欠落 / 接続失敗 (CONNECT_FAILED) は connect/discover/route.test.ts (6件)、各コネクタの discover は src/services/import/connectors/*.test.ts で担保。認証情報は永続保存しない (ADR-0034 §9)
 - [ ] `/api/tenants/me/migration-import/connect/preview` (POST) — skip: ADR-0034 (2026-06-05) 取得+正規化 (CsvEntitySource[]→buildBatchFromCsv) → プレビュー保存 API。外部HTTP依存のため E2E 非対象。認可 / mapping欠落 / 取得失敗 (FETCH_FAILED) / TOO_MANY_ROWS(200+ok:false) / previewMigrationFromSources 連携は connect/preview/route.test.ts (5件) で担保。確定 (apply) は既存 /migration-import/apply を流用
 - [ ] `/api/tenants/me/sample-data` (POST/DELETE) — skip: feat/starter-data-import (2026-06-05) スターターデータ一括取込 (管理テナントからクローン) / 一括削除。NO_SAMPLE_DATA / STORAGE_BLOCKED / tenantId 隔離 (isSampleData=false + isSeedSample=true) / embedding raw SQL コピー / 監査ログ / 削除スコープ (tenantId + isSeedSample) は src/services/sample-clone.service.test.ts (4 件) で担保。認可 (admin) は requireAdmin で共通担保

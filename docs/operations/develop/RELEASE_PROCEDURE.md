@@ -41,6 +41,7 @@
 - [ ] **(4) `/announcements` への告知が必要なら markdown ファイルを新規作成** — `docs/public/announcements/{YYYY-MM-DD}-{slug}.md`
   - frontmatter の `severity` は内容に応じて: `info` (新機能告知) / `warning` (注意喚起) / `critical` (緊急) / `maintenance` (メンテ予告)
   - **bug fix のみのパッチリリースは告知不要** (ユーザ体験への影響が無い場合)
+  - **本文内のリンク規約**: `docs/public/announcements/` は `/announcements/[slug]` で配信されるため、他のガイドへのリンクは **`/guide/slug` 絶対パス**（拡張子なし）で記述する。`../xxx.md` 形式の相対パスは `/guide/` を経由せず 404 になる
 - [ ] **(5) ローカルゲート確認** — `pnpm lint && pnpm tsc --noEmit && pnpm test && pnpm e2e:coverage-check && pnpm build`
 - [ ] **(6) PR 作成 → CI 通過** — CI には **🤖 機能受け入れ回帰 (E2E)** が含まれる: 払い出し→全資産CRUD→解約→eligibility→チャット/ヘルプ配線→添付 CRUD (`e2e/specs/19〜26`、[RELEASE_ACCEPTANCE_TEST.md](../../test/RELEASE_ACCEPTANCE_TEST.md) の 🤖 項目)。E2E が red の場合は merge しない
 - [ ] **(6.5) Deploy Preview 確認 (メジャーリリース時のみ / 通常リリースは省略可)** — `deploy-preview-<PR番号>--tasukiba.netlify.app` で [RELEASE_ACCEPTANCE_TEST.md §1〜§6](../../test/RELEASE_ACCEPTANCE_TEST.md) のフル完走を実施。Deploy Preview は**実外部サービス + ステージング DB** 接続のため本番 DB を汚さず実連携 (実メール SMK-1) を検証できる。**通常リリース (weekly) は post-deploy-smoke.yml (step 7.5) が SMK-2〜5/7 を代替するため本ステップは省略可**
@@ -92,6 +93,7 @@
 - [ ] ファイル名は `{YYYY-MM-DD}-{slug}.md` 形式厳守 — URL の slug と公開日抽出に使われる ([src/lib/announcements.ts](../../../src/lib/announcements.ts) の正規表現で検証)
 - [ ] `publishedAt` は frontmatter と filename 先頭を一致させる (filename からも抽出されるが二重定義時は frontmatter 優先)
 - [ ] 本文中の内部リンクは必ず本番 URL に解決可能な絶対 path (`/projects/...`) — 相対 path は `/announcements/{slug}` 配下に解釈される
+- [ ] **バージョンアップ告知 (`severity=info`) のイントロ段落末尾には必ず `/changelog` への導線を追加する** — 書式: `詳しくは、[バージョンアップ情報](/changelog)を参照してください。` (v1.1〜 で統一済み)
 - [ ] `severity=critical` を使う場合は SOC / 開発者責任者にも別途共有 — UI 上の赤バッジだけでユーザに知らせるのは不十分
 
 ---
@@ -116,3 +118,4 @@
 | 2026-05-24 | 初版作成 (PR #439 / feat/app-header-footer-unification: 全画面共通フッタ削減により真値ファイルの集約場所が明確化されたため、リリース手順を独立ドキュメント化) |
 | 2026-06 | 機能受け入れゲートを統合 (test/release-acceptance-e2e): §2.1 (6) に 🤖 E2E 回帰注記 + (7.5) 本番 👤 数分スモークを追加 / §2.2 にフル完走を追加 / RELEASE_ACCEPTANCE_TEST.md を §6 関連ドキュメントに追加。粒度 = 🤖毎CI / 👤数分毎リリース / フルはメジャー or 主要経路変更時 |
 | 2026-06-15 | Post-Deploy Smoke 自動化により毎週リリースの人間テストをゼロ化: (6.5) を「メジャーリリースのみ」に限定 / (7.5) を 👤 手動 → 🤖 `post-deploy-smoke.yml` 自動実行に変更 / §6 に post-deploy-smoke.yml を追加 / E2E spec 範囲を 19〜26 に更新 |
+| 2026-06-28 | §5 にバージョンアップ告知への `/changelog` 導線追加ルールを明記 (v1.1〜v1.5 の既存告知に遡及適用済) |

@@ -25,7 +25,8 @@
  *      重要設計判断。ユーザが起動していない処理での課金は「不当請求」と感じられ
  *      UX/信頼関係に直接影響するため、明示的に free 扱いを定義する。
  *      → project-embedding-backfill, knowledge-embedding-backfill, risk-issue-embedding-backfill,
- *         retrospective-embedding-backfill, memo-embedding-backfill
+ *         retrospective-embedding-backfill, memo-embedding-backfill,
+ *         idea-qa-embedding-backfill, idea-whiteboard-embedding-backfill, idea-voting-embedding-backfill
  *
  * 派生定数:
  *   - **BILLABLE_FEATURE_UNITS** = LLM + EMBEDDING + STORAGE_OVERAGE の union (= 全課金対象)。
@@ -87,6 +88,9 @@ export type LlmBillableFeatureUnit = (typeof LLM_BILLABLE_FEATURE_UNITS)[number]
  * - `chat-semantic-search`: チャット検索クエリの embedding 生成 (1 検索 = 1 call)
  * - `external-import-embedding`: CSV 一括インポート時の embedding 生成 (N 件取込 = 1 call、bulk 集約)
  * - `attachment-embedding`: 添付ファイル本文の意味検索用 embedding 生成
+ * - `idea-qa-embedding`: 匿名FAQ スレッドのクローズ時 embedding 生成 (質問+全回答を結合)
+ * - `idea-whiteboard-embedding`: ホワイトボードセッションのクローズ時 embedding 生成 (タイトル+説明+全付箋)
+ * - `idea-voting-embedding`: 投票セッションのクローズ時 embedding 生成 (タイトル+説明+選択肢テキスト)
  *
  * 設計判断:
  *   - **bulk は 1 業務操作 = 1 call**: external-import-embedding は generateBatchEmbeddings で
@@ -109,6 +113,9 @@ export const EMBEDDING_BILLABLE_FEATURE_UNITS = [
   'chat-semantic-search',
   'external-import-embedding',
   'attachment-embedding',
+  'idea-qa-embedding',
+  'idea-whiteboard-embedding',
+  'idea-voting-embedding',
 ] as const;
 
 export type EmbeddingBillableFeatureUnit = (typeof EMBEDDING_BILLABLE_FEATURE_UNITS)[number];
@@ -152,6 +159,9 @@ export const EMBEDDING_BACKFILL_FEATURE_UNITS = [
   'risk-issue-embedding-backfill',
   'retrospective-embedding-backfill',
   'memo-embedding-backfill',
+  'idea-qa-embedding-backfill',
+  'idea-whiteboard-embedding-backfill',
+  'idea-voting-embedding-backfill',
 ] as const;
 
 export type EmbeddingBackfillFeatureUnit = (typeof EMBEDDING_BACKFILL_FEATURE_UNITS)[number];

@@ -8,6 +8,9 @@
  *   4. 別セッション (新規コンテキストで再ログイン) では再表示される
  *   5. 表示期間が重なるバナーの作成は 409 OVERLAP で弾かれる (1 本制約)
  *   6. 管理画面 (/admin/super/banners) の一覧に作成したバナーが出る
+ *   7. バナー内リンクが WCAG AA コントラスト基準 (4.5:1) を満たす
+ *      (axe-core / high/medium/low 全緊急度 — デグレ検出: MarkdownDisplay 切り替えで
+ *       [&_a]:text-current が外れると blue-on-blue 等で即座に違反となる)
  *
  * バナーは **グローバル** (全テナント共通) のため、super_admin 自身もログインユーザとして
  * 帯を閲覧できる。本 spec は super_admin の fixture のみで閲覧側・管理側の双方を検証する。
@@ -26,6 +29,7 @@ import {
   type Page,
   type Browser,
 } from '@playwright/test';
+import { AxeBuilder } from '@axe-core/playwright';
 import { RUN_ID } from '../fixtures/run-id';
 import {
   setupSuperAdminFixture,
@@ -151,5 +155,65 @@ test.describe('@feature:super_admin:banners システム周知バナー (ADR-003
     const row = superAdminPage.locator('tr', { hasText: MESSAGE });
     await expect(row).toBeVisible();
     await expect(row).toContainText('表示中');
+  });
+
+  test('バナー内リンクのカラーコントラストが WCAG AA を満たす (high/medium/low 全緊急度)', async ({ browser }) => {
+    // URL を含むメッセージで <a> 要素を描画させ、バナー背景とのコントラスト比を
+    // axe-core が WCAG AA (4.5:1) 基準で自動判定する。
+    // MarkdownDisplay 内の <a> は text-info で固定されているため、親側の
+    // [&_a]:text-current override が外れると blue-on-blue 等で即座に違反となる。
+    const URL_MESSAGE = `axe テスト ${RUN_ID} https://example.com`;
+    const now = Date.now();
+    const highBannerId = createdBannerIds[0];
+
+    for (const [i, severity] of (['high', 'medium', 'low'] as const).entries()) {
+      if (i === 0) {
+        // 既存の high バナーのメッセージを URL 入りに更新して再利用
+        await superAdminRequest.patch(`/api/admin/super/banners/${highBannerId}`, {
+          data: { message: URL_MESSAGE, enabled: true },
+        });
+      } else {
+        // 前の severity を取り下げてから新規作成 (1 本制約)
+        const prevId = i === 1 ? highBannerId : createdBannerIds[createdBannerIds.length - 1];
+        await superAdminRequest.patch(`/api/admin/super/banners/${prevId}`, {
+          data: { enabled: false },
+        });
+        const res = await superAdminRequest.post('/api/admin/super/banners', {
+          data: {
+            message: URL_MESSAGE,
+            severity,
+            startAt: new Date(now - 60 * 60 * 1000).toISOString(),
+            endAt: new Date(now + 24 * 60 * 60 * 1000).toISOString(),
+            enabled: true,
+          },
+        });
+        expect(res.status()).toBe(201);
+        const body = await res.json();
+        createdBannerIds.push(body.data.id);
+      }
+
+      // sessionStorage のバナー破棄状態をリセットするため、新規コンテキストでログイン
+      const fresh = await loginSuperAdmin(browser, fixture!);
+      try {
+        await fresh.page.goto('/projects');
+        await waitForProjectsReady(fresh.page);
+        const banner = fresh.page.getByTestId('system-banner');
+        await expect(banner).toBeVisible();
+        await expect(banner).toHaveAttribute('data-severity', severity);
+
+        // axe-core: バナー要素スコープで color-contrast ルールのみ検査
+        const results = await new AxeBuilder({ page: fresh.page })
+          .include('[data-testid="system-banner"]')
+          .withRules(['color-contrast'])
+          .analyze();
+        expect(
+          results.violations,
+          `severity="${severity}" で WCAG AA コントラスト違反を検出:\n${JSON.stringify(results.violations, null, 2)}`
+        ).toHaveLength(0);
+      } finally {
+        await fresh.page.close().catch(() => undefined);
+        await fresh.context.close().catch(() => undefined);
+      }
+    }
   });
 });

@@ -16,8 +16,12 @@ import { DialogAttachmentSection } from '@/components/common/dialog-attachment-s
 // v1.3.0 資産導線機能: 昇華元課題バッジ (読み取り専用) + 手動リンクセクション
 import { PromotionBadgeList } from '@/components/common/promotion-badge-list';
 import { AssetLinkSection } from '@/components/common/asset-link-section';
+// v1.5.0 アイデア出し機能: この資産に関連するアイデアを逆引き表示
+import { IdeaAssetLinkSection } from '@/components/common/idea-asset-link-section';
 // PR #199: コメントセクション
 import { CommentSection } from '@/components/comments/comment-section';
+// v1.5.0: 公開資産共有ダイアログ
+import { ShareAssetDialog } from '@/components/dialogs/share-asset-dialog';
 // feat/dialog-fullscreen-toggle: 文字量が多い編集 dialog 向けの全画面トグル
 import { useDialogFullscreen } from '@/components/ui/use-dialog-fullscreen';
 // feat/markdown-textarea: Markdown 入力 + プレビュー + 既存値との差分表示
@@ -94,6 +98,7 @@ export function KnowledgeEditDialog({
     assigneeId: '',
   });
   const [error, setError] = useState('');
+  const [shareOpen, setShareOpen] = useState(false);
   // PR #88: 編集ダイアログを開くたびに DB データを初期表示する。
   // 初期値を null + 閉じた時に null-reset → 別エンティティ切替 / 同一再オープン / 初回マウント
   // いずれでも resync が走る。
@@ -271,9 +276,37 @@ export function KnowledgeEditDialog({
           <PromotionBadgeList titleKey="sourceIssuesTitle" queryParams={`toType=knowledge&toId=${knowledge.id}`} />
           {/* v1.3.0 資産導線機能: 手動リンク (リスク/課題/ナレッジ/振り返り/メモ 5 資産間) */}
           <AssetLinkSection entityType="knowledge" entityId={knowledge.id} isPublic={knowledge.visibility === 'public'} />
+          {/* v1.5.0 アイデア出し機能: 逆引きリンク (読み取り専用) */}
+          <IdeaAssetLinkSection
+            projectId={projectId}
+            targetType="knowledge"
+            targetId={knowledge.id}
+          />
           {!readOnly && <Button type="submit" className="w-full">{t('save')}</Button>}
-          {/* PR #199: コメント。readOnly でも投稿可 (fieldset 外配置)。 */}
-          <CommentSection entityType="knowledge" entityId={knowledge.id} mutationsLocked={closedProject} />
+          {/* v1.5.0: 公開時のみ共有ボタンを表示 */}
+          {knowledge.visibility === 'public' && (
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full"
+              onClick={() => setShareOpen(true)}
+            >
+              共有する
+            </Button>
+          )}
+          {/* PR #199: コメント。readOnly でも投稿可 (fieldset 外配置)。v1.5.0: 公開時のみ表示 */}
+          {knowledge.visibility === 'public' && (
+            <CommentSection entityType="knowledge" entityId={knowledge.id} mutationsLocked={closedProject} />
+          )}
+          {knowledge.visibility === 'public' && (
+            <ShareAssetDialog
+              entityType="knowledge"
+              entityId={knowledge.id}
+              assetTitle={knowledge.title}
+              open={shareOpen}
+              onOpenChange={setShareOpen}
+            />
+          )}
         </form>
       </DialogContent>
     </Dialog>

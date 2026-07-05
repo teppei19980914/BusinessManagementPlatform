@@ -16,8 +16,12 @@ import { DialogAttachmentSection } from '@/components/common/dialog-attachment-s
 import { LinkedProjectsSection } from '@/components/common/linked-projects-section';
 // v1.3.0 資産導線機能: 手動リンクセクション
 import { AssetLinkSection } from '@/components/common/asset-link-section';
+// v1.5.0 アイデア出し機能: この資産に関連するアイデアを逆引き表示
+import { IdeaAssetLinkSection } from '@/components/common/idea-asset-link-section';
 // PR #199: コメントセクション (旧 retrospective_comments を polymorphic comments テーブルに統合)
 import { CommentSection } from '@/components/comments/comment-section';
+// v1.5.0: 公開資産共有ダイアログ
+import { ShareAssetDialog } from '@/components/dialogs/share-asset-dialog';
 import { DateFieldWithActions } from '@/components/ui/date-field-with-actions';
 // feat/dialog-fullscreen-toggle: 文字量が多い編集 dialog 向けの全画面トグル
 import { useDialogFullscreen } from '@/components/ui/use-dialog-fullscreen';
@@ -84,6 +88,7 @@ export function RetrospectiveEditDialog({
   const { showSuccessKey, showErrorKey } = useToast();
   // feat/dialog-fullscreen-toggle: 全画面トグル (90vw × 90vh)
   const { fullscreenClassName, FullscreenToggle } = useDialogFullscreen();
+  const [shareOpen, setShareOpen] = useState(false);
   const [form, setForm] = useState({
     conductedDate: '',
     planSummary: '',
@@ -258,9 +263,37 @@ export function RetrospectiveEditDialog({
           )}
           {/* v1.3.0 資産導線機能: 手動リンク (リスク/課題/ナレッジ/振り返り/メモ 5 資産間) */}
           <AssetLinkSection entityType="retrospective" entityId={retro.id} isPublic={retro.visibility === 'public'} />
+          {/* v1.5.0 アイデア出し機能: 逆引きリンク (読み取り専用) */}
+          <IdeaAssetLinkSection
+            projectId={currentProjectId ?? retro.projectId}
+            targetType="retrospective"
+            targetId={retro.id}
+          />
           {!readOnly && <Button type="submit" className="w-full">{t('save')}</Button>}
-          {/* PR #199: コメント。fieldset disabled の外に配置することで readOnly でも投稿可。 */}
-          <CommentSection entityType="retrospective" entityId={retro.id} mutationsLocked={closedProject} />
+          {/* v1.5.0: 公開時のみ共有ボタンを表示 */}
+          {retro.visibility === 'public' && (
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full"
+              onClick={() => setShareOpen(true)}
+            >
+              共有する
+            </Button>
+          )}
+          {/* PR #199: コメント。fieldset disabled の外に配置することで readOnly でも投稿可。v1.5.0: 公開時のみ表示 */}
+          {retro.visibility === 'public' && (
+            <CommentSection entityType="retrospective" entityId={retro.id} mutationsLocked={closedProject} />
+          )}
+          {retro.visibility === 'public' && (
+            <ShareAssetDialog
+              entityType="retrospective"
+              entityId={retro.id}
+              assetTitle={retro.conductedDate}
+              open={shareOpen}
+              onOpenChange={setShareOpen}
+            />
+          )}
         </form>
       </DialogContent>
     </Dialog>

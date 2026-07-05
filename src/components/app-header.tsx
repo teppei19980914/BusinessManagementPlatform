@@ -24,10 +24,9 @@
  *     消えないようにする
  *   - SortableHeader dropdown は scroll で自前 close するため抑止対象外 (本ファイルでは関知しない)
  *
- * ナビ 1 行化 (2026-05-24):
- *   - 全 nav 項目に whitespace-nowrap を付与 (ラベル中の改行を防ぐ)
- *   - flat ↔ dropdown 切替 breakpoint を旧 `lg:` (1024px) から `xl:` (1280px) に引き上げ
- *     1366/1440px ノート PC では flat モードで 1 行に収まり、それ未満では 3 分類 dropdown に切り替わる
+ * ナビ (v1.5.0 で常時グループ dropdown に統一):
+ *   - 全 nav グループトリガに whitespace-nowrap を付与 (ラベル中の改行を防ぐ)
+ *   - 画面幅によらず常時 GroupMenu (3 分類 dropdown) を表示 (旧 xl: breakpoint による flat/dropdown 切替は廃止)
  *
  * 認可 / セキュリティ:
  *   - adminOnly / superAdminOnly / visibleToSuperAdmin の 3 フラグで項目を出し分け
@@ -484,32 +483,7 @@ function AccountMenu({ user }: { user: AppHeaderUser }) {
  * Flat / Grouped Nav (ログイン後のみ表示)
  * -------------------------------------------------------------------------- */
 
-/** xl: 以上のフラットナビ用 link */
-function FlatNavLink({ item, pathname }: { item: NavItem; pathname: string }) {
-  const active = pathname.startsWith(item.href);
-  return (
-    // perf/phase-4 (2026-06-01): ナビゲーション Link は prefetch={false}。
-    //   全○○ (全リスク / 全課題 / 全振り返り / 全ナレッジ / 全メモ) 系は SSR で N
-    //   プロジェクトを集計するヘビーなページ。default prefetch=true だと viewport 進入時
-    //   (= ヘッダ表示時) に裏で 5+ ページの RSC が自動取得され、累計数百 KB & 数秒の
-    //   無駄な帯域・サーバ負荷が発生する。ユーザは menu hover で 1 項目しか実際に
-    //   クリックしないため、prefetch を切り on-demand 取得に倒す。
-    <Link
-      href={item.href}
-      prefetch={false}
-      className={cn(
-        // whitespace-nowrap: ラベル中で改行されないように。breakpoint xl: と組み合わせて
-        // 1366/1440px ノート PC で flat 全項目が 1 行に収まることを担保。
-        'whitespace-nowrap rounded-md px-3 py-1.5 text-sm transition-colors hover:bg-accent',
-        active ? 'bg-accent font-medium' : 'text-muted-foreground',
-      )}
-    >
-      {item.label}
-    </Link>
-  );
-}
-
-/** xl: 未満の 3 分類 dropdown ナビ用 group */
+/** 常時グループ dropdown ナビ用 group */
 function GroupMenu({
   group,
   pathname,
@@ -663,10 +637,10 @@ export function AppHeader({ user }: AppHeaderProps) {
   // ログイン前 (auth / public) で「ログインへ」リンクを出すか判定。/login 自体では出さない。
   const showLoginCta = !isLoggedIn && pathname !== LOGIN_ROUTE;
 
-  // 横幅縮小時 (xl: 未満) は GroupMenu (dropdown) を使い、xl: 以上は flat に並べる。
-  // 旧実装の lg: (1024px) から引き上げ、1366/1440px ノート PC では flat が 1 行に収まる。
-  const flatBreakpointClass = 'hidden xl:flex';
-  const groupedBreakpointClass = 'flex xl:hidden';
+  // v1.5.0: 画面幅に関係なく常時グループ dropdown 表示に統一。
+  // 旧実装は xl: (1280px) のブレークポイントでフラット/dropdown を切り替えていたが、
+  // タブが増えたことでフラット表示が破綻するため、常時 dropdown に統一した。
+  const groupedNavClass = 'flex';
 
   /* --- レンダ ----------------------------------------------------------- */
   return (
@@ -734,35 +708,21 @@ export function AppHeader({ user }: AppHeaderProps) {
             </Link>
 
             {isLoggedIn && (
-              <>
-                {/* xl: 以上はフラット表示 (全項目横並び、1 行に収まる) */}
-                <nav className={cn('items-center gap-1', flatBreakpointClass)}>
-                  {navGroups.map((group) => {
-                    if (!isVisibleGroup(group, isAdmin, isSuperAdmin)) return null;
-                    return group.items
-                      .filter((item) => isVisibleItem(item, isAdmin, isSuperAdmin))
-                      .map((item) => (
-                        <FlatNavLink key={item.href} item={item} pathname={pathname} />
-                      ));
-                  })}
-                </nav>
-
-                {/* xl: 未満は 3 分類 dropdown */}
-                <nav className={cn('items-center gap-1', groupedBreakpointClass)}>
-                  {navGroups.map((group) => {
-                    if (!isVisibleGroup(group, isAdmin, isSuperAdmin)) return null;
-                    return (
-                      <GroupMenu
-                        key={group.label}
-                        group={group}
-                        pathname={pathname}
-                        isAdmin={isAdmin}
-                        isSuperAdmin={isSuperAdmin}
-                      />
-                    );
-                  })}
-                </nav>
-              </>
+              /* 常時グループ dropdown 表示 (v1.5.0: 画面幅によるフラット/dropdown 切替を廃止) */
+              <nav className={cn('items-center gap-1', groupedNavClass)}>
+                {navGroups.map((group) => {
+                  if (!isVisibleGroup(group, isAdmin, isSuperAdmin)) return null;
+                  return (
+                    <GroupMenu
+                      key={group.label}
+                      group={group}
+                      pathname={pathname}
+                      isAdmin={isAdmin}
+                      isSuperAdmin={isSuperAdmin}
+                    />
+                  );
+                })}
+              </nav>
             )}
           </div>
 

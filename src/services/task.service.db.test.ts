@@ -1055,8 +1055,9 @@ describe('recalculateAllProjectWps (ADR-0037 バッチ化)', () => {
     expect(arg.data.plannedEffort).toBe(10);
     expect(arg.data.progressRate).toBe(100);
     expect(arg.data.status).toBe('completed');
-    // 子が全員同一担当 → 親も connect
+    // 子が全員同一担当 → 親も connect、assigneeDisplayText は null (単一担当者)
     expect(arg.data.assignee).toEqual({ connect: { id: 'u-1' } });
+    expect(arg.data.assigneeDisplayText).toBeNull();
   });
 
   it('C 案: 既に集計値が正しい WP は update しない (updated=0, $transaction 未呼出)', async () => {
@@ -1111,5 +1112,54 @@ describe('recalculateAllProjectWps (ADR-0037 バッチ化)', () => {
     const r = await recalculateAllProjectWps('p-1', 'tenant-A');
     expect(r).toEqual({ total: 0, updated: 0 });
     expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('複数担当者が混在する場合、WP に assigneeDisplayText が設定され assignee は disconnect される', async () => {
+    // ACT 2 件が異なる担当者 → WP は assigneeId=null / assigneeDisplayText='ユーザーA +1'
+    vi.mocked(prisma.task.findMany).mockResolvedValue([
+      wpRow(),
+      actRow({ id: 'a-1', assigneeId: 'u-1', assignee: { name: 'ユーザーA' } }),
+      actRow({ id: 'a-2', assigneeId: 'u-2', assignee: { name: 'ユーザーB' } }),
+    ] as never);
+
+    const r = await recalculateAllProjectWps('p-1', 'tenant-A');
+
+    expect(r).toEqual({ total: 1, updated: 1 });
+    expect(prisma.task.update).toHaveBeenCalledTimes(1);
+    const arg = vi.mocked(prisma.task.update).mock.calls[0][0] as {
+      where: { id: string };
+      data: Record<string, unknown>;
+    };
+    expect(arg.where.id).toBe('wp-1');
+    // 複数担当者 → assigneeId=null (disconnect) / assigneeDisplayText='ユーザーA +1'
+    expect(arg.data.assignee).toEqual({ disconnect: true });
+    expect(arg.data.assigneeDisplayText).toBe('ユーザーA +1');
+  });
+
+  it('C 案: assigneeDisplayText が既に正しい WP は update しない', async () => {
+    // WP が既に assigneeDisplayText='ユーザーA +1' を保持、子も同じ複数担当者構成
+    vi.mocked(prisma.task.findMany).mockResolvedValue([
+      wpRow({
+        assigneeId: null,
+        assigneeDisplayText: 'ユーザーA +1',
+        plannedEffort: 10,
+        progressRate: 100,
+        plannedStartDate: new Date('2026-06-01T00:00:00Z'),
+        plannedEndDate: new Date('2026-06-05T00:00:00Z'),
+        status: 'completed',
+      }),
+      actRow({ id: 'a-1', assigneeId: 'u-1', assignee: { name: 'ユーザーA' } }),
+      actRow({
+        id: 'a-2',
+        assigneeId: 'u-2',
+        assignee: { name: 'ユーザーB' },
+        plannedEndDate: new Date('2026-06-05T00:00:00Z'),
+      }),
+    ] as never);
+
+    const r = await recalculateAllProjectWps('p-1', 'tenant-A');
+    expect(r).toEqual({ total: 1, updated: 0 });
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(prisma.task.update).not.toHaveBeenCalled();
   });
 });

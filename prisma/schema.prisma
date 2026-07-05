@@ -374,6 +374,13 @@ model Tenant {
   consentLogs             TenantConsentLog[]
   // v1.3.0: 資産間手動リンク
   assetLinks              AssetLink[]
+  // v1.5.0: アイデア出し機能
+  ideaVotingSessions      IdeaVotingSession[]     @relation("IdeaVotingSessionTenant")
+  ideaWhiteboardSessions  IdeaWhiteboardSession[] @relation("IdeaWhiteboardSessionTenant")
+  ideaQaThreads           IdeaQaThread[]          @relation("IdeaQaThreadTenant")
+  ideaAssetLinks          IdeaAssetLink[]         @relation("IdeaAssetLinkTenant")
+  // v1.5.0: テナントバナー (テナント管理者が自テナント内のみに表示する帯メッセージ, ADR-0037)
+  tenantBanners           TenantBanner[]
 
   @@index([plan], map: "idx_tenants_plan")
   // PR-S1: credit_card テナントの絞り込み用 (= Stripe 連携対象のクエリで使用)
@@ -480,6 +487,10 @@ model User {
   riskIssuePromotions          RiskIssuePromotion[]     @relation("RiskIssuePromotionCreator")
   issueKnowledgePromotions     IssueKnowledgePromotion[] @relation("IssueKnowledgePromotionCreator")
   createdAssetLinks            AssetLink[]              @relation("AssetLinkCreator")
+  // v1.5.0: アイデア出し機能
+  ideaVotingSessionsCreated    IdeaVotingSession[]      @relation("IdeaVotingSessionCreatedBy")
+  ideaWhiteboardSessionsCreated IdeaWhiteboardSession[] @relation("IdeaWhiteboardSessionCreatedBy")
+  ideaAssetLinksCreated        IdeaAssetLink[]          @relation("IdeaAssetLinkCreatedBy")
 
   // PR #2: tenant への back relation
   tenant Tenant @relation(fields: [tenantId], references: [id])
@@ -692,6 +703,10 @@ model Project {
   knowledgeProjects      KnowledgeProject[]
   stakeholders           Stakeholder[]
   suggestionExplanations SuggestionExplanation[]
+  // v1.5.0: アイデア出し機能
+  ideaVotingSessions      IdeaVotingSession[]     @relation("IdeaVotingSessionProject")
+  ideaWhiteboardSessions  IdeaWhiteboardSession[] @relation("IdeaWhiteboardSessionProject")
+  ideaQaThreads           IdeaQaThread[]          @relation("IdeaQaThreadProject")
 
   @@index([status], map: "idx_projects_status")
   @@index([customerId], map: "idx_projects_customer_id")
@@ -1500,6 +1515,34 @@ model SystemBanner {
   @@map("system_banners")
 }
 
+/// テナントバナー (ADR-0037): テナント管理者が自テナントの全ログインユーザに表示する帯メッセージ。
+/// SystemBanner (全テナント共通) の「テナントスコープ版」として新設。
+///   - **テナント分離**: tenantId を持ち、自テナントのユーザにのみ表示。他テナントからは読み書き不可
+///   - **期間指定**: enabled かつ start_at <= now < end_at の間だけ表示
+///   - **緊急度**: severity = 'high' | 'medium' | 'low' (高=赤 / 中=黄 / 低=青)
+///   - **1 本制約**: 同一テナント内で enabled なバナーの表示期間は重複不可 (service の assertNoOverlap)
+///   - **表示優先度**: SystemBanner と同時有効な場合、緊急度の高い方を上位表示。同一緊急度では SystemBanner が優先
+///   - **取り下げ (enabled=false) と物理削除の 2 系統**: SystemBanner と同設計
+/// created_by は操作した tenant_admin の User.id。FK にしない (User 物理削除で宙吊りになっても履歴として許容)。
+model TenantBanner {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
+  message   String   @db.VarChar(500)
+  severity  String   @db.VarChar(10)
+  startAt   DateTime @map("start_at") @db.Timestamptz
+  endAt     DateTime @map("end_at") @db.Timestamptz
+  enabled   Boolean  @default(true)
+  createdBy String   @map("created_by") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  /// 表示判定 (getActiveTenantBanner) と重複判定 (assertNoOverlap) の hot path 用複合 index。
+  @@index([tenantId, enabled, startAt, endAt], map: "idx_tenant_banners_active")
+  @@map("tenant_banners")
+}
+
 /// 個人メモ (PR #70): プロジェクトに紐付かない個人の知見・作業ノートを保存する。
 /// visibility:
 ///   - 'private' (既定): 作成者本人のみ閲覧可、admin も含め他者不可視
@@ -2152,4 +2195,255 @@ model GuideEmbedding {
   @@index([stepOrder], map: "idx_guide_embeddings_step_order")
   @@index([requiresAdmin, requiresProjectPm, requiresProjectMember], map: "idx_guide_embeddings_permission")
   @@map("guide_embeddings")
+}
+
+// ============================================================
+// アイデア出し機能 (v1.5.0)
+// ============================================================
+//
+// 4 機能: ライブ投票 / 事前投票 / ホワイトボード / 匿名 Q&A
+//
+// 匿名化方針:
+//   - submittedBy は DB に保存するが API レスポンスでは返さない
+//   - セッション作成者 (createdBy) は管理用に保持し、クローズ権限チェックに使う
+//   - IdeaQaUpvote.userId は重複防止のみ、件数のみ公開
+//
+// セッションライフサイクル:
+//   active → closed (endsAt 到達 or 作成者手動クローズ)
+//   閉じたセッションの結果はリクエスト到着時に endsAt < now() を判定して自動遷移 (lazy evaluation)
+//
+// 設計書: docs/design/IDEA_FEATURES.md
+
+/// アイデア投票セッション (ライブ投票・事前投票共通)。
+/// kind='live' | 'pre' でライブ/事前を区別、voteType='binary' | 'dot' で投票方式を区別。
+model IdeaVotingSession {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId       String    @map("tenant_id") @db.Uuid
+  projectId      String    @map("project_id") @db.Uuid
+  /// 'live' | 'pre'
+  kind           String    @db.VarChar(10)
+  /// 'binary' | 'dot'
+  voteType       String    @map("vote_type") @db.VarChar(10)
+  title          String    @db.VarChar(200)
+  description    String?   @db.Text
+  /// dot 投票のみ使用 (1〜10)。binary は NULL。
+  votesPerMember Int?      @map("votes_per_member")
+  /// 'active' | 'closed'
+  status         String    @default("active") @db.VarChar(10)
+  endsAt         DateTime  @map("ends_at") @db.Timestamptz
+  createdBy      String    @map("created_by") @db.Uuid
+  updatedBy      String    @map("updated_by") @db.Uuid
+  closedBy       String?   @map("closed_by") @db.Uuid
+  closedAt       DateTime? @map("closed_at") @db.Timestamptz
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt      DateTime? @map("deleted_at") @db.Timestamptz
+  /// クローズ時に生成 (タイトル+説明+選択肢テキスト)。PJ 内フクロウ検索用。
+  contentEmbedding Unsupported("vector(1024)")? @map("content_embedding")
+
+  tenant      Tenant                 @relation("IdeaVotingSessionTenant", fields: [tenantId], references: [id])
+  project     Project                @relation("IdeaVotingSessionProject", fields: [projectId], references: [id])
+  createdByU  User                   @relation("IdeaVotingSessionCreatedBy", fields: [createdBy], references: [id])
+  options     IdeaVotingOption[]
+  submissions IdeaVotingSubmission[]
+
+  @@index([tenantId, projectId], map: "idx_idea_voting_sessions_project")
+  @@index([tenantId, projectId, kind, status], map: "idx_idea_voting_sessions_kind_status")
+  @@index([tenantId, status, endsAt], map: "idx_idea_voting_sessions_status_ends")
+  @@map("idea_voting_sessions")
+}
+
+/// 投票の選択肢 (binary は必ず 2 件、dot は 2〜10 件)。
+model IdeaVotingOption {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  sessionId    String   @map("session_id") @db.Uuid
+  label        String   @db.VarChar(200)
+  displayOrder Int      @map("display_order")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  session     IdeaVotingSession      @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  allocations IdeaVotingAllocation[]
+
+  @@index([sessionId], map: "idx_idea_voting_options_session")
+  @@map("idea_voting_options")
+}
+
+/// 1 人 1 セッション 1 レコード (UNIQUE 制約で重複投票を防止)。
+/// binary: reason 必須、dot: reason 任意。
+model IdeaVotingSubmission {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  sessionId   String   @map("session_id") @db.Uuid
+  tenantId    String   @map("tenant_id") @db.Uuid
+  /// 匿名化: API レスポンスでは返さない。重複防止・本人確認のみに使用。
+  submittedBy String   @map("submitted_by") @db.Uuid
+  reason      String?  @db.Text
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  session     IdeaVotingSession    @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  allocations IdeaVotingAllocation[]
+
+  @@unique([sessionId, submittedBy], map: "uq_idea_voting_submission_per_user")
+  @@index([sessionId], map: "idx_idea_voting_submissions_session")
+  @@map("idea_voting_submissions")
+}
+
+/// 選択肢への票数配分 (binary: votes=1 固定、dot: 1〜votes_per_member)。
+model IdeaVotingAllocation {
+  id           String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  submissionId String @map("submission_id") @db.Uuid
+  optionId     String @map("option_id") @db.Uuid
+  /// binary は常に 1。dot は 1 以上。
+  votes        Int    @default(1)
+
+  submission IdeaVotingSubmission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  option     IdeaVotingOption     @relation(fields: [optionId], references: [id], onDelete: Cascade)
+
+  @@unique([submissionId, optionId], map: "uq_idea_voting_allocation_per_option")
+  @@index([submissionId], map: "idx_idea_voting_allocations_submission")
+  @@map("idea_voting_allocations")
+}
+
+/// ホワイトボードセッション。付箋の投稿受付と公開を制御する。
+model IdeaWhiteboardSession {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId    String    @map("tenant_id") @db.Uuid
+  projectId   String    @map("project_id") @db.Uuid
+  title       String    @db.VarChar(200)
+  description String?   @db.Text
+  /// 'active' | 'closed'
+  status      String    @default("active") @db.VarChar(10)
+  endsAt      DateTime  @map("ends_at") @db.Timestamptz
+  createdBy   String    @map("created_by") @db.Uuid
+  updatedBy   String    @map("updated_by") @db.Uuid
+  closedBy    String?   @map("closed_by") @db.Uuid
+  closedAt    DateTime? @map("closed_at") @db.Timestamptz
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt   DateTime? @map("deleted_at") @db.Timestamptz
+  /// クローズ時に生成 (タイトル+説明+全付箋内容)。PJ 内フクロウ検索用。
+  contentEmbedding Unsupported("vector(1024)")? @map("content_embedding")
+
+  tenant     Tenant                  @relation("IdeaWhiteboardSessionTenant", fields: [tenantId], references: [id])
+  project    Project                 @relation("IdeaWhiteboardSessionProject", fields: [projectId], references: [id])
+  createdByU User                    @relation("IdeaWhiteboardSessionCreatedBy", fields: [createdBy], references: [id])
+  notes      IdeaWhiteboardNote[]
+
+  @@index([tenantId, projectId], map: "idx_idea_whiteboard_sessions_project")
+  @@index([tenantId, projectId, status], map: "idx_idea_whiteboard_sessions_status")
+  @@index([tenantId, status, endsAt], map: "idx_idea_whiteboard_sessions_ends")
+  @@map("idea_whiteboard_sessions")
+}
+
+/// ホワイトボードの付箋。
+/// アクティブ中は submittedBy 本人のみ閲覧、クローズ後は全員閲覧 (API 層で制御)。
+model IdeaWhiteboardNote {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  sessionId   String    @map("session_id") @db.Uuid
+  tenantId    String    @map("tenant_id") @db.Uuid
+  /// 匿名化: API レスポンスでは返さない。
+  submittedBy String    @map("submitted_by") @db.Uuid
+  content     String    @db.Text
+  /// 任意ラベル (例: "課題" "改善案")
+  category    String?   @db.VarChar(50)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt   DateTime? @map("deleted_at") @db.Timestamptz
+
+  session IdeaWhiteboardSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId], map: "idx_idea_whiteboard_notes_session")
+  @@index([sessionId, submittedBy], map: "idx_idea_whiteboard_notes_session_user")
+  @@map("idea_whiteboard_notes")
+}
+
+/// 匿名 Q&A スレッド。セッション概念なし、常時投稿可能。
+model IdeaQaThread {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId    String    @map("tenant_id") @db.Uuid
+  projectId   String    @map("project_id") @db.Uuid
+  question    String    @db.Text
+  /// 匿名化: API レスポンスでは返さない。解消済みクローズ権限チェックのみに使用。
+  submittedBy String    @map("submitted_by") @db.Uuid
+  /// 非正規化 (answerCount): ソート・フィルタ高速化。IdeaQaAnswer 追加時に +1。
+  answerCount Int       @default(0) @map("answer_count")
+  /// 最終回答日時 (最終活動順ソート用)。
+  lastAnsweredAt DateTime? @map("last_answered_at") @db.Timestamptz
+  /// いいね数非正規化 (IdeaQaUpvote 追加/削除時に更新)。
+  upvoteCount Int       @default(0) @map("upvote_count")
+  /// 'open' | 'closed'
+  status      String    @default("open") @db.VarChar(10)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt   DateTime? @map("deleted_at") @db.Timestamptz
+  /// クローズ時に生成 (質問+全回答内容)。PJ 内フクロウ検索用。
+  contentEmbedding Unsupported("vector(1024)")? @map("content_embedding")
+
+  tenant     Tenant         @relation("IdeaQaThreadTenant", fields: [tenantId], references: [id])
+  project    Project        @relation("IdeaQaThreadProject", fields: [projectId], references: [id])
+  answers    IdeaQaAnswer[]
+  upvotes    IdeaQaUpvote[]
+
+  @@index([tenantId, projectId], map: "idx_idea_qa_threads_project")
+  @@index([tenantId, projectId, status], map: "idx_idea_qa_threads_status")
+  @@index([tenantId, projectId, createdAt(sort: Desc)], map: "idx_idea_qa_threads_created")
+  @@map("idea_qa_threads")
+}
+
+/// Q&A 回答。解消済み後も投稿可能。
+model IdeaQaAnswer {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  threadId    String    @map("thread_id") @db.Uuid
+  tenantId    String    @map("tenant_id") @db.Uuid
+  /// 匿名化: API レスポンスでは返さない。
+  submittedBy String    @map("submitted_by") @db.Uuid
+  content     String    @db.Text
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt   DateTime? @map("deleted_at") @db.Timestamptz
+
+  thread IdeaQaThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+
+  @@index([threadId], map: "idx_idea_qa_answers_thread")
+  @@map("idea_qa_answers")
+}
+
+/// Q&A いいね。重複防止のため userId を保存するが件数のみ公開。
+model IdeaQaUpvote {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  threadId  String   @map("thread_id") @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
+  /// 重複防止のみ。公開しない。
+  userId    String   @map("user_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  thread IdeaQaThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+
+  @@unique([threadId, userId], map: "uq_idea_qa_upvote_per_user")
+  @@index([threadId], map: "idx_idea_qa_upvotes_thread")
+  @@map("idea_qa_upvotes")
+}
+
+/// アイデアセッション/スレッドと既存プロジェクト資産の紐づけ。
+/// sourceType='voting_session' | 'whiteboard_session' | 'qa_thread'
+/// targetType='task' | 'risk' | 'issue' | 'knowledge' | 'retrospective'
+/// FK は entity ID 列に付けない (ポリモーフィック設計)。既存 AssetLink と同方針。
+/// entity 削除時の孤立リンクはアプリケーション層でクリーンアップする。
+model IdeaAssetLink {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId   String   @map("tenant_id") @db.Uuid
+  sourceType String   @map("source_type") @db.VarChar(30)
+  sourceId   String   @map("source_id") @db.Uuid
+  targetType String   @map("target_type") @db.VarChar(20)
+  targetId   String   @map("target_id") @db.Uuid
+  createdBy  String   @map("created_by") @db.Uuid
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  tenant     Tenant @relation("IdeaAssetLinkTenant", fields: [tenantId], references: [id])
+  createdByU User   @relation("IdeaAssetLinkCreatedBy", fields: [createdBy], references: [id])
+
+  @@unique([sourceType, sourceId, targetType, targetId], map: "uq_idea_asset_link")
+  @@index([tenantId, sourceType, sourceId], map: "idx_idea_asset_links_source")
+  @@index([tenantId, targetType, targetId], map: "idx_idea_asset_links_target")
+  @@map("idea_asset_links")
 }

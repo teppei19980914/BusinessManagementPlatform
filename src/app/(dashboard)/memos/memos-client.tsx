@@ -40,6 +40,8 @@ import { useTablePagination, TablePagination } from '@/components/common/table-p
 import { AttachmentList } from '@/components/attachments/attachment-list';
 // PR #213 (2026-05-01): 個人メモ画面にもコメント機能を追加
 import { CommentSection } from '@/components/comments/comment-section';
+// v1.5.0: 公開資産共有ダイアログ
+import { ShareAssetDialog } from '@/components/dialogs/share-asset-dialog';
 import {
   StagedAttachmentsInput,
   persistStagedAttachments,
@@ -124,6 +126,7 @@ export function MemosClient({
   // T-22 Phase 22d: 上書きインポート (sync-import) ダイアログ
   const [isSyncImportOpen, setIsSyncImportOpen] = useState(false);
   const [editing, setEditing] = useState<MemoDTO | null>(null);
+  const [shareOpen, setShareOpen] = useState(false);
   const [error, setError] = useState('');
   // feat/dialog-fullscreen-toggle: 全画面トグル (90vw × 90vh)。create / edit で別 state を持たせる。
   const { fullscreenClassName: createFsClassName, FullscreenToggle: CreateFullscreenToggle } = useDialogFullscreen();
@@ -602,16 +605,39 @@ export function MemosClient({
                 label={tMemo('referenceUrl')}
               />
               <Button type="submit" className="w-full">{tAction('save')}</Button>
-              {/* PR #213: 個人メモにもコメント機能 (全メモと同 UX)。form の外に配置することで
-                  保存ボタンと干渉しない。public memo は他人もコメント可、draft は本人のみ。 */}
-              <CommentSection
-                entityType="memo"
-                entityId={editing.id}
-              />
+              {/* v1.5.0: 公開時のみ共有ボタンを表示 */}
+              {editing.visibility === 'public' && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full"
+                  onClick={() => setShareOpen(true)}
+                >
+                  共有する
+                </Button>
+              )}
+              {/* PR #213: 個人メモにもコメント機能。v1.5.0: 公開時のみ表示 */}
+              {editing.visibility === 'public' && (
+                <CommentSection
+                  entityType="memo"
+                  entityId={editing.id}
+                />
+              )}
             </form>
           )}
         </DialogContent>
       </Dialog>
+
+      {/* v1.5.0: 公開メモ共有ダイアログ */}
+      {editing && editing.visibility === 'public' && (
+        <ShareAssetDialog
+          entityType="memo"
+          entityId={editing.id}
+          assetTitle={editing.title}
+          open={shareOpen}
+          onOpenChange={setShareOpen}
+        />
+      )}
 
       {/* T-22 Phase 22d: 上書きインポート (sync-import) ダイアログ */}
       <EntitySyncImportDialog

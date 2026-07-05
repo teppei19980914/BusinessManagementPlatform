@@ -5,6 +5,7 @@
 - **Deciders**: PM (teppei) + Claude Code
 - **Related**:
   - [ADR-0008](./0008-graceful-degradation-mode.md) 縮退モードバナー (DegradedModeBanner) — 表示帯の実装雛形を流用
+  - [ADR-0037](./0037-tenant-banner.md) テナントバナー — 本 ADR の設計を踏襲し、テナント管理者が自テナント向けに設定するバナー機能 (v1.5.0)
   - `src/app/(dashboard)/layout.tsx` のコメント (feat/app-header-footer-unification / 2026-05-24) — 「AnnouncementBanner を画面上部から廃止。critical な周知が必要になった場合は別途検討する」とした **その別途検討の結論**が本 ADR
 
 ---
@@ -80,3 +81,33 @@ severity の値は `src/lib/validators/system-banner.ts` の `BANNER_SEVERITIES`
 ### 非対象 (将来課題)
 - テナント指定配信 (特定テナントだけに出す) は今回スコープ外 (`tenantId` 追加で対応可能)。
 - 複数バナーの同時積み上げ表示は不採用 (1本制約)。
+
+---
+
+## 実装上の既知の落とし穴 (v1.4.0 デグレ教訓)
+
+### バナー内リンクの色は親側で上書きすること
+
+`MarkdownDisplay` および `linkifyNodes` が生成する `<a>` 要素は `text-info`
+(`oklch(0.55 0.18 240)` ≈ blue-600) で固定されている。バナー背景が同系色
+(`low` = `bg-blue-600`) または白文字背景 (`high` = `bg-red-600`) の場合、
+リンクが背景に溶け込み WCAG AA のコントラスト比 (4.5:1) を大幅に下回る。
+
+**必須**: バナーメッセージを描画するコンテナには必ず `[&_a]:text-current` を付与し、
+親の文字色 (`text-white` / `text-yellow-950`) をリンクに継承させること。
+
+```tsx
+// ✅ 正しい実装 (src/components/system-banner-bar.tsx)
+<div className="flex-1 [&_a]:text-current [&_a]:font-semibold">
+  <MarkdownDisplay value={banner.message} />
+</div>
+
+// ❌ NGパターン — MarkdownDisplay に切り替えた際に [&_a]:text-current を外すと
+//   blue-on-blue 等でリンクが見えなくなる (v1.4.0 でのデグレ原因)
+<div className="flex-1">
+  <MarkdownDisplay value={banner.message} />
+</div>
+```
+
+**自動検出**: `e2e/specs/21-system-banner.spec.ts` の axe-core テスト (観点 7) が
+`@axe-core/playwright` で `color-contrast` ルールを検査し、この種のデグレを CI で検知する。

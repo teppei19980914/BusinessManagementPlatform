@@ -62,11 +62,15 @@ E2E は「仕様通りに動く」ことを保証するが、**仕様自体が�
 
 **自動テストがカバー**:
 - `htmlFor` / `aria-label` / `aria-checked` 等、ARIA 属性の存在 (getByRole 経由で間接チェック)
+- **カラーコントラスト比 (WCAG AA: 4.5:1 以上)** — `@axe-core/playwright` を導入し、
+  有色背景コンポーネント (システム周知バナー 等) の E2E テスト内で自動検査する。
+  現在の適用範囲: `e2e/specs/21-system-banner.spec.ts`
+  (high=赤/medium=黄/low=青 の 3 severity 全種で `color-contrast` ルールを実行)。
+  新たに有色背景コンポーネントを追加する際は同様の axe チェックを E2E テストに追加すること。
 
 **人間が確認すべき**:
 - キーボード操作のみで全機能を使えるか (Tab / Enter / Esc / 矢印キー)
 - スクリーンリーダー (NVDA / VoiceOver / JAWS) での読み上げの自然さ
-- カラーコントラスト比 (WCAG AA: 4.5:1 以上)
 - フォーカスリングの視認性
 - アニメーション停止設定 (prefers-reduced-motion) の尊重
 

@@ -9,6 +9,7 @@ import { z } from 'zod/v4';
 export const NOTIFICATION_TYPES = [
   'task_end_due', // ACT の予定終了日当日 (status≠'completed')
   'comment_mention', // コメント本文の @username で言及 (PR feat/comment-mentions)
+  'asset_share', // 資産共有 (v1.5.0): 他ユーザから公開資産を共有されたとき
 ] as const;
 
 export type NotificationType = (typeof NOTIFICATION_TYPES)[number];
@@ -22,6 +23,7 @@ export const NOTIFICATION_ENTITY_TYPES = [
   'knowledge',
   'stakeholder',
   'customer',
+  'memo', // v1.5.0: asset_share 通知でメモを対象に追加
 ] as const;
 
 export type NotificationEntityType = (typeof NOTIFICATION_ENTITY_TYPES)[number];

@@ -135,6 +135,9 @@ describe('checkFairUseLimit - 集計対象', () => {
         'chat-semantic-search',
         'external-import-embedding',
         'attachment-embedding',
+        'idea-qa-embedding',
+        'idea-whiteboard-embedding',
+        'idea-voting-embedding',
       ],
     });
   });

@@ -64,6 +64,15 @@ jobs:
         # E2E 範囲の横展開漏れを構造的に防止する。
         run: pnpm e2e:coverage-check
 
+      - name: Migration sync check (schema.prisma 変更時のファイル生成漏れ検知 / v1.5.0 教訓)
+        # prisma/schema.prisma が変更されたにもかかわらず prisma/migrations/ に
+        # マイグレーションファイルが追加されていない場合に fail する。
+        # 背景: migrate deploy はファイルがなければ何もしないため、
+        #        ファイル未生成のまま main にマージされると本番 DB が未作成になり全 API が 500 になる。
+        # PR のみ実行 (push to main はすでにマージ済みのため不要)。
+        if: github.event_name == 'pull_request'
+        run: pnpm check:migration-sync origin/${{ github.base_ref }}
+
       - name: Banned auth patterns check (fix/session-clearance / PR #415)
         # NextAuth 既定 signOut の Set-Cookie 脱落で誤ユーザログイン事故が起きた
         # 経緯から、`signOut` import / `/api/auth/signout` 直接 fetch /

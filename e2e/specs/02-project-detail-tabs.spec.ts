@@ -1,21 +1,20 @@
 /**
- * E2E シナリオ Step 7 前半 (PR #93 / 段階導入 C)。
+ * E2E シナリオ Step 7 前半 (PR #93 / 段階導入 C, v1.5.0 改修)。
  *
  * カバー範囲:
- *   プロジェクト詳細画面の全 10 タブが render すること、各タブの主要見出し/要素が
- *   表示されること。admin と project member (general) で権限差分の要点を検証する。
+ *   プロジェクト詳細画面の 2 階層タブが render すること、各タブ・サブタブの
+ *   主要見出し/要素が表示されること。admin と project member (general) で権限差分を検証。
  *
- * 対象タブ (Tabs: Radix UI, role='tab' / role='tabpanel'):
- *   概要 / 見積もり (admin のみ) / WBS管理 /
- *   リスク一覧 / 課題一覧 / 振り返り一覧 / ナレッジ一覧 /
- *   参考 / メンバー (admin/pm_tl のみ)
+ * v1.5.0 タブ構造 (親タブ → サブタブ):
+ *   概要 / 見積もり (admin/pm_tl のみ) /
+ *   進捗管理 → WBS管理 / 進捗確認 /
+ *   資産 → リスク一覧 / 課題一覧 / 振り返り一覧 / ナレッジ一覧 /
+ *   参考情報 (admin/pm_tl のみ) → 稼働分析 / 提案 /
+ *   ツール / メンバー (admin/pm_tl のみ) / ステークホルダー (admin/pm_tl のみ)
  *
- * 2026-04-30 (Task 1): ガントチャートは「WBS管理」と並ぶ独立タブとして再復活
- *   (PC は role='tab'、Mobile は「進捗管理 ▼」プルダウン)。旧 feat/gantt-tab-restructure
- *   (PR-C item 6) で WBS タブ内のトグルボタンに集約していた経緯は解消。
+ * PC/Mobile 共通でサブタブ表示に統一 (旧 dropdown は廃止)。
  *
  * CRUD 検証ではなく render smoke に絞る (CRUD は後続 PR)。
- *
  * コンテキスト共有: PR #92 で確立した sharedContext パターンを踏襲。
  */
 
@@ -82,115 +81,117 @@ test.describe('@feature:project:detail Step 7 タブ render', () => {
     await disconnectDb();
   });
 
-  test('admin がプロジェクト詳細ページを開くと全タブが表示される', async () => {
+  test('admin がプロジェクト詳細ページを開くと全親タブが表示される', async () => {
     const page = sharedPage;
-    // PR #167: lg- viewport では「リスク一覧/課題一覧/振り返り一覧/ナレッジ一覧/参考」が
-    // 「資産」プルダウン (Menu.Trigger) に集約される。chromium-mobile project では
-    // 個別 TabsTrigger は hidden lg:inline-flex で非表示なので、資産プルダウンの visible で代替検証する。
-    const isMobile = test.info().project.name === 'chromium-mobile';
     await page.goto(`/projects/${projectId}`);
     await page.waitForLoadState('networkidle');
 
-    // PR #93 hotfix 1: プロジェクト名は場合によって複数箇所に出現することがある
-    // (hydration 過渡状態や状態バッジ近傍の反復表示など)。strict mode 違反を避けるため
-    // `<h2>` 要素に限定して first() でユニーク化する。タブ一覧の可視性検証が本テストの核心で、
-    // 名称の一意性検証はここでの責務外。
+    // PR #93 hotfix 1: プロジェクト名は複数箇所に出現しうるため h2 + first() でユニーク化
     await expect(
       page.locator('h2').filter({ hasText: PROJECT_NAME }).first(),
     ).toBeVisible({ timeout: 10_000 });
 
-    // 全 viewport で visible な共通タブ
+    // v1.5.0: PC/Mobile 共通で同じ親タブが表示される (dropdown 廃止)
     await expect(page.getByRole('tab', { name: '概要' })).toBeVisible();
     await expect(page.getByRole('tab', { name: '見積もり' })).toBeVisible();
+    await expect(page.getByRole('tab', { name: '進捗管理' })).toBeVisible();
+    await expect(page.getByRole('tab', { name: '資産' })).toBeVisible();
+    await expect(page.getByRole('tab', { name: '参考情報' })).toBeVisible();
+    await expect(page.getByRole('tab', { name: 'ツール' })).toBeVisible();
     await expect(page.getByRole('tab', { name: 'メンバー' })).toBeVisible();
+    await expect(page.getByRole('tab', { name: 'ステークホルダー' })).toBeVisible();
 
-    if (isMobile) {
-      // PR #167 mobile: 資産プルダウンが visible (個別 TabsTrigger は hidden)
-      await expect(page.getByRole('button', { name: '資産メニューを開く' })).toBeVisible();
-      // 2026-04-30 (Task 1) mobile: WBS管理 / ガントチャート は「進捗管理」プルダウンに集約。
-      //   個別 TabsTrigger は hidden lg:inline-flex で非表示なので、進捗管理プルダウン
-      //   トリガーで代替検証。配下 Menu.Item は閉じている間 DOM 上に出ないため visibility は
-      //   別 test で検証 (line 122 周辺の click test)。
-      await expect(page.getByRole('button', { name: '進捗管理メニューを開く' })).toBeVisible();
-    } else {
-      // PC viewport: 個別タブが visible
-      // 2026-04-30 (Task 1): WBS管理 / ガントチャートは PC では独立タブ
-      await expect(page.getByRole('tab', { name: 'WBS管理' })).toBeVisible();
-      await expect(page.getByRole('tab', { name: '進捗確認' })).toBeVisible();
-      await expect(page.getByRole('tab', { name: 'リスク一覧' })).toBeVisible();
-      await expect(page.getByRole('tab', { name: '課題一覧' })).toBeVisible();
-      await expect(page.getByRole('tab', { name: '振り返り一覧' })).toBeVisible();
-      await expect(page.getByRole('tab', { name: 'ナレッジ一覧' })).toBeVisible();
-      await expect(page.getByRole('tab', { name: '参考' })).toBeVisible();
-    }
     await snapshotStep(page, 'project-detail-all-tabs-admin');
   });
 
-  test('各タブをクリックするとアクティブ切替が発生する (admin)', async () => {
+  test('進捗管理タブを開くとサブタブ (WBS管理/進捗確認) が表示される', async () => {
     const page = sharedPage;
-    // PR #167: lg- viewport では「資産」プルダウン経由で配下タブを選択する経路に変わる。
-    // 個別 TabsTrigger は hidden lg:inline-flex で click intercepted。
-    const isMobile = test.info().project.name === 'chromium-mobile';
+    await page.goto(`/projects/${projectId}`);
+    await page.waitForLoadState('networkidle');
+
+    await page.getByRole('tab', { name: '進捗管理' }).click();
+    await expect(page.getByRole('tab', { name: '進捗管理' })).toHaveAttribute('aria-selected', 'true', { timeout: 10_000 });
+
+    // サブタブが出現する
+    await expect(page.getByRole('tab', { name: 'WBS管理' })).toBeVisible();
+    await expect(page.getByRole('tab', { name: '進捗確認' })).toBeVisible();
+
+    // WBS管理サブタブが初期選択される
+    await expect(page.getByRole('tab', { name: 'WBS管理' })).toHaveAttribute('aria-selected', 'true');
+
+    // 進捗確認 (ガント) に切り替え
+    await page.getByRole('tab', { name: '進捗確認' }).click();
+    await expect(page.getByRole('tab', { name: '進捗確認' })).toHaveAttribute('aria-selected', 'true', { timeout: 10_000 });
+
+    await snapshotStep(page, 'project-detail-progress-subtabs');
+  });
+
+  test('資産タブを開くとサブタブ (リスク/課題/振り返り/ナレッジ) が表示される', async () => {
+    const page = sharedPage;
+    await page.goto(`/projects/${projectId}`);
+    await page.waitForLoadState('networkidle');
+
+    await page.getByRole('tab', { name: '資産' }).click();
+    await expect(page.getByRole('tab', { name: '資産' })).toHaveAttribute('aria-selected', 'true', { timeout: 10_000 });
+
+    // サブタブが出現する
+    await expect(page.getByRole('tab', { name: 'リスク一覧' })).toBeVisible();
+    await expect(page.getByRole('tab', { name: '課題一覧' })).toBeVisible();
+    await expect(page.getByRole('tab', { name: '振り返り一覧' })).toBeVisible();
+    await expect(page.getByRole('tab', { name: 'ナレッジ一覧' })).toBeVisible();
+
+    // リスク一覧サブタブが初期選択される
+    await expect(page.getByRole('tab', { name: 'リスク一覧' })).toHaveAttribute('aria-selected', 'true');
+
+    // 各サブタブを順にクリックして aria-selected が遷移することを確認
+    for (const name of ['課題一覧', '振り返り一覧', 'ナレッジ一覧']) {
+      await page.getByRole('tab', { name }).click();
+      await expect(page.getByRole('tab', { name })).toHaveAttribute('aria-selected', 'true', { timeout: 10_000 });
+    }
+
+    await snapshotStep(page, 'project-detail-assets-subtabs');
+  });
+
+  test('参考情報タブを開くとサブタブ (稼働分析/提案) が表示される (admin)', async () => {
+    const page = sharedPage;
+    await page.goto(`/projects/${projectId}`);
+    await page.waitForLoadState('networkidle');
+
+    await page.getByRole('tab', { name: '参考情報' }).click();
+    await expect(page.getByRole('tab', { name: '参考情報' })).toHaveAttribute('aria-selected', 'true', { timeout: 10_000 });
+
+    // サブタブが出現する
+    await expect(page.getByRole('tab', { name: '稼働分析' })).toBeVisible();
+    await expect(page.getByRole('tab', { name: '提案' })).toBeVisible();
+
+    // 稼働分析サブタブが初期選択される
+    await expect(page.getByRole('tab', { name: '稼働分析' })).toHaveAttribute('aria-selected', 'true');
+
+    await snapshotStep(page, 'project-detail-reference-subtabs');
+  });
+
+  test('各親タブをクリックするとアクティブ切替が発生する (admin)', async () => {
+    const page = sharedPage;
     await page.goto(`/projects/${projectId}`);
     await page.waitForLoadState('networkidle');
 
     // 概要タブは初期表示 - プロジェクト情報フィールドの一部 (顧客名) が見える
     await expect(page.getByText('E2E 顧客').first()).toBeVisible({ timeout: 10_000 });
 
-    // タブ UI は @base-ui/react (data-active="" / aria-selected="true") を使用。
-    // ライブラリ固有の data 属性ではなく、W3C ARIA 標準の aria-selected で判定する
-    // (Radix UI の data-state="active" とは異なるため、過去に Radix 想定で書いて
-    // 失敗した → PR #93 hotfix 3)。
-    // 2026-04-30 (Task 1): WBS管理 / ガントチャートは PC では独立タブ、Mobile では
-    //   「進捗管理」プルダウンに集約。viewport 別に経路を分岐。
-    // PR #167: 同パターンが「リスク/課題/振り返り/ナレッジ/参考」(資産プルダウン) にも存在。
-    const directlyClickableTabs = isMobile
-      ? ['概要', '見積もり']
-      : ['概要', '見積もり', 'WBS管理', '進捗確認', 'リスク一覧', '課題一覧', '振り返り一覧', 'ナレッジ一覧', '参考'];
-    for (const name of directlyClickableTabs) {
+    // v1.5.0: PC/Mobile 共通の親タブ (dropdown 廃止)
+    // タブ UI は @base-ui/react (aria-selected="true") を使用。
+    const parentTabs = ['概要', '見積もり', '進捗管理', '資産', '参考情報', 'ツール', 'メンバー', 'ステークホルダー'];
+    for (const name of parentTabs) {
       const tab = page.getByRole('tab', { name });
       await tab.click();
       await expect(tab).toHaveAttribute('aria-selected', 'true', { timeout: 10_000 });
     }
 
-    if (isMobile) {
-      // 2026-04-30 (Task 1) mobile: 進捗管理プルダウン経由で WBS管理 / ガントチャート を選択
-      // KDD §5.X+126: chromium-mobile DPR=3 で dropdown menu trigger / menuitem click も
-      //   hit-test 誤判定の対象 (Dialog / AppHeader と同根)。先回りで { force: true } を適用。
-      // KDD §5.X+139 (本 PR): menuitem click 後 React onClick → setState が伝播しない
-      //   microtask race の対策として、click 前後で「menuitem が visible」「menu が close」
-      //   の 2 段 explicit wait を挿入。force:true は hit-test 回避のため維持。
-      const progressTabsViaMenu = ['WBS管理', '進捗確認'];
-      for (const name of progressTabsViaMenu) {
-        await page.getByRole('button', { name: '進捗管理メニューを開く' }).click({ force: true });
-        const menuItem = page.getByRole('menuitem', { name });
-        // §5.X+139 step 1: menuitem visible 待機 = portal popup の open animation 完了
-        //   + React event handler 登録完了。これで click が「アニメ中の宙ぶらりん要素」に
-        //   発火する race を回避する。
-        await expect(menuItem).toBeVisible({ timeout: 5_000 });
-        await menuItem.click({ force: true });
-        // §5.X+139 step 2: menu close (menuitem が DOM から消えた) を確認 = click event が
-        //   React 側で完全処理された証拠。aria-selected 検証より先にここで失敗を catch する。
-        await expect(menuItem).toBeHidden({ timeout: 5_000 });
-        // PR #167 hotfix 2 と同様: hidden lg:inline-flex で display:none の要素を
-        // CSS セレクタ + filter(hasText) で取得し aria-selected を検証する。
-        const tab = page.locator('[role="tab"]').filter({ hasText: name }).first();
-        await expect(tab).toHaveAttribute('aria-selected', 'true', { timeout: 10_000 });
-      }
-      // PR #167 mobile: 資産プルダウン経由で配下タブを選択 (§5.X+139 と同型 wait を適用)
-      const assetTabsViaMenu = ['リスク一覧', '課題一覧', '振り返り一覧', 'ナレッジ一覧', '参考'];
-      for (const name of assetTabsViaMenu) {
-        await page.getByRole('button', { name: '資産メニューを開く' }).click({ force: true });
-        const menuItem = page.getByRole('menuitem', { name });
-        await expect(menuItem).toBeVisible({ timeout: 5_000 });
-        await menuItem.click({ force: true });
-        await expect(menuItem).toBeHidden({ timeout: 5_000 });
-        const tab = page.locator('[role="tab"]').filter({ hasText: name }).first();
-        await expect(tab).toHaveAttribute('aria-selected', 'true', { timeout: 10_000 });
-      }
-    }
+    await snapshotStep(page, 'project-detail-tab-switching');
+  });
 
-    // メンバータブは固有の UI 検証: 追加済メンバーが一覧に表示される
+  test('メンバータブにメンバー一覧が表示される', async () => {
+    const page = sharedPage;
     await page.getByRole('tab', { name: 'メンバー' }).click();
     // メンバー一覧も tbody tr + .first() でスコープ (LESSONS_LEARNED §4.11)
     await expect(
@@ -199,34 +200,29 @@ test.describe('@feature:project:detail Step 7 タブ render', () => {
     await snapshotStep(page, 'project-detail-members-tab');
   });
 
-  test('general ユーザが参加プロジェクトを開くと 見積もり/メンバー タブが非表示', async () => {
+  test('general ユーザが参加プロジェクトを開くと admin 専用タブが非表示', async () => {
     const page = sharedPage;
-    // PR #167: lg- viewport は資産プルダウン経由になる
-    const isMobile = test.info().project.name === 'chromium-mobile';
     await loginAsGeneral(page, sharedContext, { email: MEMBER_EMAIL, password: MEMBER_PW });
     await page.goto(`/projects/${projectId}`);
     await page.waitForLoadState('networkidle');
 
-    // member ロールは project:read 範囲のタブのみ表示される
+    // v1.5.0: PC/Mobile 共通で member が見える親タブ
     await expect(page.getByRole('tab', { name: '概要' })).toBeVisible();
-    if (isMobile) {
-      // 2026-04-30 (Task 1) mobile: WBS管理 は「進捗管理」プルダウンに集約 (個別タブは hidden)
-      await expect(page.getByRole('button', { name: '進捗管理メニューを開く' })).toBeVisible();
-      // PR #167 mobile: 資産プルダウン visible (個別タブは hidden)
-      await expect(page.getByRole('button', { name: '資産メニューを開く' })).toBeVisible();
-    } else {
-      // 2026-04-30 (Task 1) PC: WBS管理 / 進捗確認は独立タブとして visible
-      await expect(page.getByRole('tab', { name: 'WBS管理' })).toBeVisible();
-      await expect(page.getByRole('tab', { name: '進捗確認' })).toBeVisible();
-      await expect(page.getByRole('tab', { name: 'リスク一覧' })).toBeVisible();
-      await expect(page.getByRole('tab', { name: '課題一覧' })).toBeVisible();
-      await expect(page.getByRole('tab', { name: '振り返り一覧' })).toBeVisible();
-      await expect(page.getByRole('tab', { name: 'ナレッジ一覧' })).toBeVisible();
-    }
+    await expect(page.getByRole('tab', { name: '進捗管理' })).toBeVisible();
+    await expect(page.getByRole('tab', { name: '資産' })).toBeVisible();
+    await expect(page.getByRole('tab', { name: 'ツール' })).toBeVisible();
 
-    // admin 専用のタブは表示されないこと
+    // admin/pm_tl 専用タブは表示されないこと
     await expect(page.getByRole('tab', { name: '見積もり' })).toHaveCount(0);
+    await expect(page.getByRole('tab', { name: '参考情報' })).toHaveCount(0);
     await expect(page.getByRole('tab', { name: 'メンバー' })).toHaveCount(0);
+    await expect(page.getByRole('tab', { name: 'ステークホルダー' })).toHaveCount(0);
+
+    // member が進捗管理タブを開くとサブタブが見えること
+    await page.getByRole('tab', { name: '進捗管理' }).click();
+    await expect(page.getByRole('tab', { name: 'WBS管理' })).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole('tab', { name: '進捗確認' })).toBeVisible();
+
     await snapshotStep(page, 'project-detail-general-member-view');
   });
 });

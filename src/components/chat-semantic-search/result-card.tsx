@@ -15,8 +15,9 @@
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import { cn } from '@/lib/utils';
-import { buildChatHitLink } from '@/lib/chat-search-link';
+import { buildChatHitLink, buildProjectChatHitLink } from '@/lib/chat-search-link';
 import type { ChatSearchHit, ChatSearchKind } from '@/services/chat-search.service';
+import type { ProjectChatSearchHit, ProjectChatSearchKind } from '@/services/project-chat-search.service';
 
 export function ChatSearchResultCard({
   hit,
@@ -77,6 +78,56 @@ export function ChatSearchResultCard({
       )}
     >
       <CardInner meta={meta} hit={hit} />
+    </Link>
+  );
+}
+
+/**
+ * プロジェクトスコープ意味検索 (PJ内から探す) の結果カード。
+ * GlobalChatSearchResultCard と同構造だが ProjectChatSearchHit を受け取り、
+ * projectId を使ってアイデア系の遷移先 URL を構築する。
+ */
+export function ProjectChatSearchResultCard({
+  hit,
+  projectId,
+  onClick,
+}: {
+  hit: ProjectChatSearchHit;
+  projectId: string;
+  onClick?: () => void;
+}) {
+  const t = useTranslations('chatPanel');
+  const KIND_META: Record<ProjectChatSearchKind, { icon: string; label: string }> = {
+    knowledge: { icon: '📕', label: t('kindKnowledge') },
+    risk: { icon: '⚠️', label: t('kindRisk') },
+    issue: { icon: '⚠️', label: t('kindIssue') },
+    retrospective: { icon: '📋', label: t('kindRetrospective') },
+    qa_thread: { icon: '🙋', label: t('kindQaThread') },
+    whiteboard_session: { icon: '🤔', label: t('kindWhiteboardSession') },
+    voting_session: { icon: '🗳️', label: t('kindVotingSession') },
+  };
+  const meta = KIND_META[hit.kind];
+  const href = buildProjectChatHitLink(hit, projectId);
+
+  return (
+    <Link
+      href={href}
+      onClick={onClick}
+      className={cn(
+        'block rounded-md border border-border bg-background p-3 text-sm transition-colors',
+        'hover:border-primary hover:bg-muted',
+      )}
+    >
+      <div className="mb-1 flex items-center gap-2 text-xs text-muted-foreground">
+        <span className="font-medium">
+          {meta.icon} {meta.label}
+        </span>
+        <span className="ml-auto whitespace-nowrap">
+          {t('similarityScore', { score: hit.score.toFixed(2) })}
+        </span>
+      </div>
+      <div className="line-clamp-1 font-medium">{hit.title}</div>
+      <div className="mt-1 line-clamp-2 text-xs text-muted-foreground">{hit.snippet}</div>
     </Link>
   );
 }

@@ -9,7 +9,7 @@ import { LOGIN_ROUTE } from '@/config';
 // feat/app-header-footer-unification (2026-05-24): DashboardHeader を AppHeader に統合。
 // 同一コンポーネントを (public) / (auth) でも user=null で再利用し「同じ役割は同じ UI」を担保。
 import { AppHeader } from '@/components/app-header';
-// feat/collapsed-nav-screen-title (2026-06-05): ナビ折りたたみ幅 (xl: 未満) で現在の画面名を表示。
+// v1.5.0: ナビが常時グループ dropdown のため、全画面幅で画面名を表示する。
 import { CollapsedNavScreenTitle } from '@/components/collapsed-nav-screen-title';
 import { LoadingProvider } from '@/components/loading-overlay';
 // 2026-04-30 (Task 2): リクエスト成功/失敗を画面下部の帯で通知する共通基盤
@@ -23,12 +23,15 @@ import { DegradedModeBanner } from '@/components/degraded-mode-banner';
 // ADR-0036: 全ユーザ共通のシステム周知バナー (画面上部の帯メッセージ)。
 //   feat/app-header-footer-unification (2026-05-24) で廃止した常時バナーの再導入。
 import { getActiveBanner } from '@/services/system-banner.service';
+// ADR-0037: テナント管理者が自テナント向けに設定する帯メッセージ。
+import { getActiveTenantBanner } from '@/services/tenant-banner.service';
 import { SystemBannerBar } from '@/components/system-banner-bar';
 // PR #373 / chat-semantic-search: 全ページ右下のチャット意味検索 FAB
 import { ChatSemanticSearchFab } from '@/components/chat-semantic-search';
 // G2-e-3 (2026-05-31): 初回ログイン時のオンボーディングモーダル (自動表示コントローラ)
 import { WelcomeOwlAutoOpen } from '@/components/onboarding/welcome-owl-modal';
 import type { SystemRole } from '@/config/master-data';
+import type { BannerSeverity } from '@/lib/validators/system-banner';
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   // perf/dashboard-layout-parallel-ssr (2026-06-01): SSR 並列化。
@@ -50,12 +53,25 @@ export default async function DashboardLayout({ children }: { children: React.Re
   // Q5(3): 縮退モード状態を取得し banner で表示する。
   //   - 取得失敗は許容 (バナー表示は best-effort、画面遷移を妨げない)
   //   - admin / general 双方に共通で表示 (内容は role で出し分けない、リンク先のみ admin/一般で差別)
-  const [user, degradedMode, activeBanner] = await Promise.all([
+  const [user, degradedMode, activeBanner, activeTenantBanner] = await Promise.all([
     requireAuthForLayout(),
     getDegradedModeBannerState(session.user.tenantId).catch(() => null),
     // ADR-0036: 全テナント共通の周知バナー。取得失敗は best-effort で握りつぶす (画面遷移を妨げない)。
     getActiveBanner().catch(() => null),
+    // ADR-0037: 自テナント向けバナー。取得失敗は best-effort。
+    getActiveTenantBanner(session.user.tenantId).catch(() => null),
   ]);
+
+  // ADR-0037: 重みソート (high=3 / medium=2 / low=1)。同一重みでは SystemBanner が上。
+  const SEVERITY_WEIGHT: Record<BannerSeverity, number> = { high: 3, medium: 2, low: 1 };
+  type BannerEntry = { id: string; message: string; severity: BannerSeverity; _sys: boolean };
+  const bannerQueue: BannerEntry[] = [];
+  if (activeBanner) bannerQueue.push({ id: activeBanner.id, message: activeBanner.message, severity: activeBanner.severity, _sys: true });
+  if (activeTenantBanner) bannerQueue.push({ id: activeTenantBanner.id, message: activeTenantBanner.message, severity: activeTenantBanner.severity, _sys: false });
+  bannerQueue.sort((a, b) => {
+    const diff = SEVERITY_WEIGHT[b.severity] - SEVERITY_WEIGHT[a.severity];
+    return diff !== 0 ? diff : (a._sys ? -1 : 1);
+  });
 
   // feat/app-header-footer-unification (2026-05-24): AnnouncementBanner を削除。
   //   「画面上の表示項目を極力減らし UX を向上に寄せる」方針 (= header auto-hide / footer 削減と同じ系)。
@@ -74,9 +90,12 @@ export default async function DashboardLayout({ children }: { children: React.Re
               systemRole={user.systemRole as SystemRole}
             />
           )}
-          {/* ADR-0036: システム周知バナー (運営者が出す全ユーザ共通の帯)。
+          {/* ADR-0036/0037: システム周知バナー + テナントバナー。
+              重み順 (high > medium > low) にソート。同一重みは SystemBanner が上。
               表示判定はサーバ、×破棄のセッション維持は client (SystemBannerBar) で行う。 */}
-          <SystemBannerBar banner={activeBanner} />
+          {bannerQueue.map(({ _sys: _, ...b }) => (
+            <SystemBannerBar key={b.id} banner={b} />
+          ))}
           {/*
             max-w-7xl は意図的に外している: 画面左右に大きな余白が残ったまま
             一覧テーブルに横スクロールが出るとユーザビリティが下がるため、
@@ -84,8 +103,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
             テーブル側の overflow-x-auto でスクロールさせる運用。
           */}
           <main className="px-4 py-6 sm:px-6 lg:px-8">
-            {/* feat/collapsed-nav-screen-title: ナビ折りたたみ幅 (xl: 未満) のみ画面名を表示。
-                全画面で <main> 先頭に置き、UI 配置を統一する。 */}
+            {/* v1.5.0: 全画面幅で画面名を表示 (ナビが常時 dropdown のため)。 */}
             <CollapsedNavScreenTitle />
             {children}
           </main>

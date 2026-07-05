@@ -15,6 +15,13 @@
  *   バッファ率 (0〜50%) は state 管理のみ (セッション中有効。DB 保存なし — 案X 設計方針)。
  *   案Y (テナントレベルのデフォルト設定) は将来機能として実装予定。
  *
+ * 行選択 (v1.5.0):
+ *   selectedIds (Set<string>) で選択行を管理。
+ *   - チェックなし → 全行を activeEstimates として集計・エクスポートに使う。
+ *   - 1 行以上チェック → 選択行のみを activeEstimates とする。
+ *   全ページをまたいだ選択が可能 (selectableIds = estimates 全件の id)。
+ *   reload 後は選択をリセットする。
+ *
  * 認可: canEdit prop (PM/TL 以上 or admin)。
  * API: /api/projects/[id]/estimates (GET/POST), /api/projects/[id]/estimates/[id] (PATCH/DELETE)
  */
@@ -38,6 +45,7 @@ import {
 } from '@/components/ui/dialog';
 import { nativeSelectClass } from '@/components/ui/native-select-style';
 import { useTablePagination, TablePagination } from '@/components/common/table-pagination';
+import { BulkSelectHeader, BulkSelectCell } from '@/components/common/bulk-select';
 import { TASK_CATEGORIES, EFFORT_UNITS } from '@/types';
 import { CoefficientForm, type CoefficientFormState } from '@/components/estimates/coefficient-form';
 import { EstimateSummaryPanel } from '@/components/estimates/estimate-summary-panel';
@@ -80,14 +88,6 @@ export function EstimatesClient({ projectId, projectName, estimates, canEdit, on
   const { withLoading } = useLoading();
   const { showSuccessKey, showErrorKey } = useToast();
 
-  const reload = useCallback(async () => {
-    if (onReload) {
-      await onReload();
-    } else {
-      router.refresh();
-    }
-  }, [onReload, router]);
-
   // ---- ダイアログ開閉状態 ----
   const [isDirectOpen, setIsDirectOpen] = useState(false);
   const [isCoeffOpen, setIsCoeffOpen] = useState(false);
@@ -102,6 +102,36 @@ export function EstimatesClient({ projectId, projectName, estimates, canEdit, on
 
   // ---- バッファ率 (案X 方針: state 管理のみ、デフォルト 20%) ----
   const [bufferRate, setBufferRate] = useState(0.2);
+
+  // ---- 行選択 (v1.5.0): 全ページをまたいで管理 ----
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
+  const reload = useCallback(async () => {
+    if (onReload) {
+      await onReload();
+    } else {
+      router.refresh();
+    }
+    setSelectedIds(new Set());
+  }, [onReload, router]);
+  const selectableIds = estimates.map((e) => e.id);
+  const allSelected = selectableIds.length > 0 && selectableIds.every((id) => selectedIds.has(id));
+  // チェックなし → 全件。1 件以上チェック → 選択行のみ。
+  const activeEstimates = selectedIds.size === 0
+    ? estimates
+    : estimates.filter((e) => selectedIds.has(e.id));
+
+  function toggleOneId(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleAllIds() {
+    setSelectedIds(allSelected ? new Set() : new Set(selectableIds));
+  }
 
   // ================================================================
   // 手動登録
@@ -182,11 +212,11 @@ export function EstimatesClient({ projectId, projectName, estimates, canEdit, on
   }
 
   // ================================================================
-  // エクスポート
+  // エクスポート (activeEstimates を対象とする)
   // ================================================================
   async function handleExportExcel() {
     try {
-      await exportEstimateExcel(estimates, resolvedProjectName, bufferRate);
+      await exportEstimateExcel(activeEstimates, resolvedProjectName, bufferRate);
     } catch {
       showErrorKey('estimate.toastExcelExportFailed');
     }
@@ -194,7 +224,7 @@ export function EstimatesClient({ projectId, projectName, estimates, canEdit, on
 
   async function handleExportWord() {
     try {
-      await exportEstimateWord(estimates, resolvedProjectName, bufferRate);
+      await exportEstimateWord(activeEstimates, resolvedProjectName, bufferRate);
     } catch {
       showErrorKey('estimate.toastWordExportFailed');
     }
@@ -203,23 +233,31 @@ export function EstimatesClient({ projectId, projectName, estimates, canEdit, on
   // ================================================================
   // 表示
   // ================================================================
-  const totalEffort = estimates.reduce((sum, e) => sum + e.estimatedEffort, 0);
+  const totalEffort = activeEstimates.reduce((sum, e) => sum + e.estimatedEffort, 0);
   const { pageItems, page, pageCount, setPage } = useTablePagination(estimates, '');
+
+  // テーブル列数 (チェックボックス列を含む)
+  const colCount = canEdit ? 12 : 11;
 
   return (
     <div className="space-y-6">
-      {/* サマリパネル */}
+      {/* サマリパネル (activeEstimates を渡す) */}
       <EstimateSummaryPanel
-        estimates={estimates}
+        estimates={activeEstimates}
         bufferRate={bufferRate}
         onBufferRateChange={setBufferRate}
         onExportExcel={handleExportExcel}
         onExportWord={handleExportWord}
       />
 
-      {/* ヘッダー：合計工数 + 追加ボタン群 */}
+      {/* ヘッダー：合計工数 + 選択件数 + 追加ボタン群 */}
       <div className="flex items-center justify-between gap-2 flex-wrap">
-        <p className="text-sm text-muted-foreground">{t('totalEffort', { value: totalEffort })}</p>
+        <div className="flex items-center gap-2">
+          <p className="text-sm text-muted-foreground">{t('totalEffort', { value: totalEffort })}</p>
+          {selectedIds.size > 0 && (
+            <Badge variant="secondary" className="text-xs">{t('selectedCount', { count: selectedIds.size })}</Badge>
+          )}
+        </div>
         {canEdit && (
           <div className="flex gap-2">
             <Button variant="outline" size="sm" onClick={() => { setError(''); setDirectForm({ ...BLANK_BASE }); setIsDirectOpen(true); }}>
@@ -325,6 +363,15 @@ export function EstimatesClient({ projectId, projectName, estimates, canEdit, on
       <Table>
         <TableHeader>
           <TableRow>
+            {/* 行選択チェックボックス列 */}
+            <TableHead className="w-8">
+              <BulkSelectHeader
+                allSelected={allSelected}
+                totalSelectable={selectableIds.length}
+                onToggleAll={toggleAllIds}
+                ariaLabel={t('selectAll')}
+              />
+            </TableHead>
             <TableHead>{t('columnItemName')}</TableHead>
             <TableHead>{t('columnCategory')}</TableHead>
             <TableHead>{t('columnInputMode')}</TableHead>
@@ -343,6 +390,15 @@ export function EstimatesClient({ projectId, projectName, estimates, canEdit, on
             const methodOpt = e.inputMode === 'coefficient' ? getMethodOption(e.devMethod ?? '') : undefined;
             return (
               <TableRow key={e.id}>
+                {/* 行選択チェックボックス */}
+                <TableCell>
+                  <BulkSelectCell
+                    canSelect={true}
+                    selected={selectedIds.has(e.id)}
+                    onToggle={() => toggleOneId(e.id)}
+                    ariaLabel={t('selectRow', { name: e.itemName })}
+                  />
+                </TableCell>
                 <TableCell className="font-medium">{e.itemName}</TableCell>
                 <TableCell>{TASK_CATEGORIES[e.category as keyof typeof TASK_CATEGORIES] || e.category}</TableCell>
                 <TableCell>
@@ -401,7 +457,7 @@ export function EstimatesClient({ projectId, projectName, estimates, canEdit, on
           })}
           {estimates.length === 0 && (
             <TableRow>
-              <TableCell colSpan={canEdit ? 11 : 10} className="py-8 text-center text-muted-foreground">{t('noItems')}</TableCell>
+              <TableCell colSpan={colCount} className="py-8 text-center text-muted-foreground">{t('noItems')}</TableCell>
             </TableRow>
           )}
         </TableBody>

@@ -327,7 +327,8 @@ describe('createTenantBySuperAdmin', () => {
           tenantId: 'tenant-uuid',
           email: 'admin@customer-a.example',
           systemRole: 'admin',
-          isActive: false,
+          isActive: true,
+          forcePasswordChange: true,
         }),
       }),
     );

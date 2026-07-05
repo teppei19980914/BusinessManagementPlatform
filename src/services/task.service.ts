@@ -101,6 +101,7 @@ function toTaskDTO(t: {
   description: string | null;
   assigneeId: string | null;
   assignee?: { name: string } | null;
+  assigneeDisplayText?: string | null;
   plannedStartDate: Date | null;
   plannedEndDate: Date | null;
   actualStartDate: Date | null;
@@ -125,6 +126,7 @@ function toTaskDTO(t: {
     description: t.description,
     assigneeId: t.assigneeId,
     assigneeName: t.assignee?.name,
+    assigneeDisplayText: t.assigneeDisplayText ?? null,
     plannedStartDate: safeDate(t.plannedStartDate),
     plannedEndDate: safeDate(t.plannedEndDate),
     actualStartDate: safeDate(t.actualStartDate),
@@ -1322,11 +1324,20 @@ export async function recalculateAllProjectWps(
       actualEndDate: true,
       status: true,
       assigneeId: true,
+      assignee: { select: { name: true } },
     },
   });
 
   const wps = tasks.filter((t) => t.type === 'work_package');
   if (wps.length === 0) return { total: 0, updated: 0 };
+
+  // assigneeId → 担当者名 の逆引きマップ (assigneeDisplayText 計算用)
+  const nameByAssigneeId = new Map<string, string>();
+  for (const t of tasks) {
+    if (t.assigneeId && t.assignee?.name) {
+      nameByAssigneeId.set(t.assigneeId, t.assignee.name);
+    }
+  }
 
   // 親 ID → 直接の子タスク
   const childrenByParent = new Map<string, typeof tasks>();
@@ -1374,6 +1385,10 @@ export async function recalculateAllProjectWps(
           actualEndDate: childAgg.actualEndDate,
           status: childAgg.status,
           assigneeId: childAgg.assigneeId,
+          // 子 WP が単一担当者の場合、nameByAssigneeId から名前を逆引きして渡す
+          assigneeName: childAgg.assigneeId
+            ? (nameByAssigneeId.get(childAgg.assigneeId) ?? null)
+            : null,
         };
       }
       // ACT はそのまま DB 値で集計
@@ -1386,6 +1401,7 @@ export async function recalculateAllProjectWps(
         actualEndDate: c.actualEndDate,
         status: c.status,
         assigneeId: c.assigneeId,
+        assigneeName: c.assignee?.name ?? null,
       };
     });
 
@@ -1687,13 +1703,16 @@ async function recalculateWpOnly(taskId: string): Promise<boolean> {
           status: true,
           type: true,
           assigneeId: true,
+          assignee: { select: { name: true } },
         },
       },
     },
   });
   if (!task || task.type !== 'work_package') return false;
 
-  const aggregated = aggregateWpFromChildren(task.childTasks);
+  const aggregated = aggregateWpFromChildren(
+    task.childTasks.map((c) => ({ ...c, assigneeName: c.assignee?.name ?? null })),
+  );
 
   // C 案: 現在値と一致するなら update をスキップ
   if (isWpAggregationEqual(task, aggregated)) {
@@ -1730,13 +1749,16 @@ async function recalculateAncestors(taskId: string): Promise<void> {
           status: true,
           type: true,
           assigneeId: true,
+          assignee: { select: { name: true } },
         },
       },
     },
   });
   if (!task || task.type !== 'work_package') return;
 
-  const aggregated = aggregateWpFromChildren(task.childTasks);
+  const aggregated = aggregateWpFromChildren(
+    task.childTasks.map((c) => ({ ...c, assigneeName: c.assignee?.name ?? null })),
+  );
 
   // ADR-0035 (2026-06-05): C 案 (recalculateWpOnly / recalculateAllProjectWps と同じ最適化)。
   //   集計値が現在値と一致するなら自身の update をスキップし、上位への伝播も止める。

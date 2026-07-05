@@ -51,6 +51,7 @@ import {
   // ADR-0025 (2026-05-29): Beginner プラン超過時の専用エラー型
   BeginnerWriteGuardExceededError,
 } from '@/services/storage-guard.service';
+import { recalculateAllProjectWps } from '@/services/task.service';
 
 const IMPORT_LOCK_STALE_MINUTES = 30;
 const BCRYPT_ROUNDS = 10;
@@ -85,6 +86,8 @@ export type DataImportResult =
 export type ImportSummary = {
   importedAt: string;
   tenantId: string;
+  /** インポートで新規作成された project の新 UUID 一覧 (WP 集約再計算に使用) */
+  projectIds: string[];
   counts: {
     projects: number;
     tasks: number;
@@ -198,6 +201,16 @@ export async function importTenantData(
         };
       }
       // 計測失敗 (fail-open): storage-guard 内で記録済 + 日次 cron が補正するため握りつぶす。
+    }
+    // インポート後の WP 担当者集約テキスト再計算 (fail-open: データは既にコミット済)
+    // ZIP 内の assigneeDisplayText はインポート時に取り込まず、子から再算出して上書きする。
+    // 失敗しても取込済みデータは消えない。管理者が /recalculate エンドポイントで補正可能。
+    for (const projectId of summary.projectIds) {
+      try {
+        await recalculateAllProjectWps(projectId, tenantId);
+      } catch {
+        // fail-open
+      }
     }
     return { ok: true, summary };
   } finally {
@@ -458,6 +471,9 @@ async function runImport(
 
     const existingId = emailToExistingId.get(email);
     if (existingId) {
+      // email 一致 = 既存ユーザへの ID 再マップのみ。属性は一切更新しない。
+      //   systemRole / isActive / invitationAcceptedAt を ZIP 側の値で上書きすると
+      //   既存テナント管理者 (admin) の権限を意図せず降格させる危険があるため。
       maps.user.set(oldId, existingId);
       usersMerged += 1;
       continue;
@@ -476,6 +492,11 @@ async function runImport(
         //   admin 権限が必要なユーザは、import 後に既存の admin 招待フローで個別昇格させる。
         systemRole: 'general',
         isActive: u.isActive !== false,
+        // インポートユーザは「招待中」でなく「有効（要 PW 再設定）」として作成する。
+        //   invitationAcceptedAt: null のままだと管理者一覧に「招待中」と表示され、
+        //   削除操作が cancelInvitation 経路になる。import 後に forcePasswordChange で
+        //   初回パスワード変更を強制するため、招待受諾済みとして扱う。
+        invitationAcceptedAt: new Date(),
         themePreference:
           typeof u.themePreference === 'string' ? u.themePreference : 'light',
         // PR-1 (2026-05-15): timezone / locale はテナント単位に集約されたため User には設定しない。
@@ -860,6 +881,7 @@ async function runImport(
   return {
     importedAt: new Date().toISOString(),
     tenantId,
+    projectIds: [...maps.project.values()],
     counts: {
       projects: maps.project.size,
       tasks: maps.task.size,

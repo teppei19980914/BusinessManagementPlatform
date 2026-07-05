@@ -91,7 +91,9 @@ Claude Code が実装変更を行った場合、コミット前に以下を必�
 2. **退行 (リグレッション) チェック (重点)**
    - **単体テスト** (`pnpm test`): ローカル実行し差分が無いことを確認。テスト数の増減・旧文言残留もチェック
    - **E2E カバレッジ横展開**: 新規 `page.tsx` / `route.ts` を追加したら `docs/test/E2E_COVERAGE.md` に追記。`pnpm e2e:coverage-check` で gap 検出可、`ci.yml` でも強制
-3. **デプロイチェック** — `pnpm lint` → `pnpm tsc --noEmit` → `pnpm test` → **`pnpm e2e:coverage-check`** (新規 route/page 追加時の漏れ検知、PR #372 で push 後 CI fail 事故 [KDD §5.X+58](./docs/knowledge/KDD_PATTERNS.md)) → `pnpm build` をローカル実行
+3. **デプロイチェック** — 以下の順に実行する
+   - **`pnpm check:migration-sync`** (**最優先**。`schema.prisma` を変更した場合は必ず先頭で実行。マイグレーションファイル未生成のまま main にマージすると本番 DB のテーブルが作成されず全 API が 500 になる。v1.5.0 教訓)
+   - `pnpm lint` → `pnpm tsc --noEmit` → `pnpm test` → **`pnpm e2e:coverage-check`** (新規 route/page 追加時の漏れ検知、PR #372 で push 後 CI fail 事故 [KDD §5.X+58](./docs/knowledge/KDD_PATTERNS.md)) → `pnpm build`
 4. **E2E ローカル実行 (任意)** — UI / API 変更時は `pnpm test:e2e` で事前検証 (CI でも自動実行)
 5. **ドキュメント最新化** — 変更内容に応じて [docs/](./docs/README.md) 配下の該当ディレクトリを更新
 

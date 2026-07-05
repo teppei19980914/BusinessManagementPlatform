@@ -1,6 +1,6 @@
 {
   "name": "tasukiba",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "private": true,
   "license": "AGPL-3.0-or-later",
   "scripts": {
@@ -40,6 +40,7 @@
     "check:banned-i18n-patterns:report": "tsx scripts/check-banned-i18n-patterns.ts --report",
     "check:banned-i18n-patterns:update-baseline": "tsx scripts/check-banned-i18n-patterns.ts --update-baseline scripts/i18n-banned-patterns-baseline.json",
     "check:banned-i18n-patterns:strict": "tsx scripts/check-banned-i18n-patterns.ts --strict",
+    "check:migration-sync": "bash scripts/check-migration-sync.sh",
     "perf:check": "tsx scripts/check-perf-antipatterns.ts",
     "prepare": "husky"
   },
@@ -71,6 +72,7 @@
     "react-dom": "19.2.7",
     "react-markdown": "^10.1.0",
     "recharts": "^3.8.1",
+    "rehype-slug": "^6.0.0",
     "remark-breaks": "^4.0.0",
     "remark-gfm": "^4.0.1",
     "stripe": "^17.7.0",
@@ -79,6 +81,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.12.1",
     "@playwright/test": "^1.61.0",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^26",

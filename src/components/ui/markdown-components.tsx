@@ -58,16 +58,18 @@ export const MARKDOWN_COMPONENTS = {
   pre: ({ children }: { children?: React.ReactNode }) => (
     <pre className="my-2 overflow-x-auto rounded-md bg-muted p-2 text-xs">{children}</pre>
   ),
-  a: ({ children, href }: { children?: React.ReactNode; href?: string }) => (
-    <a
-      href={href}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="text-info underline hover:no-underline"
-    >
-      {children}
-    </a>
-  ),
+  a: ({ children, href }: { children?: React.ReactNode; href?: string }) => {
+    const isSamePageAnchor = href?.startsWith('#') ?? false;
+    return (
+      <a
+        href={href}
+        {...(!isSamePageAnchor && { target: '_blank', rel: 'noopener noreferrer' })}
+        className="text-info underline hover:no-underline"
+      >
+        {children}
+      </a>
+    );
+  },
   hr: () => <hr className="my-3 border-border" />,
   table: ({ children }: { children?: React.ReactNode }) => (
     <div className="my-2 overflow-x-auto">

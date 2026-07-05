@@ -462,6 +462,29 @@ export async function updateProject(
     include: { customer: { select: { name: true } } },
   });
 
+  // v1.5.0 カスケードクローズ: closed への遷移時にアイデアツールの active/open セッションを一括クローズ。
+  // changeProjectStatus() (旧 /status route・dormant) と同一ロジック。
+  // updateProject() が UI の実際のステータス変更経路であるため、本関数でも実行する。
+  // 背景: closed プロジェクトでは API 書き込みが禁止されるため、active のまま残ったセッションを
+  //       手動クローズできなくなる。また closed → active の逆戻しは STATE_RESTRICTIONS が 403 で阻止する。
+  if (input.status === 'closed') {
+    const now = new Date();
+    await Promise.all([
+      prisma.ideaVotingSession.updateMany({
+        where: { projectId, tenantId, status: 'active', deletedAt: null },
+        data: { status: 'closed', closedAt: now },
+      }),
+      prisma.ideaWhiteboardSession.updateMany({
+        where: { projectId, tenantId, status: 'active', deletedAt: null },
+        data: { status: 'closed', closedAt: now },
+      }),
+      prisma.ideaQaThread.updateMany({
+        where: { projectId, tenantId, status: 'open', deletedAt: null },
+        data: { status: 'closed' },
+      }),
+    ]);
+  }
+
   // (2026-05-15) text 変更時のみ embedding を再永続化。LLM 呼出は上で実施済。
   //   text 変更なし = 既存 embedding 流用 (= LLM 課金回避)。
   // PR-9 perf (2026-05-29 / ADR-0026): embedding 永続化を `after()` で非同期化。
@@ -787,6 +810,29 @@ export async function changeProjectStatus(
     data: { status: newStatus, updatedBy: userId },
     include: { customer: { select: { name: true } } },
   });
+
+  // プロジェクトクローズ時: ツールの active セッション・open スレッドをすべて自動クローズ。
+  // closed プロジェクトでは新規書き込みが API レベルでブロックされるため、
+  // クローズ前の active セッションを残しても手動クローズできなくなる。
+  // endsAt 到達による lazy auto-close は個別アクセス時にのみ動作するため、
+  // ここで一括クローズしてデータの一貫性を保証する。
+  if (newStatus === 'closed') {
+    const now = new Date();
+    await Promise.all([
+      prisma.ideaVotingSession.updateMany({
+        where: { projectId, tenantId: viewerTenantId, status: 'active', deletedAt: null },
+        data: { status: 'closed', closedAt: now },
+      }),
+      prisma.ideaWhiteboardSession.updateMany({
+        where: { projectId, tenantId: viewerTenantId, status: 'active', deletedAt: null },
+        data: { status: 'closed', closedAt: now },
+      }),
+      prisma.ideaQaThread.updateMany({
+        where: { projectId, tenantId: viewerTenantId, status: 'open', deletedAt: null },
+        data: { status: 'closed' },
+      }),
+    ]);
+  }
 
   return toProjectDTO(updated);
 }

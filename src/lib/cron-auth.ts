@@ -50,16 +50,20 @@ export type CronAuthResult =
  *   CRON_SECRET_MISCONFIGURED) を返すと診断しやすい。
  */
 export function checkCronAuthorization(req: NextRequest): CronAuthResult {
-  const cronSecret = process.env.CRON_SECRET;
-  if (!cronSecret || cronSecret.length < MIN_CRON_SECRET_LENGTH) {
-    // CRON_SECRET 未設定 / 短すぎる場合は cron 自体が無効化される。
-    // 起動時に throw する選択肢もあるが、cron 機能のみの劣化で済ませる方が
-    // 認証フロー全体への波及を避けられる。
-    return { ok: false, reason: 'server_secret_missing' };
-  }
-
+  // Authorization ヘッダの有無を CRON_SECRET チェックより先に確認する。
+  //   旧実装は CRON_SECRET 未設定時に server_secret_missing を即返し、
+  //   Authorization ヘッダなし (= 管理画面からの手動実行) が Route B に到達できなかった。
+  //   修正後: Authorization なし → no_bearer_header として返し、route 側は Route B へ進む。
+  //   CRON_SECRET の検証は Authorization ヘッダが実際に存在する場合のみ実施する。
   const header = req.headers.get('authorization');
   if (!header) return { ok: false, reason: 'no_bearer_header' };
+
+  const cronSecret = process.env.CRON_SECRET;
+  if (!cronSecret || cronSecret.length < MIN_CRON_SECRET_LENGTH) {
+    // Bearer ヘッダはあるが CRON_SECRET がサーバ側で未設定 / 短すぎる。
+    // cron-job.org 等の外部 cron が Bearer を送ってきているが受け取れない状態。
+    return { ok: false, reason: 'server_secret_missing' };
+  }
 
   if (!header.startsWith('Bearer ')) {
     // 'Bearer ' (大文字 B、半角スペース) で始まらない → format 不正。

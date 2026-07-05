@@ -19,10 +19,14 @@ import { LinkedProjectsSection } from '@/components/common/linked-projects-secti
 // v1.3.0 資産導線機能: 昇華バッジ (読み取り専用) + 手動リンクセクション + 昇華ダイアログ
 import { PromotionBadgeList } from '@/components/common/promotion-badge-list';
 import { AssetLinkSection } from '@/components/common/asset-link-section';
+// v1.5.0 アイデア出し機能: この資産に関連するアイデアを逆引き表示
+import { IdeaAssetLinkSection } from '@/components/common/idea-asset-link-section';
 import { PromoteRiskToIssueDialog } from '@/components/dialogs/promote-risk-to-issue-dialog';
 import { PromoteIssueToKnowledgeDialog } from '@/components/dialogs/promote-issue-to-knowledge-dialog';
 // PR #199: コメントセクション (entityType は risk.type='risk'|'issue' に追従)
 import { CommentSection } from '@/components/comments/comment-section';
+// v1.5.0: 公開資産共有ダイアログ
+import { ShareAssetDialog } from '@/components/dialogs/share-asset-dialog';
 import { DateFieldWithActions } from '@/components/ui/date-field-with-actions';
 // feat/dialog-fullscreen-toggle: 文字量が多い編集 dialog 向けの全画面トグル
 import { useDialogFullscreen } from '@/components/ui/use-dialog-fullscreen';
@@ -110,6 +114,7 @@ export function RiskEditDialog({
   const { fullscreenClassName, FullscreenToggle } = useDialogFullscreen();
   // v1.3.0 資産導線機能: 昇華ダイアログの開閉
   const [promoteOpen, setPromoteOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
   const [form, setForm] = useState({
     title: '',
     // feat/risk-issue-4-section (2026-05-26): 4 セクション化
@@ -396,13 +401,41 @@ export function RiskEditDialog({
             entityId={risk.id}
             isPublic={risk.visibility === 'public'}
           />
-          {!readOnly && <Button type="submit" className="w-full">{t('save')}</Button>}
-          {/* PR #199: コメント。fieldset disabled の外に配置することで readOnly でも投稿可。 */}
-          <CommentSection
-            entityType={risk.type === 'issue' ? 'issue' : 'risk'}
-            entityId={risk.id}
-            mutationsLocked={closedProject}
+          {/* v1.5.0 アイデア出し機能: 逆引きリンク (読み取り専用) */}
+          <IdeaAssetLinkSection
+            projectId={currentProjectId ?? risk.projectId}
+            targetType={risk.type === 'issue' ? 'issue' : 'risk'}
+            targetId={risk.id}
           />
+          {!readOnly && <Button type="submit" className="w-full">{t('save')}</Button>}
+          {/* v1.5.0: 公開時のみ共有ボタンを表示 */}
+          {risk.visibility === 'public' && (
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full"
+              onClick={() => setShareOpen(true)}
+            >
+              共有する
+            </Button>
+          )}
+          {/* PR #199: コメント。fieldset disabled の外に配置することで readOnly でも投稿可。v1.5.0: 公開時のみ表示 */}
+          {risk.visibility === 'public' && (
+            <CommentSection
+              entityType={risk.type === 'issue' ? 'issue' : 'risk'}
+              entityId={risk.id}
+              mutationsLocked={closedProject}
+            />
+          )}
+          {risk.visibility === 'public' && (
+            <ShareAssetDialog
+              entityType={risk.type === 'issue' ? 'issue' : 'risk'}
+              entityId={risk.id}
+              assetTitle={risk.title}
+              open={shareOpen}
+              onOpenChange={setShareOpen}
+            />
+          )}
         </form>
       </DialogContent>
     </Dialog>

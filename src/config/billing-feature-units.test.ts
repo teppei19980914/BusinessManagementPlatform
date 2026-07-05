@@ -35,7 +35,7 @@ describe('LLM_BILLABLE_FEATURE_UNITS', () => {
 });
 
 describe('EMBEDDING_BILLABLE_FEATURE_UNITS', () => {
-  it('Embedding 系課金対象 featureUnit が ADR-0022 の決定通り 7 件存在する', () => {
+  it('Embedding 系課金対象 featureUnit が ADR-0022 の決定通り 10 件存在する (v1.5.0: idea 系 3 件追加)', () => {
     expect(EMBEDDING_BILLABLE_FEATURE_UNITS).toEqual([
       'knowledge-embedding',
       'risk-issue-embedding',
@@ -44,6 +44,9 @@ describe('EMBEDDING_BILLABLE_FEATURE_UNITS', () => {
       'chat-semantic-search',
       'external-import-embedding',
       'attachment-embedding',
+      'idea-qa-embedding',
+      'idea-whiteboard-embedding',
+      'idea-voting-embedding',
     ]);
   });
 });
@@ -58,20 +61,23 @@ describe('STORAGE_OVERAGE_FEATURE_UNITS', () => {
 });
 
 describe('EMBEDDING_BACKFILL_FEATURE_UNITS', () => {
-  it('Embedding backfill (明示 free) featureUnit が ADR-0022 の決定通り 5 件存在する', () => {
+  it('Embedding backfill (明示 free) featureUnit が ADR-0022 の決定通り 8 件存在する (v1.5.0: idea 系 3 件追加)', () => {
     expect(EMBEDDING_BACKFILL_FEATURE_UNITS).toEqual([
       'project-embedding-backfill',
       'knowledge-embedding-backfill',
       'risk-issue-embedding-backfill',
       'retrospective-embedding-backfill',
       'memo-embedding-backfill',
+      'idea-qa-embedding-backfill',
+      'idea-whiteboard-embedding-backfill',
+      'idea-voting-embedding-backfill',
     ]);
   });
 });
 
 describe('BILLABLE_FEATURE_UNITS (= LLM + EMBEDDING + STORAGE_OVERAGE の union)', () => {
-  it('合計 12 件 (= 3 + 7 + 2) の課金対象 featureUnit が存在する', () => {
-    expect(BILLABLE_FEATURE_UNITS.length).toBe(12);
+  it('合計 15 件 (= 3 + 10 + 2) の課金対象 featureUnit が存在する (v1.5.0: idea 系 3 件追加)', () => {
+    expect(BILLABLE_FEATURE_UNITS.length).toBe(15);
     expect(BILLABLE_FEATURE_UNITS).toEqual([
       ...LLM_BILLABLE_FEATURE_UNITS,
       ...EMBEDDING_BILLABLE_FEATURE_UNITS,
@@ -279,7 +285,10 @@ describe('型ガード (TypeScript narrowing)', () => {
         | 'memo-embedding'
         | 'chat-semantic-search'
         | 'external-import-embedding'
-        | 'attachment-embedding' = fu;
+        | 'attachment-embedding'
+        | 'idea-qa-embedding'
+        | 'idea-whiteboard-embedding'
+        | 'idea-voting-embedding' = fu;
       expect(_check).toBe('knowledge-embedding');
     } else {
       throw new Error('expected Embedding billable');

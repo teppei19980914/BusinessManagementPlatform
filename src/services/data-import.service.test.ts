@@ -75,8 +75,13 @@ vi.mock('@/services/error-log.service', () => ({
   recordError: vi.fn(),
 }));
 
+vi.mock('@/services/task.service', () => ({
+  recalculateAllProjectWps: vi.fn(async () => ({ total: 0, updated: 0 })),
+}));
+
 import { importTenantData } from './data-import.service';
 import { prisma } from '@/lib/db';
+import { recalculateAllProjectWps } from '@/services/task.service';
 
 const TENANT_ID = '11111111-1111-1111-1111-111111111111';
 const IMPORTER_ID = '22222222-2222-2222-2222-222222222222';
@@ -134,6 +139,7 @@ async function buildEmptyZip(overrides: Partial<Record<string, unknown[]>> = {})
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(recalculateAllProjectWps).mockResolvedValue({ total: 0, updated: 0 });
   vi.mocked(prisma.tenant.findFirst).mockResolvedValue({
     id: TENANT_ID,
     plan: 'expert',
@@ -504,8 +510,148 @@ describe('importTenantData', () => {
   });
 
   // ================================================================
+  // 追記モード (2026-06-27): ZIP インポートは既存データを削除せず新規追加のみ行う
+  // ================================================================
+  it('追記モード: 既存と同 email のユーザは create されず merge カウントのみ増加する', async () => {
+    tx.user.findMany.mockResolvedValueOnce([
+      { id: 'existing-1', email: 'admin@example.com' },
+      { id: 'existing-2', email: 'user2@example.com' },
+    ] as never);
+
+    const zip = await buildEmptyZip({
+      users: [
+        // 既存と同 email (大小文字違い) → merge
+        { id: 'u-a', name: 'Admin', email: 'ADMIN@example.com', systemRole: 'admin', isActive: true },
+        // 既存と同 email → merge
+        { id: 'u-b', name: 'User2', email: 'user2@example.com', systemRole: 'general', isActive: true },
+        // 新規 email → create
+        { id: 'u-c', name: 'New1', email: 'new1@example.com', systemRole: 'general', isActive: true },
+        // 新規 email → create
+        { id: 'u-d', name: 'New2', email: 'new2@example.com', systemRole: 'general', isActive: true },
+      ],
+    });
+
+    const r = await importTenantData(TENANT_ID, zip, IMPORTER_ID);
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.summary.counts.usersCreated).toBe(2);
+      expect(r.summary.counts.usersMerged).toBe(2);
+    }
+    // 新規 2 件のみ create される (既存 2 件は create されない)
+    expect(tx.user.create).toHaveBeenCalledTimes(2);
+    const createdEmails = tx.user.create.mock.calls.map(
+      (c) => (c[0] as { data: { email: string } }).data.email,
+    );
+    expect(createdEmails).toContain('new1@example.com');
+    expect(createdEmails).toContain('new2@example.com');
+    expect(createdEmails).not.toContain('admin@example.com');
+    expect(createdEmails).not.toContain('user2@example.com');
+  });
+
+  it('追記モード: 既存テナント管理者の systemRole / isActive は ZIP 側の値で上書きされない', async () => {
+    // 既存 admin ユーザ (tenant-admin) が ZIP に general として含まれていても属性は変わらない
+    tx.user.findMany.mockResolvedValueOnce([
+      { id: 'existing-admin', email: 'admin@company.com' },
+    ] as never);
+
+    const zip = await buildEmptyZip({
+      users: [
+        // ZIP 側では general だが既存は admin → 属性更新禁止
+        { id: 'u-old', name: 'Admin', email: 'admin@company.com', systemRole: 'general', isActive: false },
+      ],
+    });
+
+    const r = await importTenantData(TENANT_ID, zip, IMPORTER_ID);
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.summary.counts.usersMerged).toBe(1);
+      expect(r.summary.counts.usersCreated).toBe(0);
+    }
+    // create / update いずれも呼ばれていない (ID 再マップのみ)
+    expect(tx.user.create).not.toHaveBeenCalled();
+  });
+
+  it('追記モード: 新規インポートユーザに invitationAcceptedAt が設定され forcePasswordChange が true になる', async () => {
+    const zip = await buildEmptyZip({
+      users: [
+        { id: 'u-1', name: 'NewUser', email: 'newuser@example.com', systemRole: 'general', isActive: true },
+      ],
+    });
+
+    const r = await importTenantData(TENANT_ID, zip, IMPORTER_ID);
+    expect(r.ok).toBe(true);
+
+    expect(tx.user.create).toHaveBeenCalledTimes(1);
+    const createdData = tx.user.create.mock.calls[0]![0].data as {
+      invitationAcceptedAt: unknown;
+      forcePasswordChange: boolean;
+      systemRole: string;
+    };
+    // 招待中ではなく有効として作成 (招待取り消し経路を防ぐ)
+    expect(createdData.invitationAcceptedAt).toBeInstanceOf(Date);
+    expect(createdData.forcePasswordChange).toBe(true);
+    // S-2: systemRole は常に general
+    expect(createdData.systemRole).toBe('general');
+  });
+
+  // ================================================================
   // D-1 (PHASE2_THREAT_MODEL.md / 2026-05-08): ZIP 解凍後サイズ上限 200MB
   // ================================================================
+  it('インポート成功後に recalculateAllProjectWps が各プロジェクト × tenantId で呼ばれる', async () => {
+    const zip = await buildEmptyZip({
+      users: [{ id: 'u-1', name: 'Alice', email: 'alice@example.com', systemRole: 'general', isActive: true }],
+      customers: [{ id: 'c-1', name: 'Customer A', createdBy: 'u-1', updatedBy: 'u-1' }],
+      projects: [
+        {
+          id: 'p-1', name: 'Project1', customerId: 'c-1', purpose: 'p', background: 'b', scope: 's',
+          devMethod: 'waterfall', plannedStartDate: '2026-01-01', plannedEndDate: '2026-12-31',
+          status: 'planning', businessDomainTags: [], techStackTags: [], processTags: [],
+          createdBy: 'u-1', updatedBy: 'u-1',
+        },
+        {
+          id: 'p-2', name: 'Project2', customerId: 'c-1', purpose: 'p', background: 'b', scope: 's',
+          devMethod: 'waterfall', plannedStartDate: '2026-01-01', plannedEndDate: '2026-12-31',
+          status: 'planning', businessDomainTags: [], techStackTags: [], processTags: [],
+          createdBy: 'u-1', updatedBy: 'u-1',
+        },
+      ],
+    });
+
+    const r = await importTenantData(TENANT_ID, zip, IMPORTER_ID);
+    expect(r.ok).toBe(true);
+
+    // プロジェクト 2 件分だけ呼ばれる
+    expect(recalculateAllProjectWps).toHaveBeenCalledTimes(2);
+    // 各呼び出しの第 2 引数がテナント ID
+    const calls = vi.mocked(recalculateAllProjectWps).mock.calls;
+    expect(calls.every(([, tid]) => tid === TENANT_ID)).toBe(true);
+    // 第 1 引数は新規採番された UUID (= 元の p-1 / p-2 とは異なる)
+    const calledProjectIds = calls.map(([pid]) => pid);
+    expect(calledProjectIds).not.toContain('p-1');
+    expect(calledProjectIds).not.toContain('p-2');
+  });
+
+  it('recalculateAllProjectWps が例外を投げてもインポート結果は ok:true を返す', async () => {
+    vi.mocked(recalculateAllProjectWps).mockRejectedValueOnce(new Error('recalc failed'));
+
+    const zip = await buildEmptyZip({
+      users: [{ id: 'u-1', name: 'Bob', email: 'bob@example.com', systemRole: 'general', isActive: true }],
+      customers: [{ id: 'c-1', name: 'C', createdBy: 'u-1', updatedBy: 'u-1' }],
+      projects: [
+        {
+          id: 'p-1', name: 'P', customerId: 'c-1', purpose: 'p', background: 'b', scope: 's',
+          devMethod: 'waterfall', plannedStartDate: '2026-01-01', plannedEndDate: '2026-12-31',
+          status: 'planning', businessDomainTags: [], techStackTags: [], processTags: [],
+          createdBy: 'u-1', updatedBy: 'u-1',
+        },
+      ],
+    });
+
+    const r = await importTenantData(TENANT_ID, zip, IMPORTER_ID);
+    // fail-open: 再計算が失敗してもインポート自体は成功扱い
+    expect(r.ok).toBe(true);
+  });
+
   it('D-1: ZIP 解凍後合計サイズが 200MB 超過 → DECOMPRESSED_TOO_LARGE', async () => {
     // 軽量化: 実際に 250MB の JSON を生成すると CI でタイムアウトするので、
     // 通常 ZIP をロード後 jszip 内部の `_data.uncompressedSize` を直接書き換えて
