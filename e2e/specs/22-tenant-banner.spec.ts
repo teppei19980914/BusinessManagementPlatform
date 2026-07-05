@@ -133,7 +133,7 @@ test.describe('@feature:tenant_admin:banners テナントバナー (ADR-0037)', 
   test('×で閉じると当該セッションでは非表示、リロードしても出ない', async () => {
     await adminPage.goto('/projects');
     await waitForProjectsReady(adminPage);
-    const banner = adminPage.getByTestId('system-banner');
+    const banner = adminPage.getByTestId('system-banner').filter({ hasText: MESSAGE });
     await expect(banner).toBeVisible();
 
     await banner.getByRole('button', { name: 'このお知らせを閉じる' }).click();
@@ -141,7 +141,7 @@ test.describe('@feature:tenant_admin:banners テナントバナー (ADR-0037)', 
 
     await adminPage.reload();
     await waitForProjectsReady(adminPage);
-    await expect(adminPage.getByTestId('system-banner')).toBeHidden();
+    await expect(adminPage.getByTestId('system-banner').filter({ hasText: MESSAGE })).toBeHidden();
   });
 
   test('別セッション (新規ログイン) では帯が再表示される', async ({ browser }) => {

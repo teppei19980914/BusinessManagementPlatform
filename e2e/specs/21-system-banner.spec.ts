@@ -158,6 +158,8 @@ test.describe('@feature:super_admin:banners システム周知バナー (ADR-003
   });
 
   test('バナー内リンクのカラーコントラストが WCAG AA を満たす (high/medium/low 全緊急度)', async ({ browser }) => {
+    // 3 severity × (新規コンテキスト作成 + ログイン + axe 解析) で 30s を超えるため延長
+    test.setTimeout(90_000);
     // URL を含むメッセージで <a> 要素を描画させ、バナー背景とのコントラスト比を
     // axe-core が WCAG AA (4.5:1) 基準で自動判定する。
     // MarkdownDisplay 内の <a> は text-info で固定されているため、親側の

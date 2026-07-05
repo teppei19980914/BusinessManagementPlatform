@@ -251,6 +251,7 @@ test.describe('@feature:project:wbs WBS カンバンビュー', () => {
         plannedStartDate: todayDate,
         plannedEndDate: todayDate,
         plannedEffort: 2,
+        includeWeekends: true,
       },
     });
     expect(singleDayRes.ok(), `single-day ACT create: ${await singleDayRes.text()}`).toBeTruthy();
