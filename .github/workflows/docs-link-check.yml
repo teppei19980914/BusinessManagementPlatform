@@ -1,4 +1,4 @@
-# docs/ 配下のリンク切れ検出
+﻿# docs/ 配下のリンク切れ検出
 #
 # 目的:
 #   人間駆動運用への切替に伴い、ドキュメント参照リンクが壊れた状態を
@@ -45,7 +45,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
       - name: Run lychee
         id: lychee
@@ -66,7 +66,7 @@ jobs:
 
       - name: Upload report
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: lychee-report
           path: ./lychee-report.md
