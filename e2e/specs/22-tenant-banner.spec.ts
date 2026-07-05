@@ -149,8 +149,8 @@ test.describe('@feature:tenant_admin:banners テナントバナー (ADR-0037)', 
     try {
       await fresh.page.goto('/projects');
       await waitForProjectsReady(fresh.page);
-      await expect(fresh.page.getByTestId('system-banner')).toBeVisible();
-      await expect(fresh.page.getByTestId('system-banner')).toContainText(MESSAGE);
+      await expect(fresh.page.getByTestId('system-banner').filter({ hasText: MESSAGE })).toBeVisible();
+      await expect(fresh.page.getByTestId('system-banner').filter({ hasText: MESSAGE })).toContainText(MESSAGE);
     } finally {
       await fresh.page.close().catch(() => undefined);
       await fresh.context.close().catch(() => undefined);
@@ -188,11 +188,16 @@ test.describe('@feature:tenant_admin:banners テナントバナー (ADR-0037)', 
     const unauthenticatedCtx = await browser.newContext();
     try {
       const unauthReq = unauthenticatedCtx.request;
+      // maxRedirects: 0 で NextAuth middleware の 302 リダイレクトをそのまま受け取る。
+      // Playwright はデフォルトでリダイレクトを追うため、追ったままでは
+      // /login (200) が返り「401 を期待したのに 200」でテストが落ちる。
       const res = await unauthReq.post('/api/tenants/me/banners', {
         data: { message: 'test', severity: 'low', startAt: new Date().toISOString(), endAt: new Date(Date.now() + 3600000).toISOString(), enabled: true },
+        maxRedirects: 0,
       });
-      // 未認証 (no session cookie) は 401
-      expect(res.status()).toBe(401);
+      // 未認証リクエストは NextAuth middleware がログインページへ 302 リダイレクト
+      // (API route handler の 401 より先に middleware が発火する仕様)
+      expect([302, 401]).toContain(res.status());
     } finally {
       await unauthenticatedCtx.close().catch(() => undefined);
     }
