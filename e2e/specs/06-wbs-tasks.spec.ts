@@ -155,6 +155,7 @@ test.describe('@feature:project:wbs WBS 管理 (PR #96)', () => {
         plannedStartDate: today,
         plannedEndDate: in7,
         plannedEffort: 8,
+        includeWeekends: true,
       },
     });
     expect(res.ok(), `ACT create: ${await res.text()}`).toBeTruthy();

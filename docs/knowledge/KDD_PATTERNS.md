@@ -20303,3 +20303,69 @@ PR #552 (v1.5.0) の CI で **Semgrep SAST が 42 件の findings で FAIL** し
 - Semgrep ルール: `yaml.github-actions.security.github-actions-mutable-action-tag` (p/security-audit に含まれる)
 - Semgrep 公式: https://sg.run/2LgAL
 - 対象ファイル: `ci.yml`, `dependency-outdated.yml`, `dependency-review.yml`, `docs-link-check.yml`, `e2e-visual-baseline.yml`, `e2e.yml`, `post-deploy-smoke.yml`, `security.yml`
+
+---
+
+## §5.X+214: Playwright E2E が「土日」の実行日・バナー厳格モード違反・Visualリグレッションで FAIL (v1.5.0 / 2026-07-05)
+
+### 事象
+
+PR #552 (v1.5.0) の CI で **Playwright E2E が 3 種類の失敗**。
+
+#### ① 土日バリデーション (06-wbs-tasks / 06b-wbs-kanban-view / 07-gantt-timeline)
+
+v1.4.0 でタスク作成 API に「`includeWeekends` が `false` の場合、土日・祝日を開始日にするとバリデーションエラー」という仕様が追加された。E2E テストが `new Date()` をそのまま `plannedStartDate` に使っており、CI 実行日が土曜日 (2026-07-05) だったためバリデーションエラーで 422 が返り、`actRes.ok()` が false になった。
+
+```typescript
+// NG: 実行日が土曜/日曜だとバリデーション 422
+const today = new Date().toISOString().slice(0, 10);
+await request.post('/api/.../tasks', { data: { plannedStartDate: today } });
+
+// OK: includeWeekends: true を追加してバリデーションをスキップ
+await request.post('/api/.../tasks', { data: { plannedStartDate: today, includeWeekends: true } });
+```
+
+`06b-wbs-kanban-view.spec.ts` には「金〜月 (土日跨ぎ) のACT」を意図的に作る箇所もあり、こちらも同様に `includeWeekends: true` が必要だった。
+
+#### ② Playwright strict mode 違反 (22-tenant-banner)
+
+`adminPage.getByTestId('system-banner')` が 2 要素にマッチ → strict mode 違反でエラー。
+
+別テスト (`21-system-banner`) が作成したシステムバナーと、このテストが作成したテナントバナーが、同一 DOM に同時に存在したため。`system-banner` test ID を両者が共有しているため複数マッチが起きた。
+
+```typescript
+// NG: strict mode でエラー (2要素ヒット)
+const banner = adminPage.getByTestId('system-banner');
+
+// OK: MESSAGEテキストでフィルタして1要素に絞る
+const banner = adminPage.getByTestId('system-banner').filter({ hasText: MESSAGE });
+```
+
+#### ③ Visual regression baseline mismatch (settings-themes)
+
+v1.5.0 の設定画面タブ再構成 (テナント設定バナータブ追加 / ヘッダーナビ変更) により `settings-themes.spec.ts` が比較するページ高さが 1440×1722 → 1440×1766 (+44px) にずれ、全テーマ分のスクリーンショットがミスマッチで FAIL した。
+
+### 根本原因
+
+- ①: E2E テストが実行日依存の `new Date()` を日付フィールドに直接使い、UI バリデーション仕様の変更に追随できていなかった
+- ②: `system-banner` test ID が 2 種類のバナー (システム / テナント) で共有されているため、並列実行や前テストの状態リークで複数要素が存在し得る
+- ③: UI 変更後に visual baseline PNG を更新し忘れた (意図的な変更なのに baseline が古いまま)
+
+### 解決策
+
+| 種別 | 対象ファイル | 修正内容 |
+|---|---|---|
+| ① | `06-wbs-tasks.spec.ts`, `06b-wbs-kanban-view.spec.ts`, `07-gantt-timeline.spec.ts` | タスク作成 POST data に `includeWeekends: true` を追加 |
+| ② | `22-tenant-banner.spec.ts` | `.getByTestId('system-banner')` に `.filter({ hasText: MESSAGE })` を追加 |
+| ③ | `settings-themes.spec.ts-snapshots/*.png` | `[gen-visual]` コミットで `e2e-visual-baseline.yml` ワークフローをトリガし自動再生成 |
+
+### 適用ルール
+
+- **E2E テストで `new Date()` を使う場合は、必ず土日を考慮する**。日付フィールドに渡す場合は `includeWeekends: true` を付けるか、平日のみに補正する処理を入れる
+- **`getByTestId()` に strict mode 違反リスクがある場合は `.filter()` で一意に絞り込む**。特に複数のテスト suite が共通コンポーネントを操作する場合は要注意
+- **UI を意図的に変更したら visual baseline も同一 PR で更新する**。方法: `[gen-visual]` を含む commit を push → `e2e-visual-baseline.yml` が自動発火 → PNG が自動 commit される
+
+### 関連
+
+- `e2e-visual-baseline.yml`: Visual baseline 生成方法の詳細 (workflow_dispatch / `[gen-visual]` タグの 2 通り)
+- v1.4.0 `includeWeekends` 仕様: `docs/adr/` 配下の WBS 稼働設定 ADR を参照

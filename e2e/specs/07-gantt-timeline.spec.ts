@@ -76,6 +76,7 @@ test.describe('@feature:project:gantt ガントチャート (PR #96)', () => {
         plannedStartDate: today,
         plannedEndDate: in14,
         plannedEffort: 16,
+        includeWeekends: true,
       },
     });
     if (!res.ok()) throw new Error(`ACT seed failed: ${res.status()} ${await res.text()}`);

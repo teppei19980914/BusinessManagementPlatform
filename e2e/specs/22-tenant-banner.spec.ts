@@ -106,7 +106,9 @@ test.describe('@feature:tenant_admin:banners テナントバナー (ADR-0037)', 
 
     await adminPage.goto('/projects');
     await waitForProjectsReady(adminPage);
-    const banner = adminPage.getByTestId('system-banner');
+    // filter by MESSAGE to avoid strict-mode violation when a system-banner from
+    // another concurrent test (e.g. 21-system-banner) is also present in the DOM
+    const banner = adminPage.getByTestId('system-banner').filter({ hasText: MESSAGE });
     await expect(banner).toBeVisible();
     await expect(banner).toContainText(MESSAGE);
     await expect(banner).toHaveAttribute('data-severity', 'high');

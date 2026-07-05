@@ -91,6 +91,7 @@ test.describe('@feature:project:wbs WBS カンバンビュー', () => {
         plannedStartDate: today,
         plannedEndDate: in7,
         plannedEffort: 8,
+        includeWeekends: true,
       },
     });
     expect(actRes.ok(), `ACT create: ${await actRes.text()}`).toBeTruthy();
@@ -114,6 +115,7 @@ test.describe('@feature:project:wbs WBS カンバンビュー', () => {
         plannedStartDate: fridayStr,
         plannedEndDate: mondayStr,
         plannedEffort: 4,
+        includeWeekends: true,
       },
     });
     expect(weekendActRes.ok(), `ACT weekend create: ${await weekendActRes.text()}`).toBeTruthy();
