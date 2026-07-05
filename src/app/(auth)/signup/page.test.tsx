@@ -107,3 +107,18 @@ describe('eligibility 3 層制御の維持', () => {
     expect(source).toContain('form.initialAdminEmail');
   });
 });
+
+describe('LP からの ?plan= 事前選択 (feat/signup-plan-preselect)', () => {
+  it('useSearchParams で plan クエリを読み取り、Suspense でラップする (login/page.tsx と同パターン)', () => {
+    expect(source).toContain("useSearchParams } from 'next/navigation'");
+    expect(source).toContain('searchParams.get(\'plan\')');
+    expect(source).toMatch(/<Suspense>\s*<SignupForm \/>\s*<\/Suspense>/);
+  });
+
+  it('plan クエリはホワイトリスト検証し、範囲外の値は beginner にフォールバックする', () => {
+    expect(source).toContain(
+      "const ALLOWED_PLANS = ['beginner', 'expert', 'pro'] as const;",
+    );
+    expect(source).toMatch(/resolveInitialPlan[\s\S]*?:\s*'beginner';/);
+  });
+});

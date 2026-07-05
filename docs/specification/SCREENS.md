@@ -33,7 +33,7 @@
 |---|---|---|---|
 | ログイン | `/login` | 組織 ID (Tenant.slug) + メール + パスワードで認証。CWE-601 対策の callbackUrl sanitize。localStorage のテナント履歴 (LRU 5 件 / 90 日 expire) を候補表示。セットアップガイドリンク併設 | 全員 (未認証可) |
 | MFA 検証 | `/login/mfa` | パスワード認証後の TOTP 6 桁検証。MFA 未有効 or 既検証なら callbackUrl へ自動 redirect。検証成功で JWT update → dashboard | password 認証済セッション保持者 |
-| サインアップ | `/signup` | 公開セルフサインアップ。入力順は **組織情報 → 初期管理者 → プラン選択 → (Expert/Pro のみ) 請求先** (feat/signup-friction-reduction 2026-06-12: メールをプランより前に置き 3 層 eligibility をプラン選択へ反映)。**組織 ID は入力欄なし**=サーバが数字連番を自動採番 (作成時に確定、衝突時リトライ)。採番値は成功画面と招待メールで本人へ案内。Beginner は請求先非表示・クレカ不要。honeypot + IP rate limit。送信後の成功画面は **自動採番された組織 ID + メール予告 (差出人 noreply@tasukiba.com / 件名「たすきば - アカウントの設定」/ 到着目安 1 分 / 24h 有効)** + 再送 + トラブルシュート。検証メール経由でパスワード設定 | 全員 (未認証可) |
+| サインアップ | `/signup` | 公開セルフサインアップ。入力順は **組織情報 → 初期管理者 → プラン選択 → (Expert/Pro のみ) 請求先** (feat/signup-friction-reduction 2026-06-12: メールをプランより前に置き 3 層 eligibility をプラン選択へ反映)。LP から `?plan=expert` / `?plan=pro` で遷移するとプランが事前選択される (feat/signup-plan-preselect 2026-07-05: ホワイトリスト外の値は `beginner` にフォールバック。あくまで初期値の UX 便宜でありサーバ側 zod enum バリデーションが最終防御)。**組織 ID は入力欄なし**=サーバが数字連番を自動採番 (作成時に確定、衝突時リトライ)。採番値は成功画面と招待メールで本人へ案内。Beginner は請求先非表示・クレカ不要。honeypot + IP rate limit。送信後の成功画面は **自動採番された組織 ID + メール予告 (差出人 noreply@tasukiba.com / 件名「たすきば - アカウントの設定」/ 到着目安 1 分 / 24h 有効)** + 再送 + トラブルシュート。検証メール経由でパスワード設定 | 全員 (未認証可) |
 | パスワード再設定 | `/reset-password` | 2 ステップ (verify → reset)。組織 slug + メールで本人確認 → reset token → 新パスワード設定。メールリンク経由の `?tenant=` 初期値取得 (ADR-0016) | 全員 (未認証可) |
 | 初期パスワード設定 | `/setup-password` | 招待/検証メールリンクからの初回パスワード設定。super_admin のみ MFA 登録 (QR + TOTP) が必須、admin/general は即時有効化。完了後リカバリーコード表示 | 検証トークン保持者 |
 

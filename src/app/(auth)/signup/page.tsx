@@ -15,8 +15,9 @@
  *   - パスワード未送信 (= 仮登録、検証メール経由でパスワード設定)
  */
 
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -55,6 +56,18 @@ type FormState = {
   hp_url: string;
 };
 
+// LP からの ?plan=expert / ?plan=pro 遷移でプランを事前選択する (feat/signup-plan-preselect 2026-07-05)。
+//   クエリ値はホワイトリスト外なら 'beginner' にフォールバックする (サーバ側 tenant-onboarding.service.ts
+//   の z.enum(['beginner','expert','pro']) と同じ許可値。あくまで初期値の UX 便宜であり、
+//   信頼境界は越えない = 最終的な登録値はサーバ側 zod バリデーションで確定する)。
+const ALLOWED_PLANS = ['beginner', 'expert', 'pro'] as const;
+
+function resolveInitialPlan(value: string | null): FormState['plan'] {
+  return (ALLOWED_PLANS as readonly string[]).includes(value ?? '')
+    ? (value as FormState['plan'])
+    : 'beginner';
+}
+
 const INITIAL: FormState = {
   name: '',
   plan: 'beginner',
@@ -77,8 +90,20 @@ const INITIAL: FormState = {
 };
 
 export default function SignupPage() {
+  return (
+    <Suspense>
+      <SignupForm />
+    </Suspense>
+  );
+}
+
+function SignupForm() {
   const t = useTranslations('auth');
-  const [form, setForm] = useState<FormState>(INITIAL);
+  const searchParams = useSearchParams();
+  const [form, setForm] = useState<FormState>(() => ({
+    ...INITIAL,
+    plan: resolveInitialPlan(searchParams.get('plan')),
+  }));
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
   const [submitting, setSubmitting] = useState(false);
