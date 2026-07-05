@@ -174,7 +174,9 @@ test.describe('@feature:tenant_admin:banners テナントバナー (ADR-0037)', 
     // 「バナーを管理する →」リンクが存在すること
     const manageLink = adminPage.getByRole('link', { name: /バナーを管理する/ });
     await expect(manageLink).toBeVisible();
-    await manageLink.click();
+    // mobile viewport では sticky タブバー (tenant-settings-tabs) がリンクの上に被り
+    // pointer events を遮断するため force: true で click する
+    await manageLink.click({ force: true });
     await adminPage.waitForURL('**/settings/tenant/banners', { timeout: 10_000 });
   });
 
