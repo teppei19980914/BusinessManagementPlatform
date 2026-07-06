@@ -43,7 +43,7 @@
   - **bug fix のみのパッチリリースは告知不要** (ユーザ体験への影響が無い場合)
 - [ ] **(5) ローカルゲート確認** — `pnpm lint && pnpm tsc --noEmit && pnpm test && pnpm e2e:coverage-check && pnpm build`
 - [ ] **(6) PR 作成 → CI 通過** — CI には **🤖 機能受け入れ回帰 (E2E)** が含まれる: 払い出し→全資産CRUD→解約→eligibility→チャット/ヘルプ配線→添付 CRUD (`e2e/specs/19〜26`、[RELEASE_ACCEPTANCE_TEST.md](../../test/RELEASE_ACCEPTANCE_TEST.md) の 🤖 項目)。E2E が red の場合は merge しない
-- [ ] **(6.5) Deploy Preview 確認 (メジャーリリース時のみ / 通常リリースは省略可)** — `deploy-preview-<PR番号>--tasukiba.netlify.app` で [RELEASE_ACCEPTANCE_TEST.md §1〜§6](../../test/RELEASE_ACCEPTANCE_TEST.md) のフル完走を実施。Deploy Preview は**実外部サービス + ステージング DB** 接続のため本番 DB を汚さず実連携 (実メール SMK-1) を検証できる。**通常リリース (weekly) は post-deploy-smoke.yml (step 7.5) が SMK-2〜5/7 を代替するため本ステップは省略可**
+- [ ] **(6.5) Deploy Preview 確認 (メジャーリリース時のみ / 通常リリースは省略可)** — `deploy-preview-<PR番号>--tasukiba.netlify.app` で [RELEASE_ACCEPTANCE_TEST.md §1〜§6](../../test/RELEASE_ACCEPTANCE_TEST.md) のフル完走を実施。Deploy Preview は**実外部サービス + ステージング DB** 接続のため本番 DB を汚さず実連携 (実メール SMK-1) を検証できる。**通常リリース (monthly) は post-deploy-smoke.yml (step 7.5) が SMK-2〜5/7 を代替するため本ステップは省略可**
 - [ ] **(6.6) squash merge**
 - [ ] **(7) Netlify Production deploy 成功確認** ([COMMIT_AND_DEPLOY.md §10.5 squash merge 時の skip キーワード罠](./COMMIT_AND_DEPLOY.md))
 - [ ] **(7.5) 🤖 Post-Deploy Smoke が自動実行** — Netlify deploy 成功後に **`.github/workflows/post-deploy-smoke.yml`** が自動 trigger され、`e2e/smoke/production-smoke.spec.ts` が本番 URL を叩く。**人間は何もしなくてよい**。GitHub Actions の `post-deploy-smoke` job を確認して green であれば go。FAIL があれば Actions ログ + Artifact (HTML report / trace / video) で原因調査 → 必要であれば原則ロールバック判断。事前準備: Netlify Outgoing Webhook + GitHub Secrets 4 件の初期設定が済んでいること (`playwright.config.smoke.ts` コメント参照)
@@ -116,3 +116,4 @@
 | 2026-05-24 | 初版作成 (PR #439 / feat/app-header-footer-unification: 全画面共通フッタ削減により真値ファイルの集約場所が明確化されたため、リリース手順を独立ドキュメント化) |
 | 2026-06 | 機能受け入れゲートを統合 (test/release-acceptance-e2e): §2.1 (6) に 🤖 E2E 回帰注記 + (7.5) 本番 👤 数分スモークを追加 / §2.2 にフル完走を追加 / RELEASE_ACCEPTANCE_TEST.md を §6 関連ドキュメントに追加。粒度 = 🤖毎CI / 👤数分毎リリース / フルはメジャー or 主要経路変更時 |
 | 2026-06-15 | Post-Deploy Smoke 自動化により毎週リリースの人間テストをゼロ化: (6.5) を「メジャーリリースのみ」に限定 / (7.5) を 👤 手動 → 🤖 `post-deploy-smoke.yml` 自動実行に変更 / §6 に post-deploy-smoke.yml を追加 / E2E spec 範囲を 19〜26 に更新 |
+| 2026-07-06 | リリースケイデンスを毎週金曜 → 毎月1回に変更 (CLAUDE.md 月次リリース運用改訂と連動)。ブランチ命名は `week/YYYY-wWW` → `month/YYYY-MM`。§2.1 (6.5) の「weekly」表記を「monthly」に修正 |

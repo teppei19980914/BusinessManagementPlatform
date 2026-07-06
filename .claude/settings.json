@@ -122,7 +122,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"c:/Users/SF02512/GitHub/Private/BusinessManagementPlatform/.claude/hooks/session-start-weekly-branch.sh\""
+            "command": "bash \"c:/Users/teppe/OneDrive/PersonalFolder/GitHubRepository_teppei19980914/BusinessManagementPlatform/.claude/hooks/session-start-monthly-branch.sh\""
           }
         ]
       }

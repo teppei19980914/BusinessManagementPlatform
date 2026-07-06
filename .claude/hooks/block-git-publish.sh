@@ -64,7 +64,7 @@ if action="$(detect)"; then
   echo "  - ユーザが明示的に依頼した場合のみ、合言葉つきで実行してください:" >&2
   echo "      bash:       ALLOW_GIT_PUBLISH=1 <そのコマンド>" >&2
   echo "      PowerShell: \$env:ALLOW_GIT_PUBLISH='1'; <そのコマンド>" >&2
-  echo "  - 週次ブランチ week/YYYY-wWW への直接コミット運用と整合させること。" >&2
+  echo "  - 月次ブランチ month/YYYY-MM への直接コミット運用と整合させること。" >&2
   echo "  - main / develop / release/* / hotfix/* への直接 push は別途禁止。" >&2
   exit 2
 fi

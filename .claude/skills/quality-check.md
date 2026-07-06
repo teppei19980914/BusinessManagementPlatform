@@ -69,7 +69,7 @@ wait $PERF_PID && echo "[perf:check] done (WARN は要目視)" || echo "[perf:ch
    - 単体テストと E2E は **別観点で両方継続** (単体 = 分岐ロジック / 認可マトリクス、E2E = 統合動作)
 3. **ドキュメント更新 (docs 同期チェーン)**: 機能追加 / 仕様変更があった場合、対応ドキュメント (SPECIFICATION / DESIGN / OPERATION / E2E_COVERAGE 等) への反映が必要か。
    - **★docs 同期チェーン (2026-06-09)★**: 実装を変えたら `design` → `public` → `faq-content.ts` / `guide-content.ts` を **1 作業単位として連動**させる。「実装は直したのに公開ドキュメント/FAQ が古いまま」を作らない。違法でも機密でもない範囲のみ public に展開する。
-   - **Embedding は片方向・デプロイ時生成**: `faq-content.ts` / `guide-content.ts` を更新しても、本番フクロウが新知識を学ぶのは**週次デプロイ (build:netlify) 時**。ローカル完了時点で本番フクロウが未更新なのは**正常**。
+   - **Embedding は片方向・デプロイ時生成**: `faq-content.ts` / `guide-content.ts` を更新しても、本番フクロウが新知識を学ぶのは**月次デプロイ (build:netlify) 時**。ローカル完了時点で本番フクロウが未更新なのは**正常**。
 4. **severity-1 自己点検**: 触れた変更が以下に該当するなら必ず確認。
    - **テナント越境防止**: 一覧/検索クエリに `where.tenantId` フィルタが強制されているか ([[feedback_tenant_isolation]])。
    - **課金 invariant**: 表示/請求/CSV/Stripe 全経路で ApiCallLog SUM を真値にしているか ([[feedback_billing_invariant]])。

@@ -227,7 +227,7 @@ example+rel03@example.com   ← 3 回目 ...
 
 ## 9. Post-Deploy Smoke (自動実行) — 🤖 (e2e/smoke/)
 
-> **週次リリース (通常)**: 本節の SMK-2〜5/7 は `.github/workflows/post-deploy-smoke.yml` が **Netlify deploy 成功後に自動実行**する。人間は毎週リリースで何もしなくてよい。
+> **月次リリース (通常)**: 本節の SMK-2〜5/7 は `.github/workflows/post-deploy-smoke.yml` が **Netlify deploy 成功後に自動実行**する。人間は毎月リリースで何もしなくてよい。
 > **メジャーリリース**: 本節の自動 smoke に加え §1〜§4 + §6 のフル完走を人間が実施する ([§8](#8-go--no-go-判定) 参照)。
 
 ### 自動実行の仕組み
@@ -255,7 +255,7 @@ example+rel03@example.com   ← 3 回目 ...
 | **SMK-6** | Stripe 決済 (クレジットカード払い提供時のみ) | 👤 手動 (別手順) | [STRIPE_PAYMENT_TEST_PROCEDURE.md](./STRIPE_PAYMENT_TEST_PROCEDURE.md) |
 | **SMK-7** | 主要画面の本番レンダリング | 🤖 post-deploy-smoke | /projects + /settings/tenant が 500 なく表示 |
 
-> **SMK-6 のみ** 👤 手動に残る。週次リリースでは SKIP 可 (クレジットカード払い未提供のため)。
+> **SMK-6 のみ** 👤 手動に残る。月次リリースでは SKIP 可 (クレジットカード払い未提供のため)。
 
 ---
 

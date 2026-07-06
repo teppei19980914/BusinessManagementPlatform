@@ -111,14 +111,14 @@ Claude Code が実装変更を行った場合、コミット前に以下を必�
 
 ---
 
-## 週次リリース運用 (2026-06-09)
+## 月次リリース運用 (2026-07-05 改訂、旧: 週次リリース)
 
-- **毎週金曜リリース** (目標。リリース日は変動しうる)。**土曜始まり〜金曜まで**の変更を 1 ブランチに集約し、金曜に main へマージ & デプロイする。
-- **ブランチ名 = `week/YYYY-wWW`** (ISO 週番号、ただし土曜始まりに補正)。例: `week/2026-w24`。リリース日に依存しない抽象的命名。`release/*`・`hotfix/*` は保護接頭辞のため使わない。
-- **SessionStart hook (`session-start-weekly-branch.sh`)** が起動時に当週ブランチを**冪等に保証** (有れば checkout / 無ければ main 最新化のうえ作成)。週途中の再起動でも同じ週次ブランチに乗り続ける。
+- **毎月1回リリース** (目標。リリース日は月内で変動しうる)。**暦月単位**の変更を 1 ブランチに集約し、月内の任意のタイミングで main へマージ & デプロイする。
+- **ブランチ名 = `month/YYYY-MM`** (暦月、特定日への補正なし)。例: `month/2026-07`。リリース日に依存しない抽象的命名。`release/*`・`hotfix/*` は保護接頭辞のため使わない。
+- **SessionStart hook (`session-start-monthly-branch.sh`)** が起動時に当月ブランチを**冪等に保証** (有れば checkout / 無ければ main 最新化のうえ作成)。月途中の再起動でも同じ月次ブランチに乗り続ける。
   - 未コミット変更がある場合は自動切替せず警告のみ (commit はしない方針)。
-  - 「ブランチを切らないで」と指示された場合は `.claude/.weekly-branch-disabled` を touch してスキップ。
-- 溜め方は**週次ブランチへ直接コミット** (機能別サブブランチ統合はしない)。
+  - 「ブランチを切らないで」と指示された場合は `.claude/.monthly-branch-disabled` を touch してスキップ。
+- 溜め方は**月次ブランチへ直接コミット** (機能別サブブランチ統合はしない)。
 
 ---
 
@@ -127,12 +127,12 @@ Claude Code が実装変更を行った場合、コミット前に以下を必�
 実装を変更したら、以下を **1 作業単位として連動**させ「片方だけ更新」を禁止する。
 
 ```
-実装変更 → docs/design/ → docs/public/ → src/config/faq-content.ts / guide-content.ts → (週次デプロイ時に Embedding 自動再生成)
+実装変更 → docs/design/ → docs/public/ → src/config/faq-content.ts / guide-content.ts → (月次デプロイ時に Embedding 自動再生成)
 ```
 
 - **public への展開条件**: 違法でも、たすきばの機密情報でもないものに限る。
 - **FAQ/ガイド = たすきフクロウの頭脳**。`/help`・`/guide` 画面 (ユーザメニューから到達) とフクロウ AI チャットの共通ソース。
-- **Embedding は片方向・デプロイ時生成**: `faq-content.ts` 等を更新しても本番フクロウが新知識を学ぶのは**週次デプロイ (`build:netlify` が `generate-faq-embeddings.ts` を実行) 時**。ローカル完了時点で本番フクロウが未更新なのは**正常**。SHA-256 変更検知で差分のみ再生成 (無変更 deploy は Voyage 呼出ゼロ)。
+- **Embedding は片方向・デプロイ時生成**: `faq-content.ts` 等を更新しても本番フクロウが新知識を学ぶのは**月次デプロイ (`build:netlify` が `generate-faq-embeddings.ts` を実行) 時**。ローカル完了時点で本番フクロウが未更新なのは**正常**。SHA-256 変更検知で差分のみ再生成 (無変更 deploy は Voyage 呼出ゼロ)。
 - 詳細手順は完了時に [`.claude/skills/quality-check.md`](./.claude/skills/quality-check.md) Step 2-3 で確認する。
 
 ---
