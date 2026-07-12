@@ -1,4 +1,4 @@
-﻿# セキュリティスキャンワークフロー
+# セキュリティスキャンワークフロー
 #
 # 設計方針 (PR feat/security-auto-update / 2026-05-09 全面再構成):
 #   「ローカル必須チェック撤廃 → CI 自動に一本化」の前提を満たすため、
@@ -75,7 +75,7 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
       - name: Setup pnpm
-        uses: pnpm/action-setup@b0f76dfb45f55f8421693e4803ac7bb65143bd34 # v6
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
         with:
           version: 10
       - name: Setup Node.js
@@ -255,7 +255,7 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
       - name: Setup pnpm
-        uses: pnpm/action-setup@b0f76dfb45f55f8421693e4803ac7bb65143bd34 # v6
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
         with:
           version: 10
       - name: Setup Node.js

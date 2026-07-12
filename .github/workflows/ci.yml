@@ -1,4 +1,4 @@
-﻿# メイン CI ワークフロー (PR #82 で有効化 / PR #83 でカバレッジ統合):
+# メイン CI ワークフロー (PR #82 で有効化 / PR #83 でカバレッジ統合):
 #
 #   PR / push 時に lint / test / build を自動実行する。
 #   Stop hook (ローカル) と同等のチェックを GitHub 側でも回し、
@@ -40,7 +40,7 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@b0f76dfb45f55f8421693e4803ac7bb65143bd34 # v6
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
         with:
           version: 10
 

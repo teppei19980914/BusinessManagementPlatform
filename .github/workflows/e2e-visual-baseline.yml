@@ -1,4 +1,4 @@
-﻿# 視覚回帰 baseline 生成ワークフロー (PR #96)
+# 視覚回帰 baseline 生成ワークフロー (PR #96)
 #
 # 目的:
 #   Linux CI 環境 (Ubuntu + Playwright Chromium) で baseline PNG を生成し、
@@ -102,7 +102,7 @@ jobs:
           token: ${{ secrets.CI_TRIGGER_PAT || secrets.GITHUB_TOKEN }}
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@b0f76dfb45f55f8421693e4803ac7bb65143bd34 # v6
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
         with:
           version: 10
 
