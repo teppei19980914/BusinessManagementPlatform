@@ -1,4 +1,4 @@
-﻿# メイン CI ワークフロー (PR #82 で有効化 / PR #83 でカバレッジ統合):
+# メイン CI ワークフロー (PR #82 で有効化 / PR #83 でカバレッジ統合):
 #
 #   PR / push 時に lint / test / build を自動実行する。
 #   Stop hook (ローカル) と同等のチェックを GitHub 側でも回し、
@@ -37,15 +37,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@b0f76dfb45f55f8421693e4803ac7bb65143bd34 # v6
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
         with:
           version: 10
 
       - name: Setup Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
         with:
           node-version: '22'
           cache: 'pnpm'
@@ -129,7 +129,7 @@ jobs:
         if: always() && github.event_name == 'pull_request'
         # security/phase-1 (2026-05-31): third-party action は SHA pinning でサプライチェーン汚染を抑止。
         # SHA は v2 タグの最新 commit (2026-05-31 検証時点)。Dependabot 自動更新対象。
-        uses: davelosert/vitest-coverage-report-action@3c054a2d2e2ca45446417ad5d6d5eb33092af8f1 # v2
+        uses: davelosert/vitest-coverage-report-action@8b157684c6a6b259b97d45e72b44242865c0f6a5 # v2
 
       - name: Build (next build)
         # ビルド時は実 DB 接続不要 (next build は static analysis 中心)。

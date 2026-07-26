@@ -1,4 +1,4 @@
-﻿# E2E + 視覚回帰テストワークフロー (PR #90 基盤)
+# E2E + 視覚回帰テストワークフロー (PR #90 基盤)
 #
 # 実行内容:
 #   1. エフェメラル Postgres (services: postgres) を起動
@@ -96,15 +96,15 @@ jobs:
       CI: 'true'
 
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@b0f76dfb45f55f8421693e4803ac7bb65143bd34 # v6
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
         with:
           version: 10
 
       - name: Setup Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
         with:
           node-version: '22'
           cache: 'pnpm'
@@ -155,7 +155,7 @@ jobs:
       - name: Comment PR
         if: always() && github.event_name == 'pull_request'
         # security/phase-1 (2026-05-31): SHA pinning でサプライチェーン汚染抑止 (v3.0.4)
-        uses: marocchino/sticky-pull-request-comment@0ea0beb66eb9baf113663a64ec522f60e49231c0 # v3
+        uses: marocchino/sticky-pull-request-comment@5770ad5eb8f42dd2c4f34da00c94c5381e49af88 # v3
         with:
           header: e2e-report
           message: |
